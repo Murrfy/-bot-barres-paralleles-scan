@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/binance-read.js": {
+      "maxDuration": 10
+    }
+  }
+}
