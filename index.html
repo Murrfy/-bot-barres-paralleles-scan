@@ -160,7 +160,7 @@ const lastAggIds=new Map(),lastAggTimes=new Map(),recoveringSymbols=new Set(),pe
 let cursorSaveTimer=null;
 let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1';
-let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null;
+let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
 function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}}
@@ -197,12 +197,49 @@ async function refreshControllerIdentity(){
     localStorage.setItem(ZENITH_DEVICE_ROLE_KEY,'controller');
     controllerIdentity={paired:true,role:'controller',lastOk:Date.now(),error:''};
     renderControllerIdentity();
+    scheduleControllerCloudStateSync();
     return true;
   }catch(e){
     controllerIdentity={...controllerIdentity,paired:false,error:e?.message||'Connexion impossible'};
     renderControllerIdentity();
     return false;
   }
+}
+function controllerCloudStatePayload(){
+  return {
+    settings:clone(settings),
+    tokenSettings:clone(tokenSettings),
+    manualTokens:clone(manualTokens),
+    validated:clone(validated)
+  };
+}
+async function syncControllerCloudStateNow(){
+  if(!controllerIdentity.paired||controllerIdentity.role!=='controller')return false;
+  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
+  if(!token)return false;
+  try{
+    const r=await fetch('/api/zenith-sync?action=controller-state',{
+      method:'POST',
+      cache:'no-store',
+      headers:{
+        'Content-Type':'application/json',
+        Accept:'application/json',
+        Authorization:'Bearer '+token
+      },
+      body:JSON.stringify({data:controllerCloudStatePayload()})
+    });
+    const q=await r.json().catch(()=>({}));
+    return !!(r.ok&&q?.ok===true);
+  }catch(_){
+    return false;
+  }
+}
+function scheduleControllerCloudStateSync(){
+  if(controllerStateSyncTimer)clearTimeout(controllerStateSyncTimer);
+  controllerStateSyncTimer=setTimeout(()=>{
+    controllerStateSyncTimer=null;
+    syncControllerCloudStateNow();
+  },600);
 }
 function startControllerIdentityCheck(){
   if(controllerIdentityTimer)clearInterval(controllerIdentityTimer);
@@ -219,7 +256,7 @@ function tokenExactBuy(symbol){const t=tokenSettings[symbol]||{};return t.exactB
 function tokenExactSale(symbol){const t=tokenSettings[symbol]||{};return t.exactSaleEnabled&&n(t.exactSalePrice)>0?n(t.exactSalePrice):0}
 function openBySymbol(symbol){return openPositions.find(p=>p.symbol===symbol)||null}
 function trackedSymbols(){return new Set([...Object.keys(validated),...openPositions.map(p=>p.symbol)])}
-function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify({settings,tokenSettings,manualTokens,validated,revalidateBlock,missedSignals,openPositions,history,dismissed,selectedSymbol}))}
+function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify({settings,tokenSettings,manualTokens,validated,revalidateBlock,missedSignals,openPositions,history,dismissed,selectedSymbol}));scheduleControllerCloudStateSync()}
 function load(){try{const x=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');if(!x)return;settings={...clone(DEFAULTS),...x.settings};if(n(x.settings?.margin)===100)settings.margin=1000;if(n(x.settings?.targetProfit)===40)settings.targetProfit=3000;if(n(x.settings?.maxLoss)===40)settings.maxLoss=400;settings.marginType='ISOLATED';settings.protectionStages=normalizeProtections(settings.protectionStages,settings.targetProfit);tokenSettings=x.tokenSettings||{};for(const t of Object.values(tokenSettings)){if(n(t?.targetProfit)===40&&n(t?.manualTargetProfit,40)===40){t.targetProfit=3000;t.manualTargetProfit=3000}if(n(t?.maxLoss)===40)t.maxLoss=400;if(Array.isArray(t?.protectionStages)&&t.protectionStages.length===9)t.protectionStages=normalizeProtections(t.protectionStages,n(t.manualTargetProfit,n(t.targetProfit,settings.targetProfit)))};manualTokens=x.manualTokens||{};validated=x.validated||{};revalidateBlock=x.revalidateBlock||{};missedSignals=x.missedSignals||{};openPositions=x.openPositions||[];history=x.history||[];dismissed=x.dismissed||{};selectedSymbol=x.selectedSymbol||'';for(const [s,r] of Object.entries(manualTokens))if(n(r?.last)>0)lastPrices.set(s,n(r.last));for(const p of openPositions){if(!(n(p.openedAt)>0))p.openedAt=n(p.startedAt,n(p.createdAt,Date.now()));if(!(n(p.baseTargetProfit)>0))p.baseTargetProfit=Math.max(1,n(tokenSettings[p.symbol]?.manualTargetProfit,n(tokenSettings[p.symbol]?.targetProfit,settings.targetProfit)));if(n(p.entryPrice)>0)lastPrices.set(p.symbol,n(p.entryPrice));if(Number.isFinite(+p.lastAggId))lastAggIds.set(p.symbol,+p.lastAggId);if(Number.isFinite(+p.lastAggTime))lastAggTimes.set(p.symbol,+p.lastAggTime);p.marginType='ISOLATED';p.protectionStages=normalizeProtections(p.protectionStages,n(p.baseTargetProfit,n(p.targetProfit,settings.targetProfit)));p.protectionFloorActive=0;for(const st of p.protectionStages)if(st.enabled&&n(p.maxProfit)>=st.arm)p.protectionFloorActive=Math.max(n(p.protectionFloorActive),st.floor);if(!history.some(h=>h.symbol===p.symbol&&(h.status==='OPEN'||h.closedAt==null)&&n(h.openedAt)===n(p.openedAt)))history.push({symbol:p.symbol,entryPrice:p.entryPrice,exitPrice:null,pnl:null,reason:'ACHAT',openedAt:p.openedAt,closedAt:null,status:'OPEN'})}for(const [s,v] of Object.entries(validated)){if(Number.isFinite(+v?.lastAggId))lastAggIds.set(s,+v.lastAggId);if(Number.isFinite(+v?.lastAggTime))lastAggTimes.set(s,+v.lastAggTime)}expireWaitingSignals()}catch(_){}}
 async function jf(path){const r=await fetch(API+path,{cache:'no-store'});if(!r.ok)throw new Error(`Binance ${r.status}`);return r.json()}
 async function ensureExchange(force=false){if(exchangeMap.size&&!force)return;const info=await jf('/fapi/v1/exchangeInfo');exchangeMap.clear();for(const s of info.symbols||[]){if(!['PERPETUAL','TRADIFI_PERPETUAL'].includes(s.contractType)||s.quoteAsset!=='USDT'||s.status!=='TRADING')continue;const fm={};for(const f of s.filters||[])if(f?.filterType)fm[f.filterType]=f;exchangeMap.set(s.symbol,{contractType:s.contractType,onboardDate:n(s.onboardDate),underlyingType:s.underlyingType||'',underlyingSubType:s.underlyingSubType||[],pricePrecision:n(s.pricePrecision),quantityPrecision:n(s.quantityPrecision),filters:fm})}}
