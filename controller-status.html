@@ -24,6 +24,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     <div class="sub">Cette page vérifie que cet appareil est bien reconnu par le serveur comme contrôleur et non comme MASTER.</div>
     <div id="status" class="status">Vérification en cours…</div>
     <div id="cloud" class="status" style="margin-top:12px">Vérification de la synchronisation centrale…</div>
+    <div id="safety" class="status" style="margin-top:12px">Vérification des verrous de sécurité…</div>
   </div>
 </div>
 <script>
@@ -69,6 +70,34 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
       const cloud=document.getElementById('cloud');
       cloud.textContent='Synchronisation centrale inaccessible : '+String(se?.message||'erreur')+'.';
       cloud.className='status err';
+    }
+
+    try{
+      const rr=await fetch('/api/zenith-sync?action=safety',{
+        headers:{Authorization:'Bearer '+token,Accept:'application/json'},
+        cache:'no-store'
+      });
+      const rq=await rr.json().catch(()=>({}));
+      const safety=document.getElementById('safety');
+      if(!rr.ok||rq?.ok!==true){
+        throw new Error(rq?.code||rq?.error||('HTTP '+rr.status));
+      }
+
+      const locked = rq.realTradingEnabled !== true && rq.executionMode === 'SIMULATION_LOCKED';
+      const noMasterLease = rq.masterLeaseActive !== true;
+      const noMasterRegistered = rq.masterRegistered !== true;
+
+      safety.textContent =
+        'Sécurité : trading réel '+(locked?'VERROUILLÉ':'NON VERROUILLÉ')+
+        ' · iPad MASTER '+(noMasterRegistered?'non enregistré':'enregistré')+
+        ' · bail MASTER '+(noMasterLease?'inactif':'ACTIF')+
+        ' · commandes '+String(rq.pendingCommands||0)+' en attente / '+String(rq.processingCommands||0)+' en traitement.';
+
+      safety.className='status '+(locked&&noMasterLease?'ok':'warn');
+    }catch(se){
+      const safety=document.getElementById('safety');
+      safety.textContent='État sécurité non vérifié : '+String(se?.message||'erreur')+'.';
+      safety.className='status err';
     }
   }catch(e){
     show('Vérification refusée : '+(e?.message||'erreur inconnue')+'.','err');
