@@ -79,6 +79,10 @@ if (!sync.includes("ZENITH_MASTER_ADMIN_CODE") ||
     !sync.includes("action === 'controller-replacement-redeem'")) {
   fail('api/zenith-sync.js must keep secure controller replacement recovery');
 }
+if (!sync.includes('CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60') ||
+    !sync.includes("redis.call('DEL', KEYS[1])")) {
+  fail('controller replacement code must remain short-lived and one-time use');
+}
 if (!sync.includes("'STALE_CONTROLLER_COMMAND'") || !sync.includes("'CONTROLLER_REPLACED'")) {
   fail('api/zenith-sync.js must reject/quarantine commands from a replaced controller');
 }
