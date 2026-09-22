@@ -42,6 +42,9 @@ const COMMAND_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 30;
 const PAIR_RATE_LIMIT = 5;
 const CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60;
 const CONTROLLER_REPLACEMENT_RATE_LIMIT = 5;
+const MASTER_ADMIN_FAILURE_LIMIT = 5;
+const MASTER_ADMIN_LOCK_SECONDS = 15 * 60;
+const RUNTIME_STATE_STALE_MS = 30 * 1000;
 
 function send(res, status, body) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -125,6 +128,41 @@ async function controllerReplacementRateAllowed(req) {
   return count <= CONTROLLER_REPLACEMENT_RATE_LIMIT;
 }
 
+function masterAdminFailureKey(device) {
+  const identity = String(device?.tokenHash || device?.deviceId || 'unknown');
+  return `${PREFIX}:master-admin-fail:${sha256(identity)}`;
+}
+
+async function verifyMasterAdminCode(req, res, device) {
+  if (!MASTER_ADMIN_CODE) {
+    send(res, 503, { ok: false, code: 'MASTER_ADMIN_NOT_CONFIGURED' });
+    return false;
+  }
+
+  const key = masterAdminFailureKey(device);
+  const existing = Number(await redis(['GET', key])) || 0;
+  if (existing >= MASTER_ADMIN_FAILURE_LIMIT) {
+    const ttl = Number(await redis(['TTL', key])) || MASTER_ADMIN_LOCK_SECONDS;
+    send(res, 429, { ok: false, code: 'MASTER_ADMIN_LOCKED', retryAfterSeconds: Math.max(1, ttl) });
+    return false;
+  }
+
+  const supplied = String(req.body?.adminCode || '');
+  if (!timingSafeEqualText(supplied, MASTER_ADMIN_CODE)) {
+    const failures = Number(await redis(['INCR', key])) || 0;
+    if (failures === 1) await redis(['EXPIRE', key, String(MASTER_ADMIN_LOCK_SECONDS)]);
+    if (failures >= MASTER_ADMIN_FAILURE_LIMIT) {
+      send(res, 429, { ok: false, code: 'MASTER_ADMIN_LOCKED', retryAfterSeconds: MASTER_ADMIN_LOCK_SECONDS });
+    } else {
+      send(res, 401, { ok: false, code: 'MASTER_ADMIN_CODE_INVALID', attemptsRemaining: Math.max(0, MASTER_ADMIN_FAILURE_LIMIT - failures) });
+    }
+    return false;
+  }
+
+  await redis(['DEL', key]);
+  return true;
+}
+
 function normalizeReplacementCode(value) {
   return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
@@ -183,7 +221,7 @@ function roleDeviceKey(role) {
   return role === 'master' ? KEY_MASTER_DEVICE : KEY_CONTROLLER_DEVICE;
 }
 
-async function claimOrVerifyRoleDevice(role, deviceId) {
+async function claimRoleDevice(role, deviceId) {
   const key = roleDeviceKey(role);
   const script = [
     "local current = redis.call('GET', KEYS[1])",
@@ -196,6 +234,11 @@ async function claimOrVerifyRoleDevice(role, deviceId) {
   ].join('\n');
   const ok = await redis(['EVAL', script, '1', key, String(deviceId)]);
   return Number(ok) === 1;
+}
+
+async function verifyRoleDevice(role, deviceId) {
+  const current = await redis(['GET', roleDeviceKey(role)]);
+  return Boolean(current) && String(current) === String(deviceId);
 }
 
 async function roleDeviceId(role) {
@@ -220,7 +263,7 @@ async function requireDevice(req, res, roles) {
     send(res, 403, { ok: false, code: 'ROLE_FORBIDDEN' });
     return null;
   }
-  if (!(await claimOrVerifyRoleDevice(device.role, device.deviceId))) {
+  if (!(await verifyRoleDevice(device.role, device.deviceId))) {
     send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
     return null;
   }
@@ -336,6 +379,21 @@ function inspectRuntimeActivity(snapshot) {
   };
 }
 
+function runtimeSnapshotStatus(snapshot, expectedMasterDeviceId = '', maxAgeMs = RUNTIME_STATE_STALE_MS) {
+  const present = Boolean(snapshot?.data && typeof snapshot.data === 'object');
+  const ageMs = Date.now() - Number(snapshot?.updatedAt || 0);
+  const identityMatches = !expectedMasterDeviceId || String(snapshot?.masterDeviceId || '') === String(expectedMasterDeviceId);
+  const fresh = present && identityMatches && Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= maxAgeMs;
+  const reason = !present
+    ? 'MASTER_RUNTIME_UNAVAILABLE'
+    : !identityMatches
+      ? 'MASTER_RUNTIME_WRONG_DEVICE'
+      : !fresh
+        ? 'MASTER_RUNTIME_STALE'
+        : 'MASTER_RUNTIME_FRESH';
+  return { present, identityMatches, fresh, ageMs: Number.isFinite(ageMs) ? ageMs : null, reason };
+}
+
 function parseStoredJson(raw) {
   try { return raw ? JSON.parse(raw) : null; } catch { return null; }
 }
@@ -354,11 +412,12 @@ function masterConfigSyncStatus(controllerState, appliedState, runtimeState, exp
     appliedStateHash === controllerStateHash &&
     masterIdentityMatches;
 
-  const runtimePresent = Boolean(runtimeState?.data && typeof runtimeState.data === 'object');
-  const runtimeAgeMs = Date.now() - Number(runtimeState?.updatedAt || 0);
-  const runtimeFresh = runtimePresent && Number.isFinite(runtimeAgeMs) && runtimeAgeMs >= 0 && runtimeAgeMs <= 30000;
+  const runtime = runtimeSnapshotStatus(runtimeState, expectedMasterDeviceId);
+  const runtimePresent = runtime.present;
+  const runtimeAgeMs = runtime.ageMs;
+  const runtimeFresh = runtime.fresh;
   const runtimeFailClosed = Boolean(runtimeRequired && !runtimeFresh);
-  const runtimeReason = !runtimePresent ? 'MASTER_RUNTIME_UNAVAILABLE' : !runtimeFresh ? 'MASTER_RUNTIME_STALE' : '';
+  const runtimeReason = runtimeFailClosed ? runtime.reason : '';
 
   const synchronized = configMatched && !runtimeFailClosed;
   const needsApply = controllerPresent && !configMatched;
@@ -467,7 +526,11 @@ async function tryFinalizePendingPause(deviceId, knownMode = '') {
   if (activity.openOrders > 0) blockers.push('OPEN_ORDER');
   if (Number(pending || 0) > 0) blockers.push('PENDING_COMMAND');
   if (Number(processing || 0) > 0) blockers.push('PROCESSING_COMMAND');
-  if (REAL_TRADING_ENABLED && !runtimeState) blockers.push('RUNTIME_STATE_UNAVAILABLE');
+  if (REAL_TRADING_ENABLED) {
+    const runtime = runtimeSnapshotStatus(runtimeState, deviceId);
+    if (!runtime.fresh) blockers.push(runtime.reason);
+    if (!deviceId) blockers.push('MASTER_LEASE_REQUIRED');
+  }
 
   let reconciliation = null;
   if (!blockers.length && REAL_TRADING_ENABLED) {
@@ -585,6 +648,7 @@ export default async function handler(req, res) {
       masterAdminConfigured: Boolean(MASTER_ADMIN_CODE),
       pairingDisabled: PAIRING_DISABLED,
       realTradingEnabled: REAL_TRADING_ENABLED,
+      realExecutionEnvironmentReady: Boolean(REAL_TRADING_ENABLED && PAIRING_DISABLED),
       executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
       mode: 'SYNC_SAFE_SIMULATION',
       masterTtlSeconds: MASTER_TTL_SECONDS,
@@ -622,7 +686,7 @@ export default async function handler(req, res) {
       if (claimedDeviceId && claimedDeviceId !== deviceId) {
         return send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
       }
-      if (role === 'master' && !(await claimOrVerifyRoleDevice(role, deviceId))) {
+      if (!(await claimRoleDevice(role, deviceId))) {
         return send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
       }
 
@@ -643,14 +707,7 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res, ['controller', 'master']);
       if (!device) return;
 
-      if (!MASTER_ADMIN_CODE) {
-        return send(res, 503, { ok: false, code: 'MASTER_ADMIN_NOT_CONFIGURED' });
-      }
-
-      const adminCode = String(req.body?.adminCode || '');
-      if (!timingSafeEqualText(adminCode, MASTER_ADMIN_CODE)) {
-        return send(res, 401, { ok: false, code: 'MASTER_ADMIN_CODE_INVALID' });
-      }
+      if (!(await verifyMasterAdminCode(req, res, device))) return;
 
       const oldControllerDeviceId = await roleDeviceId('controller');
       if (!oldControllerDeviceId) {
@@ -903,69 +960,23 @@ export default async function handler(req, res) {
     if (action === 'master-pause' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller', 'master']);
       if (!device) return;
+      if (!(await verifyMasterAdminCode(req, res, device))) return;
 
-      if (!MASTER_ADMIN_CODE) {
-        return send(res, 503, { ok: false, code: 'MASTER_ADMIN_NOT_CONFIGURED' });
-      }
-      if (!timingSafeEqualText(String(req.body?.adminCode || ''), MASTER_ADMIN_CODE)) {
-        return send(res, 401, { ok: false, code: 'MASTER_ADMIN_CODE_INVALID' });
-      }
-
-      const [runtimeRaw, pending, processing] = await Promise.all([
-        redis(['GET', KEY_STATE]),
-        redis(['LLEN', KEY_PENDING]),
-        redis(['LLEN', KEY_PROCESSING]),
-      ]);
-
-      let runtimeState = null;
-      try { runtimeState = runtimeRaw ? JSON.parse(runtimeRaw) : null; } catch {}
-      const activity = inspectRuntimeActivity(runtimeState);
-      const hardBlockers = [];
-      if (Number(pending || 0) > 0) hardBlockers.push('PENDING_COMMAND');
-      if (Number(processing || 0) > 0) hardBlockers.push('PROCESSING_COMMAND');
-      if (REAL_TRADING_ENABLED && !runtimeState) hardBlockers.push('RUNTIME_STATE_UNAVAILABLE');
-      if (activity.activePositions === 0 && activity.openOrders > 0) hardBlockers.push('OPEN_ORDER_WITHOUT_POSITION');
-
-      if (hardBlockers.length) {
-        return send(res, 409, {
-          ok: false,
-          code: 'MASTER_PAUSE_BLOCKED',
-          blockers: hardBlockers,
-          activity,
-          pendingCommands: Number(pending || 0),
-          processingCommands: Number(processing || 0),
-        });
-      }
-
-      const requestedMode = activity.activePositions > 0 ? 'PAUSE_PENDING' : 'PAUSED';
-      const script = [
-        "if redis.call('LLEN', KEYS[1]) > 0 then return 0 end",
-        "if redis.call('LLEN', KEYS[2]) > 0 then return 0 end",
-        "redis.call('SET', KEYS[3], ARGV[1])",
-        "return 1"
-      ].join('\n');
-      const armed = Number(await redis([
-        'EVAL', script, '3',
-        KEY_PENDING, KEY_PROCESSING, KEY_MASTER_MODE,
-        requestedMode,
-      ])) === 1;
-
-      if (!armed) {
-        return send(res, 409, {
-          ok: false,
-          code: 'MASTER_PAUSE_RACE_BLOCKED',
-          blockers: ['COMMAND_QUEUE_CHANGED'],
-        });
-      }
+      // Block every new entry first. Close/protection work may drain safely while pending.
+      await setMasterMode('PAUSE_PENDING');
+      const currentMaster = await masterDeviceId();
+      const transition = await tryFinalizePendingPause(currentMaster, 'PAUSE_PENDING');
+      const requestedMode = transition.masterMode;
 
       const at = Date.now();
       await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
         at,
-        kind: requestedMode === 'PAUSE_PENDING' ? 'MASTER_PAUSE_QUEUED' : 'MASTER_PAUSED',
+        kind: requestedMode === 'PAUSED' ? 'MASTER_PAUSED' : 'MASTER_PAUSE_QUEUED',
         deviceId: device.deviceId,
         requestedByRole: device.role,
-        activePositions: activity.activePositions,
-        openOrders: activity.openOrders,
+        blockers: transition.blockers || [],
+        activePositions: Number(transition.activity?.activePositions || 0),
+        openOrders: Number(transition.activity?.openOrders || 0),
       })]);
       await redis(['LTRIM', KEY_AUDIT, '0', '199']);
 
@@ -973,9 +984,10 @@ export default async function handler(req, res) {
         ok: true,
         masterMode: requestedMode,
         pauseQueued: requestedMode === 'PAUSE_PENDING',
-        activity,
-        pendingCommands: 0,
-        processingCommands: 0,
+        blockers: transition.blockers || [],
+        activity: transition.activity || { activePositions: 0, openOrders: 0 },
+        pendingCommands: Number(transition.pendingCommands || 0),
+        processingCommands: Number(transition.processingCommands || 0),
       });
     }
 
@@ -983,12 +995,7 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res, ['controller', 'master']);
       if (!device) return;
 
-      if (!MASTER_ADMIN_CODE) {
-        return send(res, 503, { ok: false, code: 'MASTER_ADMIN_NOT_CONFIGURED' });
-      }
-      if (!timingSafeEqualText(String(req.body?.adminCode || ''), MASTER_ADMIN_CODE)) {
-        return send(res, 401, { ok: false, code: 'MASTER_ADMIN_CODE_INVALID' });
-      }
+      if (!(await verifyMasterAdminCode(req, res, device))) return;
 
       const [currentMaster, registeredMaster, currentMode] = await Promise.all([
         masterDeviceId(),
@@ -1027,12 +1034,7 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res, ['controller', 'master']);
       if (!device) return;
 
-      if (!MASTER_ADMIN_CODE) {
-        return send(res, 503, { ok: false, code: 'MASTER_ADMIN_NOT_CONFIGURED' });
-      }
-      if (!timingSafeEqualText(String(req.body?.adminCode || ''), MASTER_ADMIN_CODE)) {
-        return send(res, 401, { ok: false, code: 'MASTER_ADMIN_CODE_INVALID' });
-      }
+      if (!(await verifyMasterAdminCode(req, res, device))) return;
       const [currentMaster, registeredMaster] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('master'),
@@ -1071,6 +1073,7 @@ export default async function handler(req, res) {
 
       let reconciliation = null;
       if (REAL_TRADING_ENABLED) {
+        if (!PAIRING_DISABLED) blockers.push('PAIRING_MUST_BE_DISABLED');
         reconciliation = await freshCleanReconciliation();
         if (!reconciliation.ok) blockers.push(reconciliation.reason);
       }
@@ -1444,12 +1447,14 @@ export default async function handler(req, res) {
       }
       if (type.startsWith('EXEC_')) {
         const halted = await emergencyStopActive();
-        if (!REAL_TRADING_ENABLED || halted) {
+        const pairingOpen = !PAIRING_DISABLED;
+        if (!REAL_TRADING_ENABLED || halted || pairingOpen) {
           return send(res, 423, {
             ok: false,
             code: 'EXECUTION_LOCKED',
             realTradingEnabled: REAL_TRADING_ENABLED,
             emergencyStopActive: halted,
+            pairingDisabled: PAIRING_DISABLED,
           });
         }
       }

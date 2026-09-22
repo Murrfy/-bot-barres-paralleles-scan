@@ -19,8 +19,9 @@ const applied = (revision = 3, hash = 'hash-3', masterDeviceId = 'master-1') => 
   appliedAt: Date.now(),
   masterDeviceId,
 });
-const runtime = (positions = [], orders = []) => ({
+const runtime = (positions = [], orders = [], masterDeviceId = 'master-1') => ({
   updatedAt: Date.now(),
+  masterDeviceId,
   data: { openPositions: positions, openOrders: orders },
 });
 
@@ -93,4 +94,11 @@ test('real-mode synchronization fails closed without a fresh MASTER runtime', ()
   const stale = masterConfigSyncStatus(controller(), applied(), staleRuntime, 'master-1', true);
   assert.equal(stale.synchronized, false);
   assert.equal(stale.reason, 'MASTER_RUNTIME_STALE');
+});
+
+test('real-mode synchronization rejects runtime from another MASTER', () => {
+  const wrongMaster = masterConfigSyncStatus(controller(), applied(), runtime([], [], 'old-master'), 'master-1', true);
+  assert.equal(wrongMaster.synchronized, false);
+  assert.equal(wrongMaster.failClosed, true);
+  assert.equal(wrongMaster.reason, 'MASTER_RUNTIME_WRONG_DEVICE');
 });

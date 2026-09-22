@@ -51,6 +51,16 @@ if (!index.includes("Authorization:'Bearer '+token")) {
   fail('index.html must authenticate Binance account reads with the paired device token');
 }
 
+for (const [name, source] of [
+  ['api/zenith-sync.js', fs.readFileSync('api/zenith-sync.js', 'utf8')],
+  ['api/binance-read.js', fs.readFileSync('api/binance-read.js', 'utf8')],
+  ['api/binance-reconcile.js', fs.readFileSync('api/binance-reconcile.js', 'utf8')],
+]) {
+  for (const secretName of ['BINANCE_API_KEY','BINANCE_API_SECRET','UPSTASH_REDIS_REST_TOKEN']) {
+    const literal = new RegExp(secretName + "\\s*=\\s*['\\\"][^'\\\"]+['\\\"]");
+    if (literal.test(source)) fail(`${name} contains a hard-coded secret assignment for ${secretName}`);
+  }
+}
 const binanceRead = fs.readFileSync('api/binance-read.js', 'utf8');
 for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
   if (binanceRead.includes(forbidden)) {
@@ -116,12 +126,13 @@ if (!sync.includes("const KEY_MASTER_MODE") ||
     !sync.includes("action === 'master-resume'")) {
   fail('api/zenith-sync.js must keep protected MASTER pause/resume');
 }
-if (!sync.includes("'MASTER_PAUSE_BLOCKED'") ||
+if (!sync.includes("await setMasterMode('PAUSE_PENDING')") ||
     !sync.includes("'ACTIVE_POSITION'") ||
     !sync.includes("'OPEN_ORDER'") ||
     !sync.includes("'PENDING_COMMAND'") ||
-    !sync.includes("'PROCESSING_COMMAND'")) {
-  fail('MASTER pause must fail closed while trading activity or commands remain');
+    !sync.includes("'PROCESSING_COMMAND'") ||
+    !sync.includes("'MASTER_RUNTIME_STALE'")) {
+  fail('MASTER pause must block new entries immediately and remain pending until activity is safely drained');
 }
 if (!sync.includes("'MASTER_PAUSED'") || !sync.includes("currentMode === 'PAUSED'")) {
   fail('MASTER command consumption must stop while paused');
@@ -200,6 +211,34 @@ if (!masterStandby.includes('stableStringify(state.data)')) {
   fail('MASTER standby must verify controller state with the canonical hash');
 }
 
+if (sync.includes('claimOrVerifyRoleDevice') ||
+    !sync.includes('async function claimRoleDevice') ||
+    !sync.includes('async function verifyRoleDevice') ||
+    !sync.includes('await claimRoleDevice(role, deviceId)') ||
+    !sync.includes('await verifyRoleDevice(device.role, device.deviceId)')) {
+  fail('authenticated devices must never auto-claim a missing controller or MASTER role');
+}
+if (!sync.includes('MASTER_ADMIN_FAILURE_LIMIT = 5') ||
+    !sync.includes('MASTER_ADMIN_LOCK_SECONDS = 15 * 60') ||
+    !sync.includes('verifyMasterAdminCode') ||
+    !sync.includes("'MASTER_ADMIN_LOCKED'")) {
+  fail('MASTER admin code must be protected against repeated guessing');
+}
+if (!sync.includes("'PAIRING_MUST_BE_DISABLED'") || !sync.includes('pairingDisabled: PAIRING_DISABLED')) {
+  fail('real execution must remain locked while device pairing is open');
+}
+if (!index.includes('escapeHtml') || !index.includes('escapeHtml(h.reason)') || !index.includes('escapeHtml(p.symbol)')) {
+  fail('dynamic trading UI strings must be HTML-escaped');
+}
+
+const vercelConfig = JSON.parse(fs.readFileSync('vercel.json', 'utf8'));
+const securityHeaders = JSON.stringify(vercelConfig.headers || []);
+for (const requiredHeader of ['Content-Security-Policy','X-Content-Type-Options','X-Frame-Options','Referrer-Policy','Permissions-Policy']) {
+  if (!securityHeaders.includes(requiredHeader)) fail(`vercel.json missing security header: ${requiredHeader}`);
+}
+if (!securityHeaders.includes("frame-ancestors 'none'") || !securityHeaders.includes("connect-src 'self' https://fapi.binance.com wss://fstream.binance.com")) {
+  fail('Content Security Policy must prevent framing and restrict outbound connections');
+}
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');
 if (!replaceController.includes('restoreCentralState') ||
     !replaceController.includes('zenith_controller_revision_v1')) {
