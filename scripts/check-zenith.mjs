@@ -86,6 +86,25 @@ if (!sync.includes('CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60') ||
 if (!sync.includes("'STALE_CONTROLLER_COMMAND'") || !sync.includes("'CONTROLLER_REPLACED'")) {
   fail('api/zenith-sync.js must reject/quarantine commands from a replaced controller');
 }
+if (!sync.includes("const KEY_MASTER_MODE") ||
+    !sync.includes("action === 'master-pause'") ||
+    !sync.includes("action === 'master-resume'")) {
+  fail('api/zenith-sync.js must keep protected MASTER pause/resume');
+}
+if (!sync.includes("'MASTER_PAUSE_BLOCKED'") ||
+    !sync.includes("'ACTIVE_POSITION'") ||
+    !sync.includes("'OPEN_ORDER'") ||
+    !sync.includes("'PENDING_COMMAND'") ||
+    !sync.includes("'PROCESSING_COMMAND'")) {
+  fail('MASTER pause must fail closed while trading activity or commands remain');
+}
+if (!sync.includes("'MASTER_PAUSED'") || !sync.includes("masterMode()) !== 'RUNNING'")) {
+  fail('MASTER command consumption must stop while paused');
+}
+if (!sync.includes('freshCleanReconciliation') ||
+    !sync.includes("'BINANCE_RECONCILIATION_REQUIRED'")) {
+  fail('real MASTER resume must require fresh clean Binance reconciliation');
+}
 
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');
 if (!replaceController.includes('restoreCentralState') ||

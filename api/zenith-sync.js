@@ -29,6 +29,8 @@ const KEY_PENDING = `${PREFIX}:commands:pending`;
 const KEY_PROCESSING = `${PREFIX}:commands:processing`;
 const KEY_DEAD = `${PREFIX}:commands:dead`;
 const KEY_EMERGENCY_STOP = `${PREFIX}:safety:emergency-stop`;
+const KEY_MASTER_MODE = `${PREFIX}:master-mode`;
+const KEY_RECONCILE_LAST = `${PREFIX}:reconcile:last`;
 const MASTER_TTL_SECONDS = 20;
 const MASTER_ACTIVATION_TTL_SECONDS = 120;
 const COMMAND_CLAIM_TTL_MS = 90 * 1000;
@@ -256,6 +258,65 @@ async function emergencyStopActive() {
   const value = await redis(['GET', KEY_EMERGENCY_STOP]);
   if (value === null || value === undefined || value === '') return true;
   return String(value) !== '0';
+}
+
+function normalizeMasterMode(value) {
+  return String(value || '').toUpperCase() === 'RUNNING' ? 'RUNNING' : 'PAUSED';
+}
+
+async function masterMode() {
+  return normalizeMasterMode(await redis(['GET', KEY_MASTER_MODE]));
+}
+
+async function setMasterMode(mode) {
+  const normalized = normalizeMasterMode(mode);
+  await redis(['SET', KEY_MASTER_MODE, normalized]);
+  return normalized;
+}
+
+function activityCount(data, arrayKeys, numberKeys) {
+  let count = 0;
+  for (const key of arrayKeys) {
+    if (Array.isArray(data?.[key])) count = Math.max(count, data[key].length);
+  }
+  for (const key of numberKeys) {
+    const value = Number(data?.[key]);
+    if (Number.isFinite(value) && value > count) count = value;
+  }
+  return count;
+}
+
+function inspectRuntimeActivity(snapshot) {
+  const data = snapshot?.data && typeof snapshot.data === 'object' ? snapshot.data : {};
+  return {
+    activePositions: activityCount(
+      data,
+      ['openPositions', 'positions', 'realPositions', 'binancePositions'],
+      ['activePositions', 'activePositionCount', 'realPositionCount', 'realPositionsCount']
+    ),
+    openOrders: activityCount(
+      data,
+      ['openOrders', 'pendingOrders', 'binanceOrders', 'protectiveOrders'],
+      ['openOrderCount', 'openOrdersCount', 'pendingOrderCount']
+    ),
+  };
+}
+
+async function freshCleanReconciliation(maxAgeMs = 30000) {
+  const raw = await redis(['GET', KEY_RECONCILE_LAST]);
+  if (!raw) return { ok: false, reason: 'BINANCE_RECONCILIATION_REQUIRED' };
+  try {
+    const report = JSON.parse(raw);
+    const ageMs = Date.now() - Number(report?.observedAt || 0);
+    const positions = Number(report?.actual?.positions || 0);
+    const orders = Number(report?.actual?.orders || 0);
+    if (report?.failClosed === true) return { ok: false, reason: 'BINANCE_RECONCILIATION_MISMATCH' };
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMs) return { ok: false, reason: 'BINANCE_RECONCILIATION_STALE' };
+    if (positions > 0 || orders > 0) return { ok: false, reason: 'BINANCE_ACTIVITY_PRESENT' };
+    return { ok: true, report };
+  } catch {
+    return { ok: false, reason: 'BINANCE_RECONCILIATION_INVALID' };
+  }
 }
 
 async function recoverStaleProcessing(deviceId) {
@@ -616,6 +677,7 @@ export default async function handler(req, res) {
         acquired: lease.acquired,
         renewed: lease.renewed,
         currentMaster: await masterDeviceId(),
+        masterMode: await masterMode(),
         ttlSeconds: MASTER_TTL_SECONDS,
       });
     }
@@ -626,11 +688,125 @@ export default async function handler(req, res) {
       return send(res, 200, { ok: true, currentMaster: await masterDeviceId() });
     }
 
+    if (action === 'master-pause' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+
+      if (!MASTER_ADMIN_CODE) {
+        return send(res, 503, { ok: false, code: 'MASTER_ADMIN_NOT_CONFIGURED' });
+      }
+      if (!timingSafeEqualText(String(req.body?.adminCode || ''), MASTER_ADMIN_CODE)) {
+        return send(res, 401, { ok: false, code: 'MASTER_ADMIN_CODE_INVALID' });
+      }
+
+      const [runtimeRaw, pending, processing] = await Promise.all([
+        redis(['GET', KEY_STATE]),
+        redis(['LLEN', KEY_PENDING]),
+        redis(['LLEN', KEY_PROCESSING]),
+      ]);
+
+      let runtimeState = null;
+      try { runtimeState = runtimeRaw ? JSON.parse(runtimeRaw) : null; } catch {}
+      const activity = inspectRuntimeActivity(runtimeState);
+      const blockers = [];
+      if (activity.activePositions > 0) blockers.push('ACTIVE_POSITION');
+      if (activity.openOrders > 0) blockers.push('OPEN_ORDER');
+      if (Number(pending || 0) > 0) blockers.push('PENDING_COMMAND');
+      if (Number(processing || 0) > 0) blockers.push('PROCESSING_COMMAND');
+      if (REAL_TRADING_ENABLED && !runtimeState) blockers.push('RUNTIME_STATE_UNAVAILABLE');
+
+      if (blockers.length) {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_PAUSE_BLOCKED',
+          blockers,
+          activity,
+          pendingCommands: Number(pending || 0),
+          processingCommands: Number(processing || 0),
+        });
+      }
+
+      const mode = await setMasterMode('PAUSED');
+      const at = Date.now();
+      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+        at,
+        kind: 'MASTER_PAUSED',
+        deviceId: device.deviceId,
+      })]);
+      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+
+      return send(res, 200, {
+        ok: true,
+        masterMode: mode,
+        activity,
+        pendingCommands: Number(pending || 0),
+        processingCommands: Number(processing || 0),
+      });
+    }
+
+    if (action === 'master-resume' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+
+      if (!MASTER_ADMIN_CODE) {
+        return send(res, 503, { ok: false, code: 'MASTER_ADMIN_NOT_CONFIGURED' });
+      }
+      if (!timingSafeEqualText(String(req.body?.adminCode || ''), MASTER_ADMIN_CODE)) {
+        return send(res, 401, { ok: false, code: 'MASTER_ADMIN_CODE_INVALID' });
+      }
+      if (!(await hasMasterLease(device.deviceId))) {
+        return send(res, 409, { ok: false, code: 'NOT_MASTER' });
+      }
+
+      const [controllerRaw, pending, processing] = await Promise.all([
+        redis(['GET', KEY_CONTROLLER_STATE]),
+        redis(['LLEN', KEY_PENDING]),
+        redis(['LLEN', KEY_PROCESSING]),
+      ]);
+
+      const blockers = [];
+      if (!controllerRaw) blockers.push('NO_CONTROLLER_STATE');
+      if (Number(pending || 0) > 0) blockers.push('PENDING_COMMAND');
+      if (Number(processing || 0) > 0) blockers.push('PROCESSING_COMMAND');
+
+      let reconciliation = null;
+      if (REAL_TRADING_ENABLED) {
+        reconciliation = await freshCleanReconciliation();
+        if (!reconciliation.ok) blockers.push(reconciliation.reason);
+      }
+
+      if (blockers.length) {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_RESUME_BLOCKED',
+          blockers,
+          pendingCommands: Number(pending || 0),
+          processingCommands: Number(processing || 0),
+        });
+      }
+
+      const mode = await setMasterMode('RUNNING');
+      const at = Date.now();
+      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+        at,
+        kind: 'MASTER_RESUMED',
+        deviceId: device.deviceId,
+        realTradingEnabled: REAL_TRADING_ENABLED,
+      })]);
+      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+
+      return send(res, 200, {
+        ok: true,
+        masterMode: mode,
+        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
+      });
+    }
+
     if (action === 'safety' && req.method === 'GET') {
       const device = await requireDevice(req, res);
       if (!device) return;
 
-      const [currentMaster, controllerDevice, masterDevice, pending, processing, controllerRaw, emergencyStop] = await Promise.all([
+      const [currentMaster, controllerDevice, masterDevice, pending, processing, controllerRaw, emergencyStop, currentMasterMode] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('controller'),
         roleDeviceId('master'),
@@ -638,6 +814,7 @@ export default async function handler(req, res) {
         redis(['LLEN', KEY_PROCESSING]),
         redis(['GET', KEY_CONTROLLER_STATE]),
         emergencyStopActive(),
+        masterMode(),
       ]);
 
       let controllerRevision = 0;
@@ -657,6 +834,7 @@ export default async function handler(req, res) {
         emergencyStopActive: Boolean(emergencyStop),
         masterLeaseActive: Boolean(currentMaster),
         currentMaster,
+        masterMode: currentMasterMode,
         controllerRegistered: Boolean(controllerDevice),
         masterRegistered: Boolean(masterDevice),
         pendingCommands: Number(pending || 0),
@@ -673,12 +851,13 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res, ['master']);
       if (!device) return;
 
-      const [currentMaster, controllerRaw, emergencyStop, pending, processing] = await Promise.all([
+      const [currentMaster, controllerRaw, emergencyStop, pending, processing, currentMasterMode] = await Promise.all([
         masterDeviceId(),
         redis(['GET', KEY_CONTROLLER_STATE]),
         emergencyStopActive(),
         redis(['LLEN', KEY_PENDING]),
         redis(['LLEN', KEY_PROCESSING]),
+        masterMode(),
       ]);
 
       let controllerState = null;
@@ -701,6 +880,7 @@ export default async function handler(req, res) {
         realTradingEnabled: REAL_TRADING_ENABLED,
         executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
         currentMaster,
+        masterMode: currentMasterMode,
         pendingCommands: Number(pending || 0),
         processingCommands: Number(processing || 0),
         reasons,
@@ -904,6 +1084,9 @@ export default async function handler(req, res) {
       if (!device) return;
       if (!(await hasMasterLease(device.deviceId))) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
+      }
+      if ((await masterMode()) !== 'RUNNING') {
+        return send(res, 423, { ok: false, code: 'MASTER_PAUSED', masterMode: 'PAUSED' });
       }
 
       const recovery = await recoverStaleProcessing(device.deviceId);
