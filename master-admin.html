@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Zenith — Admin MASTER</title>
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#07111f;color:#eef6ff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#07111f}
+.wrap{max-width:720px;margin:0 auto;padding:28px 18px 48px}
+.card{background:#0c1a2b;border:1px solid #29415d;border-radius:22px;padding:22px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+h1{font-size:30px;margin:0 0 8px}.sub{color:#a9bdd3;margin-bottom:20px;line-height:1.45}
+.notice{padding:14px;border-radius:14px;border:1px solid #7b5b18;background:#221a06;color:#ffe6a3;line-height:1.45;margin-bottom:18px}
+label{display:block;font-weight:700;margin:16px 0 8px}
+input{width:100%;font-size:19px;padding:15px 14px;border-radius:14px;border:1px solid #35516f;background:#07111f;color:#fff;outline:none}
+button{width:100%;margin-top:18px;padding:16px;border:0;border-radius:14px;font-size:18px;font-weight:800;background:#16a3c7;color:#041018}
+button:disabled{opacity:.5}
+.status{margin-top:18px;padding:14px;border-radius:14px;background:#07111f;border:1px solid #29415d;line-height:1.45}
+.ok{border-color:#168d5d;color:#9bf0c3}.err{border-color:#a53b3b;color:#ffb1b1}.warn{border-color:#7b5b18;color:#ffe6a3}
+.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:28px;letter-spacing:.08em;text-align:center;word-break:break-all}
+.small{font-size:13px;color:#9db0c4;margin-top:12px;line-height:1.45}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Zenith — Admin MASTER</h1>
+    <div class="sub">Accès local exceptionnel depuis l’iPad MASTER.</div>
+    <div class="notice">Cette page ne modifie pas les réglages du bot. Elle sert uniquement aux opérations administratives critiques.</div>
+
+    <div id="identity" class="status">Vérification MASTER…</div>
+
+    <label for="adminCode">Code ADMIN MASTER</label>
+    <input id="adminCode" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Code administrateur">
+
+    <button id="replaceBtn">Autoriser le remplacement de l’iPhone</button>
+
+    <div id="status" class="status">Aucune autorisation créée.</div>
+    <div id="recoveryCode" class="status code" hidden></div>
+    <div class="small">Le code temporaire expire après 10 minutes et ne peut servir qu’une seule fois. Le code ADMIN n’est jamais stocké dans le navigateur.</div>
+  </div>
+</div>
+<script>
+const TOKEN_KEY='zenith_device_token_v1';
+const $=id=>document.getElementById(id);
+
+function setBox(id,msg,type=''){
+  const el=$(id);
+  el.textContent=msg;
+  el.className='status'+(type?' '+type:'')+(id==='recoveryCode'?' code':'');
+}
+
+async function verifyMaster(){
+  const token=localStorage.getItem(TOKEN_KEY)||'';
+  if(!token){
+    setBox('identity','Aucun jeton MASTER trouvé dans ce navigateur.','err');
+    $('replaceBtn').disabled=true;
+    return false;
+  }
+  try{
+    const r=await fetch('/api/zenith-sync?action=whoami',{
+      headers:{Authorization:'Bearer '+token,Accept:'application/json'},
+      cache:'no-store'
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true||q?.device?.role!=='master'){
+      throw new Error(q?.code||q?.error||('ROLE_'+String(q?.device?.role||'UNKNOWN')));
+    }
+    setBox('identity','Identité vérifiée : cet iPad est le MASTER enregistré.','ok');
+    return true;
+  }catch(e){
+    setBox('identity','Vérification MASTER refusée : '+String(e?.message||'erreur')+'.','err');
+    $('replaceBtn').disabled=true;
+    return false;
+  }
+}
+
+async function authorizeReplacement(){
+  const token=localStorage.getItem(TOKEN_KEY)||'';
+  const adminCode=$('adminCode').value;
+  if(!adminCode){
+    setBox('status','Entre le code ADMIN MASTER.','err');
+    return;
+  }
+
+  $('replaceBtn').disabled=true;
+  setBox('status','Création de l’autorisation temporaire…');
+  $('recoveryCode').hidden=true;
+
+  try{
+    const r=await fetch('/api/zenith-sync?action=controller-replacement-authorize',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        Accept:'application/json',
+        Authorization:'Bearer '+token
+      },
+      body:JSON.stringify({adminCode})
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true||!q?.recoveryCode){
+      throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    }
+
+    $('adminCode').value='';
+    setBox('status','Autorisation créée. Utilise ce code sur le nouvel iPhone dans les 10 minutes.','ok');
+    setBox('recoveryCode',q.recoveryCode,'ok');
+    $('recoveryCode').hidden=false;
+  }catch(e){
+    setBox('status','Autorisation refusée : '+String(e?.message||'erreur')+'.','err');
+  }finally{
+    $('replaceBtn').disabled=false;
+  }
+}
+
+$('replaceBtn').addEventListener('click',authorizeReplacement);
+$('adminCode').addEventListener('keydown',e=>{if(e.key==='Enter')authorizeReplacement()});
+verifyMaster();
+</script>
+</body>
+</html>
