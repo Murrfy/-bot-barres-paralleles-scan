@@ -84,16 +84,18 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
       }
 
       const locked = rq.realTradingEnabled !== true && rq.executionMode === 'SIMULATION_LOCKED';
+      const emergencyStop = rq.emergencyStopActive === true;
       const noMasterLease = rq.masterLeaseActive !== true;
       const noMasterRegistered = rq.masterRegistered !== true;
 
       safety.textContent =
         'Sécurité : trading réel '+(locked?'VERROUILLÉ':'NON VERROUILLÉ')+
+        ' · arrêt sécurité '+(emergencyStop?'ACTIF':'INACTIF')+
         ' · iPad MASTER '+(noMasterRegistered?'non enregistré':'enregistré')+
         ' · bail MASTER '+(noMasterLease?'inactif':'ACTIF')+
         ' · commandes '+String(rq.pendingCommands||0)+' en attente / '+String(rq.processingCommands||0)+' en traitement.';
 
-      safety.className='status '+(locked&&noMasterLease?'ok':'warn');
+      safety.className='status '+(locked&&emergencyStop&&noMasterLease?'ok':'warn');
     }catch(se){
       const safety=document.getElementById('safety');
       safety.textContent='État sécurité non vérifié : '+String(se?.message||'erreur')+'.';
