@@ -3,6 +3,73 @@ import crypto from 'node:crypto';
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
 
+const REDIS_URL =
+  process.env.UPSTASH_REDIS_REST_URL ||
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_URL ||
+  process.env.KV_REST_API_URL ||
+  process.env.UPSTASH_REDIS_REST_REDIS_URL;
+
+const REDIS_TOKEN =
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN ||
+  process.env.KV_REST_API_TOKEN;
+
+const PREFIX = 'zenith:v1';
+
+function bearer(req) {
+  const h = String(req.headers.authorization || '');
+  return h.startsWith('Bearer ') ? h.slice(7).trim() : '';
+}
+
+function sha256(v) {
+  return crypto.createHash('sha256').update(String(v)).digest('hex');
+}
+
+async function redis(command) {
+  if (!REDIS_URL || !REDIS_TOKEN) {
+    const e = new Error('UPSTASH_NOT_CONFIGURED');
+    e.code = 'UPSTASH_NOT_CONFIGURED';
+    throw e;
+  }
+
+  const r = await fetch(REDIS_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${REDIS_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(command),
+    cache: 'no-store',
+  });
+
+  const text = await r.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+
+  if (!r.ok || data?.error) {
+    const e = new Error(data?.error || `Redis HTTP ${r.status}`);
+    e.code = 'REDIS_ERROR';
+    throw e;
+  }
+  return data?.result;
+}
+
+async function requireZenithDevice(req) {
+  const token = bearer(req);
+  if (!token) return null;
+
+  const raw = await redis(['GET', `${PREFIX}:device:${sha256(token)}`]);
+  if (!raw) return null;
+
+  try {
+    const device = JSON.parse(raw);
+    if (!device?.deviceId || !['controller', 'master'].includes(device?.role)) return null;
+    return device;
+  } catch {
+    return null;
+  }
+}
+
 function send(res, status, body) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -43,6 +110,25 @@ async function signedGet(path, apiKey, secret, serverTime) {
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, { ok: false, code: 'METHOD_NOT_ALLOWED' });
+
+  let device = null;
+  try {
+    device = await requireZenithDevice(req);
+  } catch (e) {
+    return send(res, 503, {
+      ok: false,
+      code: e?.code || 'AUTH_BACKEND_ERROR',
+      error: e?.message || 'Authentification Zenith indisponible.',
+    });
+  }
+
+  if (!device) {
+    return send(res, 401, {
+      ok: false,
+      code: 'UNAUTHORIZED_DEVICE',
+      error: 'Appareil Zenith non autorisé.',
+    });
+  }
 
   const apiKey = process.env.BINANCE_API_KEY;
   const secret = process.env.BINANCE_API_SECRET;
