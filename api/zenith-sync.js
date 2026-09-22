@@ -17,6 +17,8 @@ const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const PREFIX = 'zenith:v1';
 const KEY_MASTER = `${PREFIX}:master`;
 const KEY_STATE = `${PREFIX}:state`;
+const KEY_CONTROLLER_STATE = `${PREFIX}:controller-state`;
+const KEY_CONTROLLER_REV = `${PREFIX}:controller-state:rev`;
 const KEY_PENDING = `${PREFIX}:commands:pending`;
 const KEY_PROCESSING = `${PREFIX}:commands:processing`;
 const MASTER_TTL_SECONDS = 20;
@@ -218,6 +220,35 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res);
       if (!device) return;
       return send(res, 200, { ok: true, currentMaster: await masterDeviceId() });
+    }
+
+
+    if (action === 'controller-state' && req.method === 'GET') {
+      const device = await requireDevice(req, res, ['controller', 'master']);
+      if (!device) return;
+      const raw = await redis(['GET', KEY_CONTROLLER_STATE]);
+      let state = null;
+      try { state = raw ? JSON.parse(raw) : null; } catch { state = null; }
+      return send(res, 200, { ok: true, state });
+    }
+
+    if (action === 'controller-state' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+      const data = req.body?.data;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return send(res, 400, { ok: false, code: 'CONTROLLER_STATE_INVALID' });
+      }
+      const revision = Number(await redis(['INCR', KEY_CONTROLLER_REV])) || 0;
+      const snapshot = {
+        version: 1,
+        revision,
+        updatedAt: Date.now(),
+        controllerDeviceId: device.deviceId,
+        data,
+      };
+      await redis(['SET', KEY_CONTROLLER_STATE, JSON.stringify(snapshot)]);
+      return send(res, 200, { ok: true, state: snapshot });
     }
 
     if (action === 'state' && req.method === 'GET') {
