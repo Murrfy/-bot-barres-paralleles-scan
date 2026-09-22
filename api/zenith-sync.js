@@ -239,13 +239,22 @@ export default async function handler(req, res) {
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
         return send(res, 400, { ok: false, code: 'CONTROLLER_STATE_INVALID' });
       }
+      const safeData = {
+        settings: data.settings && typeof data.settings === 'object' ? data.settings : {},
+        tokenSettings: data.tokenSettings && typeof data.tokenSettings === 'object' ? data.tokenSettings : {},
+        manualTokens: data.manualTokens && typeof data.manualTokens === 'object' ? data.manualTokens : {},
+        validated: data.validated && typeof data.validated === 'object' ? data.validated : {},
+      };
+      if (JSON.stringify(safeData).length > 250000) {
+        return send(res, 413, { ok: false, code: 'CONTROLLER_STATE_TOO_LARGE' });
+      }
       const revision = Number(await redis(['INCR', KEY_CONTROLLER_REV])) || 0;
       const snapshot = {
         version: 1,
         revision,
         updatedAt: Date.now(),
         controllerDeviceId: device.deviceId,
-        data,
+        data: safeData,
       };
       await redis(['SET', KEY_CONTROLLER_STATE, JSON.stringify(snapshot)]);
       return send(res, 200, { ok: true, state: snapshot });
