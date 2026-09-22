@@ -63,6 +63,25 @@ if (!binanceRead.includes("'UNAUTHORIZED_DEVICE'") || !binanceRead.includes('req
 if (!binanceRead.includes('role-device:controller') || !binanceRead.includes('role-device:master')) {
   fail('api/binance-read.js must reject tokens from devices that no longer own their Zenith role');
 }
+if (!binanceRead.includes('/fapi/v1/openAlgoOrders')) {
+  fail('api/binance-read.js must count Binance algo TP/SL orders');
+}
+
+const binanceReconcile = fs.readFileSync('api/binance-reconcile.js', 'utf8');
+for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
+  if (binanceReconcile.includes(forbidden)) {
+    fail(`api/binance-reconcile.js must remain read-only; forbidden endpoint found: ${forbidden}`);
+  }
+}
+if (!binanceReconcile.includes("'UNAUTHORIZED_DEVICE'") || !binanceReconcile.includes('requireZenithDevice')) {
+  fail('api/binance-reconcile.js must require a paired Zenith device');
+}
+if (!binanceReconcile.includes("'MISMATCH'") || !binanceReconcile.includes('failClosed')) {
+  fail('api/binance-reconcile.js must fail closed on Binance/runtime mismatches');
+}
+if (!binanceReconcile.includes('/fapi/v1/openAlgoOrders')) {
+  fail('api/binance-reconcile.js must reconcile Binance algo TP/SL orders');
+}
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
 if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'")) {

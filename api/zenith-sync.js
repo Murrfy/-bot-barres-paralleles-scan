@@ -327,7 +327,14 @@ async function freshCleanReconciliation(maxAgeMs = 30000) {
     const ageMs = Date.now() - Number(report?.observedAt || 0);
     const positions = Number(report?.actual?.positions || 0);
     const orders = Number(report?.actual?.orders || 0);
-    if (report?.failClosed === true) return { ok: false, reason: 'BINANCE_RECONCILIATION_MISMATCH' };
+    if (report?.failClosed !== false) return { ok: false, reason: 'BINANCE_RECONCILIATION_MISMATCH' };
+    if (report.version !== 2 || !['CLEAN_REAL', 'CLEAN_IDLE'].includes(report.status) ||
+        !Array.isArray(report.reasons) || report.reasons.length ||
+        !report.actual || !Number.isInteger(report.actual.positions) || report.actual.positions < 0 ||
+        !Number.isInteger(report.actual.orders) || report.actual.orders < 0 ||
+        !report.runtimeHash) return { ok: false, reason: 'BINANCE_RECONCILIATION_INVALID' };
+    const runtimeRaw = await redis(['GET', KEY_STATE]);
+    if (!runtimeRaw || sha256(runtimeRaw) !== report.runtimeHash) return { ok: false, reason: 'BINANCE_RECONCILIATION_RUNTIME_CHANGED' };
     if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMs) return { ok: false, reason: 'BINANCE_RECONCILIATION_STALE' };
     if (positions > 0 || orders > 0) return { ok: false, reason: 'BINANCE_ACTIVITY_PRESENT' };
     return { ok: true, report };

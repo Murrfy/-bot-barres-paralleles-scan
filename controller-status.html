@@ -13,7 +13,7 @@ body{margin:0;min-height:100vh;background:#07111f}
 .card{background:#0c1a2b;border:1px solid #29415d;border-radius:22px;padding:22px}
 h1{font-size:30px;margin:0 0 8px}.sub{color:#a9bdd3;margin-bottom:20px;line-height:1.45}
 .status{padding:16px;border-radius:14px;background:#07111f;border:1px solid #29415d;line-height:1.5}
-.ok{border-color:#168d5d;color:#9bf0c3}.err{border-color:#a53b3b;color:#ffb1b1}
+.ok{border-color:#168d5d;color:#9bf0c3}.err{border-color:#a53b3b;color:#ffb1b1}.warn{border-color:#7b5b18;color:#ffe6a3}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </style>
 </head>
@@ -25,6 +25,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     <div id="status" class="status">Vérification en cours…</div>
     <div id="cloud" class="status" style="margin-top:12px">Vérification de la synchronisation centrale…</div>
     <div id="safety" class="status" style="margin-top:12px">Vérification des verrous de sécurité…</div>
+    <div id="reconcile" class="status" style="margin-top:12px">Réconciliation Binance en lecture seule…</div>
   </div>
 </div>
 <script>
@@ -100,6 +101,42 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
       const safety=document.getElementById('safety');
       safety.textContent='État sécurité non vérifié : '+String(se?.message||'erreur')+'.';
       safety.className='status err';
+    }
+
+    try{
+      const br=await fetch('/api/binance-reconcile',{
+        headers:{Authorization:'Bearer '+token,Accept:'application/json'},
+        cache:'no-store'
+      });
+      const bq=await br.json().catch(()=>({}));
+      const reconcile=document.getElementById('reconcile');
+
+      if(!br.ok||bq?.ok!==true||!bq?.report){
+        throw new Error(bq?.code||bq?.error||('HTTP '+br.status));
+      }
+
+      const report=bq.report;
+      const actualPositions=Number(report?.actual?.positions||0);
+      const actualOrders=Number(report?.actual?.orders||0);
+      const reasons=Array.isArray(report?.reasons)?report.reasons:[];
+
+      if(report.failClosed===true){
+        reconcile.textContent=
+          'Réconciliation Binance BLOQUANTE · positions réelles '+actualPositions+
+          ' · ordres ouverts '+actualOrders+
+          ' · écarts : '+(reasons.join(', ')||'inconnus')+'.';
+        reconcile.className='status err';
+      }else{
+        reconcile.textContent=
+          'Réconciliation Binance OK · positions réelles '+actualPositions+
+          ' · ordres ouverts '+actualOrders+
+          ' · aucun écart détecté.';
+        reconcile.className='status ok';
+      }
+    }catch(se){
+      const reconcile=document.getElementById('reconcile');
+      reconcile.textContent='Réconciliation Binance non vérifiée : '+String(se?.message||'erreur')+'.';
+      reconcile.className='status err';
     }
   }catch(e){
     show('Vérification refusée : '+(e?.message||'erreur inconnue')+'.','err');

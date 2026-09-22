@@ -103,11 +103,14 @@ async function jsonFetch(url, init = {}) {
   }
 }
 
-async function signedGet(path, apiKey, secret, serverTime) {
+async function signedGet(path, apiKey, secret, serverTime, extra = {}) {
   const params = new URLSearchParams({
     timestamp: String(serverTime),
     recvWindow: String(RECV_WINDOW),
   });
+  for (const [key, value] of Object.entries(extra || {})) {
+    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+  }
   const signature = crypto.createHmac('sha256', secret).update(params.toString()).digest('hex');
   params.set('signature', signature);
   return jsonFetch(`${BASE}${path}?${params.toString()}`, {
@@ -153,11 +156,12 @@ export default async function handler(req, res) {
     const serverTime = Number(time?.serverTime);
     if (!Number.isFinite(serverTime)) throw new Error('Heure Binance indisponible.');
 
-    const [balance, positions, account, openOrders] = await Promise.all([
+    const [balance, positions, account, openOrders, openAlgoOrders] = await Promise.all([
       signedGet('/fapi/v3/balance', apiKey, secret, serverTime),
       signedGet('/fapi/v3/positionRisk', apiKey, secret, serverTime),
       signedGet('/fapi/v3/account', apiKey, secret, serverTime),
       signedGet('/fapi/v1/openOrders', apiKey, secret, serverTime),
+      signedGet('/fapi/v1/openAlgoOrders', apiKey, secret, serverTime, { algoType: 'CONDITIONAL' }),
     ]);
 
     const usdt = Array.isArray(balance) ? balance.find(x => x.asset === 'USDT') : null;
@@ -199,7 +203,9 @@ export default async function handler(req, res) {
         totalMaintMargin: account?.totalMaintMargin,
       },
       positions: livePositions,
-      openOrders: Array.isArray(openOrders) ? openOrders.length : 0,
+      openOrders: (Array.isArray(openOrders) ? openOrders.length : 0) + (Array.isArray(openAlgoOrders) ? openAlgoOrders.length : 0),
+      standardOpenOrders: Array.isArray(openOrders) ? openOrders.length : 0,
+      algoOpenOrders: Array.isArray(openAlgoOrders) ? openAlgoOrders.length : 0,
     });
   } catch (e) {
     return send(res, 502, {
