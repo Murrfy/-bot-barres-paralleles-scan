@@ -508,20 +508,28 @@ export default async function handler(req, res) {
       }
 
       const oldControllerDeviceId = String(result[1] || '');
-      const quarantined = await quarantineCommandsForDevice(oldControllerDeviceId);
 
-      const controllerRaw = await redis(['GET', KEY_CONTROLLER_STATE]);
+      let quarantined = { pending: 0, processing: 0 };
+      try {
+        quarantined = await quarantineCommandsForDevice(oldControllerDeviceId);
+      } catch {}
+
       let state = null;
-      try { state = controllerRaw ? JSON.parse(controllerRaw) : null; } catch {}
+      try {
+        const controllerRaw = await redis(['GET', KEY_CONTROLLER_STATE]);
+        state = controllerRaw ? JSON.parse(controllerRaw) : null;
+      } catch {}
 
-      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
-        at: Date.now(),
-        kind: 'CONTROLLER_REPLACED',
-        oldControllerDeviceId,
-        newControllerDeviceId: newDeviceId,
-        quarantined,
-      })]);
-      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      try {
+        await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+          at: Date.now(),
+          kind: 'CONTROLLER_REPLACED',
+          oldControllerDeviceId,
+          newControllerDeviceId: newDeviceId,
+          quarantined,
+        })]);
+        await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      } catch {}
 
       return send(res, 200, {
         ok: true,
