@@ -22,7 +22,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   <div class="card">
     <h1>Zenith — vérification contrôleur</h1>
     <div class="sub">Cette page vérifie que cet appareil est bien reconnu par le serveur comme contrôleur et non comme MASTER.</div>
-    <div id="status" class="status">Vérification en cours…</div>
+    <div id="status" class="status">Vérification en cours…</div>\n    <div id="cloud" class="status" style="margin-top:12px">Vérification de la synchronisation centrale…</div>
   </div>
 </div>
 <script>
@@ -47,6 +47,28 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
     localStorage.setItem(ROLE_KEY,'controller');
     if(q.device.deviceName) localStorage.setItem(NAME_KEY,q.device.deviceName);
     show('Vérifié : cet iPhone est reconnu par le serveur comme CONTRÔLEUR. Il n’est pas MASTER.','ok');
+    try{
+      const sr=await fetch('/api/zenith-sync?action=controller-state',{
+        headers:{Authorization:'Bearer '+token,Accept:'application/json'},
+        cache:'no-store'
+      });
+      const sq=await sr.json().catch(()=>({}));
+      const cloud=document.getElementById('cloud');
+      if(sr.ok&&sq?.ok===true&&sq?.state){
+        cloud.textContent='Synchronisation centrale OK · révision '+String(sq.state.revision||0)+'.';
+        cloud.className='status ok';
+      }else if(sr.ok&&sq?.ok===true&&!sq?.state){
+        cloud.textContent='Synchronisation centrale prête, mais aucun état iPhone n’a encore été enregistré.';
+        cloud.className='status';
+      }else{
+        cloud.textContent='Synchronisation centrale non vérifiée : '+String(sq?.code||sq?.error||('HTTP '+sr.status))+'.';
+        cloud.className='status err';
+      }
+    }catch(se){
+      const cloud=document.getElementById('cloud');
+      cloud.textContent='Synchronisation centrale inaccessible : '+String(se?.message||'erreur')+'.';
+      cloud.className='status err';
+    }
   }catch(e){
     show('Vérification refusée : '+(e?.message||'erreur inconnue')+'.','err');
   }
