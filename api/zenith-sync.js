@@ -23,6 +23,7 @@ const KEY_MASTER_DEVICE = `${PREFIX}:role-device:master`;
 const KEY_STATE = `${PREFIX}:state`;
 const KEY_CONTROLLER_STATE = `${PREFIX}:controller-state`;
 const KEY_CONTROLLER_REV = `${PREFIX}:controller-state:rev`;
+const KEY_AUDIT = `${PREFIX}:audit`;
 const KEY_PENDING = `${PREFIX}:commands:pending`;
 const KEY_PROCESSING = `${PREFIX}:commands:processing`;
 const KEY_DEAD = `${PREFIX}:commands:dead`;
@@ -359,10 +360,12 @@ export default async function handler(req, res) {
 
       let controllerRevision = 0;
       let controllerUpdatedAt = 0;
+      let controllerStateHash = '';
       try {
         const parsed = controllerRaw ? JSON.parse(controllerRaw) : null;
         controllerRevision = Number(parsed?.revision || 0);
         controllerUpdatedAt = Number(parsed?.updatedAt || 0);
+        controllerStateHash = String(parsed?.stateHash || '');
       } catch {}
 
       return send(res, 200, {
@@ -377,6 +380,7 @@ export default async function handler(req, res) {
         processingCommands: Number(processing || 0),
         controllerRevision,
         controllerUpdatedAt,
+        controllerStateHash,
         commandClaimTtlMs: COMMAND_CLAIM_TTL_MS,
       });
     }
@@ -408,14 +412,29 @@ export default async function handler(req, res) {
         return send(res, 413, { ok: false, code: 'CONTROLLER_STATE_TOO_LARGE' });
       }
       const revision = Number(await redis(['INCR', KEY_CONTROLLER_REV])) || 0;
+      const updatedAt = Date.now();
+      const stateHash = sha256(JSON.stringify(safeData));
       const snapshot = {
         version: 1,
         revision,
-        updatedAt: Date.now(),
+        updatedAt,
         controllerDeviceId: device.deviceId,
+        stateHash,
         data: safeData,
       };
+
+      const audit = {
+        at: updatedAt,
+        kind: 'CONTROLLER_STATE_WRITE',
+        revision,
+        deviceId: device.deviceId,
+        stateHash,
+      };
+
       await redis(['SET', KEY_CONTROLLER_STATE, JSON.stringify(snapshot)]);
+      await redis(['LPUSH', KEY_AUDIT, JSON.stringify(audit)]);
+      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+
       return send(res, 200, { ok: true, state: snapshot });
     }
 
@@ -565,6 +584,19 @@ export default async function handler(req, res) {
       const removed = await redis(['LREM', KEY_PROCESSING, '1', raw]);
       if (Number(removed) > 0) await redis(['LPUSH', KEY_PENDING, raw]);
       return send(res, 200, { ok: true, requeued: Number(removed) > 0 });
+    }
+
+    if (action === 'audit' && req.method === 'GET') {
+      const device = await requireDevice(req, res);
+      if (!device) return;
+
+      const requested = Math.max(1, Math.min(50, Number(req.query?.limit || 20)));
+      const rows = await redis(['LRANGE', KEY_AUDIT, '0', String(requested - 1)]);
+      const events = [];
+      for (const raw of Array.isArray(rows) ? rows : []) {
+        try { events.push(JSON.parse(raw)); } catch {}
+      }
+      return send(res, 200, { ok: true, events });
     }
 
     return send(res, 404, { ok: false, code: 'UNKNOWN_ACTION' });
