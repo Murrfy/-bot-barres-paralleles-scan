@@ -30,13 +30,16 @@ button:disabled{opacity:.5}
     <div class="notice">Cette page ne modifie pas les réglages du bot. Elle sert uniquement aux opérations administratives critiques.</div>
 
     <div id="identity" class="status">Vérification MASTER…</div>
+    <div id="masterMode" class="status">État MASTER…</div>
 
     <label for="adminCode">Code ADMIN MASTER</label>
     <input id="adminCode" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Code administrateur">
 
+    <button id="pauseBtn">Mettre le MASTER en pause</button>
+    <button id="resumeBtn">Reprendre le MASTER</button>
     <button id="replaceBtn">Autoriser le remplacement de l’iPhone</button>
 
-    <div id="status" class="status">Aucune autorisation créée.</div>
+    <div id="status" class="status">Prêt. La pause sera refusée si une position, un ordre ou une commande est encore actif.</div>
     <div id="recoveryCode" class="status code" hidden></div>
     <div class="small">Le code temporaire expire après 10 minutes et ne peut servir qu’une seule fois. Le code ADMIN n’est jamais stocké dans le navigateur.</div>
   </div>
@@ -55,6 +58,8 @@ async function verifyMaster(){
   const token=localStorage.getItem(TOKEN_KEY)||'';
   if(!token){
     setBox('identity','Aucun jeton MASTER trouvé dans ce navigateur.','err');
+    $('pauseBtn').disabled=true;
+    $('resumeBtn').disabled=true;
     $('replaceBtn').disabled=true;
     return false;
   }
@@ -68,11 +73,66 @@ async function verifyMaster(){
       throw new Error(q?.code||q?.error||('ROLE_'+String(q?.device?.role||'UNKNOWN')));
     }
     setBox('identity','Identité vérifiée : cet iPad est le MASTER enregistré.','ok');
+    await refreshMasterMode();
     return true;
   }catch(e){
     setBox('identity','Vérification MASTER refusée : '+String(e?.message||'erreur')+'.','err');
+    $('pauseBtn').disabled=true;
+    $('resumeBtn').disabled=true;
     $('replaceBtn').disabled=true;
     return false;
+  }
+}
+
+async function refreshMasterMode(){
+  const token=localStorage.getItem(TOKEN_KEY)||'';
+  try{
+    const r=await fetch('/api/zenith-sync?action=safety',{
+      headers:{Authorization:'Bearer '+token,Accept:'application/json'},
+      cache:'no-store'
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true) throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    const mode=String(q.masterMode||'PAUSED');
+    setBox('masterMode','MASTER : '+(mode==='RUNNING'?'EN MARCHE':'EN PAUSE'),mode==='RUNNING'?'ok':'warn');
+  }catch(e){
+    setBox('masterMode','État MASTER non vérifié : '+String(e?.message||'erreur')+'.','err');
+  }
+}
+
+async function setMasterMode(action){
+  const token=localStorage.getItem(TOKEN_KEY)||'';
+  const adminCode=$('adminCode').value;
+  if(!adminCode){
+    setBox('status','Entre le code ADMIN MASTER.','err');
+    return;
+  }
+  $('pauseBtn').disabled=true;
+  $('resumeBtn').disabled=true;
+  setBox('status',action==='master-pause'?'Vérification avant pause…':'Vérification avant reprise…');
+  try{
+    const r=await fetch('/api/zenith-sync?action='+action,{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        Accept:'application/json',
+        Authorization:'Bearer '+token
+      },
+      body:JSON.stringify({adminCode})
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true){
+      const blockers=Array.isArray(q?.blockers)&&q.blockers.length?' · '+q.blockers.join(', '):'';
+      throw new Error((q?.code||q?.error||('HTTP '+r.status))+blockers);
+    }
+    $('adminCode').value='';
+    setBox('status',q.masterMode==='PAUSED'?'MASTER mis en pause. Aucune nouvelle commande de trading ne sera consommée.':'MASTER repris après contrôles de sécurité.','ok');
+    await refreshMasterMode();
+  }catch(e){
+    setBox('status','Action refusée : '+String(e?.message||'erreur')+'.','err');
+  }finally{
+    $('pauseBtn').disabled=false;
+    $('resumeBtn').disabled=false;
   }
 }
 
@@ -114,6 +174,8 @@ async function authorizeReplacement(){
   }
 }
 
+$('pauseBtn').addEventListener('click',()=>setMasterMode('master-pause'));
+$('resumeBtn').addEventListener('click',()=>setMasterMode('master-resume'));
 $('replaceBtn').addEventListener('click',authorizeReplacement);
 $('adminCode').addEventListener('keydown',e=>{if(e.key==='Enter')authorizeReplacement()});
 verifyMaster();
