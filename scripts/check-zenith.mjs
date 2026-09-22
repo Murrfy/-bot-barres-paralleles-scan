@@ -87,5 +87,11 @@ if (!sync.includes("'STALE_CONTROLLER_COMMAND'") || !sync.includes("'CONTROLLER_
   fail('api/zenith-sync.js must reject/quarantine commands from a replaced controller');
 }
 
+const replaceController = fs.readFileSync('replace-controller.html', 'utf8');
+if (!replaceController.includes('restoreCentralState') ||
+    !replaceController.includes('zenith_controller_revision_v1')) {
+  fail('replace-controller.html must restore central configuration and revision before opening Zenith');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
