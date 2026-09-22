@@ -45,6 +45,10 @@ const CONTROLLER_REPLACEMENT_RATE_LIMIT = 5;
 const MASTER_ADMIN_FAILURE_LIMIT = 5;
 const MASTER_ADMIN_LOCK_SECONDS = 15 * 60;
 const RUNTIME_STATE_STALE_MS = 30 * 1000;
+const COMMAND_MAX_AGE_MS = 2 * 60 * 1000;
+const COMMAND_QUEUE_MAX = 100;
+const COMMAND_PAYLOAD_MAX_BYTES = 16 * 1024;
+const DEAD_LETTER_MAX = 500;
 
 function send(res, status, body) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -171,6 +175,12 @@ function replacementKey(code) {
   return `${PREFIX}:controller-replacement:${sha256(normalizeReplacementCode(code))}`;
 }
 
+async function pushDeadLetter(entry) {
+  const raw = typeof entry === 'string' ? entry : JSON.stringify(entry);
+  await redis(['LPUSH', KEY_DEAD, raw]);
+  await redis(['LTRIM', KEY_DEAD, '0', String(DEAD_LETTER_MAX - 1)]);
+}
+
 async function quarantineCommandsForDevice(deviceId) {
   if (!deviceId) return { pending: 0, processing: 0 };
   let pending = 0;
@@ -192,7 +202,7 @@ async function quarantineCommandsForDevice(deviceId) {
           sourceList: label,
           previousControllerDeviceId: String(deviceId),
         };
-        await redis(['LPUSH', KEY_DEAD, JSON.stringify(dead)]);
+        await pushDeadLetter(dead);
         if (label === 'pending') pending += removed;
         else processing += removed;
       }
@@ -339,6 +349,46 @@ const PAUSE_PENDING_ALLOWED_COMMANDS = new Set([
 
 function commandAllowedDuringPausePending(type) {
   return PAUSE_PENDING_ALLOWED_COMMANDS.has(String(type || '').toUpperCase());
+}
+
+const ALLOWED_COMMAND_TYPES = new Set([
+  'UPDATE_EXIT',
+  'UPDATE_PROTECTION',
+  'CLOSE_POSITION',
+  'CANCEL_ENTRY',
+  'EXEC_UPDATE_EXIT',
+  'EXEC_UPDATE_PROTECTION',
+  'EXEC_CLOSE_POSITION',
+  'EXEC_CANCEL_ENTRY',
+]);
+
+const PROTECTIVE_EXEC_COMMANDS = new Set([
+  'EXEC_UPDATE_EXIT',
+  'EXEC_UPDATE_PROTECTION',
+  'EXEC_CLOSE_POSITION',
+  'EXEC_CANCEL_ENTRY',
+]);
+
+function commandTypeAllowed(type) {
+  return ALLOWED_COMMAND_TYPES.has(String(type || '').toUpperCase());
+}
+
+function commandExpired(command, now = Date.now()) {
+  const createdAt = Number(command?.createdAt || 0);
+  const expiresAt = Number(command?.expiresAt || 0);
+  if (!Number.isFinite(createdAt) || !Number.isFinite(expiresAt) || createdAt <= 0 || expiresAt <= createdAt) return true;
+  return now > expiresAt || now - createdAt > COMMAND_MAX_AGE_MS;
+}
+
+function executionGate(type, halted) {
+  const normalized = String(type || '').toUpperCase();
+  if (!normalized.startsWith('EXEC_')) return { allowed: true, reason: '' };
+  if (!REAL_TRADING_ENABLED) return { allowed: false, reason: 'REAL_TRADING_DISABLED' };
+  if (!PAIRING_DISABLED) return { allowed: false, reason: 'PAIRING_OPEN' };
+  if (halted && !PROTECTIVE_EXEC_COMMANDS.has(normalized)) {
+    return { allowed: false, reason: 'EMERGENCY_STOP_ACTIVE' };
+  }
+  return { allowed: true, reason: '' };
 }
 
 async function masterMode() {
@@ -580,7 +630,20 @@ async function recoverStaleProcessing(deviceId) {
     try { command = JSON.parse(raw); } catch {
       const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
       if (removed > 0) {
-        await redis(['LPUSH', KEY_DEAD, raw]);
+        await pushDeadLetter({ raw, rejectedAt: now, rejectedReason: 'COMMAND_CORRUPT' });
+        dead += 1;
+      }
+      continue;
+    }
+
+    if (!commandTypeAllowed(command?.type) || commandExpired(command, now)) {
+      const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+      if (removed > 0) {
+        await pushDeadLetter({
+          raw,
+          rejectedAt: now,
+          rejectedReason: !commandTypeAllowed(command?.type) ? 'COMMAND_TYPE_NOT_ALLOWED' : 'COMMAND_EXPIRED',
+        });
         dead += 1;
       }
       continue;
@@ -597,6 +660,19 @@ async function recoverStaleProcessing(deviceId) {
 
     const claimedAt = Number(command?.claimedAt || 0);
     if (!claimedAt || now - claimedAt <= COMMAND_CLAIM_TTL_MS) continue;
+
+    if (String(command?.type || '').toUpperCase().startsWith('EXEC_')) {
+      const halted = await emergencyStopActive();
+      const gate = executionGate(command.type, halted);
+      if (!gate.allowed) {
+        const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+        if (removed > 0) {
+          await pushDeadLetter({ raw, rejectedAt: now, rejectedReason: 'EXECUTION_LOCKED_' + gate.reason });
+          dead += 1;
+        }
+        continue;
+      }
+    }
 
     const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
     if (removed > 0) {
@@ -620,6 +696,7 @@ async function claimNextCommand(deviceId) {
     "local ok, obj = pcall(cjson.decode, raw)",
     "if not ok then",
     "  redis.call('LPUSH', KEYS[3], raw)",
+    "  redis.call('LTRIM', KEYS[3], 0, tonumber(ARGV[3]) - 1)",
     "  return '__DEAD__'",
     "end",
     "obj['claimedAt'] = tonumber(ARGV[1])",
@@ -632,8 +709,18 @@ async function claimNextCommand(deviceId) {
   return await redis([
     'EVAL', script, '3',
     KEY_PENDING, KEY_PROCESSING, KEY_DEAD,
-    String(Date.now()), String(deviceId)
+    String(Date.now()), String(deviceId), String(DEAD_LETTER_MAX)
   ]);
+}
+
+async function rejectClaimedCommand(raw, reason, extra = {}) {
+  await redis(['LREM', KEY_PROCESSING, '1', raw]);
+  await pushDeadLetter({
+    raw,
+    rejectedAt: Date.now(),
+    rejectedReason: String(reason || 'COMMAND_REJECTED'),
+    ...extra,
+  });
 }
 
 export default async function handler(req, res) {
@@ -654,6 +741,9 @@ export default async function handler(req, res) {
       masterTtlSeconds: MASTER_TTL_SECONDS,
       masterActivationTtlSeconds: MASTER_ACTIVATION_TTL_SECONDS,
       commandClaimTtlMs: COMMAND_CLAIM_TTL_MS,
+      commandMaxAgeMs: COMMAND_MAX_AGE_MS,
+      commandQueueMax: COMMAND_QUEUE_MAX,
+      commandPayloadMaxBytes: COMMAND_PAYLOAD_MAX_BYTES,
     });
   }
 
@@ -1426,6 +1516,9 @@ export default async function handler(req, res) {
       if (!/^[A-Z0-9_:-]{1,64}$/.test(type)) {
         return send(res, 400, { ok: false, code: 'COMMAND_TYPE_INVALID' });
       }
+      if (!commandTypeAllowed(type)) {
+        return send(res, 400, { ok: false, code: 'COMMAND_TYPE_NOT_ALLOWED' });
+      }
       const modeAtSubmit = await masterMode();
       if (modeAtSubmit === 'PAUSED') {
         return send(res, 423, { ok: false, code: 'MASTER_PAUSED', masterMode: modeAtSubmit });
@@ -1447,11 +1540,12 @@ export default async function handler(req, res) {
       }
       if (type.startsWith('EXEC_')) {
         const halted = await emergencyStopActive();
-        const pairingOpen = !PAIRING_DISABLED;
-        if (!REAL_TRADING_ENABLED || halted || pairingOpen) {
+        const gate = executionGate(type, halted);
+        if (!gate.allowed) {
           return send(res, 423, {
             ok: false,
             code: 'EXECUTION_LOCKED',
+            reason: gate.reason,
             realTradingEnabled: REAL_TRADING_ENABLED,
             emergencyStopActive: halted,
             pairingDisabled: PAIRING_DISABLED,
@@ -1463,14 +1557,22 @@ export default async function handler(req, res) {
       }
 
       const payload = req.body?.payload ?? null;
-      if (JSON.stringify(payload).length > 100000) {
-        return send(res, 413, { ok: false, code: 'COMMAND_PAYLOAD_TOO_LARGE' });
+      const payloadJson = JSON.stringify(payload);
+      const payloadBytes = Buffer.byteLength(payloadJson === undefined ? 'null' : payloadJson, 'utf8');
+      if (payloadBytes > COMMAND_PAYLOAD_MAX_BYTES) {
+        return send(res, 413, {
+          ok: false,
+          code: 'COMMAND_PAYLOAD_TOO_LARGE',
+          maxBytes: COMMAND_PAYLOAD_MAX_BYTES,
+        });
       }
 
+      const createdAt = Date.now();
       const command = {
         id: crypto.randomUUID(),
         clientCommandId,
-        createdAt: Date.now(),
+        createdAt,
+        expiresAt: createdAt + COMMAND_MAX_AGE_MS,
         deviceId: device.deviceId,
         type,
         payload,
@@ -1484,16 +1586,18 @@ export default async function handler(req, res) {
         "if mode == 'PAUSE_PENDING' and ARGV[4] ~= '1' then return {-3, mode} end",
         "local existing = redis.call('GET', KEYS[1])",
         "if existing then return {0, existing} end",
+        "local total = redis.call('LLEN', KEYS[2]) + redis.call('LLEN', KEYS[4])",
+        "if total >= tonumber(ARGV[5]) then return {-4, tostring(total)} end",
         "redis.call('LPUSH', KEYS[2], ARGV[2])",
         "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])",
         "return {1, ARGV[1]}"
       ].join('\n');
 
       const result = await redis([
-        'EVAL', script, '3',
-        dedupeKey, KEY_PENDING, KEY_MASTER_MODE,
+        'EVAL', script, '4',
+        dedupeKey, KEY_PENDING, KEY_MASTER_MODE, KEY_PROCESSING,
         command.id, raw, String(COMMAND_DEDUPE_TTL_SECONDS),
-        allowedWhilePending ? '1' : '0'
+        allowedWhilePending ? '1' : '0', String(COMMAND_QUEUE_MAX)
       ]);
 
       const resultCode = Number(Array.isArray(result) ? result[0] : -99);
@@ -1502,6 +1606,14 @@ export default async function handler(req, res) {
       }
       if (resultCode === -3) {
         return send(res, 423, { ok: false, code: 'MASTER_PAUSE_PENDING', masterMode: 'PAUSE_PENDING' });
+      }
+      if (resultCode === -4) {
+        return send(res, 429, {
+          ok: false,
+          code: 'COMMAND_QUEUE_FULL',
+          queueDepth: Number(Array.isArray(result) ? result[1] : COMMAND_QUEUE_MAX),
+          queueMax: COMMAND_QUEUE_MAX,
+        });
       }
 
       const created = resultCode === 1;
@@ -1519,12 +1631,12 @@ export default async function handler(req, res) {
       if (!(await hasMasterLease(device.deviceId))) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
-      const currentMode = await masterMode();
-      if (currentMode === 'PAUSED') {
-        return send(res, 423, { ok: false, code: 'MASTER_PAUSED', masterMode: currentMode });
+
+      const modeBeforeClaim = await masterMode();
+      if (modeBeforeClaim === 'PAUSED') {
+        return send(res, 423, { ok: false, code: 'MASTER_PAUSED', masterMode: modeBeforeClaim });
       }
 
-      const configSync = await readMasterConfigSync(device.deviceId);
       const recovery = await recoverStaleProcessing(device.deviceId);
       const raw = await claimNextCommand(device.deviceId);
       if (!raw) return send(res, 200, { ok: true, command: null, recovery });
@@ -1535,15 +1647,43 @@ export default async function handler(req, res) {
       let command = null;
       try { command = JSON.parse(raw); } catch {}
 
-      if (!configSync.status.synchronized && !commandAllowedDuringPausePending(command?.type)) {
-        await redis(['LREM', KEY_PROCESSING, '1', raw]);
-        await redis(['LPUSH', KEY_DEAD, JSON.stringify({
-          raw,
-          rejectedAt: Date.now(),
-          rejectedReason: 'MASTER_CONFIG_OUT_OF_SYNC',
+      if (!command || !commandTypeAllowed(command.type)) {
+        await rejectClaimedCommand(raw, 'COMMAND_TYPE_NOT_ALLOWED');
+        return send(res, 200, { ok: true, command: null, typeRejected: true, recovery });
+      }
+
+      if (commandExpired(command)) {
+        await rejectClaimedCommand(raw, 'COMMAND_EXPIRED', {
+          createdAt: Number(command.createdAt || 0),
+          expiresAt: Number(command.expiresAt || 0),
+        });
+        return send(res, 200, { ok: true, command: null, expiredRejected: true, recovery });
+      }
+
+      const modeNow = await masterMode();
+      if (modeNow === 'PAUSED') {
+        await rejectClaimedCommand(raw, 'MASTER_PAUSED_AFTER_CLAIM');
+        return send(res, 200, { ok: true, command: null, pausedRejected: true, recovery });
+      }
+      if (modeNow === 'PAUSE_PENDING' && !commandAllowedDuringPausePending(command.type)) {
+        await rejectClaimedCommand(raw, 'MASTER_PAUSE_PENDING_UNSAFE_COMMAND');
+        return send(res, 200, { ok: true, command: null, pausePendingRejected: true, recovery });
+      }
+
+      const currentController = await roleDeviceId('controller');
+      if (String(command.deviceId || '') !== String(currentController || '')) {
+        await rejectClaimedCommand(raw, 'STALE_CONTROLLER_COMMAND', {
+          currentControllerDeviceId: currentController,
+        });
+        return send(res, 200, { ok: true, command: null, staleRejected: true, recovery });
+      }
+
+      const configSync = await readMasterConfigSync(device.deviceId);
+      if (!configSync.status.synchronized && !commandAllowedDuringPausePending(command.type)) {
+        await rejectClaimedCommand(raw, 'MASTER_CONFIG_OUT_OF_SYNC', {
           controllerRevision: configSync.status.controllerRevision,
           appliedRevision: configSync.status.appliedRevision,
-        })]);
+        });
         return send(res, 200, {
           ok: true,
           command: null,
@@ -1553,39 +1693,33 @@ export default async function handler(req, res) {
         });
       }
 
-      if (currentMode === 'PAUSE_PENDING' && !commandAllowedDuringPausePending(command?.type)) {
-        await redis(['LREM', KEY_PROCESSING, '1', raw]);
-        await redis(['LPUSH', KEY_DEAD, JSON.stringify({
-          raw,
-          rejectedAt: Date.now(),
-          rejectedReason: 'MASTER_PAUSE_PENDING_UNSAFE_COMMAND',
-        })]);
-        return send(res, 200, {
-          ok: true,
-          command: null,
-          pausePendingRejected: true,
-          recovery,
-        });
+      if (String(command.type || '').toUpperCase().startsWith('EXEC_')) {
+        const halted = await emergencyStopActive();
+        const gate = executionGate(command.type, halted);
+        if (!gate.allowed) {
+          await rejectClaimedCommand(raw, 'EXECUTION_LOCKED_' + gate.reason, {
+            emergencyStopActive: halted,
+            realTradingEnabled: REAL_TRADING_ENABLED,
+            pairingDisabled: PAIRING_DISABLED,
+          });
+          return send(res, 200, {
+            ok: true,
+            command: null,
+            executionRejected: true,
+            executionReason: gate.reason,
+            recovery,
+          });
+        }
       }
 
-      const currentController = await roleDeviceId('controller');
-      if (!command || String(command.deviceId || '') !== String(currentController || '')) {
-        await redis(['LREM', KEY_PROCESSING, '1', raw]);
-        await redis(['LPUSH', KEY_DEAD, JSON.stringify({
-          raw,
-          rejectedAt: Date.now(),
-          rejectedReason: 'STALE_CONTROLLER_COMMAND',
-          currentControllerDeviceId: currentController,
-        })]);
-        return send(res, 200, {
-          ok: true,
-          command: null,
-          staleRejected: true,
-          recovery,
-        });
-      }
-
-      return send(res, 200, { ok: true, command, raw, recovery });
+      return send(res, 200, {
+        ok: true,
+        command,
+        raw,
+        recovery,
+        validatedAt: Date.now(),
+        masterMode: modeNow,
+      });
     }
 
     if (action === 'command-recover-stale' && req.method === 'POST') {
@@ -1621,11 +1755,22 @@ export default async function handler(req, res) {
       if (!(await hasMasterLease(device.deviceId))) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
+
       const raw = String(req.body?.raw || '');
       if (!raw) return send(res, 400, { ok: false, code: 'RAW_REQUIRED' });
 
-      let commandId = '';
-      try { commandId = String(JSON.parse(raw)?.id || ''); } catch {}
+      let command = null;
+      try { command = JSON.parse(raw); } catch {}
+      if (!command || !commandTypeAllowed(command.type)) {
+        await rejectClaimedCommand(raw, 'COMMAND_TYPE_NOT_ALLOWED');
+        return send(res, 200, { ok: true, requeued: false, rejected: true });
+      }
+      if (commandExpired(command)) {
+        await rejectClaimedCommand(raw, 'COMMAND_EXPIRED');
+        return send(res, 200, { ok: true, requeued: false, expired: true });
+      }
+
+      const commandId = String(command.id || '');
       if (commandId) {
         const done = await redis(['GET', `${PREFIX}:command:done:${commandId}`]);
         if (done) {
@@ -1634,9 +1779,32 @@ export default async function handler(req, res) {
         }
       }
 
-      const removed = await redis(['LREM', KEY_PROCESSING, '1', raw]);
-      if (Number(removed) > 0) await redis(['LPUSH', KEY_PENDING, raw]);
-      return send(res, 200, { ok: true, requeued: Number(removed) > 0 });
+      const modeNow = await masterMode();
+      if (modeNow === 'PAUSED' ||
+          (modeNow === 'PAUSE_PENDING' && !commandAllowedDuringPausePending(command.type))) {
+        await rejectClaimedCommand(raw, modeNow === 'PAUSED' ? 'MASTER_PAUSED' : 'MASTER_PAUSE_PENDING_UNSAFE_COMMAND');
+        return send(res, 200, { ok: true, requeued: false, paused: true, masterMode: modeNow });
+      }
+
+      if (String(command.type || '').toUpperCase().startsWith('EXEC_')) {
+        const halted = await emergencyStopActive();
+        const gate = executionGate(command.type, halted);
+        if (!gate.allowed) {
+          await rejectClaimedCommand(raw, 'EXECUTION_LOCKED_' + gate.reason);
+          return send(res, 200, { ok: true, requeued: false, executionRejected: true, executionReason: gate.reason });
+        }
+      }
+
+      const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+      if (removed > 0) {
+        const clean = { ...command };
+        delete clean.claimedAt;
+        delete clean.claimedBy;
+        clean.requeuedAt = Date.now();
+        clean.requeuedBy = device.deviceId;
+        await redis(['LPUSH', KEY_PENDING, JSON.stringify(clean)]);
+      }
+      return send(res, 200, { ok: true, requeued: removed > 0 });
     }
 
     if (action === 'emergency-stop' && req.method === 'POST') {

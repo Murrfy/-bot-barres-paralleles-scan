@@ -239,6 +239,28 @@ for (const requiredHeader of ['Content-Security-Policy','X-Content-Type-Options'
 if (!securityHeaders.includes("frame-ancestors 'none'") || !securityHeaders.includes("connect-src 'self' https://fapi.binance.com wss://fstream.binance.com")) {
   fail('Content Security Policy must prevent framing and restrict outbound connections');
 }
+if (!sync.includes('COMMAND_MAX_AGE_MS = 2 * 60 * 1000') ||
+    !sync.includes('COMMAND_QUEUE_MAX = 100') ||
+    !sync.includes('COMMAND_PAYLOAD_MAX_BYTES = 16 * 1024') ||
+    !sync.includes('DEAD_LETTER_MAX = 500')) {
+  fail('command queue must have bounded age, depth, payload size and dead-letter retention');
+}
+if (!sync.includes('ALLOWED_COMMAND_TYPES') ||
+    !sync.includes("'COMMAND_TYPE_NOT_ALLOWED'") ||
+    sync.includes("'EXEC_OPEN_POSITION'")) {
+  fail('command queue must use a protective-only allowlist until real entry execution is audited');
+}
+if (!sync.includes("'COMMAND_EXPIRED'") ||
+    !sync.includes("'COMMAND_QUEUE_FULL'") ||
+    !sync.includes('modeBeforeClaim') ||
+    !sync.includes('modeNow') ||
+    !sync.includes('executionGate(command.type, halted)')) {
+  fail('MASTER must revalidate age, mode and execution lock after a command is claimed');
+}
+if (!sync.includes('pushDeadLetter') || !sync.includes("redis(['LTRIM', KEY_DEAD")) {
+  fail('dead-letter queue must be bounded');
+}
+
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');
 if (!replaceController.includes('restoreCentralState') ||
     !replaceController.includes('zenith_controller_revision_v1')) {
