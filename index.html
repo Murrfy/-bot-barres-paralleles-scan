@@ -159,8 +159,9 @@ let exchangeMap=new Map(),lastPrices=new Map(),ws=null,wsLive=false,fallbackTime
 const lastAggIds=new Map(),lastAggTimes=new Map(),recoveringSymbols=new Set(),pendingAggTrades=new Map();
 let cursorSaveTimer=null;
 let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
-const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1';
+const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
+let controllerSyncState={conflict:false,lastOk:0,error:''};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
 function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}}
@@ -168,8 +169,13 @@ function renderControllerIdentity(){
   const b=$('controllerBadge');
   if(!b)return;
   if(controllerIdentity.paired&&controllerIdentity.role==='controller'){
-    b.textContent='IPHONE CONTRÔLEUR OK';
-    b.classList.add('on');
+    if(controllerSyncState.conflict){
+      b.textContent='CONTRÔLEUR CONFLIT SYNC';
+      b.classList.remove('on');
+    }else{
+      b.textContent='IPHONE CONTRÔLEUR OK';
+      b.classList.add('on');
+    }
   }else{
     b.textContent=controllerIdentity.error?'CONTRÔLEUR HORS LIGNE':'IPHONE NON JUMELÉ';
     b.classList.remove('on');
@@ -217,7 +223,49 @@ async function syncControllerCloudStateNow(){
   if(!controllerIdentity.paired||controllerIdentity.role!=='controller')return false;
   const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   if(!token)return false;
+
+  const payload=controllerCloudStatePayload();
+
   try{
+    const currentResponse=await fetch('/api/zenith-sync?action=controller-state',{
+      cache:'no-store',
+      headers:{Accept:'application/json',Authorization:'Bearer '+token}
+    });
+    const current=await currentResponse.json().catch(()=>({}));
+    if(!currentResponse.ok||current?.ok!==true){
+      controllerSyncState={...controllerSyncState,error:current?.code||current?.error||('HTTP '+currentResponse.status)};
+      renderControllerIdentity();
+      return false;
+    }
+
+    const remoteState=current?.state||null;
+    const remoteRevision=Math.max(0,n(remoteState?.revision,0));
+    const localRevisionRaw=localStorage.getItem(ZENITH_CONTROLLER_REV_KEY);
+    let localRevision=localRevisionRaw===null?null:Math.max(0,n(localRevisionRaw,0));
+
+    if(localRevision===null){
+      if(remoteState){
+        const localJson=JSON.stringify(payload);
+        const remoteJson=JSON.stringify(remoteState?.data||{});
+        if(localJson!==remoteJson){
+          controllerSyncState={conflict:true,lastOk:0,error:'REVISION_BOOTSTRAP_CONFLICT'};
+          renderControllerIdentity();
+          return false;
+        }
+        localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(remoteRevision));
+        controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
+        renderControllerIdentity();
+        return true;
+      }
+      localRevision=0;
+    }
+
+    if(remoteRevision!==localRevision){
+      controllerSyncState={conflict:true,lastOk:0,error:'REVISION_CONFLICT'};
+      renderControllerIdentity();
+      return false;
+    }
+
     const r=await fetch('/api/zenith-sync?action=controller-state',{
       method:'POST',
       cache:'no-store',
@@ -226,11 +274,29 @@ async function syncControllerCloudStateNow(){
         Accept:'application/json',
         Authorization:'Bearer '+token
       },
-      body:JSON.stringify({data:controllerCloudStatePayload()})
+      body:JSON.stringify({expectedRevision:localRevision,data:payload})
     });
     const q=await r.json().catch(()=>({}));
-    return !!(r.ok&&q?.ok===true);
-  }catch(_){
+
+    if(r.status===409&&q?.code==='REVISION_CONFLICT'){
+      controllerSyncState={conflict:true,lastOk:0,error:'REVISION_CONFLICT'};
+      renderControllerIdentity();
+      return false;
+    }
+
+    if(!r.ok||q?.ok!==true||!q?.state){
+      controllerSyncState={...controllerSyncState,error:q?.code||q?.error||('HTTP '+r.status)};
+      renderControllerIdentity();
+      return false;
+    }
+
+    localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(Math.max(0,n(q.state.revision,localRevision))));
+    controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
+    renderControllerIdentity();
+    return true;
+  }catch(e){
+    controllerSyncState={...controllerSyncState,error:e?.message||'Connexion impossible'};
+    renderControllerIdentity();
     return false;
   }
 }

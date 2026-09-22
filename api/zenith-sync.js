@@ -398,10 +398,17 @@ export default async function handler(req, res) {
     if (action === 'controller-state' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller']);
       if (!device) return;
+
+      const expectedRevision = Number(req.body?.expectedRevision);
+      if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
+        return send(res, 400, { ok: false, code: 'EXPECTED_REVISION_REQUIRED' });
+      }
+
       const data = req.body?.data;
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
         return send(res, 400, { ok: false, code: 'CONTROLLER_STATE_INVALID' });
       }
+
       const safeData = {
         settings: data.settings && typeof data.settings === 'object' ? data.settings : {},
         tokenSettings: data.tokenSettings && typeof data.tokenSettings === 'object' ? data.tokenSettings : {},
@@ -411,31 +418,75 @@ export default async function handler(req, res) {
       if (JSON.stringify(safeData).length > 250000) {
         return send(res, 413, { ok: false, code: 'CONTROLLER_STATE_TOO_LARGE' });
       }
-      const revision = Number(await redis(['INCR', KEY_CONTROLLER_REV])) || 0;
+
       const updatedAt = Date.now();
       const stateHash = sha256(JSON.stringify(safeData));
-      const snapshot = {
+      const snapshotTemplate = {
         version: 1,
-        revision,
+        revision: 0,
         updatedAt,
         controllerDeviceId: device.deviceId,
         stateHash,
         data: safeData,
       };
-
-      const audit = {
+      const auditTemplate = {
         at: updatedAt,
         kind: 'CONTROLLER_STATE_WRITE',
-        revision,
+        revision: 0,
         deviceId: device.deviceId,
         stateHash,
       };
 
-      await redis(['SET', KEY_CONTROLLER_STATE, JSON.stringify(snapshot)]);
-      await redis(['LPUSH', KEY_AUDIT, JSON.stringify(audit)]);
-      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      const script = [
+        "local currentRaw = redis.call('GET', KEYS[1])",
+        "local currentRev = 0",
+        "if currentRaw then",
+        "  local ok, current = pcall(cjson.decode, currentRaw)",
+        "  if ok and current and current['revision'] then currentRev = tonumber(current['revision']) or 0 end",
+        "end",
+        "local expected = tonumber(ARGV[1])",
+        "if currentRev ~= expected then",
+        "  return {0, tostring(currentRev), currentRaw or ''}",
+        "end",
+        "local newRev = currentRev + 1",
+        "local snapshot = cjson.decode(ARGV[2])",
+        "snapshot['revision'] = newRev",
+        "local snapshotRaw = cjson.encode(snapshot)",
+        "local audit = cjson.decode(ARGV[3])",
+        "audit['revision'] = newRev",
+        "local auditRaw = cjson.encode(audit)",
+        "redis.call('SET', KEYS[1], snapshotRaw)",
+        "redis.call('SET', KEYS[2], tostring(newRev))",
+        "redis.call('LPUSH', KEYS[3], auditRaw)",
+        "redis.call('LTRIM', KEYS[3], 0, 199)",
+        "return {1, tostring(newRev), snapshotRaw}"
+      ].join('\n');
 
-      return send(res, 200, { ok: true, state: snapshot });
+      const result = await redis([
+        'EVAL', script, '3',
+        KEY_CONTROLLER_STATE, KEY_CONTROLLER_REV, KEY_AUDIT,
+        String(expectedRevision),
+        JSON.stringify(snapshotTemplate),
+        JSON.stringify(auditTemplate),
+      ]);
+
+      const applied = Number(Array.isArray(result) ? result[0] : 0) === 1;
+      const currentRevision = Number(Array.isArray(result) ? result[1] : 0) || 0;
+      const rawState = String(Array.isArray(result) ? result[2] || '' : '');
+
+      let state = null;
+      try { state = rawState ? JSON.parse(rawState) : null; } catch {}
+
+      if (!applied) {
+        return send(res, 409, {
+          ok: false,
+          code: 'REVISION_CONFLICT',
+          currentRevision,
+          state,
+        });
+      }
+
+      return send(res, 200, { ok: true, state });
     }
 
     if (action === 'state' && req.method === 'GET') {
