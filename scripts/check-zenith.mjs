@@ -98,7 +98,7 @@ if (!sync.includes("'MASTER_PAUSE_BLOCKED'") ||
     !sync.includes("'PROCESSING_COMMAND'")) {
   fail('MASTER pause must fail closed while trading activity or commands remain');
 }
-if (!sync.includes("'MASTER_PAUSED'") || !sync.includes("masterMode()) !== 'RUNNING'")) {
+if (!sync.includes("'MASTER_PAUSED'") || !sync.includes("currentMode === 'PAUSED'")) {
   fail('MASTER command consumption must stop while paused');
 }
 if (!sync.includes('freshCleanReconciliation') ||
