@@ -29,6 +29,7 @@ const KEY_PROCESSING = `${PREFIX}:commands:processing`;
 const KEY_DEAD = `${PREFIX}:commands:dead`;
 const KEY_EMERGENCY_STOP = `${PREFIX}:safety:emergency-stop`;
 const MASTER_TTL_SECONDS = 20;
+const MASTER_ACTIVATION_TTL_SECONDS = 120;
 const COMMAND_CLAIM_TTL_MS = 90 * 1000;
 const COMMAND_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 30;
 const PAIR_RATE_LIMIT = 5;
@@ -168,17 +169,37 @@ async function hasMasterLease(deviceId) {
   return (await masterDeviceId()) === String(deviceId);
 }
 
+function masterActivationKey(deviceId) {
+  return `${PREFIX}:master-activation:${deviceId}`;
+}
+
 async function acquireOrRenewMaster(deviceId) {
   const script = [
     "local current = redis.call('GET', KEYS[1])",
-    "if (not current) or current == ARGV[1] then",
+    "if current and current == ARGV[1] then",
     "  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])",
-    "  return 1",
+    "  return 2",
     "end",
-    "return 0"
+    "if current and current ~= ARGV[1] then return -1 end",
+    "local approved = redis.call('GET', KEYS[2])",
+    "if approved ~= '1' then return 0 end",
+    "redis.call('DEL', KEYS[2])",
+    "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])",
+    "return 1"
   ].join('\n');
-  const ok = await redis(['EVAL', script, '1', KEY_MASTER, String(deviceId), String(MASTER_TTL_SECONDS)]);
-  return Number(ok) === 1;
+
+  const result = Number(await redis([
+    'EVAL', script, '2',
+    KEY_MASTER, masterActivationKey(deviceId),
+    String(deviceId), String(MASTER_TTL_SECONDS)
+  ]));
+
+  return {
+    acquired: result === 1,
+    renewed: result === 2,
+    conflict: result === -1,
+    authorized: result !== 0,
+  };
 }
 
 async function emergencyStopActive() {
@@ -269,6 +290,7 @@ export default async function handler(req, res) {
       executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
       mode: 'SYNC_SAFE_SIMULATION',
       masterTtlSeconds: MASTER_TTL_SECONDS,
+      masterActivationTtlSeconds: MASTER_ACTIVATION_TTL_SECONDS,
       commandClaimTtlMs: COMMAND_CLAIM_TTL_MS,
     });
   }
@@ -334,13 +356,65 @@ export default async function handler(req, res) {
       });
     }
 
+    if (action === 'master-authorize' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+
+      const masterDevice = await roleDeviceId('master');
+      if (!masterDevice) {
+        return send(res, 409, { ok: false, code: 'MASTER_NOT_REGISTERED' });
+      }
+
+      await redis([
+        'SET',
+        masterActivationKey(masterDevice),
+        '1',
+        'EX',
+        String(MASTER_ACTIVATION_TTL_SECONDS)
+      ]);
+
+      const at = Date.now();
+      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+        at,
+        kind: 'MASTER_ACTIVATION_AUTHORIZED',
+        deviceId: device.deviceId,
+        masterDeviceId: masterDevice,
+        ttlSeconds: MASTER_ACTIVATION_TTL_SECONDS,
+      })]);
+      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+
+      return send(res, 200, {
+        ok: true,
+        masterDeviceId: masterDevice,
+        expiresInSeconds: MASTER_ACTIVATION_TTL_SECONDS,
+      });
+    }
+
     if (action === 'master-heartbeat' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['master']);
       if (!device) return;
-      const master = await acquireOrRenewMaster(device.deviceId);
+
+      const lease = await acquireOrRenewMaster(device.deviceId);
+      if (lease.conflict) {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_LEASE_CONFLICT',
+          currentMaster: await masterDeviceId(),
+        });
+      }
+      if (!lease.authorized) {
+        return send(res, 423, {
+          ok: false,
+          code: 'MASTER_ACTIVATION_REQUIRED',
+          currentMaster: await masterDeviceId(),
+        });
+      }
+
       return send(res, 200, {
         ok: true,
-        master,
+        master: true,
+        acquired: lease.acquired,
+        renewed: lease.renewed,
         currentMaster: await masterDeviceId(),
         ttlSeconds: MASTER_TTL_SECONDS,
       });
