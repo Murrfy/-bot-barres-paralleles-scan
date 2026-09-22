@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Zenith — Jumelage iPad MASTER</title>
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#07111f;color:#eef6ff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#07111f}
+.wrap{max-width:680px;margin:0 auto;padding:28px 18px 48px}
+.card{background:#0c1a2b;border:1px solid #29415d;border-radius:22px;padding:22px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+h1{font-size:30px;margin:0 0 8px}.sub{color:#a9bdd3;margin-bottom:22px;line-height:1.45}
+.notice{padding:14px;border-radius:14px;border:1px solid #7b5b18;background:#221a06;color:#ffe6a3;margin-bottom:18px;line-height:1.45}
+label{display:block;font-weight:700;margin:16px 0 8px}
+input{width:100%;font-size:19px;padding:15px 14px;border-radius:14px;border:1px solid #35516f;background:#07111f;color:#fff;outline:none}
+button{width:100%;margin-top:18px;padding:16px;border:0;border-radius:14px;font-size:18px;font-weight:800;background:#16a3c7;color:#041018}
+button:disabled{opacity:.5}
+.status{margin-top:18px;padding:14px;border-radius:14px;background:#07111f;border:1px solid #29415d;line-height:1.4}
+.ok{border-color:#168d5d;color:#9bf0c3}.err{border-color:#a53b3b;color:#ffb1b1}
+.small{font-size:13px;color:#9db0c4;margin-top:16px;line-height:1.4}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Zenith — iPad MASTER</h1>
+    <div class="sub">Cette page servira plus tard à associer l’iPad comme unique moteur MASTER.</div>
+    <div class="notice">Ne pas utiliser tant que le MASTER n’est pas volontairement activé. Le code iPhone ne fonctionne pas ici.</div>
+    <label for="code">Code MASTER</label>
+    <input id="code" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Code MASTER séparé">
+    <button id="pairBtn">Associer cet iPad comme MASTER</button>
+    <div id="status" class="status">MASTER non jumelé.</div>
+    <div class="small">Le code MASTER n’est pas conservé. Après validation, seul un jeton d’appareil propre à cet iPad est stocké localement.</div>
+  </div>
+</div>
+<script>
+const DEVICE_ID_KEY='zenith_device_id_v1';
+const DEVICE_TOKEN_KEY='zenith_device_token_v1';
+const DEVICE_ROLE_KEY='zenith_device_role_v1';
+const DEVICE_NAME_KEY='zenith_device_name_v1';
+
+function deviceId(){
+  let id=localStorage.getItem(DEVICE_ID_KEY);
+  if(!id){
+    id='ipad-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
+    localStorage.setItem(DEVICE_ID_KEY,id);
+  }
+  return id;
+}
+const $=id=>document.getElementById(id);
+const setStatus=(msg,type='')=>{const el=$('status');el.textContent=msg;el.className='status'+(type?' '+type:'')};
+
+async function pair(){
+  const code=$('code').value;
+  if(!code){setStatus('Entre le code MASTER.','err');return}
+  $('pairBtn').disabled=true;
+  setStatus('Jumelage MASTER en cours…');
+  try{
+    const r=await fetch('/api/zenith-sync?action=pair',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify({
+        pairingCode:code,
+        deviceId:deviceId(),
+        role:'master',
+        deviceName:'iPad MASTER Zenith'
+      })
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true||!q?.token) throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    localStorage.setItem(DEVICE_TOKEN_KEY,q.token);
+    localStorage.setItem(DEVICE_ROLE_KEY,'master');
+    localStorage.setItem(DEVICE_NAME_KEY,'iPad MASTER Zenith');
+    $('code').value='';
+    setStatus('Jumelage réussi. Cet iPad est enregistré comme MASTER Zenith.','ok');
+  }catch(e){
+    setStatus('Jumelage refusé : '+(e?.message||'erreur inconnue')+'.','err');
+  }finally{$('pairBtn').disabled=false}
+}
+$('pairBtn').addEventListener('click',pair);
+$('code').addEventListener('keydown',e=>{if(e.key==='Enter')pair()});
+</script>
+</body>
+</html>
