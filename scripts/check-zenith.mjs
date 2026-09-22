@@ -6,6 +6,8 @@ const htmlFiles = [
   'controller-status.html',
   'pair-master.html',
   'master-standby.html',
+  'master-admin.html',
+  'replace-controller.html',
 ].filter(fs.existsSync);
 
 let failed = false;
@@ -52,6 +54,9 @@ for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batch
 if (!binanceRead.includes("'UNAUTHORIZED_DEVICE'") || !binanceRead.includes('requireZenithDevice')) {
   fail('api/binance-read.js must require a paired Zenith device');
 }
+if (!binanceRead.includes('role-device:controller') || !binanceRead.includes('role-device:master')) {
+  fail('api/binance-read.js must reject tokens from devices that no longer own their Zenith role');
+}
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
 if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'")) {
@@ -68,6 +73,18 @@ if (!sync.includes("'EXECUTION_LOCKED'")) {
 }
 if (!sync.includes("'MASTER_ACTIVATION_REQUIRED'") || !sync.includes("action === 'master-authorize'")) {
   fail('api/zenith-sync.js must require controller authorization before first MASTER lease');
+}
+if (!sync.includes("ZENITH_MASTER_ADMIN_CODE") ||
+    !sync.includes("action === 'controller-replacement-authorize'") ||
+    !sync.includes("action === 'controller-replacement-redeem'")) {
+  fail('api/zenith-sync.js must keep secure controller replacement recovery');
+}
+if (!sync.includes('CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60') ||
+    !sync.includes("redis.call('DEL', KEYS[1])")) {
+  fail('controller replacement code must remain short-lived and one-time use');
+}
+if (!sync.includes("'STALE_CONTROLLER_COMMAND'") || !sync.includes("'CONTROLLER_REPLACED'")) {
+  fail('api/zenith-sync.js must reject/quarantine commands from a replaced controller');
 }
 
 if (failed) process.exit(1);

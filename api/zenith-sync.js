@@ -13,6 +13,7 @@ const REDIS_TOKEN =
 
 const PAIRING_CODE = process.env.ZENITH_PAIRING_CODE || '';
 const MASTER_PAIRING_CODE = process.env.ZENITH_MASTER_PAIRING_CODE || '';
+const MASTER_ADMIN_CODE = process.env.ZENITH_MASTER_ADMIN_CODE || '';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 
@@ -33,6 +34,8 @@ const MASTER_ACTIVATION_TTL_SECONDS = 120;
 const COMMAND_CLAIM_TTL_MS = 90 * 1000;
 const COMMAND_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 30;
 const PAIR_RATE_LIMIT = 5;
+const CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60;
+const CONTROLLER_REPLACEMENT_RATE_LIMIT = 5;
 
 function send(res, status, body) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -93,6 +96,53 @@ async function pairRateAllowed(req) {
   const count = Number(await redis(['INCR', key])) || 0;
   if (count === 1) await redis(['EXPIRE', key, '120']);
   return count <= PAIR_RATE_LIMIT;
+}
+
+async function controllerReplacementRateAllowed(req) {
+  const bucket = Math.floor(Date.now() / 60000);
+  const key = `${PREFIX}:controller-replacement-rate:${sha256(clientIp(req))}:${bucket}`;
+  const count = Number(await redis(['INCR', key])) || 0;
+  if (count === 1) await redis(['EXPIRE', key, '120']);
+  return count <= CONTROLLER_REPLACEMENT_RATE_LIMIT;
+}
+
+function normalizeReplacementCode(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function replacementKey(code) {
+  return `${PREFIX}:controller-replacement:${sha256(normalizeReplacementCode(code))}`;
+}
+
+async function quarantineCommandsForDevice(deviceId) {
+  if (!deviceId) return { pending: 0, processing: 0 };
+  let pending = 0;
+  let processing = 0;
+
+  for (const [key, label] of [[KEY_PENDING, 'pending'], [KEY_PROCESSING, 'processing']]) {
+    const rows = await redis(['LRANGE', key, '0', '-1']);
+    for (const raw of Array.isArray(rows) ? rows : []) {
+      let command = null;
+      try { command = JSON.parse(raw); } catch {}
+      if (String(command?.deviceId || '') !== String(deviceId)) continue;
+
+      const removed = Number(await redis(['LREM', key, '1', raw])) || 0;
+      if (removed > 0) {
+        const dead = {
+          raw,
+          rejectedAt: Date.now(),
+          rejectedReason: 'CONTROLLER_REPLACED',
+          sourceList: label,
+          previousControllerDeviceId: String(deviceId),
+        };
+        await redis(['LPUSH', KEY_DEAD, JSON.stringify(dead)]);
+        if (label === 'pending') pending += removed;
+        else processing += removed;
+      }
+    }
+  }
+
+  return { pending, processing };
 }
 
 async function authDevice(req) {
@@ -285,6 +335,7 @@ export default async function handler(req, res) {
       redisConfigured: Boolean(REDIS_URL && REDIS_TOKEN),
       pairingConfigured: Boolean(PAIRING_CODE),
       masterPairingConfigured: Boolean(MASTER_PAIRING_CODE),
+      masterAdminConfigured: Boolean(MASTER_ADMIN_CODE),
       pairingDisabled: PAIRING_DISABLED,
       realTradingEnabled: REAL_TRADING_ENABLED,
       executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
@@ -339,6 +390,155 @@ export default async function handler(req, res) {
       };
       await redis(['SET', `${PREFIX}:device:${tokenHash}`, JSON.stringify(record)]);
       return send(res, 201, { ok: true, token, device: record });
+    }
+
+    if (action === 'controller-replacement-authorize' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+
+      if (!MASTER_ADMIN_CODE) {
+        return send(res, 503, { ok: false, code: 'MASTER_ADMIN_NOT_CONFIGURED' });
+      }
+
+      const adminCode = String(req.body?.adminCode || '');
+      if (!timingSafeEqualText(adminCode, MASTER_ADMIN_CODE)) {
+        return send(res, 401, { ok: false, code: 'MASTER_ADMIN_CODE_INVALID' });
+      }
+
+      const oldControllerDeviceId = await roleDeviceId('controller');
+      if (!oldControllerDeviceId) {
+        return send(res, 409, { ok: false, code: 'CONTROLLER_NOT_REGISTERED' });
+      }
+
+      const rawCode = crypto.randomBytes(6).toString('hex').toUpperCase();
+      const recoveryCode = rawCode.match(/.{1,4}/g).join('-');
+      const createdAt = Date.now();
+      const expiresAt = createdAt + CONTROLLER_REPLACEMENT_TTL_SECONDS * 1000;
+      const record = {
+        version: 1,
+        createdAt,
+        expiresAt,
+        oldControllerDeviceId,
+        masterDeviceId: device.deviceId,
+      };
+
+      await redis([
+        'SET',
+        replacementKey(recoveryCode),
+        JSON.stringify(record),
+        'EX',
+        String(CONTROLLER_REPLACEMENT_TTL_SECONDS),
+      ]);
+
+      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+        at: createdAt,
+        kind: 'CONTROLLER_REPLACEMENT_AUTHORIZED',
+        masterDeviceId: device.deviceId,
+        oldControllerDeviceId,
+        expiresAt,
+      })]);
+      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+
+      return send(res, 200, {
+        ok: true,
+        recoveryCode,
+        expiresAt,
+        expiresInSeconds: CONTROLLER_REPLACEMENT_TTL_SECONDS,
+      });
+    }
+
+    if (action === 'controller-replacement-redeem' && req.method === 'POST') {
+      if (!(await controllerReplacementRateAllowed(req))) {
+        return send(res, 429, { ok: false, code: 'CONTROLLER_REPLACEMENT_RATE_LIMIT' });
+      }
+
+      const recoveryCode = String(req.body?.recoveryCode || '');
+      const newDeviceId = String(req.body?.deviceId || '').trim();
+      const deviceName = String(req.body?.deviceName || 'iPhone contrôleur Zenith').trim().slice(0, 80);
+
+      if (!newDeviceId || normalizeReplacementCode(recoveryCode).length < 12) {
+        return send(res, 400, { ok: false, code: 'CONTROLLER_REPLACEMENT_REQUEST_INVALID' });
+      }
+
+      const token = crypto.randomBytes(32).toString('base64url');
+      const tokenHash = sha256(token);
+      const createdAt = Date.now();
+      const deviceRecord = {
+        deviceId: newDeviceId,
+        role: 'controller',
+        deviceName,
+        createdAt,
+        lastSeenAt: createdAt,
+      };
+
+      const script = [
+        "local recoveryRaw = redis.call('GET', KEYS[1])",
+        "if not recoveryRaw then return {0, '', ''} end",
+        "local ok, recovery = pcall(cjson.decode, recoveryRaw)",
+        "if not ok then return {-2, '', ''} end",
+        "local oldController = tostring(recovery['oldControllerDeviceId'] or '')",
+        "local currentController = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if currentController ~= oldController then",
+        "  return {-1, currentController, oldController}",
+        "end",
+        "redis.call('SET', KEYS[2], ARGV[1])",
+        "redis.call('SET', KEYS[3], ARGV[2])",
+        "redis.call('DEL', KEYS[1])",
+        "return {1, oldController, ARGV[1]}"
+      ].join('\n');
+
+      const result = await redis([
+        'EVAL', script, '3',
+        replacementKey(recoveryCode),
+        KEY_CONTROLLER_DEVICE,
+        `${PREFIX}:device:${tokenHash}`,
+        newDeviceId,
+        JSON.stringify(deviceRecord),
+      ]);
+
+      const code = Number(Array.isArray(result) ? result[0] : 0);
+      if (code === 0) {
+        return send(res, 410, { ok: false, code: 'CONTROLLER_REPLACEMENT_CODE_EXPIRED' });
+      }
+      if (code === -1) {
+        return send(res, 409, { ok: false, code: 'CONTROLLER_REPLACEMENT_CONFLICT' });
+      }
+      if (code !== 1) {
+        return send(res, 500, { ok: false, code: 'CONTROLLER_REPLACEMENT_FAILED' });
+      }
+
+      const oldControllerDeviceId = String(result[1] || '');
+
+      let quarantined = { pending: 0, processing: 0 };
+      try {
+        quarantined = await quarantineCommandsForDevice(oldControllerDeviceId);
+      } catch {}
+
+      let state = null;
+      try {
+        const controllerRaw = await redis(['GET', KEY_CONTROLLER_STATE]);
+        state = controllerRaw ? JSON.parse(controllerRaw) : null;
+      } catch {}
+
+      try {
+        await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+          at: Date.now(),
+          kind: 'CONTROLLER_REPLACED',
+          oldControllerDeviceId,
+          newControllerDeviceId: newDeviceId,
+          quarantined,
+        })]);
+        await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      } catch {}
+
+      return send(res, 200, {
+        ok: true,
+        token,
+        device: deviceRecord,
+        state,
+        previousControllerDeviceId: oldControllerDeviceId,
+        quarantined,
+      });
     }
 
     if (action === 'whoami' && req.method === 'GET') {
@@ -715,6 +915,24 @@ export default async function handler(req, res) {
 
       let command = null;
       try { command = JSON.parse(raw); } catch {}
+
+      const currentController = await roleDeviceId('controller');
+      if (!command || String(command.deviceId || '') !== String(currentController || '')) {
+        await redis(['LREM', KEY_PROCESSING, '1', raw]);
+        await redis(['LPUSH', KEY_DEAD, JSON.stringify({
+          raw,
+          rejectedAt: Date.now(),
+          rejectedReason: 'STALE_CONTROLLER_COMMAND',
+          currentControllerDeviceId: currentController,
+        })]);
+        return send(res, 200, {
+          ok: true,
+          command: null,
+          staleRejected: true,
+          recovery,
+        });
+      }
+
       return send(res, 200, { ok: true, command, raw, recovery });
     }
 
