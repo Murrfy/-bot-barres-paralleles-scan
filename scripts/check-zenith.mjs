@@ -41,6 +41,12 @@ if (!index.includes('simulation uniquement')) {
 if (!index.includes('startBinanceAccountReadOnly()')) {
   fail('index.html must keep Binance read-only account refresh');
 }
+if (!index.includes("normalExit:'LIMIT_EXACT_GTC'") ||
+    !index.includes("protectiveExit:'LIMIT_IOC_ADAPTIVE'") ||
+    !index.includes("primaryPriceMatch:'OPPONENT'") ||
+    !index.includes("fallback:'MARKET_LAST_RESORT'")) {
+  fail('Zenith must keep LIMIT-first exit execution policy with market only as last resort');
+}
 if (!index.includes("Authorization:'Bearer '+token")) {
   fail('index.html must authenticate Binance account reads with the paired device token');
 }

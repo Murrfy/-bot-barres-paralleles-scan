@@ -153,7 +153,7 @@ const API='https://fapi.binance.com';
 const DEFAULT_PROTECTIONS=Array.from({length:29},(_,i)=>({enabled:true,arm:105+i*100,floor:100+i*100}));
 function protectionCountForTarget(target){const t=Math.max(0,n(target,3000));return Math.max(0,Math.floor((t-106)/100)+1)}
 function defaultProtection(i){return{enabled:true,arm:105+i*100,floor:100+i*100}}
-const DEFAULTS={margin:1000,leverage:10,marginType:'ISOLATED',maxActive:3,targetProfit:3000,maxLoss:400,protectionStages:DEFAULT_PROTECTIONS,theme:'dark',sound:true,vibrate:true,showProtections:true};
+const DEFAULTS={margin:1000,leverage:10,marginType:'ISOLATED',maxActive:3,targetProfit:3000,maxLoss:400,protectionStages:DEFAULT_PROTECTIONS,exitExecutionPolicy:{normalExit:'LIMIT_EXACT_GTC',protectiveExit:'LIMIT_IOC_ADAPTIVE',primaryPriceMatch:'OPPONENT',fallback:'MARKET_LAST_RESORT'},theme:'dark',sound:true,vibrate:true,showProtections:true};
 const $=id=>document.getElementById(id),n=(v,d=0)=>Number.isFinite(+v)?+v:d,parsePrice=(v,d=0)=>{if(typeof v==='number')return Number.isFinite(v)?v:d;let x=String(v??'').trim().replace(/\s/g,'');if(!x)return d;if(x.includes(',')&&!x.includes('.'))x=x.replace(',','.');else if(x.includes(',')&&x.includes('.')){const lc=x.lastIndexOf(','),ld=x.lastIndexOf('.');x=lc>ld?x.replace(/\./g,'').replace(',','.'):x.replace(/,/g,'')}const z=Number(x);return Number.isFinite(z)?z:d},clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),clone=x=>x==null?x:JSON.parse(JSON.stringify(x));
 const money=v=>`${v>=0?'+':'-'}$${Math.abs(n(v)).toFixed(2)}`;
 const price=v=>{v=n(v);if(!v)return '—';if(v>=1000)return v.toFixed(2);if(v>=1)return v.toFixed(4);if(v>=.01)return v.toFixed(6);return v.toPrecision(6)};
