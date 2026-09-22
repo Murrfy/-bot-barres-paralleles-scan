@@ -64,6 +64,13 @@ async function requireZenithDevice(req) {
   try {
     const device = JSON.parse(raw);
     if (!device?.deviceId || !['controller', 'master'].includes(device?.role)) return null;
+
+    const roleKey = device.role === 'master'
+      ? `${PREFIX}:role-device:master`
+      : `${PREFIX}:role-device:controller`;
+    const owner = await redis(['GET', roleKey]);
+    if (owner && String(owner) !== String(device.deviceId)) return null;
+
     return device;
   } catch {
     return null;
