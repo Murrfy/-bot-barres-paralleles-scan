@@ -14,6 +14,7 @@ const REDIS_TOKEN =
 const PAIRING_CODE = process.env.ZENITH_PAIRING_CODE || '';
 const MASTER_PAIRING_CODE = process.env.ZENITH_MASTER_PAIRING_CODE || '';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
+const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 
 const PREFIX = 'zenith:v1';
 const KEY_MASTER = `${PREFIX}:master`;
@@ -24,7 +25,10 @@ const KEY_CONTROLLER_STATE = `${PREFIX}:controller-state`;
 const KEY_CONTROLLER_REV = `${PREFIX}:controller-state:rev`;
 const KEY_PENDING = `${PREFIX}:commands:pending`;
 const KEY_PROCESSING = `${PREFIX}:commands:processing`;
+const KEY_DEAD = `${PREFIX}:commands:dead`;
 const MASTER_TTL_SECONDS = 20;
+const COMMAND_CLAIM_TTL_MS = 90 * 1000;
+const COMMAND_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 30;
 const PAIR_RATE_LIMIT = 5;
 
 function send(res, status, body) {
@@ -175,6 +179,74 @@ async function acquireOrRenewMaster(deviceId) {
   return Number(ok) === 1;
 }
 
+async function recoverStaleProcessing(deviceId) {
+  const rows = await redis(['LRANGE', KEY_PROCESSING, '0', '-1']);
+  const now = Date.now();
+  let requeued = 0;
+  let removedDone = 0;
+  let dead = 0;
+
+  for (const raw of Array.isArray(rows) ? rows : []) {
+    let command = null;
+    try { command = JSON.parse(raw); } catch {
+      const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+      if (removed > 0) {
+        await redis(['LPUSH', KEY_DEAD, raw]);
+        dead += 1;
+      }
+      continue;
+    }
+
+    const commandId = String(command?.id || '');
+    if (commandId) {
+      const done = await redis(['GET', `${PREFIX}:command:done:${commandId}`]);
+      if (done) {
+        removedDone += Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+        continue;
+      }
+    }
+
+    const claimedAt = Number(command?.claimedAt || 0);
+    if (!claimedAt || now - claimedAt <= COMMAND_CLAIM_TTL_MS) continue;
+
+    const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+    if (removed > 0) {
+      const clean = { ...command };
+      delete clean.claimedAt;
+      delete clean.claimedBy;
+      clean.recoveredAt = now;
+      clean.recoveredBy = deviceId;
+      await redis(['RPUSH', KEY_PENDING, JSON.stringify(clean)]);
+      requeued += 1;
+    }
+  }
+
+  return { requeued, removedDone, dead };
+}
+
+async function claimNextCommand(deviceId) {
+  const script = [
+    "local raw = redis.call('RPOP', KEYS[1])",
+    "if not raw then return nil end",
+    "local ok, obj = pcall(cjson.decode, raw)",
+    "if not ok then",
+    "  redis.call('LPUSH', KEYS[3], raw)",
+    "  return '__DEAD__'",
+    "end",
+    "obj['claimedAt'] = tonumber(ARGV[1])",
+    "obj['claimedBy'] = ARGV[2]",
+    "local claimed = cjson.encode(obj)",
+    "redis.call('LPUSH', KEYS[2], claimed)",
+    "return claimed"
+  ].join('\n');
+
+  return await redis([
+    'EVAL', script, '3',
+    KEY_PENDING, KEY_PROCESSING, KEY_DEAD,
+    String(Date.now()), String(deviceId)
+  ]);
+}
+
 export default async function handler(req, res) {
   const action = String(req.query?.action || 'health');
 
@@ -185,8 +257,11 @@ export default async function handler(req, res) {
       pairingConfigured: Boolean(PAIRING_CODE),
       masterPairingConfigured: Boolean(MASTER_PAIRING_CODE),
       pairingDisabled: PAIRING_DISABLED,
+      realTradingEnabled: REAL_TRADING_ENABLED,
+      executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
       mode: 'SYNC_SAFE_SIMULATION',
       masterTtlSeconds: MASTER_TTL_SECONDS,
+      commandClaimTtlMs: COMMAND_CLAIM_TTL_MS,
     });
   }
 
@@ -269,6 +344,43 @@ export default async function handler(req, res) {
       return send(res, 200, { ok: true, currentMaster: await masterDeviceId() });
     }
 
+    if (action === 'safety' && req.method === 'GET') {
+      const device = await requireDevice(req, res);
+      if (!device) return;
+
+      const [currentMaster, controllerDevice, masterDevice, pending, processing, controllerRaw] = await Promise.all([
+        masterDeviceId(),
+        roleDeviceId('controller'),
+        roleDeviceId('master'),
+        redis(['LLEN', KEY_PENDING]),
+        redis(['LLEN', KEY_PROCESSING]),
+        redis(['GET', KEY_CONTROLLER_STATE]),
+      ]);
+
+      let controllerRevision = 0;
+      let controllerUpdatedAt = 0;
+      try {
+        const parsed = controllerRaw ? JSON.parse(controllerRaw) : null;
+        controllerRevision = Number(parsed?.revision || 0);
+        controllerUpdatedAt = Number(parsed?.updatedAt || 0);
+      } catch {}
+
+      return send(res, 200, {
+        ok: true,
+        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
+        realTradingEnabled: REAL_TRADING_ENABLED,
+        masterLeaseActive: Boolean(currentMaster),
+        currentMaster,
+        controllerRegistered: Boolean(controllerDevice),
+        masterRegistered: Boolean(masterDevice),
+        pendingCommands: Number(pending || 0),
+        processingCommands: Number(processing || 0),
+        controllerRevision,
+        controllerUpdatedAt,
+        commandClaimTtlMs: COMMAND_CLAIM_TTL_MS,
+      });
+    }
+
 
     if (action === 'controller-state' && req.method === 'GET') {
       const device = await requireDevice(req, res, ['controller', 'master']);
@@ -335,17 +447,54 @@ export default async function handler(req, res) {
     if (action === 'command' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller']);
       if (!device) return;
-      const type = String(req.body?.type || '').trim();
-      if (!type) return send(res, 400, { ok: false, code: 'COMMAND_INVALID' });
+
+      const type = String(req.body?.type || '').trim().toUpperCase();
+      const clientCommandId = String(req.body?.clientCommandId || '').trim();
+
+      if (!/^[A-Z0-9_:-]{1,64}$/.test(type)) {
+        return send(res, 400, { ok: false, code: 'COMMAND_TYPE_INVALID' });
+      }
+      if (!/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId)) {
+        return send(res, 400, { ok: false, code: 'CLIENT_COMMAND_ID_REQUIRED' });
+      }
+
+      const payload = req.body?.payload ?? null;
+      if (JSON.stringify(payload).length > 100000) {
+        return send(res, 413, { ok: false, code: 'COMMAND_PAYLOAD_TOO_LARGE' });
+      }
+
       const command = {
         id: crypto.randomUUID(),
+        clientCommandId,
         createdAt: Date.now(),
         deviceId: device.deviceId,
         type,
-        payload: req.body?.payload ?? null,
+        payload,
       };
-      await redis(['RPUSH', KEY_PENDING, JSON.stringify(command)]);
-      return send(res, 202, { ok: true, commandId: command.id });
+      const raw = JSON.stringify(command);
+      const dedupeKey = `${PREFIX}:command:client:${device.deviceId}:${sha256(clientCommandId)}`;
+
+      const script = [
+        "local existing = redis.call('GET', KEYS[1])",
+        "if existing then return {0, existing} end",
+        "redis.call('LPUSH', KEYS[2], ARGV[2])",
+        "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])",
+        "return {1, ARGV[1]}"
+      ].join('\n');
+
+      const result = await redis([
+        'EVAL', script, '2',
+        dedupeKey, KEY_PENDING,
+        command.id, raw, String(COMMAND_DEDUPE_TTL_SECONDS)
+      ]);
+
+      const created = Number(Array.isArray(result) ? result[0] : 0) === 1;
+      const commandId = String(Array.isArray(result) ? result[1] : command.id);
+      return send(res, created ? 202 : 200, {
+        ok: true,
+        commandId,
+        duplicate: !created,
+      });
     }
 
     if (action === 'command-next' && req.method === 'POST') {
@@ -354,11 +503,27 @@ export default async function handler(req, res) {
       if (!(await hasMasterLease(device.deviceId))) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
-      const raw = await redis(['RPOPLPUSH', KEY_PENDING, KEY_PROCESSING]);
-      if (!raw) return send(res, 200, { ok: true, command: null });
+
+      const recovery = await recoverStaleProcessing(device.deviceId);
+      const raw = await claimNextCommand(device.deviceId);
+      if (!raw) return send(res, 200, { ok: true, command: null, recovery });
+      if (raw === '__DEAD__') {
+        return send(res, 500, { ok: false, code: 'COMMAND_CORRUPT', recovery });
+      }
+
       let command = null;
       try { command = JSON.parse(raw); } catch {}
-      return send(res, 200, { ok: true, command, raw });
+      return send(res, 200, { ok: true, command, raw, recovery });
+    }
+
+    if (action === 'command-recover-stale' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+      if (!(await hasMasterLease(device.deviceId))) {
+        return send(res, 409, { ok: false, code: 'NOT_MASTER' });
+      }
+      const recovery = await recoverStaleProcessing(device.deviceId);
+      return send(res, 200, { ok: true, recovery });
     }
 
     if (action === 'command-ack' && req.method === 'POST') {
