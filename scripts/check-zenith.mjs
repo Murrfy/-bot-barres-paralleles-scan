@@ -39,12 +39,18 @@ if (!index.includes('simulation uniquement')) {
 if (!index.includes('startBinanceAccountReadOnly()')) {
   fail('index.html must keep Binance read-only account refresh');
 }
+if (!index.includes("Authorization:'Bearer '+token")) {
+  fail('index.html must authenticate Binance account reads with the paired device token');
+}
 
 const binanceRead = fs.readFileSync('api/binance-read.js', 'utf8');
 for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
   if (binanceRead.includes(forbidden)) {
     fail(`api/binance-read.js must remain read-only; forbidden endpoint found: ${forbidden}`);
   }
+}
+if (!binanceRead.includes("'UNAUTHORIZED_DEVICE'") || !binanceRead.includes('requireZenithDevice')) {
+  fail('api/binance-read.js must require a paired Zenith device');
 }
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
