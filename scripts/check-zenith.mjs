@@ -53,6 +53,19 @@ if (!binanceRead.includes("'UNAUTHORIZED_DEVICE'") || !binanceRead.includes('req
   fail('api/binance-read.js must require a paired Zenith device');
 }
 
+const binanceReconcile = fs.readFileSync('api/binance-reconcile.js', 'utf8');
+for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
+  if (binanceReconcile.includes(forbidden)) {
+    fail(`api/binance-reconcile.js must remain read-only; forbidden endpoint found: ${forbidden}`);
+  }
+}
+if (!binanceReconcile.includes("'UNAUTHORIZED_DEVICE'") || !binanceReconcile.includes('requireZenithDevice')) {
+  fail('api/binance-reconcile.js must require a paired Zenith device');
+}
+if (!binanceReconcile.includes("'MISMATCH'") || !binanceReconcile.includes('failClosed')) {
+  fail('api/binance-reconcile.js must fail closed on Binance/runtime mismatches');
+}
+
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
 if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'")) {
   fail('api/zenith-sync.js must keep the explicit real-trading environment lock');
