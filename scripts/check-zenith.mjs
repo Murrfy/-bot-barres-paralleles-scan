@@ -52,6 +52,9 @@ for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batch
 if (!binanceRead.includes("'UNAUTHORIZED_DEVICE'") || !binanceRead.includes('requireZenithDevice')) {
   fail('api/binance-read.js must require a paired Zenith device');
 }
+if (!binanceRead.includes('/fapi/v1/openAlgoOrders')) {
+  fail('api/binance-read.js must count Binance algo TP/SL orders');
+}
 
 const binanceReconcile = fs.readFileSync('api/binance-reconcile.js', 'utf8');
 for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
@@ -64,6 +67,9 @@ if (!binanceReconcile.includes("'UNAUTHORIZED_DEVICE'") || !binanceReconcile.inc
 }
 if (!binanceReconcile.includes("'MISMATCH'") || !binanceReconcile.includes('failClosed')) {
   fail('api/binance-reconcile.js must fail closed on Binance/runtime mismatches');
+}
+if (!binanceReconcile.includes('/fapi/v1/openAlgoOrders')) {
+  fail('api/binance-reconcile.js must reconcile Binance algo TP/SL orders');
 }
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
