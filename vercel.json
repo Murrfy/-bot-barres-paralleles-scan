@@ -1,9 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["dxb1"],
   "functions": {
     "api/binance-read.js": {
-      "maxDuration": 10,
-      "regions": ["dxb1"]
+      "maxDuration": 10
     }
   }
 }
