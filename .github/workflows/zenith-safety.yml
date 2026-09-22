@@ -1,0 +1,27 @@
+name: Zenith Safety Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Check HTML and safety invariants
+        run: node scripts/check-zenith.mjs
+      - name: Check Binance read API syntax
+        run: node --check api/binance-read.js
+      - name: Check Zenith sync API syntax
+        run: node --check api/zenith-sync.js
