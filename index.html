@@ -3,761 +3,317 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
-<meta name="theme-color" content="#080d14">
-<title>Bot Barres Parallèles — Manuel</title>
+<meta name="theme-color" content="#07111d">
+<title>Zenith — Sans graphique</title>
 <style>
-:root{--bg:#080d14;--panel:#0e1622;--panel2:#101b2b;--line:#26364d;--muted:#8ea0b8;--txt:#ecf3fb;--green:#22c55e;--red:#ef4444;--cyan:#22d3ee;--amber:#f59e0b;--violet:#a78bfa}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html{scroll-behavior:smooth}html,body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{min-height:100vh;overscroll-behavior-y:auto}button,input,select{font:inherit}main{max-width:1160px;margin:auto;padding:10px 8px 70px}h1{font-size:20px;margin:2px 0}.sub{font-size:11px;color:var(--muted);margin:2px 0 8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}.liveBadge{font-size:10px;font-weight:800;border:1px solid #166534;color:#86efac;border-radius:999px;padding:2px 7px;background:#052e16}.liveBadge.off{border-color:#7f1d1d;color:#fca5a5;background:#450a0a}.toolbar{display:flex;gap:5px;flex-wrap:wrap;align-items:center}.btn{appearance:none;border:1px solid #3b4c64;background:#142033;color:#f8fafc;border-radius:8px;padding:7px 10px;font-weight:750;font-size:12px;min-height:32px}.btn:active{transform:scale(.985)}.btn.primary{border-color:#0e7490;background:#0d3441}.btn.danger{border-color:#991b1b;background:#3f0d12;color:#fecaca}.btn.good{border-color:#166534;background:#092f1c;color:#bbf7d0}.btn.ghost{background:transparent}.btn:disabled{opacity:.42}.status{font-size:11px;color:#a7f3d0;min-height:16px;margin:6px 1px}.status.err{color:#fca5a5}.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin:6px 0}.kpi{background:var(--panel);border:1px solid #24344a;border-radius:7px;padding:4px 5px;min-height:43px}.kpi b{display:block;font-size:15px;line-height:18px;overflow:hidden;text-overflow:ellipsis}.kpi span{font-size:9px;color:var(--muted);white-space:nowrap}.kpi.gain b{color:#4ade80}.kpi.loss b{color:#f87171}.sectionTitle{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 2px 4px;font-size:13px;font-weight:800}.tablebox{position:relative;overflow:auto;border:1px solid #24344a;border-radius:8px;background:#0b1320;max-height:none;touch-action:pan-y;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}.selectionTable{min-width:100%;width:100%}table{width:100%;border-collapse:collapse;font-size:10.5px}th,td{padding:5px 5px;border-bottom:1px solid #1d2a3c;text-align:right;white-space:nowrap;height:29px}th{position:sticky;top:0;z-index:3;background:#101a29;color:#cbd5e1;font-weight:700}th:nth-child(2),td:nth-child(2),th:last-child,td:last-child{text-align:left}th:last-child{position:sticky;right:0;z-index:5;background:#101a29}tbody tr{cursor:pointer;position:relative}tr.selected{background:#16263a}tr.worked td:nth-child(2){color:#4ade80;font-weight:800}tr.worked td:nth-child(2)::after{content:' ✓';color:#4ade80}.perp{display:inline-block;margin-left:4px;padding:1px 3px;border:1px solid #31526c;border-radius:4px;color:#93c5fd;font-size:8px;vertical-align:1px}.statuscell{position:sticky!important;right:0;z-index:2;min-width:86px;background:#0b1320;border-left:1px solid #24344a}.trashbtn{display:none;position:absolute;right:3px;top:2px;bottom:2px;border:0;border-radius:6px;background:#b91c1c;color:#fff;font-weight:900;padding:0 10px;font-size:13px}.swiped .trashbtn{display:block;z-index:8}.swiped .statuscell{background:#3f0d12}.swiped .statusText{visibility:hidden}.activeWrap{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:5px 0}.posCard{border:1px solid #2b3e58;background:#0e1725;border-radius:9px;padding:8px}.posTop{display:flex;justify-content:space-between;gap:8px;align-items:center}.posSym{font-weight:900;font-size:13px}.posPnl{font-weight:900;font-size:16px}.posPnl.pos{color:#4ade80}.posPnl.neg{color:#f87171}.posGrid{display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;margin-top:6px;font-size:10px}.posGrid span:nth-child(odd){color:var(--muted)}.protectOn{color:#4ade80;font-weight:800}.protectOff{color:#fbbf24;font-weight:800}.miniTrack{position:relative;height:12px;border-radius:6px;background:linear-gradient(90deg,#3f0d12 0 25%,#172033 25% 55%,#163b2d 55% 100%);margin:7px 0 6px;border:1px solid #2c3b50}.miniTrack i{position:absolute;top:-3px;width:3px;height:16px;border-radius:2px;background:white;box-shadow:0 0 5px #fff}.chartbox{border:1px solid #24344a;border-radius:9px;background:#0b1320;overflow:hidden}.chartToolbar{display:flex;align-items:center;gap:4px;flex-wrap:nowrap;padding:6px;border-bottom:1px solid #1e2c3f;overflow-x:auto;overflow-y:hidden;white-space:nowrap;-webkit-overflow-scrolling:touch}.tf{padding:5px 8px;min-height:27px;font-size:10px}.tf.on{border-color:#0e7490;background:#0d3441}.chartLabels{display:flex;gap:6px;align-items:center;font-size:9px;color:var(--muted);margin-left:auto}.tagBot{color:#67e8f9}.canvasWrap{position:relative;touch-action:pan-y;overflow:hidden;user-select:none;-webkit-user-select:none}.canvasWrap canvas{display:block;width:100%;height:430px;background:#080d14;touch-action:pan-y}.barHandle{position:absolute;z-index:6;width:40px;height:40px;margin:-20px 0 0 -20px;padding:0;border:0;background:transparent;border-radius:50%;touch-action:none;display:none}.barHandle::after{content:"";position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:#22d3ee;box-shadow:0 0 0 1px #083344}.barHandle.med::after{background:#f59e0b;box-shadow:0 0 0 1px #451a03}.barHandle.len::after{width:9px;height:9px;margin:-4.5px 0 0 -4.5px;background:#f8fafc;box-shadow:0 0 0 1px #334155}.priceScaleTouch{position:absolute;z-index:5;right:0;top:0;bottom:0;width:78px;touch-action:none;background:transparent}.sectionTitle,.tablebox,.chartbox{scroll-margin-top:8px}.chartActions{display:flex;gap:4px;flex-wrap:wrap;align-items:center;padding:0;border:0}.chartToolbar .chartActions{order:2}.barHandle.sale::after{background:#ef4444;box-shadow:0 0 0 1px #7f1d1d}.field input[readonly]{color:#f8fafc;background:#101827;border-style:dashed}.saleHint{color:#fca5a5}.draftTag{display:none!important}.validatedTag{font-size:10px;padding:3px 6px;border-radius:999px;border:1px solid #166534;color:#bbf7d0;background:#052e16}.modal{position:fixed;inset:0;background:#020617d9;display:none;align-items:flex-end;justify-content:center;z-index:40}.modal.open{display:flex}.sheet{width:min(720px,100%);max-height:91vh;overflow:auto;background:#0d1522;border:1px solid #2a3b54;border-radius:15px 15px 0 0;padding:10px}.sheetHead{display:flex;justify-content:space-between;align-items:center;gap:8px}.sheetHead h3{margin:0;font-size:16px}.tabs{display:flex;gap:4px;margin:9px 0}.tab{flex:1}.tab.on{background:#12314a;border-color:#256d92}.pane{display:none}.pane.on{display:block}.formgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.field{display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--muted)}.field input,.field select{width:100%;background:#09111d;color:var(--txt);border:1px solid #34465f;border-radius:7px;padding:8px;font-size:12px}.checkrow{display:flex;align-items:center;gap:7px;font-size:11px;margin:6px 0}.hint{font-size:9px;color:#71839a;line-height:1.35}.modalFooter{display:flex;gap:6px;justify-content:flex-end;margin-top:10px}.historyTotals{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}.historyTotal{border:1px solid #2a3b54;background:#0a1320;border-radius:8px;padding:8px}.historyTotal b{display:block;font-size:17px}.historyTotal.g b{color:#4ade80}.historyTotal.l b{color:#f87171}.pnlCell.pos{color:#4ade80;font-weight:900}.pnlCell.neg{color:#f87171;font-weight:900}.fsBtn{margin-left:auto}.fullscreenChart{position:fixed!important;inset:0!important;z-index:80!important;background:#080d14!important;border-radius:0!important}.fullscreenChart .canvasWrap canvas{height:calc(100vh - 98px)!important}.empty{font-size:10px;color:var(--muted);padding:10px}.dangerZone{margin-top:9px;padding-top:9px;border-top:1px solid #29384e}.noteBadge{font-size:9px;color:#93c5fd}.closeNow{width:100%;margin-top:7px}.twoCols{display:grid;grid-template-columns:1fr 1fr;gap:6px}.syncWarn{font-size:9px;color:#fbbf24;margin-top:5px}.sectionTools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}.jumpBtn{min-height:24px;padding:3px 7px;font-size:9px}.lockedHint{color:#86efac;font-weight:800}
-@media(max-width:720px){main{padding:7px 5px 55px}.activeWrap{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.kpi{padding:3px 4px;min-height:39px}.kpi b{font-size:13px}.kpi span{font-size:8px}.canvasWrap canvas{height:390px}.btn{padding:6px 8px;font-size:11px}.formgrid{grid-template-columns:1fr 1fr}.selectionTable{min-width:100%;width:100%}th,td{height:27px;padding:4px}}
-@media(max-width:420px){.kpi span{font-size:7.5px}.chartLabels{width:auto;margin-left:0;flex:0 0 auto}.formgrid{grid-template-columns:1fr}.canvasWrap canvas{height:360px}}
+:root{--bg:#07111d;--panel:#0c1726;--panel2:#101d2f;--line:#233650;--text:#eef6ff;--muted:#91a3ba;--green:#22c55e;--red:#ef4444;--cyan:#22d3ee;--amber:#f59e0b}
+:root[data-theme="light"]{--bg:#eef3f8;--panel:#ffffff;--panel2:#f5f8fb;--line:#c9d5e3;--text:#132033;--muted:#5f7187;--green:#15803d;--red:#dc2626;--cyan:#0891b2;--amber:#d97706}
 
-@media (orientation:landscape){
-  html,body{width:100%;min-width:100%;overflow-x:hidden}
-  main{max-width:none;width:100%;padding:4px 5px 28px}
-  h1{font-size:15px;margin:0 0 2px}
-  .sub{font-size:9px;margin:1px 0 4px}
-  .toolbar{gap:3px;flex-wrap:nowrap;overflow-x:auto}
-  .toolbar .btn,.chartToolbar .btn{min-height:26px;padding:4px 7px;font-size:9px}
-  .kpis{margin:3px 0;gap:3px}
-  .kpi{min-height:34px;padding:2px 4px}.kpi b{font-size:12px}.kpi span{font-size:7px}
-  .sectionTitle{margin:4px 2px 2px;font-size:11px}
-  .selectionTable{min-width:0!important;width:100%;table-layout:auto}
-  .selectionTable th,.selectionTable td{height:22px;padding:2px 3px;font-size:8px}
-  .selectionTable .perp{font-size:6px;margin-left:2px}
-  .statuscell{min-width:65px}
-  .chartToolbar{gap:3px;padding:4px;overflow-x:auto;flex-wrap:nowrap}
-  .chartLabels{display:none}
-  .canvasWrap canvas{height:calc(100vh - 118px);min-height:300px}
-  .fullscreenChart .canvasWrap canvas{height:calc(100vh - 42px)!important}
-  .chartActions{gap:3px;flex-wrap:nowrap}
-  .activeWrap{grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
-  .posCard{padding:5px}.posGrid{font-size:8px}
-  .tablebox{max-width:100%;overflow:auto}
-}
-
+:root[data-theme="light"] .btn{background:#edf3f8;border-color:#aebfd0;color:#132033}
+:root[data-theme="light"] .btn.primary{background:#dff3f8;border-color:#67b8ca;color:#12303a}
+:root[data-theme="light"] .btn.good{background:#e5f6eb;border-color:#7bbf91;color:#14532d}
+:root[data-theme="light"] .btn.danger,:root[data-theme="light"] .trashMini{background:#fde8e8;border-color:#e2a2a2;color:#991b1b}
+:root[data-theme="light"] .live{background:#fde8e8;border-color:#e2a2a2;color:#991b1b}
+:root[data-theme="light"] .live.on{background:#e5f6eb;border-color:#7bbf91;color:#166534}
+:root[data-theme="light"] .selectionTable th{background:#e7edf4;color:#334155}
+:root[data-theme="light"] .selectionTable th,:root[data-theme="light"] .selectionTable td{border-bottom-color:#d8e1ea}
+:root[data-theme="light"] .selectionTable tbody tr.sel{background:#e8f0f8}
+:root[data-theme="light"] .selectionTable tbody tr.activeRow{background:#e8f7ee}
+:root[data-theme="light"] .selectionTable tbody tr.validRow:not(.activeRow){background:#e6f4f7}
+:root[data-theme="light"] .tab.on{background:#dcecf8;border-color:#77a9c8}
+:root[data-theme="light"] .profitPreview,:root[data-theme="light"] .posCard{background:#f7fafc;border-color:#cbd5e1;color:#334155}
+:root[data-theme="light"] .posRefresh{background:#edf3f8;border-color:#aebfd0;color:#132033}
+:root[data-theme="light"] .warning{background:#fff2e8;border-color:#e4b08e;color:#9a3412}
+:root[data-theme="light"] .divider{background:#d8e1ea}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}button,input,select{font:inherit}button{touch-action:manipulation}.app{padding:7px}.top{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:6px}.brand{font-size:18px;font-weight:900;margin-right:auto}.sub{color:var(--muted);font-size:9px}.live{border:1px solid #7f1d1d;background:#3f0d12;color:#fecaca;padding:2px 7px;border-radius:999px;font-weight:900}.live.on{border-color:#166534;background:#052e16;color:#bbf7d0}.btn{border:1px solid #344963;background:#142338;color:var(--text);border-radius:8px;min-height:31px;padding:6px 9px;font-size:10px;font-weight:900}.btn.primary{background:#0d3441;border-color:#0e7490}.btn.good{background:#0c3320;border-color:#166534;color:#bbf7d0}.btn.danger{background:#3f0d12;border-color:#991b1b;color:#fecaca}.btn:disabled{opacity:.4}.status{min-height:18px;font-size:10px;color:#a7f3d0;margin:4px 1px}.status.err{color:#fca5a5}.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) minmax(130px,1.55fr);gap:4px;margin-bottom:7px}.kpi{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:5px;min-height:41px}.kpi b{display:block;font-size:14px}.kpi span{display:block;color:var(--muted);font-size:8px;white-space:nowrap}.walletKpi{min-width:130px}.walletKpi span{white-space:normal;line-height:1.15;overflow-wrap:anywhere}.dashboard{display:grid;grid-template-columns:minmax(190px,.72fr) minmax(520px,2.2fr) minmax(300px,1.05fr);gap:7px;align-items:start}.panel{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:7px;min-width:0}.panel h2{font-size:12px;margin:0 0 6px}.panelTitle{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px}.hint{font-size:9px;color:var(--muted);line-height:1.35}.field{display:flex;flex-direction:column;gap:3px;color:var(--muted);font-size:9px;margin-bottom:6px}.field input,.field select{width:100%;background:var(--panel2);color:var(--text);border:1px solid #344b69;border-radius:7px;padding:7px;font-size:11px}.row{display:flex;gap:5px;align-items:center}.row>*{min-width:0}.row input{flex:1}.searchBox{margin-bottom:7px}.selectedCard{border:1px solid #2b405d;background:var(--panel2);border-radius:8px;padding:7px;margin-top:7px;cursor:pointer}.selectedCard b{font-size:13px}.tablebox{border:1px solid var(--line);border-radius:8px;overflow:auto;max-height:calc(100vh - 145px);-webkit-overflow-scrolling:touch}.selectionTable{min-width:810px;width:100%;border-collapse:collapse;font-size:9px}.selectionTable th,.selectionTable td{padding:5px;border-bottom:1px solid #1d2b3e;white-space:nowrap;text-align:right;height:28px}.selectionTable th{position:sticky;top:0;background:#101c2c;z-index:2;color:#cbd5e1}.selectionTable th:nth-child(2),.selectionTable td:nth-child(2),.selectionTable th:last-child,.selectionTable td:last-child{text-align:left}.selectionTable tbody tr{cursor:pointer}.selectionTable tbody tr.sel{background:#15263b}.selectionTable tbody tr.activeRow{background:#0b271b}.selectionTable tbody tr.validRow:not(.activeRow){background:#0b2230}.trashMini{border:0;background:#3f0d12;color:#fecaca;border-radius:6px;min-width:28px;min-height:24px}.trashMini:disabled{opacity:.28}.tabs{display:flex;gap:4px;margin-bottom:6px}.tab{flex:1}.tab.on{background:#12314a;border-color:#256d92}.pane{display:none}.pane.on{display:block}.checkrow{display:flex;gap:7px;align-items:center;font-size:10px;margin:7px 0}.formgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}.protectionTitle{display:flex;align-items:center;gap:6px}.protectionTitle input{width:15px;height:15px;margin:0}.protectionGrid{display:grid;grid-template-columns:1fr 1fr;column-gap:0;margin-top:4px}.protectionColumn{min-width:0;padding-right:5px}.protectionColumn+.protectionColumn{border-left:1px solid var(--line);padding-left:5px;padding-right:0}.protectionHead,.protectionItem{display:grid;grid-template-columns:14px 18px minmax(38px,1fr) 9px minmax(38px,1fr);gap:2px;align-items:center;min-width:0}.protectionHead{padding:0 0 3px;color:var(--muted);font-size:7px;text-align:center}.protectionHead .armHead{grid-column:3}.protectionHead .floorHead{grid-column:5}.protectionItem{min-height:25px;padding:2px 0;border-bottom:1px solid var(--line)}.protectionItem input[type="checkbox"]{width:13px;height:13px;margin:0}.protectionNum{font-size:8px;font-weight:900;text-align:center;color:#cbd5e1}.protectionItem input[type="number"]{width:100%;min-width:0;background:var(--panel2);color:var(--text);border:1px solid #344b69;border-radius:4px;padding:2px 1px;font-size:8px;text-align:center;height:20px}.protectionArrow{font-size:8px;text-align:center;color:var(--muted)}.profitPreview{padding:7px;border:1px solid #2a3e59;border-radius:8px;background:var(--panel2);color:#cbd5e1;font-size:11px;font-weight:900;margin:6px 0}.activeWrap{display:grid;grid-template-columns:1fr;gap:6px;max-height:38vh;overflow:auto}.posCard{border:1px solid #2a3e59;background:#0d1827;border-radius:9px;padding:7px}.posTop{display:flex;justify-content:space-between;align-items:center;gap:7px}.posSym{font-weight:900}.posLive{display:flex;align-items:center;gap:6px}.posElapsed{color:#f87171;font-size:11px;font-weight:900;font-variant-numeric:tabular-nums}.posRefresh{border:1px solid #344963;background:#142338;color:#e2e8f0;border-radius:50%;width:27px;height:27px;padding:0;font-size:16px;font-weight:900}.closeNowMini{display:block;width:auto;min-width:0;margin:5px 0 0 auto;padding:2px 5px;min-height:20px;font-size:7px;border-radius:5px}.missedStatus{color:#ff4d4d!important;font-weight:1000}.waitingStatus{color:#f59e0b!important;font-weight:900}.posPnl{font-size:15px;font-weight:900}.posPnl.pos{color:#4ade80}.posPnl.neg{color:#f87171}.posGrid{display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;margin-top:6px;font-size:9px}.posGrid span:nth-child(odd){color:var(--muted)}.history{max-height:26vh;overflow:auto}.history table{width:100%;border-collapse:collapse;font-size:8px}.history th,.history td{padding:4px;border-bottom:1px solid #1e2e43;text-align:right;white-space:nowrap}.history th:first-child,.history td:first-child{text-align:left}.actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}.divider{height:1px;background:#1f3046;margin:7px 0}.warning{border:1px solid #7c2d12;background:#2b1308;color:#fed7aa;border-radius:8px;padding:6px;font-size:9px;margin-top:6px}.botOption{display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px solid var(--line);padding:8px 0}.botOption:last-child{border-bottom:0}.botOption label{font-size:10px;font-weight:800}.botOption input[type="checkbox"]{width:20px;height:20px}.botOption select,.botOption input[type="number"]{width:120px;background:var(--panel2);color:var(--text);border:1px solid #344b69;border-radius:7px;padding:7px}
+@media(max-width:1000px){.dashboard{grid-template-columns:minmax(180px,.75fr) minmax(500px,2.1fr);}.rightPanel{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:7px}.rightPanel>.block{min-width:0}}
+@media(max-width:760px){.dashboard{display:flex;flex-direction:column}.panel{width:100%}.rightPanel{display:block}.tablebox{max-height:52vh}.kpis{grid-template-columns:repeat(4,minmax(0,1fr)) minmax(130px,1.6fr)}.kpi b{font-size:11px}.kpi span{font-size:7px}}
+@media(orientation:landscape){.app{padding:4px;overflow-x:auto}.top{margin-bottom:3px}.brand{font-size:15px}.btn{min-height:27px;padding:4px 7px;font-size:9px}.status{margin:2px 0}.kpi{min-height:34px;padding:3px}.dashboard{display:grid;grid-template-columns:190px minmax(440px,1fr) 310px;gap:4px;min-width:950px;align-items:start}.rightPanel{grid-column:auto;display:block}.rightPanel>.block{min-width:0}.panel{padding:5px}.selectionTable th,.selectionTable td{height:23px;padding:2px 4px;font-size:8px}.tablebox{max-height:calc(100vh - 112px)}#tokenSettingsBlock{scroll-margin-inline:8px}}
 </style>
 </head>
 <body>
-<main>
-  <h1>Bot Barres Parallèles — Manuel</h1>
-  <div class="sub">Binance Futures USDⓈ-M PERP · géométrie 1H · simulation uniquement · aucun ordre réel · v3.30 SOURCE <span id="liveBadge" class="liveBadge off">LIVE 0</span></div>
-  <div class="toolbar">
-    <button class="btn primary" id="scanBtn">Scanner</button>
-    <button class="btn" id="settingsBtn">⚙️ Réglages</button>
-    <button class="btn" id="historyBtn">Historique achats / ventes</button>
-    <button class="btn" id="resetClosedBtn">Réinitialiser gains / fermés</button>
-    <button class="btn danger" id="resetSimBtn">Réinitialiser simulation</button>
+<div class="app">
+  <div class="top">
+    <div><div class="brand">Zenith — Bot sans graphique</div><div class="sub">Binance Futures USDⓈ-M · PERP USDT · simulation uniquement</div></div>
+    <span id="liveBadge" class="live">LIVE 0</span>
+    <span id="accountBadge" class="live">BINANCE —</span>
+    <button id="resetClosedBtn" class="btn">Réinitialiser gains / fermés</button>
+    <button id="resetSimBtn" class="btn danger">Réinitialiser simulation</button>
   </div>
-  <div id="status" class="status">Initialisation…</div>
+  <div id="status" class="status">Prêt.</div>
   <div class="kpis">
-    <div class="kpi"><b id="kWatch">0</b><span>BUY surveillés</span></div>
+    <div class="kpi"><b id="kWatch">0</b><span>achats surveillés</span></div>
     <div class="kpi"><b id="kActive">0/3</b><span>positions actives</span></div>
-    <div class="kpi gain"><b id="kGains">+$0.00</b><span>gains cumulés</span></div>
-    <div class="kpi loss"><b id="kLosses">-$0.00</b><span>pertes cumulées</span></div>
+    <div class="kpi"><b id="kGain">+$0.00</b><span>gains cumulés</span></div>
+    <div class="kpi"><b id="kLoss">-$0.00</b><span>pertes cumulées</span></div>
+    <div class="kpi walletKpi"><b id="kWallet">—</b><span id="kWalletSub">portefeuille Futures Binance · lecture seule</span></div>
   </div>
 
-  <div id="activeSection" style="display:none">
-    <div class="sectionTitle"><span>Positions actives</span><span class="noteBadge" id="activeMaxNote">maximum 3 achetées simultanément</span></div>
+  <section class="panel" id="activePositionsPanel" style="margin-bottom:7px">
+    <div class="panelTitle"><h2>Positions actives</h2><span id="activeLimitNote" class="hint"></span></div>
     <div id="activeWrap" class="activeWrap"></div>
-  </div>
+  </section>
 
-  <div class="sectionTitle"><span>Sélection</span><span class="sectionTools"><button class="btn ghost jumpBtn" id="jumpChartBtn">↓ Graphe</button><span id="selectionCount" class="noteBadge"></span></span></div>
-  <div class="tablebox">
-    <table class="selectionTable"><thead><tr><th>#</th><th>Jeton</th><th>Prix</th><th>SUP</th><th>MED</th><th>INF</th><th>BUY</th><th>Prix vente</th><th>Distance</th><th>Statut</th></tr></thead><tbody id="topBody"></tbody></table>
-  </div>
-
-  <div class="sectionTitle"><span id="chartTitle">Graphique</span><span class="sectionTools"><button class="btn ghost jumpBtn" id="jumpListBtn">↑ Liste</button><span id="editState" class="validatedTag" style="display:none"></span></span></div>
-  <div class="chartbox" id="chartBox">
-    <div class="chartToolbar">
-      <button class="btn tf" data-tf="1m">1m</button><button class="btn tf" data-tf="5m">5m</button><button class="btn tf on" data-tf="1h">1H</button><button class="btn tf" data-tf="4h">4H</button><button class="btn tf" data-tf="1d">1J</button>
-      <button class="btn good" id="immediateBuyBtn">ACHAT IMMÉDIAT</button>
-      <button class="btn danger" id="manualSaleBtn">VENTE MANUELLE</button>
-      <div class="chartActions">
-        <button class="btn good" id="validateBtn">✓ Valider</button>
-        <button class="btn" id="cancelBtn">↩ Annuler</button>
-        <button class="btn" id="unlockBtn" style="display:none">🔓 Dévalider</button>
-        <button class="btn" id="resetViewBtn">Recentrer</button>
-        <button class="btn" id="centerBarsBtn">Centrer barres</button>
-        <span id="buyLegend" class="noteBadge"></span>
+  <div class="dashboard">
+    <section class="panel">
+      <div class="panelTitle"><h2>Jetons activés / surveillés</h2><span id="selectionCount" class="hint">0 jeton(s)</span></div>
+      <div class="tablebox">
+        <table class="selectionTable">
+          <thead><tr><th>#</th><th>Jeton</th><th>Prix actuel</th><th>Achat déterminé</th><th>Vente déterminée</th><th>Distance achat</th><th>Statut</th><th></th></tr></thead>
+          <tbody id="selectionBody"></tbody>
+        </table>
       </div>
-      <div class="chartLabels"><span class="tagBot">Canal unique · ACTIF BOT</span></div>
-      <button class="btn fsBtn" id="fullBtn">⛶</button>
-    </div>
-    <div class="canvasWrap" id="canvasWrap"><canvas id="chart"></canvas><div id="priceScaleTouch" class="priceScaleTouch" aria-label="Zoom vertical"></div><button id="handleSup" class="barHandle" aria-label="Déplacer SUP"></button><button id="handleMed" class="barHandle med" aria-label="Déplacer le canal"></button><button id="handleInf" class="barHandle" aria-label="Déplacer INF"></button><button id="handleLenLeft" class="barHandle len" aria-label="Allonger ou raccourcir les barres à gauche"></button><button id="handleLenRight" class="barHandle len" aria-label="Allonger ou raccourcir les barres à droite"></button><button id="handleSale" class="barHandle sale" aria-label="Déplacer le prix de vente"></button></div>
-  </div>
-</main>
+    </section>
 
-<div class="modal" id="settingsModal"><div class="sheet">
-  <div class="sheetHead"><h3>Réglages</h3><button class="btn" data-close="settingsModal">✕</button></div>
-  <div class="tabs"><button class="btn tab on" data-pane="generalPane">Général</button><button class="btn tab" data-pane="scanPane">Scan</button><button class="btn tab" data-pane="tokenPane">Jeton</button></div>
-  <div id="generalPane" class="pane on">
-    <div class="formgrid">
-      <label class="field">Marge ($)<input id="gMargin" type="number" min="1" step="1"></label>
-      <label class="field">Levier (x)<input id="gLev" type="number" min="1" step="1"></label>
-      <label class="field">Objectif gain ($)<input id="gTarget" type="number" min="1" step="1"></label>
-      <label class="field">Perte maximale ($)<input id="gLoss" type="number" min="1" step="1"></label>
-      <label class="field">BUY au-dessus de INF (%)<input id="gOffset" type="number" min="0" step="0.01"></label>
-      <label class="field">Activation protection ($)<input id="gProtArm" type="number" min="0" step="1"></label>
-      <label class="field">Gain minimum protégé ($)<input id="gProtFloor" type="number" min="0" step="1"></label><label class="field">Positions actives max<input id="gMaxActive" type="number" min="1" step="1"></label>
-    </div>
-    <div class="hint">Valeurs par défaut : objectif +40 $, activation +30 $, gain protégé +20 $, perte max -40 $. Chaque achat inclut un stop-limit simulé : déclenchement 1 $ avant la perte max, limite exactement à la perte max.</div>
-  </div>
-  <div id="scanPane" class="pane">
-    <div class="formgrid">
-      <label class="field">Nombre de jetons à scanner<input id="sCount" type="number" min="10" max="200" step="10"></label>
-      <label class="field">Prix maximum du jeton (USDT)<input id="sMaxPrice" type="number" min="0.00000001" step="any"></label>
-    </div>
-    <label class="checkrow"><input id="sRecent" type="checkbox"> Priorité aux nouveaux jetons</label>
-    <label class="checkrow"><input id="sAuto" type="checkbox"> Scan automatique à l’ouverture</label>
-    <button class="btn" id="restoreDismissedBtn">Réintégrer les jetons supprimés</button>
-    <div id="scanMeta" class="hint" style="margin-top:7px"></div>
-  </div>
-  <div id="tokenPane" class="pane">
-    <div id="tokenName" class="sectionTitle" style="margin-top:0"><span>Aucun jeton sélectionné</span></div>
-    <label class="checkrow"><input id="tOverride" type="checkbox"> Utiliser des réglages propres à ce jeton</label>
-    <div class="formgrid">
-      <label class="field">Marge ($)<input id="tMargin" type="number" min="1" step="1"></label>
-      <label class="field">Levier (x)<input id="tLev" type="number" min="1" step="1"></label>
-      <label class="field">Objectif gain ($)<input id="tTarget" type="number" min="1" step="1"></label>
-      <label class="field">Prix de vente pour cet objectif<input id="tTargetPricePreview" type="text" readonly value="—"></label>
-      <label class="field">Perte maximale ($)<input id="tLoss" type="number" min="1" step="1"></label>
-      <label class="field">Vendre à un prix précis<input id="tExactSale" type="checkbox" style="width:auto;align-self:flex-start;margin-top:7px"></label>
-      <label class="field">Prix de vente précis<input id="tExactSalePrice" type="number" min="0" step="any"></label>
-      <label class="field">BUY au-dessus de INF (%)<input id="tOffset" type="number" min="0" step="0.01"></label>
-      <label class="field">Activation protection ($)<input id="tProtArm" type="number" min="0" step="1"></label>
-      <label class="field">Gain minimum protégé ($)<input id="tProtFloor" type="number" min="0" step="1"></label>
-    </div>
-    <div class="hint">Exemple : activation +30 $, gain minimum protégé +20 $. Tu peux mettre +25, +30 ou une autre valeur, tant que le gain protégé reste inférieur ou égal au seuil d’activation.</div>
-    <button class="btn" id="tokenDefaultsBtn" style="margin-top:7px">Revenir aux valeurs par défaut</button>
-    <div id="closeNowZone" class="dangerZone" style="display:none"><button class="btn danger closeNow" id="closeNowSettingsBtn">FERMER MAINTENANT</button></div>
-  </div>
-  <div class="modalFooter"><button class="btn" data-close="settingsModal">Annuler</button><button class="btn good" id="saveSettingsBtn">Enregistrer</button></div>
-</div></div>
+    <section class="panel">
+      <div id="selectedCard" class="selectedCard" style="margin-top:0;margin-bottom:7px"><span class="hint">Jeton sélectionné</span><br><b id="selectedSymbolLabel">—</b><div id="selectedPriceLabel" class="hint">Prix : —</div></div>
+      <div class="divider"></div>
+      <h2>Recherche / Ajouter un jeton</h2>
+      <div class="row searchBox">
+        <input id="manualTokenInput" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="DOGS ou DOGSUSDT" style="background:#08111d;color:var(--text);border:1px solid #344b69;border-radius:7px;padding:7px;font-size:11px">
+        <button id="manualTokenAddBtn" class="btn primary">Ajouter</button>
+      </div>
+    </section>
 
-<div class="modal" id="historyModal"><div class="sheet">
-  <div class="sheetHead"><h3>Historique achats / ventes</h3><button class="btn" data-close="historyModal">✕</button></div>
-  <div class="historyTotals"><div class="historyTotal g"><span>Gagné</span><b id="histGain">+$0.00</b></div><div class="historyTotal l"><span>Perdu</span><b id="histLoss">-$0.00</b></div></div>
-  <div class="tablebox" style="max-height:62vh"><table style="min-width:600px"><thead><tr><th>Date / heure</th><th>Jeton</th><th>Prix achat</th><th>Prix sortie</th><th>Résultat</th></tr></thead><tbody id="histBody"></tbody></table></div>
-</div></div>
+    <section id="rightPanel" class="panel rightPanel">
+      <div id="tokenSettingsBlock" class="block">
+        <div class="panelTitle"><h2>Réglages</h2><span id="settingsSymbol" class="hint">—</span></div>
+        <div class="tabs">
+          <button class="btn tab on" data-pane="tokenPane">Jeton</button>
+          <button class="btn tab" data-pane="futuresPane">Détails Futures perpétuel</button>
+          <button class="btn tab" data-pane="botPane">BOT</button>
+        </div>
+
+        <div id="tokenPane" class="pane on">
+          <div id="tokenNoSelection" class="hint">Recherche ou sélectionne un jeton.</div><div id="tokenLockHint" class="warning" style="display:none"></div>
+          <div id="tokenSettingsWrap" style="display:none">
+            <label class="checkrow"><input id="tExactBuy" type="checkbox"> Achat à prix déterminé</label>
+            <label class="field">Prix déterminé d’achat<input id="tExactBuyPrice" type="text" inputmode="decimal" autocomplete="off"></label>
+            <label class="checkrow"><input id="tExactSale" type="checkbox"> Vente à prix déterminé</label>
+            <label class="field">Prix déterminé de vente<input id="tExactSalePrice" type="text" inputmode="decimal" autocomplete="off"></label>
+            <div id="tExactProfit" class="profitPreview">Bénéfice prévu : —</div>
+            <div class="formgrid">
+              <label class="field">Objectif gain ($)<input id="tTarget" type="number" min="1" step="1"></label>
+              <label class="field">Prix objectif calculé<input id="tTargetPreview" readonly></label>
+              <label class="field">Perte maximale ($)<input id="tMaxLoss" type="number" min="2" step="1"></label>
+            </div>
+            <div class="actions"><button id="saveTokenBtn" class="btn good">Enregistrer le jeton</button><button id="instantBuyBtn" class="btn primary">Achat immédiat</button><button id="devalidateBtn" class="btn danger">Annuler l’achat surveillé</button></div>
+            <div class="actions"><button id="tokenDefaultsBtn" class="btn">Réinitialiser réglages jeton</button><button id="tokenCloseNowBtn" class="btn danger">Fermer position</button></div>
+            <div class="warning" style="margin-top:8px">
+              <label class="protectionTitle"><input id="showProtectionsToggle" type="checkbox" checked aria-label="Afficher les protections progressives"><b>Protections progressives des gains</b></label>
+              <div id="protectionDetails">
+                <div id="protectionEditor"></div>
+                <div class="hint" id="protectionHint">29 protections indépendantes et modifiables. Par défaut : +105→+100 jusqu’à +2905→+2900, par tranches de 100 $. Si l’objectif augmente, Zenith ajoute automatiquement les protections utiles avant cet objectif. Elles ne changent qu’après « Enregistrer le jeton ».</div>
+              </div>
+            </div>
+            <div class="warning">Sans graphique : un jeton n’est surveillé pour achat que si « Achat à prix déterminé » est coché avec un prix supérieur à 0.</div>
+          </div>
+        </div>
+
+        <div id="futuresPane" class="pane">
+          <div class="panelTitle"><h2>Détails Futures perpétuel</h2><span id="futuresSymbol" class="hint">—</span></div>
+          <div id="futuresNoSelection" class="hint">Recherche ou sélectionne un jeton.</div>
+          <div id="futuresSettingsWrap" style="display:none">
+            <div class="formgrid">
+              <label class="field">Marge ($)<input id="fMargin" type="number" min="1" step="1"></label>
+              <label class="field">Levier x<input id="fLev" type="number" min="1" max="125" step="1"></label>
+            </div>
+            <div id="fSummary" class="hint">Marge : ISOLÉE · Notionnel : —</div>
+            <div id="fLimits" class="hint" style="margin-top:6px">Limites Binance : chargement…</div>
+            <button id="saveFuturesBtn" class="btn good" style="width:100%;margin-top:6px">Enregistrer Futures perpétuel</button>
+          </div>
+        </div>
+
+        <div id="botPane" class="pane">
+          <div class="panelTitle"><h2>BOT</h2><span class="hint">Réglages de Zenith</span></div>
+          <div class="botOption"><label for="bMaxActive">Positions maximum simultanées</label><input id="bMaxActive" type="number" min="1" max="20" step="1"></div>
+          <div class="botOption"><label for="bTheme">Affichage</label><select id="bTheme"><option value="dark">Nuit</option><option value="light">Jour</option></select></div>
+          <div class="botOption"><label for="bSound">Son lors d’un achat ou d’une vente</label><input id="bSound" type="checkbox"></div>
+          <div class="botOption"><label for="bVibrate">Vibration lors d’un achat ou d’une vente</label><input id="bVibrate" type="checkbox"></div>
+          <button id="saveBotBtn" class="btn good" style="width:100%;margin-top:8px">Enregistrer BOT</button>
+        </div>      </div>
+
+      <div class="block" style="margin-top:8px">
+        <div class="panelTitle"><h2>Historique</h2><span id="historyTotals" class="hint"></span></div>
+        <div class="history"><table><thead><tr><th>Date</th><th>Jeton</th><th>Achat</th><th>Vente</th><th>Chrono</th><th>P&amp;L</th><th>Motif</th></tr></thead><tbody id="historyBody"></tbody></table></div>
+      </div>
+    </section>
+  </div>
+</div>
 <script>
-const __mods={
-'./engine_v2':function(module,exports,require){
-'use strict';
-
-function red(c){ return c.c < c.o; }
-function bodyLo(c){ return Math.min(c.o,c.c); }
-function bodyHi(c){ return Math.max(c.o,c.c); }
-function mid(a,b){ return (a+b)/2; }
-
-function chooseUpperCandidates(cs, peak, riseStart){
-  const corr=[];
-  for(let i=peak;i<=Math.min(cs.length-1,peak+7);i++){
-    if(red(cs[i])) corr.push({i,u:cs[i].h,kind:'correction',rank:corr.length});
-    if(corr.length>=2) break;
+"use strict";
+const STORAGE_KEY='zenith_final3_v3_20260921';
+const LEGACY_KEY='';
+const API='https://fapi.binance.com';
+const DEFAULT_PROTECTIONS=Array.from({length:29},(_,i)=>({enabled:true,arm:105+i*100,floor:100+i*100}));
+function protectionCountForTarget(target){const t=Math.max(0,n(target,3000));return Math.max(0,Math.floor((t-106)/100)+1)}
+function defaultProtection(i){return{enabled:true,arm:105+i*100,floor:100+i*100}}
+const DEFAULTS={margin:1000,leverage:10,marginType:'ISOLATED',maxActive:3,targetProfit:3000,maxLoss:400,protectionStages:DEFAULT_PROTECTIONS,theme:'dark',sound:true,vibrate:true,showProtections:true};
+const $=id=>document.getElementById(id),n=(v,d=0)=>Number.isFinite(+v)?+v:d,parsePrice=(v,d=0)=>{if(typeof v==='number')return Number.isFinite(v)?v:d;let x=String(v??'').trim().replace(/\s/g,'');if(!x)return d;if(x.includes(',')&&!x.includes('.'))x=x.replace(',','.');else if(x.includes(',')&&x.includes('.')){const lc=x.lastIndexOf(','),ld=x.lastIndexOf('.');x=lc>ld?x.replace(/\./g,'').replace(',','.'):x.replace(/,/g,'')}const z=Number(x);return Number.isFinite(z)?z:d},clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),clone=x=>x==null?x:JSON.parse(JSON.stringify(x));
+const money=v=>`${v>=0?'+':'-'}$${Math.abs(n(v)).toFixed(2)}`;
+const price=v=>{v=n(v);if(!v)return '—';if(v>=1000)return v.toFixed(2);if(v>=1)return v.toFixed(4);if(v>=.01)return v.toFixed(6);return v.toPrecision(6)};
+const fmtDate=t=>new Date(t).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+let settings=clone(DEFAULTS),tokenSettings={},manualTokens={},validated={},revalidateBlock={},missedSignals={},openPositions=[],history=[],dismissed={},selectedSymbol='';
+let exchangeMap=new Map(),lastPrices=new Map(),ws=null,wsLive=false,fallbackTimer=null,uiRenderPending=false,wsSubscribed=new Set(),wsReconnectTimer=null,wsRequestId=1;
+const lastAggIds=new Map(),lastAggTimes=new Map(),recoveringSymbols=new Set(),pendingAggTrades=new Map();
+let cursorSaveTimer=null;
+let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
+function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
+function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
+function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}}
+async function refreshBinanceAccount(){try{const r=await fetch('/api/binance-read',{cache:'no-store',headers:{Accept:'application/json'}});let q={};try{q=await r.json()}catch(_){q={}}if(!r.ok||q?.ok!==true){binanceAccount={...binanceAccount,connected:false,configured:q?.code!=='MISSING_ENV',error:q?.error||`HTTP ${r.status}`};renderBinanceAccount();return false}const usdt=q?.usdt||{};binanceAccount={connected:true,configured:true,walletBalance:n(usdt.balance,n(usdt.walletBalance,NaN)),availableBalance:n(usdt.availableBalance,NaN),realPositions:Array.isArray(q.positions)?q.positions.length:0,openOrders:n(q.openOrders),latencyMs:n(q.latencyMs),lastOk:Date.now(),error:''};renderBinanceAccount();return true}catch(e){binanceAccount={...binanceAccount,connected:false,error:e?.message||'Connexion impossible'};renderBinanceAccount();return false}}
+function startBinanceAccountReadOnly(){if(binanceAccountTimer)clearInterval(binanceAccountTimer);refreshBinanceAccount();binanceAccountTimer=setInterval(refreshBinanceAccount,15000)}
+function notional(c){return n(c.binanceEffectiveNotional)>0?n(c.binanceEffectiveNotional):n(c.margin,100)*n(c.leverage,10)}
+function normalizeProtections(stages,target=3000){const src=Array.isArray(stages)?stages:[],count=Math.max(protectionCountForTarget(target),src.length&&target==null?src.length:0);return Array.from({length:count},(_,i)=>{const d=defaultProtection(i),x=src[i]||d;return{enabled:x.enabled!==false,arm:Math.max(0,n(x.arm,d.arm)),floor:Math.max(0,n(x.floor,d.floor))}})}
+function cfg(symbol){const t=tokenSettings[symbol]||{},base={...settings,...t};base.marginType='ISOLATED';base.protectionStages=normalizeProtections(t.protectionStages||settings.protectionStages,n(t.manualTargetProfit,n(t.targetProfit,settings.targetProfit)));if(t.exactBuyEnabled&&n(t.exactBuyPrice)>0&&t.exactSaleEnabled&&n(t.exactSalePrice)>0)base.targetProfit=((n(t.exactSalePrice)-n(t.exactBuyPrice))/n(t.exactBuyPrice))*notional(base);return base}
+function exactProfitFor(buy,sale,c){buy=n(buy);sale=n(sale);return buy>0&&sale>0?((sale-buy)/buy)*notional(c):null}
+function tokenExactBuy(symbol){const t=tokenSettings[symbol]||{};return t.exactBuyEnabled&&n(t.exactBuyPrice)>0?n(t.exactBuyPrice):0}
+function tokenExactSale(symbol){const t=tokenSettings[symbol]||{};return t.exactSaleEnabled&&n(t.exactSalePrice)>0?n(t.exactSalePrice):0}
+function openBySymbol(symbol){return openPositions.find(p=>p.symbol===symbol)||null}
+function trackedSymbols(){return new Set([...Object.keys(validated),...openPositions.map(p=>p.symbol)])}
+function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify({settings,tokenSettings,manualTokens,validated,revalidateBlock,missedSignals,openPositions,history,dismissed,selectedSymbol}))}
+function load(){try{const x=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');if(!x)return;settings={...clone(DEFAULTS),...x.settings};if(n(x.settings?.margin)===100)settings.margin=1000;if(n(x.settings?.targetProfit)===40)settings.targetProfit=3000;if(n(x.settings?.maxLoss)===40)settings.maxLoss=400;settings.marginType='ISOLATED';settings.protectionStages=normalizeProtections(settings.protectionStages,settings.targetProfit);tokenSettings=x.tokenSettings||{};for(const t of Object.values(tokenSettings)){if(n(t?.targetProfit)===40&&n(t?.manualTargetProfit,40)===40){t.targetProfit=3000;t.manualTargetProfit=3000}if(n(t?.maxLoss)===40)t.maxLoss=400;if(Array.isArray(t?.protectionStages)&&t.protectionStages.length===9)t.protectionStages=normalizeProtections(t.protectionStages,n(t.manualTargetProfit,n(t.targetProfit,settings.targetProfit)))};manualTokens=x.manualTokens||{};validated=x.validated||{};revalidateBlock=x.revalidateBlock||{};missedSignals=x.missedSignals||{};openPositions=x.openPositions||[];history=x.history||[];dismissed=x.dismissed||{};selectedSymbol=x.selectedSymbol||'';for(const [s,r] of Object.entries(manualTokens))if(n(r?.last)>0)lastPrices.set(s,n(r.last));for(const p of openPositions){if(!(n(p.openedAt)>0))p.openedAt=n(p.startedAt,n(p.createdAt,Date.now()));if(!(n(p.baseTargetProfit)>0))p.baseTargetProfit=Math.max(1,n(tokenSettings[p.symbol]?.manualTargetProfit,n(tokenSettings[p.symbol]?.targetProfit,settings.targetProfit)));if(n(p.entryPrice)>0)lastPrices.set(p.symbol,n(p.entryPrice));if(Number.isFinite(+p.lastAggId))lastAggIds.set(p.symbol,+p.lastAggId);if(Number.isFinite(+p.lastAggTime))lastAggTimes.set(p.symbol,+p.lastAggTime);p.marginType='ISOLATED';p.protectionStages=normalizeProtections(p.protectionStages,n(p.baseTargetProfit,n(p.targetProfit,settings.targetProfit)));p.protectionFloorActive=0;for(const st of p.protectionStages)if(st.enabled&&n(p.maxProfit)>=st.arm)p.protectionFloorActive=Math.max(n(p.protectionFloorActive),st.floor);if(!history.some(h=>h.symbol===p.symbol&&(h.status==='OPEN'||h.closedAt==null)&&n(h.openedAt)===n(p.openedAt)))history.push({symbol:p.symbol,entryPrice:p.entryPrice,exitPrice:null,pnl:null,reason:'ACHAT',openedAt:p.openedAt,closedAt:null,status:'OPEN'})}for(const [s,v] of Object.entries(validated)){if(Number.isFinite(+v?.lastAggId))lastAggIds.set(s,+v.lastAggId);if(Number.isFinite(+v?.lastAggTime))lastAggTimes.set(s,+v.lastAggTime)}expireWaitingSignals()}catch(_){}}
+async function jf(path){const r=await fetch(API+path,{cache:'no-store'});if(!r.ok)throw new Error(`Binance ${r.status}`);return r.json()}
+async function ensureExchange(force=false){if(exchangeMap.size&&!force)return;const info=await jf('/fapi/v1/exchangeInfo');exchangeMap.clear();for(const s of info.symbols||[]){if(!['PERPETUAL','TRADIFI_PERPETUAL'].includes(s.contractType)||s.quoteAsset!=='USDT'||s.status!=='TRADING')continue;const fm={};for(const f of s.filters||[])if(f?.filterType)fm[f.filterType]=f;exchangeMap.set(s.symbol,{contractType:s.contractType,onboardDate:n(s.onboardDate),underlyingType:s.underlyingType||'',underlyingSubType:s.underlyingSubType||[],pricePrecision:n(s.pricePrecision),quantityPrecision:n(s.quantityPrecision),filters:fm})}}
+function ruleNum(o,...keys){for(const k of keys){const v=n(o?.[k],NaN);if(Number.isFinite(v))return v}return 0}
+function stepDecimals(step){const x=String(step||'');if(!x.includes('.'))return 0;return Math.min(12,x.split('.')[1].replace(/0+$/,'').length)}
+function floorStep(v,step){v=n(v);step=n(step);if(!(step>0))return v;const q=Math.floor((v+step*1e-10)/step)*step;return Number(q.toFixed(stepDecimals(step)))}
+function alignedStep(v,min,step){v=n(v);min=n(min);step=n(step);if(!(step>0))return true;const z=(v-min)/step;return Math.abs(z-Math.round(z))<1e-7}
+function symbolRules(s){return exchangeMap.get(s)||null}
+function futuresDraft(s,margin,leverage,kind='LIMIT',refOverride=0){const r=symbolRules(s),ref=n(refOverride,n(tokenExactBuy(s),n(lastPrices.get(s)))),requestedNotional=n(margin)*n(leverage);if(!r||!(ref>0))return{ok:false,error:`Limites/prix Binance indisponibles pour ${s}.`};const lot=r.filters?.[kind==='MARKET'?'MARKET_LOT_SIZE':'LOT_SIZE']||r.filters?.LOT_SIZE||{},minQty=ruleNum(lot,'minQty'),maxQty=ruleNum(lot,'maxQty'),step=ruleNum(lot,'stepSize'),rawQty=requestedNotional/ref,qty=floorStep(rawQty,step),effectiveNotional=qty*ref,minNotional=ruleNum(r.filters?.MIN_NOTIONAL,'notional','minNotional'),notionalRule=r.filters?.NOTIONAL||{},notMin=ruleNum(notionalRule,'minNotional'),notMax=ruleNum(notionalRule,'maxNotional'),errors=[];if(!(qty>0))errors.push('quantité calculée nulle');if(minQty>0&&qty<minQty)errors.push(`quantité minimale ${minQty}`);if(maxQty>0&&qty>maxQty)errors.push(`quantité maximale ${maxQty}`);const minN=Math.max(minNotional,notMin);if(minN>0&&effectiveNotional+1e-9<minN)errors.push(`notionnel minimum $${minN}`);if(notMax>0&&effectiveNotional-1e-9>notMax)errors.push(`notionnel maximum $${notMax}`);return{ok:!errors.length,error:errors.join(' · '),rules:r,ref,requestedNotional,qty,effectiveNotional,minQty,maxQty,step,minNotional:minN,maxNotional:notMax}}
+function validateLimitPrice(s,pv,label){const r=symbolRules(s),f=r?.filters?.PRICE_FILTER;if(!f||!(pv>0))return'';const min=ruleNum(f,'minPrice'),max=ruleNum(f,'maxPrice'),tick=ruleNum(f,'tickSize');if(min>0&&pv<min)return`${label} inférieur au minimum Binance ${price(min)}`;if(max>0&&pv>max)return`${label} supérieur au maximum Binance ${price(max)}`;if(tick>0&&!alignedStep(pv,min,tick))return`${label} non conforme au pas Binance ${price(tick)}`;return''}
+function limitsText(s,margin,leverage){const d=futuresDraft(s,margin,leverage,'LIMIT'),r=symbolRules(s);if(!r)return'Limites Binance : non chargées';const lot=r.filters?.LOT_SIZE||{},pf=r.filters?.PRICE_FILTER||{},parts=[];const step=ruleNum(lot,'stepSize'),minQ=ruleNum(lot,'minQty'),maxQ=ruleNum(lot,'maxQty'),tick=ruleNum(pf,'tickSize');if(step>0)parts.push(`pas quantité ${step}`);if(minQ>0)parts.push(`min ${minQ}`);if(maxQ>0)parts.push(`max ${maxQ}`);if(tick>0)parts.push(`tick ${tick}`);if(d.minNotional>0)parts.push(`notionnel min $${d.minNotional}`);if(d.maxNotional>0)parts.push(`notionnel max $${d.maxNotional}`);if(d.qty>0)parts.push(`quantité calculée ${d.qty}`);parts.push('levier compte : contrôlé à la connexion Binance');return`Limites Binance : ${parts.join(' · ')}`}
+function showTokenPane(){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.pane==='tokenPane'));document.querySelectorAll('.pane').forEach(x=>x.classList.toggle('on',x.id==='tokenPane'));$('settingsSymbol').style.visibility='visible'}
+function openTokenSettings(symbol,scroll=true){if(!symbol)return;selectedSymbol=symbol;save();showTokenPane();renderAll();if(scroll){requestAnimationFrame(()=>{const el=$('tokenSettingsBlock');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest',inline:'end'})})}}
+async function addManualToken(){let symbol=($('manualTokenInput').value||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');if(!symbol)return setStatus('Entre le nom du jeton.',true);if(!symbol.endsWith('USDT'))symbol+='USDT';try{$('manualTokenAddBtn').disabled=true;let last=0,directFound=false;try{const t=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(symbol)}`);last=n(t?.price);directFound=last>0}catch(_){}if(!directFound){await ensureExchange(true);if(!exchangeMap.has(symbol))return setStatus(`${symbol} est introuvable sur Binance Futures USDⓈ-M.`,true);try{const t=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(symbol)}`);last=n(t?.price)}catch(_){}}if(!(last>0))return setStatus(`${symbol} existe peut-être sur Binance mais son prix Futures est indisponible actuellement.`,true);await ensureExchange();if(!exchangeMap.has(symbol))return setStatus(`${symbol} n’est pas actuellement négociable en Futures perpétuel USDT sur Binance.`,true);lastPrices.set(symbol,last);delete dismissed[symbol];$('manualTokenInput').value='';openTokenSettings(symbol,true);setStatus(`${symbol} trouvé sur Binance Futures USDⓈ-M. Réglages ouverts — il n’entrera dans la liste qu’après validation de la surveillance.`)}catch(e){setStatus(`Ajout impossible : ${e.message}`,true)}finally{$('manualTokenAddBtn').disabled=false}}
+function rowStatus(s){const m=missedSignals[s];if(m?.state==='expired')return 'OBJECTIF DÉPASSÉ !!';if(m?.state==='waiting')return `ATTENTE PLACE (${Math.max(0,Math.ceil((n(m.expiresAt)-Date.now())/1000))}s)`;if(openBySymbol(s))return 'ACTIF';if(validated[s]&&!revalidateBlock[s])return 'SURVEILLÉ';if(revalidateBlock[s])return 'À REVALIDER';return 'NON SURVEILLÉ'}
+function tableRows(){const by=new Map();for(const [s,r] of Object.entries(manualTokens))by.set(s,{symbol:s,last:n(lastPrices.get(s),r?.last),manual:true});for(const s of Object.keys(validated))if(!by.has(s))by.set(s,{symbol:s,last:n(lastPrices.get(s))});for(const s of Object.keys(missedSignals))if(!by.has(s))by.set(s,{symbol:s,last:n(lastPrices.get(s))});for(const p of openPositions)if(!by.has(p.symbol))by.set(p.symbol,{symbol:p.symbol,last:n(lastPrices.get(p.symbol),p.entryPrice)});const rows=[...by.values()];const rank=s=>openBySymbol(s)?0:validated[s]?1:missedSignals[s]?2:3;rows.sort((a,b)=>rank(a.symbol)-rank(b.symbol)||n(manualTokens[a.symbol]?.addedAt)-n(manualTokens[b.symbol]?.addedAt)||a.symbol.localeCompare(b.symbol));return rows}
+function distanceBuy(s,last){const b=tokenExactBuy(s);return b>0&&last>0?((n(last)-b)/n(last))*100:null}
+function effectiveSalePrice(s){const p=openBySymbol(s);if(p&&n(p.targetPrice)>0)return n(p.targetPrice);const exact=tokenExactSale(s);if(exact>0)return exact;const buy=n(validated[s]?.buy,tokenExactBuy(s));if(!(buy>0))return 0;const c=cfg(s);return priceForPnl(buy,notional(c),n(c.targetProfit,settings.targetProfit))}
+function dismissSymbol(s){if(openBySymbol(s))return setStatus(`${s} est ACTIF.`,true);if(validated[s])return setStatus(`${s} est surveillé : annule d'abord son achat surveillé.`,true);dismissed[s]=Date.now();delete manualTokens[s];if(selectedSymbol===s)selectedSymbol=tableRows().find(r=>r.symbol!==s)?.symbol||'';save();renderAll();setStatus(`${s} supprimé de la liste.`)}
+function renderTable(){expireWaitingSignals();const rows=tableRows(),body=$('selectionBody');$('selectionCount').textContent=`${rows.length} jeton(s)`;body.innerHTML=rows.map((r,i)=>{const s=r.symbol,last=n(lastPrices.get(s),r.last),buy=n(validated[s]?.buy,tokenExactBuy(s)),sale=effectiveSalePrice(s),d=distanceBuy(s,last),st=rowStatus(s),missed=missedSignals[s]?.state==='expired',waiting=missedSignals[s]?.state==='waiting',rc=openBySymbol(s)?'activeRow':validated[s]?'validRow':'',cls=s===selectedSymbol?'sel ':'';return `<tr class="${cls}${rc}" data-symbol="${s}"><td>${i+1}</td><td><b>${s}</b></td><td>${price(last)}</td><td>${price(buy)}</td><td>${price(sale)}</td><td>${d==null?'—':d.toFixed(2)+'%'}</td><td class="${missed?'missedStatus':waiting?'waitingStatus':''}">${st}</td><td><button class="trashMini" data-trash="${s}" ${openBySymbol(s)||validated[s]?'disabled':''}>🗑</button></td></tr>`}).join('');body.querySelectorAll('tr[data-symbol]').forEach(tr=>tr.onclick=e=>{if(e.target.closest('[data-trash]'))return;openTokenSettings(tr.dataset.symbol,true)});body.querySelectorAll('[data-trash]').forEach(b=>b.onclick=e=>{e.stopPropagation();dismissSymbol(b.dataset.trash)})}
+function totals(){let gain=0,loss=0;for(const h of history){if(h.status==='OPEN'||h.closedAt==null)continue;const pl=n(h.pnl);if(pl>=0)gain+=pl;else loss+=Math.abs(pl)}return{gain,loss}}
+function renderKpis(){const t=totals(),watch=Object.keys(validated).filter(s=>!openBySymbol(s)&&!revalidateBlock[s]).length;$('kWatch').textContent=watch;$('kActive').textContent=`${openPositions.length}/${settings.maxActive}`;$('kGain').textContent=`+$${t.gain.toFixed(2)}`;$('kLoss').textContent=`-$${t.loss.toFixed(2)}`;$('liveBadge').textContent=`LIVE ${wsLive?1:0}`;$('liveBadge').classList.toggle('on',wsLive);$('activeLimitNote').textContent=`max ${settings.maxActive}`;renderBinanceAccount()}
+function pnlAt(p,mark){return ((n(mark)-n(p.entryPrice))/n(p.entryPrice))*n(p.notional)}
+function priceForPnl(entry,notionalValue,pnl){return n(entry)*(1+n(pnl)/n(notionalValue))}
+function durationHMS(openedAt,closedAt=Date.now()){const secs=Math.max(0,Math.floor((n(closedAt,Date.now())-n(openedAt,Date.now()))/1000)),h=Math.floor(secs/3600),m=Math.floor((secs%3600)/60),s=secs%60;return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
+function elapsedHMS(openedAt){return durationHMS(openedAt,Date.now())}
+function renderPositions(){const wrap=$('activeWrap');wrap.innerHTML=openPositions.length?openPositions.map(p=>{const mark=n(lastPrices.get(p.symbol),p.entryPrice),pl=pnlAt(p,mark);return `<div class="posCard"><div class="posTop"><span class="posSym">${p.symbol}</span><span class="posLive"><span class="posElapsed">${elapsedHMS(p.openedAt)}</span><button class="posRefresh" data-refresh="${p.symbol}">↻</button><span class="posPnl ${pl>=0?'pos':'neg'}">${money(pl)}</span></span></div><div class="posGrid"><span>Achat</span><b>${price(p.entryPrice)}</b><span>Actuel</span><b>${price(mark)}</b><span>Objectif</span><b>${price(p.targetPrice)}</b><span>Protection</span><b>${n(p.protectionFloorActive)>0?'ON '+money(p.protectionFloorActive):'EN ATTENTE'}</b></div><button class="btn danger closeNowMini" data-close="${p.symbol}">VENDRE MAINTENANT</button></div>`}).join(''):'<div class="hint">Aucune position active.</div>';wrap.querySelectorAll('[data-refresh]').forEach(b=>b.onclick=e=>{e.stopPropagation();location.reload()});wrap.querySelectorAll('[data-close]').forEach(b=>b.onclick=e=>{e.stopPropagation();const sym=b.dataset.close;if(confirm(`AVERTISSEMENT — Confirmer la vente immédiate de ${sym} ?\n\nCette action fermera la position au prix disponible.`))manualClose(sym)});wrap.querySelectorAll('.posCard').forEach(card=>card.onclick=e=>{if(e.target.closest('button'))return;const sym=card.querySelector('.posSym')?.textContent?.trim();if(sym)openTokenSettings(sym,true)})}
+function renderHistory(){const t=totals();$('historyTotals').textContent=`+$${t.gain.toFixed(2)} / -$${t.loss.toFixed(2)}`;$('historyBody').innerHTML=history.length?history.slice().reverse().slice(0,80).map(h=>{const active=h.status==='OPEN'||h.closedAt==null,pl=active?'—':money(h.pnl),when=h.openedAt||h.closedAt,chrono=durationHMS(h.openedAt,active?Date.now():h.closedAt);return `<tr><td>${fmtDate(when)}</td><td><b>${h.symbol}</b></td><td>${price(h.entryPrice)}</td><td>${active?'—':price(h.exitPrice)}</td><td>${chrono}</td><td style="color:${active?'#cbd5e1':n(h.pnl)>=0?'#4ade80':'#f87171'};font-weight:900">${pl}</td><td>${active?'ACHAT':'VENTE — '+h.reason}</td></tr>`}).join(''):'<tr><td colspan="7" class="hint">Aucun achat enregistré.</td></tr>'}
+function applyTheme(){const theme=settings.theme==='light'?'light':'dark';document.documentElement.dataset.theme=theme;const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute('content',theme==='light'?'#eef3f8':'#07111d')}
+let audioCtx=null;
+function ensureAudio(){if(!settings.sound)return null;try{if(!audioCtx)audioCtx=new (window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==='suspended')audioCtx.resume();return audioCtx}catch(_){return null}}
+function tradeAlert(kind){if(settings.sound){try{const ctx=ensureAudio();if(ctx){const o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=kind==='buy'?740:520;g.gain.setValueAtTime(.0001,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.07,ctx.currentTime+.01);g.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+.16);o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+.17)}}catch(_){}}if(settings.vibrate&&navigator.vibrate){try{navigator.vibrate(kind==='buy'?[80]:[80,50,80])}catch(_){}}}
+function fillGeneral(){fillFutures();fillBot()}
+function fillFutures(){const s=selectedSymbol,has=!!s;$('futuresNoSelection').style.display=has?'none':'block';$('futuresSettingsWrap').style.display=has?'block':'none';$('futuresSymbol').textContent=s||'—';if(!has)return;const t=tokenSettings[s]||{},margin=Math.max(1,n(t.margin,settings.margin)),lev=clamp(n(t.leverage,settings.leverage),1,125);$('fMargin').value=margin;$('fLev').value=lev;const d=futuresDraft(s,margin,lev,'LIMIT');$('fSummary').textContent=`Marge : ISOLÉE · Notionnel demandé : $${(margin*lev).toFixed(2)}${d.qty>0?` · effectif ≈ $${d.effectiveNotional.toFixed(2)}`:''}`;$('fLimits').textContent=limitsText(s,margin,lev)}
+function fillBot(){$('bMaxActive').value=settings.maxActive;$('bTheme').value=settings.theme==='light'?'light':'dark';$('bSound').checked=settings.sound!==false;$('bVibrate').checked=settings.vibrate!==false}
+function setTokenFieldsEnabled(){
+  if(!selectedSymbol)return;
+  const active=!!openBySymbol(selectedSymbol),watched=!!validated[selectedSymbol]&&!active,lock=$('tokenLockHint');
+  const protectionEls=$('protectionEditor')?.querySelectorAll('input')||[];
+  if(watched){
+    ['tExactBuy','tExactBuyPrice','tExactSale','tExactSalePrice','tTarget','tMaxLoss'].forEach(id=>$(id).disabled=true);
+    protectionEls.forEach(el=>el.disabled=true);
+    $('saveTokenBtn').disabled=true;$('instantBuyBtn').disabled=true;$('tokenDefaultsBtn').disabled=true;
+    $('fMargin').disabled=true;$('fLev').disabled=true;$('saveFuturesBtn').disabled=true;
+    lock.style.display='block';lock.textContent='Achat surveillé : paramètres verrouillés. Utilise « Annuler l’achat surveillé » avant toute modification.';
+    return;
   }
-  const ascent=[];
-  for(let i=Math.max(riseStart,peak-16);i<peak;i++){
-    if(red(cs[i])) ascent.push({i,u:cs[i].h,kind:'ascent',rank:10});
+  if(active){
+    ['tExactBuy','tExactBuyPrice','tTarget','tMaxLoss'].forEach(id=>$(id).disabled=true);
+    ['tExactSale','tExactSalePrice'].forEach(id=>$(id).disabled=false);
+    protectionEls.forEach(el=>el.disabled=false);
+    $('saveTokenBtn').disabled=false;$('instantBuyBtn').disabled=true;$('tokenDefaultsBtn').disabled=true;$('devalidateBtn').disabled=true;
+    $('fMargin').disabled=true;$('fLev').disabled=true;$('saveFuturesBtn').disabled=true;
+    lock.style.display='block';lock.textContent='Position active : seuls le prix déterminé de VENTE et les protections peuvent être modifiés.';
+    return;
   }
-  if(corr.length) return [...corr,...ascent.slice(-3)];
-  if(ascent.length) return ascent.slice(-3);
-  return [{i:peak,u:cs[peak].h,kind:'peak',rank:20}];
+  ['tExactBuy','tExactBuyPrice','tExactSale','tExactSalePrice','tMaxLoss'].forEach(id=>$(id).disabled=false);
+  $('tTarget').disabled=$('tTarget').dataset.exactAuto==='1';protectionEls.forEach(el=>el.disabled=false);
+  $('saveTokenBtn').disabled=false;$('tokenDefaultsBtn').disabled=false;$('fMargin').disabled=false;$('fLev').disabled=false;$('saveFuturesBtn').disabled=false;
+  lock.style.display='none';lock.textContent='';
 }
-
-function detectBreaks(cs, peak, maxForward=70){
-  const raw=[];
-  for(let i=peak+1;i<Math.min(cs.length,peak+maxForward);i++){
-    // Include the final candles of the ascent so the very first obvious
-    // correction break can be detected immediately after the peak.
-    const prev=cs.slice(Math.max(0,peak-2,i-6),i);
-    if(!prev.length) continue;
-    const prevLow=Math.min(...prev.map(x=>x.l));
-    const c=cs[i];
-    const range=c.h-c.l;
-    const body=Math.abs(c.c-c.o);
-    const visible=range>0 && (body/range>=0.22 || c.l<prevLow*0.999);
-    const broke=(c.l<prevLow*0.9995 || c.c<prevLow);
-    if(red(c)&&visible&&broke) raw.push({i,prevLow,level:Math.min(c.o,c.c,prevLow)});
+function updateTokenPreview(){
+  if(!selectedSymbol)return;
+  const t=tokenSettings[selectedSymbol]||{},active=openBySymbol(selectedSymbol),margin=Math.max(1,n(t.margin,settings.margin)),lev=clamp(n(t.leverage,settings.leverage),1,125),base=active?{margin:n(active.notional)/Math.max(1,n(active.leverage)),leverage:n(active.leverage),binanceEffectiveNotional:n(active.notional)}:{margin,leverage:lev},buy=$('tExactBuy').checked?parsePrice($('tExactBuyPrice').value):0,sale=$('tExactSale').checked?parsePrice($('tExactSalePrice').value):0,targetEl=$('tTarget');
+  if(targetEl.dataset.exactAuto!=='1')targetEl.dataset.manualTarget=targetEl.value||settings.targetProfit;
+  const manual=n(targetEl.dataset.manualTarget,settings.targetProfit),entry=active?n(active.entryPrice):buy,both=entry>0&&sale>0,profit=both?exactProfitFor(entry,sale,base):null;
+  if(!active&&both&&profit!=null){targetEl.value=profit.toFixed(2);targetEl.dataset.exactAuto='1'}else if(!active){if(targetEl.dataset.exactAuto==='1')targetEl.value=manual;targetEl.dataset.exactAuto='0'}else{targetEl.dataset.exactAuto='0'}
+  const target=active?n(active.baseTargetProfit,n(active.targetProfit,settings.targetProfit)):(both&&profit!=null?profit:n(targetEl.value,settings.targetProfit)),goal=sale||(entry?priceForPnl(entry,notional(base),target):0);$('tTargetPreview').value=goal?price(goal):'—';$('tExactProfit').textContent=profit==null?'Bénéfice prévu : —':`Bénéfice prévu : ${money(profit)} · calculé avec ${active?'le prix d’achat réel':'les deux prix déterminés'}`;setTokenFieldsEnabled()
+}
+function protectionDraft(){const els=[...($('protectionEditor')?.querySelectorAll('.protectionItem')||[])];return els.map((_,i)=>{const d=defaultProtection(i);return{enabled:$(`tProtect${i+1}`)?.checked!==false,arm:Math.max(0,n($(`tProtect${i+1}Arm`)?.value,d.arm)),floor:Math.max(0,n($(`tProtect${i+1}Floor`)?.value,d.floor))}})}
+function protectionsForTarget(stages,target){const count=protectionCountForTarget(target),src=Array.isArray(stages)?stages:[];return Array.from({length:count},(_,i)=>{const d=defaultProtection(i),x=src[i]||d;return{enabled:x.enabled!==false,arm:Math.max(0,n(x.arm,d.arm)),floor:Math.max(0,n(x.floor,d.floor))}})}
+function renderProtectionEditor(stages,target=3000){const arr=protectionsForTarget(stages,target),head=`<div class="protectionHead"><span class="armHead">ATTEINT</span><span class="floorHead">PROTÉGÉ</span></div>`,item=(st,i)=>`<div class="protectionItem" title="Protection ${i+1} : +${st.arm} → +${st.floor}"><input id="tProtect${i+1}" type="checkbox" ${st.enabled?'checked':''} aria-label="Activer protection ${i+1}"><span class="protectionNum">${i+1}</span><input id="tProtect${i+1}Arm" type="number" min="0" step="1" value="${st.arm}" aria-label="Gain atteint protection ${i+1}"><span class="protectionArrow">→</span><input id="tProtect${i+1}Floor" type="number" min="0" step="1" value="${st.floor}" aria-label="Gain protégé protection ${i+1}"></div>`;const mid=Math.ceil(arr.length/2);$('protectionEditor').innerHTML=`<div class="protectionGrid"><div class="protectionColumn">${head}${arr.slice(0,mid).map((st,j)=>item(st,j)).join('')}</div><div class="protectionColumn">${head}${arr.slice(mid).map((st,j)=>item(st,mid+j)).join('')}</div></div>`;const hint=$('protectionHint');if(hint){const last=arr.length?arr[arr.length-1]:null;hint.textContent=arr.length?`${arr.length} protections affichées pour un objectif de +${money(n(target)).replace('$','').trim()} $ : +105→+100 jusqu’à +${last.arm}→+${last.floor}. Si l’objectif augmente, Zenith ajoute automatiquement les protections utiles par tranche de 100 $.`:`Aucune protection par tranche de 100 $ n’est possible sous cet objectif.`}}
+function applyProtectionVisibility(){const cb=$('showProtectionsToggle'),details=$('protectionDetails');if(!cb||!details)return;cb.checked=settings.showProtections!==false;details.style.display=cb.checked?'block':'none'}
+function syncProtectionsToTarget(target){if(!selectedSymbol||openBySymbol(selectedSymbol)||validated[selectedSymbol])return;const current=protectionDraft(),saved=tokenSettings[selectedSymbol]?.protectionStages||settings.protectionStages,merged=current.length?current:saved;renderProtectionEditor(merged,target);setTokenFieldsEnabled()}
+function fillToken(){const s=selectedSymbol,has=!!s;$('tokenNoSelection').style.display=has?'none':'block';$('tokenSettingsWrap').style.display=has?'block':'none';applyProtectionVisibility();$('settingsSymbol').textContent=s||'—';$('selectedSymbolLabel').textContent=s||'—';$('selectedPriceLabel').textContent=`Prix : ${s?price(lastPrices.get(s)):'—'}`;if(!has){fillFutures();return}const t=tokenSettings[s]||{},c={...settings,...t},manual=n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit));$('tTarget').value=manual;$('tTarget').dataset.manualTarget=manual;$('tTarget').dataset.exactAuto='0';renderProtectionEditor(t.protectionStages||settings.protectionStages,manual);$('tMaxLoss').value=n(t.maxLoss,settings.maxLoss);$('tExactBuy').checked=!!t.exactBuyEnabled;$('tExactBuyPrice').value=n(t.exactBuyPrice)||'';$('tExactSale').checked=!!t.exactSaleEnabled;$('tExactSalePrice').value=n(t.exactSalePrice)||'';$('devalidateBtn').disabled=!validated[s];$('tokenCloseNowBtn').disabled=!openBySymbol(s);$('instantBuyBtn').disabled=!!openBySymbol(s)||openPositions.length>=settings.maxActive;fillFutures();updateTokenPreview()}
+async function saveFutures(){const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);if(openBySymbol(s))return setStatus(`${s} est actif : marge et levier sont verrouillés. Seuls le prix déterminé de VENTE et les protections peuvent être modifiés.`,true);if(validated[s])return setStatus(`${s} est surveillé : annule d’abord l’achat surveillé avant de modifier ses paramètres.`,true);const old=tokenSettings[s]||{},margin=Math.max(1,n($('fMargin').value,settings.margin)),leverage=Math.round(n($('fLev').value,settings.leverage));if(leverage<1||leverage>125)return setStatus('Le levier doit être compris entre x1 et x125. La limite exacte du compte sera contrôlée par Binance lors de la connexion API.',true);try{await ensureExchange();if(!(n(lastPrices.get(s))>0))await currentMarketPrice(s)}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}const d=futuresDraft(s,margin,leverage,'LIMIT');if(!d.ok)return setStatus(`${s} : réglage refusé par les limites Binance — ${d.error}.`,true);const buy=tokenExactBuy(s),sale=tokenExactSale(s),buyErr=buy>0?validateLimitPrice(s,buy,'Prix d’achat'):'';if(buyErr)return setStatus(`${s} : ${buyErr}.`,true);const saleErr=sale>0?validateLimitPrice(s,sale,'Prix de vente'):'';if(saleErr)return setStatus(`${s} : ${saleErr}.`,true);tokenSettings[s]={...old,enabled:true,margin,leverage,marginType:'ISOLATED',binanceQty:d.qty,binanceEffectiveNotional:d.effectiveNotional};const active=openBySymbol(s);if(active){active.margin=margin;active.leverage=leverage;active.marginType='ISOLATED';active.notional=d.effectiveNotional||margin*leverage;active.binanceQty=d.qty;active.stopExitPrice=priceForPnl(active.entryPrice,active.notional,-active.maxLoss);if(active.manualSaleTarget&&n(active.targetPrice)>active.entryPrice)active.targetProfit=exactProfitFor(active.entryPrice,active.targetPrice,{margin:active.notional/leverage,leverage});else active.targetPrice=priceForPnl(active.entryPrice,active.notional,active.targetProfit)}save();renderAll();setStatus(`${s} : Futures enregistré — ISOLÉE $${margin.toFixed(2)}, x${leverage}, quantité Binance ${d.qty}, notionnel effectif ≈ $${d.effectiveNotional.toFixed(2)}.`)}
+function readBotSettings(){return{maxActive:clamp(Math.round(n($('bMaxActive').value,settings.maxActive||3)),1,20),theme:$('bTheme').value==='light'?'light':'dark',sound:$('bSound').checked,vibrate:$('bVibrate').checked}}
+function applyBotSettings(message='Réglages BOT enregistrés.'){const next=readBotSettings(),themeChanged=next.theme!==settings.theme,soundEnabled=next.sound&&!settings.sound;settings={...settings,...next};save();if(themeChanged)applyTheme();if(soundEnabled)ensureAudio();renderKpis();fillBot();if(selectedSymbol)fillToken();setStatus(message)}
+function saveBot(){const wantsVibrate=$('bVibrate').checked;applyBotSettings('Réglages BOT enregistrés.');if(wantsVibrate&&!('vibrate' in navigator))setStatus('Réglages BOT enregistrés. La vibration est activée dans Zenith, mais ce navigateur ne prend pas en charge la vibration.',true)}
+async function saveToken(){
+  const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);
+  const active=openBySymbol(s),watched=!!validated[s]&&!active;
+  if(watched)return setStatus(`${s} est surveillé : utilise « Annuler l’achat surveillé » avant de modifier ses paramètres.`,true);
+  try{await ensureExchange()}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}
+  const old=tokenSettings[s]||{},protections=protectionDraft();
+  for(let i=0;i<protections.length;i++){const st=protections[i];if(st.enabled&&st.floor>=st.arm)return setStatus(`Protection ${i+1} : le gain à protéger doit être inférieur au gain atteint.`,true)}
+  if(active){
+    const saleEnabled=$('tExactSale').checked,salePrice=Math.max(0,parsePrice($('tExactSalePrice').value));
+    if(saleEnabled&&!(salePrice>0))return setStatus('Entre un prix de vente déterminé supérieur à 0.',true);
+    const saleRuleErr=saleEnabled?validateLimitPrice(s,salePrice,'Prix de vente'):'';if(saleRuleErr)return setStatus(`${s} : ${saleRuleErr}.`,true);
+    tokenSettings[s]={...old,protectionStages:protections,exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings',marginType:'ISOLATED'};
+    active.protectionStages=normalizeProtections(protections,n(active.baseTargetProfit,n(active.targetProfit,settings.targetProfit)));
+    let floor=0;for(const st of active.protectionStages)if(st.enabled&&n(active.maxProfit)>=st.arm)floor=Math.max(floor,st.floor);active.protectionFloorActive=floor;
+    if(!(n(active.baseTargetProfit)>0))active.baseTargetProfit=Math.max(1,n(old.manualTargetProfit,n(old.targetProfit,settings.targetProfit)));
+    const exact=saleEnabled&&salePrice>active.entryPrice?salePrice:0;
+    active.manualSaleTarget=!!exact;active.targetProfit=exact?exactProfitFor(active.entryPrice,exact,{margin:active.margin,leverage:active.leverage,binanceEffectiveNotional:active.notional}):active.baseTargetProfit;active.targetPrice=exact||priceForPnl(active.entryPrice,active.notional,active.targetProfit);
+    save();renderAll();const mark=n(lastPrices.get(s),active.entryPrice);tickPosition(active,mark);if(openBySymbol(s))setStatus(`${s} actif : prix déterminé de VENTE et protections enregistrés. Les autres paramètres restent verrouillés.`);return;
   }
-  // Close breaks at the same level belong to the same structural break.
-  const out=[];
-  for(const b of raw){
-    const prior=out.at(-1);
-    if(prior){
-      const lastMember=prior.members.at(-1);
-      const gap=b.i-lastMember;
-      const closeLevel=Math.abs(b.level-prior.level)/Math.max(b.level,1e-12)<0.006;
-      const between=cs.slice(lastMember+1,b.i);
-      const rebound=between.some(x=>x.c>x.o && x.h>prior.level*1.01);
-      const sameSlide=!rebound && b.level<=prior.level && (prior.level-b.level)/prior.level<0.025;
-      if(gap<=4 && (closeLevel||sameSlide)){
-        // Several red candles can be one continuous structural break.
-        // A real rebound between them prevents this merge.
-        prior.members.push(b.i);
-        prior.level=Math.min(prior.level,b.level);
-        continue;
-      }
-    }
-    out.push({...b,members:[b.i]});
-  }
-  return out;
+  const buyEnabled=$('tExactBuy').checked,buyPrice=Math.max(0,parsePrice($('tExactBuyPrice').value)),saleEnabled=$('tExactSale').checked,salePrice=Math.max(0,parsePrice($('tExactSalePrice').value)),manual=Math.max(0,n($('tTarget').dataset.manualTarget,settings.targetProfit)),shown=Math.max(0,n($('tTarget').value,manual));
+  if(buyEnabled&&!(buyPrice>0))return setStatus('Entre un prix d’achat déterminé supérieur à 0.',true);if(saleEnabled&&!(salePrice>0))return setStatus('Entre un prix de vente déterminé supérieur à 0.',true);
+  const market=n(lastPrices.get(s));if(buyEnabled&&market>0&&buyPrice>=market)return setStatus(`Le BUY Limit ${price(buyPrice)} doit être sous le prix actuel ${price(market)}. Pour acheter maintenant, utilise « Achat immédiat ».`,true);if(buyEnabled&&market>0&&(buyPrice>market*100||buyPrice<market/100))return setStatus(`Prix d’achat incohérent avec Binance (${price(market)}). Vérifie la décimale.`,true);
+  const buyRuleErr=buyEnabled?validateLimitPrice(s,buyPrice,'Prix d’achat'):'';if(buyRuleErr)return setStatus(`${s} : ${buyRuleErr}.`,true);const saleRuleErr=saleEnabled?validateLimitPrice(s,salePrice,'Prix de vente'):'';if(saleRuleErr)return setStatus(`${s} : ${saleRuleErr}.`,true);
+  tokenSettings[s]={...old,enabled:true,targetProfit:shown,manualTargetProfit:manual,protectionStages:protections,maxLoss:Math.max(2,n($('tMaxLoss').value,settings.maxLoss)),exactBuyEnabled:buyEnabled,exactBuyPrice:buyPrice,exactBuySource:'settings',exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings',marginType:'ISOLATED'};
+  if(buyEnabled){manualTokens[s]={symbol:s,last:market,addedAt:n(manualTokens[s]?.addedAt,Date.now())};validated[s]={buy:buyPrice,validatedAt:Date.now(),armedAbove:market>buyPrice,lastSeen:market||null};delete revalidateBlock[s];delete missedSignals[s]}else{delete validated[s];delete revalidateBlock[s];delete missedSignals[s];delete manualTokens[s]}
+  save();syncRealtime();renderAll();setStatus(buyEnabled?`${s} validé : ajouté à la liste et surveillé pour achat à ${price(buyPrice)}.`:`${s} enregistré sans surveillance : il n’est pas ajouté à la liste.`)
 }
-
-function wallCenters(cs,b){
-  const bc=cs[b.i];
-  const points=[];
-  const scanStart=0; // use all available pre-break history; ambiguous walls may be much farther back
-  for(let k=scanStart;k<b.i;k++){
-    const x=cs[k];
-    points.push({v:x.o,w:2.5,idx:k,type:'body'});
-    points.push({v:x.c,w:2.5,idx:k,type:'body'});
-    points.push({v:x.h,w:1.0,idx:k,type:'wick'});
-    points.push({v:x.l,w:1.0,idx:k,type:'wick'});
-  }
-
-  // First search inside the break BODY. If no real wall is found, widen to the wick.
-  // This avoids letting an old dense level elsewhere inside a huge wick beat the causal wall.
-  const corridors=[
-    {lo:bodyLo(bc)*0.995,hi:bodyHi(bc)*1.005,scope:'body'},
-    {lo:bc.l*0.995,hi:bc.h*1.005,scope:'wick'}
-  ];
-
-  for(const corridor of corridors){
-    const candidates=[];
-    for(const p of points){
-      if(p.v<corridor.lo||p.v>corridor.hi) continue;
-      const tol=p.v*0.0065; // broad enough to join both edges of a real wall
-      const cluster=points.filter(q=>q.v>=corridor.lo&&q.v<=corridor.hi&&Math.abs(q.v-p.v)<=tol);
-      const unique=[...new Set(cluster.map(q=>q.idx))];
-      if(cluster.length<4||unique.length<3) continue;
-
-      const minV=Math.min(...cluster.map(q=>q.v));
-      const maxV=Math.max(...cluster.map(q=>q.v));
-      const center=mid(minV,maxV); // may be between any traded candle prices
-      const span=(maxV-minV)/center;
-      if(span>0.018) continue; // not a wall anymore, too broad
-
-      let score=cluster.reduce((s,q)=>s+q.w,0)+unique.length*1.5;
-      let above=0,below=0,reject=0;
-      for(const k of unique){
-        const x=cs[k], bm=mid(x.o,x.c);
-        if(bm>center) above++;
-        if(bm<center) below++;
-        if(x.l<=center && bodyLo(x)>center) reject++;
-        if(x.h>=center && bodyHi(x)<center) reject++;
-      }
-      if(above&&below) score+=Math.min(above,below)*1.3;
-      score+=reject*0.9;
-
-      // Recent evidence matters, without forbidding older walls.
-      const avgIdx=unique.reduce((s,x)=>s+x,0)/unique.length;
-      score += 8*Math.max(0,(avgIdx-scanStart)/Math.max(1,b.i-scanStart));
-      if(corridor.scope==='body') score+=8;
-
-      candidates.push({
-        v:center,low:minV,high:maxV,score,touches:unique.length,
-        sourceIndex:unique[Math.floor(unique.length/2)],source:'centre-mur',scope:corridor.scope
-      });
-    }
-
-    candidates.sort((a,b2)=>b2.score-a.score);
-    const out=[];
-    for(const c of candidates){
-      if(!out.some(o=>Math.abs(o.v-c.v)/c.v<0.0020)) out.push(c);
-      if(out.length>=8) break;
-    }
-    if(out.length) return out;
-  }
-  return [];
-}
-
-function localLevels(cs,b){
-  const c=cs[b.i];
-  return [
-    {v:c.o,score:1.8,sourceIndex:b.i,source:'cassure-open'},
-    {v:c.c,score:1.8,sourceIndex:b.i,source:'cassure-close'},
-    {v:b.prevLow,score:1.6,sourceIndex:b.i-1,source:'ancien-bas'}
-  ].filter(x=>x.v>=c.l*0.995 && x.v<=c.h*1.005);
-}
-
-function firstBuyTouch(cs,from,buy){
-  for(let k=from;k<cs.length;k++) if(cs[k].l<=buy) return k;
-  return -1;
-}
-
-function validateLowerReaction(cs,a,b,low,justTriggered){
-  let infReact=0, infBodyCross=0;
-  for(let k=Math.max(0,a.i-24);k<b.i;k++){
-    const x=cs[k];
-    const near=Math.abs(x.l-low)/low<0.0045;
-    const reacts=near && bodyLo(x)>=low*0.9975;
-    if(reacts) infReact++;
-    if(bodyLo(x)<low*1.0015 && bodyHi(x)>low*0.9985) infBodyCross++;
-  }
-  if(infReact<1 && !justTriggered) return {ok:false,infReact,infBodyCross,reason:'no-INF-reaction'};
-  if(infBodyCross>Math.max(3,infReact*2+1)) return {ok:false,infReact,infBodyCross,reason:'INF-cuts-bodies'};
-  return {ok:true,infReact,infBodyCross};
-}
-
-function upperPriority(a){
-  if(a.kind==='correction'&&a.rank===0) return 30;
-  if(a.kind==='correction'&&a.rank===1) return 20;
-  if(a.kind==='ascent') return 10;
-  return 0;
-}
-
-function evaluateSetup(cs,rise,b,a,m){
-  if(a.u<=m.v) return null;
-  const lower=2*m.v-a.u;
-  if(lower<=0) return null;
-  const buy=lower*1.001;
-  const last=cs.at(-1).c;
-  const dist=(last-buy)/last;
-  const touch=firstBuyTouch(cs,b.i+1,buy);
-  const justTriggered=touch>=cs.length-2;
-  const consumed=touch>=0&&!justTriggered;
-  if(consumed) return null;
-
-  const inf=validateLowerReaction(cs,a,b,lower,justTriggered);
-  if(!inf.ok) return null;
-
-  // MED/wall quality + strict SUP hierarchy. Quality breaks ties *inside* a SUP tier.
-  let score=(m.score||0)*2.6 + upperPriority(a);
-  if(justTriggered) score+=4;
-  const bc=cs[b.i];
-  const breakStrengthPct=(bc.h-bc.l)/Math.max(m.v,1e-12);
-  const referencePeak=cs[rise.hi]?.h;
-  return {
-    upper:a.u,median:m.v,lower,buy,breakIndex:b.i,upperIndex:a.i,
-    referencePeak,risePct:rise.rise,breakStrengthPct,breakGroupSize:(b.members||[]).length,
-    medianSource:m.source,medianSourceIndex:m.sourceIndex,wallTouches:m.touches||0,
-    dist,score,justTriggered,firstBuyTouch:touch,infReact:inf.infReact,infBodyCross:inf.infBodyCross,
-    upperKind:a.kind,upperRank:a.rank
-  };
-}
-
-function bestRiseInRange(cs,start,endExclusive){
-  let best=null;
-  for(let i=start;i<endExclusive-1;i++){
-    let lo=cs[i].l,li=i;
-    for(let k=i+1;k<endExclusive;k++){
-      if(cs[k].l<lo){lo=cs[k].l;li=k;}
-      const r=(cs[k].h-lo)/lo;
-      if(!best||r>best.rise) best={rise:r,li,hi:k};
-    }
-  }
-  return best;
-}
-
-function findRise(cs){
-  const n=cs.length, end=n, threshold=0.035;
-  let start=Math.max(0,n-140);
-  let chosen=null;
-  // A genuine later ascent resets the temporary matrix. We therefore
-  // search the suffix after each chosen peak; if another >=3.5% ascent
-  // exists later, that later ascent becomes the active one.
-  while(start<end-1){
-    const best=bestRiseInRange(cs,start,end);
-    if(!best||best.rise<threshold) break;
-    chosen=best;
-    const nextStart=best.hi+1;
-    if(nextStart>=end-1) break;
-    const later=bestRiseInRange(cs,nextStart,end);
-    if(!later||later.rise<threshold) break;
-    start=nextStart;
-  }
-  return chosen;
-}
-
-
-function selectSetupForBreak(cs,rise,b,uppers,meds){
-  for(const a of uppers){
-    // A projection may only use a SUP that already exists when this break occurs.
-    // Later correction reds are valid fallbacks for later breaks, never hindsight
-    // rescue anchors for an earlier break.
-    if(a.i>b.i) continue;
-    const tier=[];
-    for(const m of meds){
-      const q=evaluateSetup(cs,rise,b,a,m);
-      if(q) tier.push(q);
-    }
-    if(tier.length){
-      tier.sort((x,y)=>y.score-x.score || Math.abs(x.dist)-Math.abs(y.dist));
-      return tier[0];
-    }
-  }
-  return null;
-}
-
-function matrixInvalidated(){
-  // No isolated-candle / overshoot invalidation. The temporary matrix is reset
-  // only when findRise() identifies a later genuine ascent.
-  return false;
-}
-
-function analyzeAll(cs){
-  if(cs.length<70) return [];
-  const rise=findRise(cs); if(!rise) return [];
-  const peak=rise.hi; if(peak>=cs.length-1) return [];
-  const uppers=chooseUpperCandidates(cs,peak,rise.li);
-  const breaks=detectBreaks(cs,peak);
-  const results=[];
-  for(const b of breaks){
-    const meds=[...wallCenters(cs,b),...localLevels(cs,b)];
-    // Keep walls first; local levels are fallbacks. The first SUP in the
-    // hierarchy that yields a valid geometry wins; only then may quality
-    // choose between MED candidates inside that SUP tier.
-    const chosen=selectSetupForBreak(cs,rise,b,uppers,meds);
-    if(chosen) results.push(chosen);
-  }
-  // Different genuine breaks remain separate; order by break chronology, not by score.
-  return results.sort((a,b)=>a.breakIndex-b.breakIndex);
-}
-
-function rankOpportunities(rows){
-  return [...rows].sort((a,b)=>{
-    const da=Math.max(0,a.dist), db=Math.max(0,b.dist);
-    if(Math.abs(da-db)>1e-12) return da-db;
-    return b.score-a.score;
-  });
-}
-
-module.exports={
-  red,chooseUpperCandidates,detectBreaks,wallCenters,localLevels,firstBuyTouch,
-  validateLowerReaction,evaluateSetup,selectSetupForBreak,bestRiseInRange,findRise,matrixInvalidated,analyzeAll,rankOpportunities
-};
-
-},
-'./scanner_core_v2':function(module,exports,require){
-'use strict';
-const E=require('./engine_v2');
-
-function candles(raw){
-  return raw.map(x=>Array.isArray(x)
-    ? {t:x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4]}
-    : {t:x.t,o:+x.o,h:+x.h,l:+x.l,c:+x.c});
-}
-
-function selectUniverse(info,tickers,maxPrice=1,maxSymbols=50){
-  const tmap=new Map((tickers||[]).map(t=>[t.symbol,t]));
-  return (info?.symbols||[])
-    .filter(s=>s.contractType==='PERPETUAL'&&s.quoteAsset==='USDT'&&s.status==='TRADING')
-    .map(s=>({symbol:s.symbol,last:+(tmap.get(s.symbol)?.lastPrice??Infinity)}))
-    .filter(x=>Number.isFinite(x.last)&&x.last>0&&x.last<maxPrice)
-    .sort((a,b)=>a.last-b.last)
-    .slice(0,maxSymbols);
-}
-
-
-function setupId(symbol,q,cs){
-  // A genuine break is the projection's identity. SUP/MED may be refined by
-  // later scans, but while the order stays armed that must not create a new
-  // logical order or move its frozen BUY. If the order is canceled and later
-  // re-enters the Top 3, reconcile() deliberately re-arms this same break
-  // from the then-current geometry.
-  const breakTime=cs[q.breakIndex]?.t ?? q.breakIndex;
-  return `${symbol}:${breakTime}`;
-}
-
-function analyzeSymbol(symbol,raw,lastPrice){
-  const cs=candles(raw);
-  const rows=E.analyzeAll(cs);
-  const last=Number.isFinite(+lastPrice)&&+lastPrice>0?+lastPrice:cs.at(-1)?.c;
-  return rows.map((q,projectionIndex)=>({
-    ...q,
-    symbol,
-    projectionIndex,
-    projectionsTotal:rows.length,
-    setupId:setupId(symbol,q,cs),
-    breakTime:cs[q.breakIndex]?.t ?? null,
-    upperTime:cs[q.upperIndex]?.t ?? null,
-    last,
-    dist:(last-q.buy)/last
-  }));
-}
-
-function buildShortlist(opportunities,topN=10,armN=3){
-  const ranked=E.rankOpportunities(opportunities);
-  const top=ranked.slice(0,topN);
-  const armed=[]; const symbols=new Set();
-  for(const row of top){
-    if(symbols.has(row.symbol)) continue;
-    armed.push(row); symbols.add(row.symbol);
-    if(armed.length>=armN) break;
-  }
-  return {ranked,top,armed};
-}
-
-function scanSnapshots(info,tickers,snapshots,{maxPrice=1,maxSymbols=50,topN=10,armN=3}={}){
-  const universe=selectUniverse(info,tickers,maxPrice,maxSymbols);
-  const all=[];
-  for(const u of universe){
-    const raw=snapshots[u.symbol];
-    if(!raw) continue;
-    all.push(...analyzeSymbol(u.symbol,raw,u.last));
-  }
-  const lists=buildShortlist(all,topN,armN);
-  return {universe,opportunities:all,...lists};
-}
-
-module.exports={candles,selectUniverse,setupId,analyzeSymbol,buildShortlist,scanSnapshots};
-
-},
-// --- expose scanner only ---
-};
-const __cache={};
-function require(id){if(__cache[id])return __cache[id].exports;const fn=__mods[id];if(!fn)throw new Error('Module not found: '+id);const module={exports:{}};__cache[id]=module;fn(module,module.exports,require);return module.exports;}
-const Scanner=require('./scanner_core_v2');
-
-(()=>{'use strict';
-const $=id=>document.getElementById(id);
-const K='walter_parallel_manual_v3', LKEY='walter_parallel_manual_v3_live', MKEY='walter_parallel_manual_v3_meta', GKEY='walter_parallel_manual_v3_settings', TKEY='walter_parallel_manual_v3_token_settings', VKEY='walter_parallel_manual_v3_validated', HKEY='walter_parallel_manual_v3_trade_history', DKEY='walter_parallel_manual_v3_dismissed', BKEY='walter_parallel_manual_v3_revalidate_block', MIGKEY='walter_parallel_manual_v329_migrated';
-const defaults={margin:100,leverage:10,targetProfit:40,maxLoss:40,buyOffsetPct:.1,protectionArm:30,protectionFloor:20,maxActivePositions:3,scanCount:50,maxTokenPrice:1,preferRecent:true,autoScan:true};
-function load(key,fallback){try{const v=JSON.parse(localStorage.getItem(key)||'null');return v==null?structuredClone(fallback):v}catch(_){return structuredClone(fallback)}}
-function save(key,v){try{localStorage.setItem(key,JSON.stringify(v))}catch(_){}}
-let state=load(K,{pending:[],open:[],closed:[]}); state.pending=Array.isArray(state.pending)?state.pending:[]; state.open=Array.isArray(state.open)?state.open:[]; state.closed=Array.isArray(state.closed)?state.closed:[];
-let live=load(LKEY,{uni:[],ops:[],top:[],scanRows:[],snap:{}}); live.uni=Array.isArray(live.uni)?live.uni:[];live.ops=Array.isArray(live.ops)?live.ops:[];live.top=Array.isArray(live.top)?live.top:[];live.scanRows=Array.isArray(live.scanRows)?live.scanRows:[];live.snap=live.snap||{};
-let meta=load(MKEY,{selectedSymbol:null,tf:'1h'}), settings={...defaults,...load(GKEY,{})}, tokenSettings=load(TKEY,{}), validated=load(VKEY,{}), tradeHistory=load(HKEY,[]), dismissed=load(DKEY,{}), revalidateBlock=load(BKEY,{});
-function recoverSymbol(key,q){const c=[q?.symbol,q?.s,(typeof q?.setupId==='string'?q.setupId.split(':')[0]:null),(typeof q?.id==='string'?q.id.split(':')[0]:null),key];for(const x of c){const v=typeof x==='string'?x.trim():'';if(v&&/USDT$/i.test(v)&&!/^\d+$/.test(v))return v.toUpperCase()}return null}
-function ff(...xs){for(const x of xs){const n=+x;if(Number.isFinite(n)&&n>0)return n}return 0}
-function sourceForSymbol(sym){return [...(state.pending||[]),...(state.open||[]),...(live.top||[]),...(live.ops||[])].find(x=>recoverSymbol('',x)===sym)||null}
-function repairChannel(raw,alt=null){if(!raw||typeof raw!=='object')raw={};const b=raw.baseGeom&&typeof raw.baseGeom==='object'?raw.baseGeom:{};const a=alt&&typeof alt==='object'?alt:{};const ab=a.baseGeom&&typeof a.baseGeom==='object'?a.baseGeom:{};let upper=ff(raw.upper,raw.sup,raw.SUP,raw.u,b.upper,b.sup,a.upper,a.sup,a.u,ab.upper,ab.sup);let lower=ff(raw.lower,raw.inf,raw.INF,raw.l,b.lower,b.inf,a.lower,a.inf,a.l,ab.lower,ab.inf);let median=ff(raw.median,raw.med,raw.MED,raw.m,b.median,b.med,a.median,a.med,a.m,ab.median,ab.med);if(upper>0&&lower>0){if(upper<lower){const t=upper;upper=lower;lower=t}if(!(median>lower&&median<upper))median=(upper+lower)/2}return {upper,median,lower}}
-function repairSetup(raw,sym){const alt=sourceForSymbol(sym),g=repairChannel(raw,alt),v={...(raw||{}),symbol:sym,upper:g.upper,median:g.median,lower:g.lower};delete v.visualChannel;delete v.channel2;if(!v.baseGeom||typeof v.baseGeom!=='object')v.baseGeom={upper:g.upper,median:g.median,lower:g.lower};v.buy=ff(raw?.buy,raw?.armedBuy,alt?.buy,alt?.armedBuy);v.last=ff(raw?.last,alt?.last);v.market='PERP';v.draft=false;return v}
-function normalizeValidated(raw){const out={};for(const [k,v0] of Object.entries(raw&&typeof raw==='object'?raw:{})){if(!v0||typeof v0!=='object')continue;const sym=recoverSymbol(k,v0);if(!sym)continue;out[sym]=repairSetup({...v0},sym)}return out}
-validated=normalizeValidated(validated);
-// Recovery guard: older/rollback builds may have emptied VKEY while the same
-// validated setups still exist in pending/open/live. Recover them BEFORE arm()
-// can rewrite pending, and never replace a valid VKEY entry.
-function recoverLostValidated(){
-  const candidates=[];
-  // Only pending/open state is trusted. Stale scan rows never resurrect a closed token.
-  for(const q of (state.pending||[])) candidates.push(q);
-  for(const q of (state.open||[])) candidates.push(q);
-  let restored=0;
-  for(const raw of candidates){
-    const sym=recoverSymbol('',raw);
-    if(!sym||validated[sym]||revalidateBlock[sym]) continue;
-    const q=repairSetup(raw,sym);
-    if(!(ff(q.upper)>0&&ff(q.lower)>0)) continue;
-    if(!ff(q.buy)) q.buy=buyFor(q,sym);
-    q.validatedAt=num(raw.validatedAt,raw.armedAt||Date.now());
-    q.validated=true; q.market='PERP'; q.draft=false;
-    validated[sym]=q; restored++;
-  }
-  if(restored) save(VKEY,validated);
-  return restored;
-}
-const restoredValidatedCount=recoverLostValidated();
-let selectedSymbol=meta.selectedSymbol&&validated[meta.selectedSymbol]?meta.selectedSymbol:Object.keys(validated)[0]||(live.top||[]).find(q=>q?.symbol)?.symbol||null;
-let currentTF=meta.tf||'1h', chartData=[], chartLoading=false, chartReq=0, chartView={visible:120,offset:0,panX:0,yZoom:1,yShift:0}, chartDrafts={}, rt=null, rtTimer=null, rtReconnect=null, hitQueue=[], hitFlushScheduled=false, openTrashRow=null, lastPrices=new Map(), lastRtCount=0;
-const chart=$('chart'),ctx=chart.getContext('2d');
-
-function clone(x){return JSON.parse(JSON.stringify(x))}
-function num(x,d=0){x=+x;return Number.isFinite(x)?x:d}
-function price(x){x=+x;if(!Number.isFinite(x))return '—';if(x>=100)return x.toFixed(2);if(x>=1)return x.toFixed(4);if(x>=.1)return x.toFixed(5);if(x>=.01)return x.toFixed(6);return x.toFixed(8)}
-function money(x,sign=true){x=num(x);return `${sign&&x>=0?'+':''}$${Math.abs(x).toFixed(2)}`.replace('$-','$')}
-function moneySigned(x){x=num(x);return `${x>=0?'+':'-'}$${Math.abs(x).toFixed(2)}`}
-function pct(x){return Number.isFinite(+x)?`${(+x*100).toFixed(2)}%`:'—'}
-function when(t){return Number.isFinite(+t)?new Date(+t).toLocaleString('fr-FR',{hour12:false}):'—'}
-function setStatus(t,err=false){$('status').textContent=t;$('status').className='status'+(err?' err':'')}
-function persist(){save(K,state);save(LKEY,compactLive());save(MKEY,{...meta,selectedSymbol,currentTF});save(GKEY,settings);save(TKEY,tokenSettings);save(VKEY,validated);save(HKEY,tradeHistory);save(DKEY,dismissed);save(BKEY,revalidateBlock)}
-function stripSetup(q){if(!q)return q;const {cs,...rest}=q;return rest}
-function compactLive(){return {uni:(live.uni||[]).slice(0,220),ops:(live.ops||[]).map(stripSetup).slice(0,500),top:(live.top||[]).map(stripSetup).slice(0,220),scanRows:(live.scanRows||[]).map(stripSetup).slice(0,220),snap:live.snap||{}}}
-function cfg(symbol){const t=tokenSettings[symbol];return t&&t.enabled?{...settings,...t}:{...settings}}
-function maxActive(){return Math.max(1,Math.floor(num(settings.maxActivePositions,3)))}
-function notional(c){return Math.max(1,num(c.margin,100)*Math.max(1,num(c.leverage,10)))}
-function pnlAt(p,px){const fill=num(p.fillPrice||p.buy);return fill>0&&px>0?num(p.notional,1000)*(px/fill-1):0}
-function priceForPnl(p,pnl){const fill=num(p.fillPrice||p.buy);return fill*(1+pnl/Math.max(1,num(p.notional,1000)))}
-function openBySymbol(symbol){return state.open.find(p=>p.symbol===symbol)}
-function getValidated(symbol){return validated[symbol]||null}
-function hasGeom(q){return !!(q&&ff(q.upper,q.sup,q.baseGeom?.upper)>0&&ff(q.lower,q.inf,q.baseGeom?.lower)>0)}
-function working(symbol){let q=chartDrafts[symbol]||validated[symbol]||live.top.find(q=>q.symbol===symbol)||live.ops.find(q=>q.symbol===symbol)||null;if(q&&validated[symbol]&&!hasGeom(q)){const repaired=repairSetup(q,symbol);validated[symbol]={...q,...repaired};q=validated[symbol]}return q}
-function channelSpan(q){const l=Math.max(.02,Math.min(.90,num(q?.channelLeft,.18))),r=Math.max(.10,Math.min(.98,num(q?.channelRight,.84)));return l<r-.06?{left:l,right:r}:{left:.18,right:.84}}
-function geomCopy(q){const sp=channelSpan(q);return {upper:num(q.upper),median:num(q.median),lower:num(q.lower),channelLeft:sp.left,channelRight:sp.right}}
-function buyFor(q,symbol){const c=cfg(symbol);return num(q.lower)*(1+num(c.buyOffsetPct,.1)/100)}
-function plannedTargetPrice(symbol,targetProfit=null,margin=null,leverage=null){
-  const q=working(symbol),p=openBySymbol(symbol);
-  const fill=ff(p?.fillPrice,q?.buy,q?buyFor(q,symbol):0,lastPrices.get(symbol));
-  const c=cfg(symbol),m=Math.max(1,num(margin,c.margin)),l=Math.max(1,num(leverage,c.leverage)),n=m*l,t=num(targetProfit,c.targetProfit);
-  return fill>0?fill*(1+t/n):0
-}
-function manualSalePriceFor(q,symbol){
-  if(!q||!q.manualSaleEnabled)return 0;
-  return num(q.manualSalePrice,0)
-}
-function syncManualSaleToTokenSettings(symbol,q){
-  if(!symbol||!q)return;
-  const t=tokenSettings[symbol]||{};
-  if(q.manualSaleEnabled&&num(q.manualSalePrice)>0) tokenSettings[symbol]={...t,manualSaleEnabled:true,manualSalePrice:num(q.manualSalePrice)};
-  else if(t.manualSaleEnabled||t.manualSalePrice){tokenSettings[symbol]={...t,manualSaleEnabled:false,manualSalePrice:0}}
-}
-
-function applyGeometry(q){if(!q)return q;q.median=(num(q.upper)+num(q.lower))/2;q.buy=buyFor(q,q.symbol);return q}
-function isLocked(symbol){return !!(symbol&&validated[symbol]&&!chartDrafts[symbol])}
-function freshDraft(symbol){if(isLocked(symbol))return null;const q=working(symbol);if(!q)return null;if(!chartDrafts[symbol]){const t=tokenSettings[symbol]||{};chartDrafts[symbol]={...clone(q),baseGeom:geomCopy(q),draft:true,manualSaleEnabled:q.manualSaleEnabled??!!t.manualSaleEnabled,manualSalePrice:num(q.manualSalePrice,t.manualSalePrice)}}return chartDrafts[symbol]}
-function markDraft(symbol){if(isLocked(symbol))return null;const q=freshDraft(symbol);if(q){q.draft=true;renderEditState();persist()}return q}
-function updateChannelControls(){}
-function renderEditState(){const q=working(selectedSymbol),tag=$('editState'),locked=isLocked(selectedSymbol),saleOnly=!!chartDrafts[selectedSymbol]?._saleOnly,vb=$('validateBtn'),ib=$('immediateBuyBtn'),sb=$('manualSaleBtn');updateChannelControls();vb.style.display='inline-block';vb.disabled=(!q)||(locked&&!saleOnly);vb.textContent=saleOnly?'✓ Valider vente':(locked?'✓ VALIDÉ 🔒':'✓ Valider');$('cancelBtn').style.display=(!locked||saleOnly)?'inline-block':'none';$('unlockBtn').style.display=(locked&&!saleOnly)?'inline-block':'none';if(ib){ib.style.display='inline-block';ib.disabled=!q||!!openBySymbol(selectedSymbol)||state.open.filter(isRealOpen).length>=maxActive()}if(sb){sb.style.display='inline-block';sb.disabled=!q;sb.textContent=q?.manualSaleEnabled?'VENTE MANUELLE ✓':'VENTE MANUELLE';sb.classList.toggle('good',!!q?.manualSaleEnabled);sb.classList.toggle('danger',!q?.manualSaleEnabled)}if(locked&&!saleOnly){tag.style.display='inline-block';tag.className='validatedTag';tag.textContent='VALIDÉ 🔒';$('buyLegend').textContent='';return}tag.style.display='none';$('buyLegend').textContent=''}
-function arm(){const openSy=new Set(state.open.map(x=>x.symbol));const old=new Map((state.pending||[]).map(x=>[x.symbol,x]));const now=Date.now();const next=[];for(const [symbol,q] of Object.entries(validated)){if(openSy.has(symbol)||revalidateBlock[symbol])continue;const prev=old.get(symbol);next.push({...clone(q),symbol,buy:num(q.buy)||buyFor(q,symbol),armedAt:prev?.armedAt||q.validatedAt||now,status:'WATCHING'})}state.pending=next;persist();syncRealtime();render()}
-function ensureOpenMeta(p){const c=p.frozenCfg||cfg(p.symbol),n=notional(c);p.margin=num(p.margin,c.margin);p.leverage=num(p.leverage,c.leverage);p.notional=num(p.notional,n);p.targetProfit=num(p.targetProfit,c.targetProfit);p.maxLoss=num(p.maxLoss,c.maxLoss);p.protectionArm=num(p.protectionArm,c.protectionArm);p.protectionFloor=num(p.protectionFloor,c.protectionFloor);const exact=num(p.manualSalePrice,c.manualSalePrice),fill=num(p.fillPrice||p.buy);if((p.manualSaleEnabled||c.manualSaleEnabled)&&exact>fill&&fill>0){p.manualSaleEnabled=true;p.manualSalePrice=exact;p.targetPrice=exact;p.targetProfit=pnlAt({...p,notional:p.notional,fillPrice:fill},exact)}else{p.targetPrice=num(p.targetPrice,priceForPnl({...p,notional:p.notional},p.targetProfit))}p.hardStopPrice=priceForPnl({...p,notional:p.notional,fillPrice:fill},-p.maxLoss);p.stopTriggerLoss=Math.max(0,p.maxLoss-1);p.stopTriggerPrice=priceForPnl({...p,notional:p.notional,fillPrice:fill},-p.stopTriggerLoss);p.stopLimitEnabled=true;p.maxProfit=Math.max(0,num(p.maxProfit));p.protectionArmed=!!p.protectionArmed;p.belowInfTicks=num(p.belowInfTicks);return p}
-function isRealOpen(p){return !!(p&&recoverSymbol('',p)&&num(p.fillPrice||p.entry)>0&&num(p.fillTime||p.openedAt||p.entryTime)>0)}
-state.open=state.open.filter(isRealOpen).map(p=>{p.symbol=recoverSymbol('',p)||p.symbol;return ensureOpenMeta(p)});
-state.open=[...state.open].sort((a,b)=>num(a.fillTime)-num(b.fillTime))
-if(!tradeHistory.length&&state.closed.length){tradeHistory=state.closed.map(p=>({symbol:p.symbol,fillPrice:num(p.fillPrice||p.buy),exitPrice:num(p.exitPrice),pnl:num(p.pnl,p.simPnl),exitTime:num(p.exitTime,Date.now())})).filter(x=>x.symbol&&x.fillPrice>0&&x.exitPrice>0)}
-function gainsLosses(){let gains=0,loss=0;for(const h of tradeHistory){const p=num(h.pnl);if(p>0)gains+=p;else if(p<0)loss+=-p}return {gains,loss}}
-function cleanupLegacyDuplicateStops(){if(localStorage.getItem(MIGKEY))return 0;const seen=new Set(),out=[];let removed=0;for(const h of tradeHistory){const loss=Math.abs(num(h.pnl)),fill=num(h.fillPrice),exit=num(h.exitPrice),sym=h.symbol||'';const looksStop=loss>0&&Math.abs(loss-num(settings.maxLoss,40))<0.02&&fill>0&&exit>0;const key=looksStop?`${sym}|${fill.toPrecision(12)}|${exit.toPrecision(12)}|${loss.toFixed(2)}`:'';if(key&&seen.has(key)){removed++;continue}if(key)seen.add(key);out.push(h)}tradeHistory=out;localStorage.setItem(MIGKEY,'1');persist();return removed}
-function purgeLegacyReactivations(){const lastClosed=new Map();for(const r of [...(tradeHistory||[]),...(state.closed||[])]){const sym=recoverSymbol('',r),t=num(r?.exitTime,0);if(sym&&t>num(lastClosed.get(sym),0))lastClosed.set(sym,t)}let purged=0;for(const [sym,q] of Object.entries(validated)){const closedAt=num(lastClosed.get(sym),0),validatedAt=num(q?.validatedAt,q?.armedAt||0);if(closedAt>0&&closedAt>=validatedAt){delete validated[sym];revalidateBlock[sym]={closedAt,reason:'LEGACY_REACTIVATION_BLOCK'};purged++}}state.open=(state.open||[]).filter(p=>{const sym=recoverSymbol('',p)||p.symbol,closedAt=num(lastClosed.get(sym),0),validatedAt=num(p?.validatedAt,p?.armedAt||0),fillTime=num(p?.fillTime,0);const stale=closedAt>0&&closedAt>=validatedAt&&fillTime>closedAt;if(stale){revalidateBlock[sym]={closedAt,reason:'LEGACY_REACTIVATION_BLOCK'};purged++;return false}return true});state.pending=(state.pending||[]).filter(q=>!revalidateBlock[recoverSymbol('',q)]);for(const arr of [live.top,live.ops,live.scanRows])for(const q of (arr||[])){const sym=recoverSymbol('',q);if(sym&&revalidateBlock[sym]){q.validated=false;q.active=false;q.scanStatus=q.scanStatus||'À VALIDER';delete q.validatedAt;delete q.armedAt}}if(purged)persist();return purged}
-function closePosition(symbol,px,reason='MANUAL'){const i=state.open.findIndex(p=>p.symbol===symbol);if(i<0)return false;let p=ensureOpenMeta(state.open[i]);state.open.splice(i,1);const exit=px>0?px:num(p.lastMarkPrice,p.fillPrice),pnl=pnlAt(p,exit),now=Date.now();const rec={symbol,fillPrice:p.fillPrice,exitPrice:exit,pnl,exitTime:now,reason};tradeHistory.push(rec);state.closed.push({...p,...rec,status:'CLOSED'});revalidateBlock[symbol]={closedAt:now,reason,fillPrice:p.fillPrice,exitPrice:exit};delete validated[symbol];delete chartDrafts[symbol];state.pending=(state.pending||[]).filter(x=>x.symbol!==symbol);hitQueue=hitQueue.filter(x=>x.symbol!==symbol);for(const arr of [live.top,live.ops,live.scanRows])for(const q of (arr||[]))if(q&&q.symbol===symbol){q.validated=false;q.active=false;q.status='CANDIDATE';q.scanStatus='À VALIDER';delete q.validatedAt;delete q.armedAt}persist();arm();renderHistory();setStatus(`${symbol} fermé · ${moneySigned(pnl)} · dévalidé automatiquement · revalidation manuelle obligatoire`);return true}
-function manualClose(symbol){const p=openBySymbol(symbol);if(!p)return;const px=num(lastPrices.get(symbol),num(p.lastMarkPrice,p.fillPrice));closePosition(symbol,px,'MANUAL')}
-function queueHit(symbol,px,time){if(openBySymbol(symbol)||!validated[symbol]||revalidateBlock[symbol])return;hitQueue.push({symbol,px,time:num(time,Date.now())});if(!hitFlushScheduled){hitFlushScheduled=true;setTimeout(flushBuyHits,25)}}
-function flushBuyHits(){hitFlushScheduled=false;hitQueue.sort((a,b)=>a.time-b.time||a.symbol.localeCompare(b.symbol));while(hitQueue.length){const h=hitQueue.shift();if(state.open.filter(isRealOpen).length>=maxActive())continue;if(openBySymbol(h.symbol)||!validated[h.symbol]||revalidateBlock[h.symbol])continue;const q=validated[h.symbol],buy=num(q.buy)||buyFor(q,h.symbol);if(h.px>buy)continue;const c=cfg(h.symbol),n=notional(c);const p=ensureOpenMeta({...clone(q),symbol:h.symbol,status:'OPEN',fillPrice:buy,fillTime:h.time,lastMarkPrice:h.px,unrealizedPnl:n*(h.px/buy-1),maxProfit:Math.max(0,n*(h.px/buy-1)),frozenCfg:clone(c),margin:c.margin,leverage:c.leverage,notional:n,targetProfit:c.targetProfit,maxLoss:c.maxLoss,protectionArm:c.protectionArm,protectionFloor:c.protectionFloor,belowInfSince:null,belowInfTicks:0});state.open.push(p);state.pending=state.pending.filter(x=>x.symbol!==h.symbol);if(p.unrealizedPnl<=-p.maxLoss||h.px<=p.hardStopPrice){closePosition(h.symbol,p.hardStopPrice,'MAX_LOSS');continue}setStatus(`${h.symbol} acheté en simulation à ${price(buy)}`)}persist();render();syncRealtime()}
-function processOpenTrade(p,px,t){p=ensureOpenMeta(p);p.lastMarkPrice=px;p.unrealizedPnl=pnlAt(p,px);p.maxProfit=Math.max(num(p.maxProfit),p.unrealizedPnl);if(p.maxProfit>=p.protectionArm)p.protectionArmed=true;if(px>=p.targetPrice){closePosition(p.symbol,p.targetPrice,'TARGET');return true}if(p.protectionArmed&&p.unrealizedPnl<=p.protectionFloor){closePosition(p.symbol,priceForPnl(p,p.protectionFloor),'PROTECTION');return true}if(p.stopLimitEnabled&&px<=p.stopTriggerPrice){closePosition(p.symbol,p.hardStopPrice,'STOP_LIMIT');return true}const i=state.open.findIndex(x=>x.symbol===p.symbol);if(i>=0)state.open[i]=p;return false}
-function onTrade(symbol,px,time){if(!(px>0))return;lastPrices.set(symbol,px);for(const q of live.top||[])if(q.symbol===symbol){q.last=px;q.dist=(px-num(q.buy))/px}for(const q of live.ops||[])if(q.symbol===symbol){q.last=px;q.dist=(px-num(q.buy))/px}if(validated[symbol]){validated[symbol].last=px;validated[symbol].dist=(px-num(validated[symbol].buy))/px}const p=openBySymbol(symbol);if(p){if(processOpenTrade(p,px,time)){render();return}}else if(validated[symbol]){const buy=num(validated[symbol].buy)||buyFor(validated[symbol],symbol);if(px<=buy)queueHit(symbol,px,time)}render(false)}
-function desiredRtStreams(){const sy=new Set([...Object.keys(validated),...state.open.map(x=>x.symbol)]);return [...sy].filter(Boolean).map(s=>s.toLowerCase()+'@aggTrade')}
-function rtConnected(){return rt&&rt.readyState===WebSocket.OPEN}
-function syncRealtime(){const streams=desiredRtStreams();const key=streams.join('/');if(rt&&rt._key===key&&(rt.readyState===WebSocket.OPEN||rt.readyState===WebSocket.CONNECTING))return;if(rt){try{rt.onclose=null;rt.close()}catch(_){}}clearTimeout(rtReconnect);if(!streams.length){rt=null;lastRtCount=0;updateLiveBadge();return}try{const ws=new WebSocket('wss://fstream.binance.com/stream?streams='+streams.join('/'));ws._key=key;rt=ws;ws.onopen=()=>{lastRtCount=streams.length;updateLiveBadge();setStatus(`Surveillance temps réel active · ${streams.length} jeton(s)`) };ws.onmessage=e=>{try{const m=JSON.parse(e.data),d=m.data||m;if(d&&d.s&&d.p)onTrade(d.s,+d.p,+d.T||Date.now())}catch(_){}};ws.onerror=()=>{};ws.onclose=()=>{updateLiveBadge();rtReconnect=setTimeout(syncRealtime,2500)}}catch(_){rt=null;updateLiveBadge()}}
-function updateLiveBadge(){$('liveBadge').textContent=`LIVE ${rtConnected()?lastRtCount:0}`;$('liveBadge').className='liveBadge'+(rtConnected()?'':' off')}
-
-async function jf(path){const errs=[],enc=encodeURIComponent(path),tries=['/api/binance?path='+enc,'https://bot-barres-paralleles-connect2-p5g0owjie-waaron.vercel.app/api/binance?path='+enc,'https://fapi.binance.com'+path,'https://fapi1.binance.com'+path,'https://fapi2.binance.com'+path,'https://fapi3.binance.com'+path];for(const url of tries){try{const r=await fetch(url,{cache:'no-store'});if(!r.ok){errs.push('HTTP '+r.status);continue}const data=await r.json();if(data&&data.error&&url.startsWith('/api/binance')){errs.push(String(data.error));continue}return data}catch(e){errs.push(e?.message||String(e))}}throw new Error(errs.filter(Boolean).slice(0,3).join(' · ')||'Connexion Binance impossible')}
-async function pool(items,fn,limit=7){const out=new Array(items.length);let n=0;async function w(){while(true){const i=n++;if(i>=items.length)return;try{out[i]=await fn(items[i],i)}catch(_){out[i]=null}}}await Promise.all(Array.from({length:Math.min(limit,items.length||1)},w));return out}
-function uniqueSymbols(rows){const seen=new Set();return rows.filter(q=>q&&q.symbol&&!seen.has(q.symbol)&&(seen.add(q.symbol),true))}
-async function scan(force=false){$('scanBtn').disabled=true;setStatus('Chargement Binance Futures PERP…');try{const [info,ticks]=await Promise.all([jf('/fapi/v1/exchangeInfo'),jf('/fapi/v1/ticker/24hr')]);const tm=new Map(ticks.map(t=>[t.symbol,+t.lastPrice]));for(const [vs,vq] of Object.entries(validated)){const lp=tm.get(vs);if(lp>0){vq.last=lp;lastPrices.set(vs,lp);if(ff(vq.buy)>0)vq.dist=(lp-vq.buy)/lp}}const protectedSy=new Set(Object.keys(validated)),dismissedSy=new Set(Object.keys(dismissed)),maxPx=Math.max(.00000001,num(settings.maxTokenPrice,1));let uni=(info.symbols||[]).filter(s=>s.contractType==='PERPETUAL'&&s.quoteAsset==='USDT'&&s.status==='TRADING'&&!protectedSy.has(s.symbol)&&!dismissedSy.has(s.symbol)).map(s=>({symbol:s.symbol,last:tm.get(s.symbol),onboardDate:+s.onboardDate||0,market:'PERP'})).filter(x=>x.last>0&&x.last<=maxPx);if(settings.preferRecent)uni.sort((a,b)=>(b.onboardDate-a.onboardDate)||(a.last-b.last));else uni.sort((a,b)=>a.last-b.last);uni=uni.slice(0,Math.max(10,Math.min(200,num(settings.scanCount,50))));setStatus(`Analyse 1H de ${uni.length} contrats PERP…`);const rows=await pool(uni,u=>jf(`/fapi/v1/klines?symbol=${u.symbol}&interval=1h&limit=140`));let ops=[];rows.forEach((raw,i)=>{if(!raw)return;const u=uni[i];try{ops.push(...Scanner.analyzeSymbol(u.symbol,raw,u.last).map(q=>({...q,onboardDate:u.onboardDate,market:'PERP',cs:raw})))}catch(_){}});ops.sort((a,b)=>Math.max(0,a.dist)-Math.max(0,b.dist)||num(b.score)-num(a.score));let ranked=uniqueSymbols(ops).map(q=>{q.buy=buyFor(q,q.symbol);q.baseGeom=geomCopy(q);q.draft=false;return q});const bySym=new Map(ranked.map(q=>[q.symbol,q]));const scanRows=uni.map((u,i)=>{const q=bySym.get(u.symbol);if(q)return {...clone(q),last:u.last,scanStatus:'À VALIDER',market:'PERP'};return {symbol:u.symbol,last:u.last,market:'PERP',scanStatus:rows[i]?'NON RETENU':'NON ANALYSÉ'}});const fresh=scanRows.filter(q=>q.scanStatus==='À VALIDER');const valRows=Object.values(validated).filter(q=>!revalidateBlock[q.symbol]).map(q=>({...clone(q),last:num(lastPrices.get(q.symbol),num(q.last)),dist:num(q.last)>0?(num(q.last)-num(q.buy))/num(q.last):q.dist,validated:true,market:'PERP'}));const snap={...(live.snap||{})};rows.forEach((raw,i)=>{if(raw)snap[uni[i].symbol]=raw});live={uni,ops:ranked,top:[...valRows,...fresh],scanRows,snap};if(!selectedSymbol)selectedSymbol=live.top[0]?.symbol||Object.keys(validated)[0]||null;meta.lastScanAt=Date.now();persist();arm();setStatus(`Scan terminé · ${uni.length} analysé(s) · ${ranked.length} opportunité(s) · ${Object.keys(validated).length} validé(s)`);if(selectedSymbol)loadChart(selectedSymbol,currentTF,true)}catch(e){setStatus(`Erreur scanner : ${e?.message||e}`,true)}finally{$('scanBtn').disabled=false;render()}}
-function nextCandidate(exclude=new Set()){return (live.ops||[]).find(q=>!exclude.has(q.symbol)&&!validated[q.symbol]&&!dismissed[q.symbol])||null}
-function deleteToken(q){if(!q?.symbol)return;const symbol=q.symbol;dismissed[symbol]=Date.now();delete validated[symbol];delete tokenSettings[symbol];delete chartDrafts[symbol];delete revalidateBlock[symbol];state.pending=state.pending.filter(x=>x.symbol!==symbol);const idx=live.top.findIndex(x=>x.symbol===symbol);live.top=live.top.filter(x=>x.symbol!==symbol);let replaced=false;if(idx>=0){const ex=new Set(live.top.map(x=>x.symbol));const n=nextCandidate(ex);if(n){live.top.splice(Math.min(idx,live.top.length),0,n);replaced=true}}if(selectedSymbol===symbol){selectedSymbol=live.top[Math.min(Math.max(0,idx),live.top.length-1)]?.symbol||Object.keys(validated)[0]||null;if(selectedSymbol)loadChart(selectedSymbol,currentTF,true)}persist();arm();closeTrash();render();if(!replaced)setTimeout(()=>scan(true),0)}
-function closeTrash(){if(openTrashRow){openTrashRow.classList.remove('swiped');openTrashRow=null}}
-function attachSwipeDelete(tr,q,statusCell){let sx=0,sy=0,active=false;const begin=(x,y)=>{sx=x;sy=y;active=true};const finish=(x,y)=>{if(!active)return;active=false;const dx=x-sx,dy=y-sy;if(dx>38&&Math.abs(dx)>Math.abs(dy)*1.15){if(openTrashRow&&openTrashRow!==tr)openTrashRow.classList.remove('swiped');tr.classList.add('swiped');openTrashRow=tr;setTimeout(()=>{if(openTrashRow===tr)closeTrash()},4500)}else if(dx<-25&&tr.classList.contains('swiped'))closeTrash()};tr.addEventListener('pointerdown',e=>{if(e.target.closest('button'))return;begin(e.clientX,e.clientY)},{passive:true});tr.addEventListener('pointerup',e=>finish(e.clientX,e.clientY),{passive:true});tr.addEventListener('pointercancel',()=>{active=false},{passive:true});const b=document.createElement('button');b.className='trashbtn';b.textContent='🗑';b.setAttribute('aria-label','Supprimer le jeton');b.onclick=e=>{e.stopPropagation();deleteToken(q)};statusCell.appendChild(b)}
-document.addEventListener('pointerdown',e=>{if(openTrashRow&&!openTrashRow.contains(e.target))closeTrash()},{capture:true});
-
-function rowStatus(q){if(openBySymbol(q.symbol))return 'ACTIF';if(validated[q.symbol])return 'VALIDÉ 🔒';if(q?.scanStatus==='NON RETENU'||q?.scanStatus==='NON ANALYSÉ')return q.scanStatus;return 'À VALIDER'}
-function rowSalePrice(q){const p=openBySymbol(q.symbol);if(p)return num(ensureOpenMeta(p).targetPrice);const v=validated[q.symbol]||q;if(v?.manualSaleEnabled&&num(v.manualSalePrice)>0)return num(v.manualSalePrice);const buy=ff(v?.buy,(ff(v?.lower)>0?buyFor(v,q.symbol):0));if(!(buy>0))return 0;const c=cfg(q.symbol),n=notional(c);return buy*(1+num(c.targetProfit,40)/n)}
-function showPrice(v){return num(v)>0?price(v):'—'}
-function displayRows(){
-  const active=state.open.filter(isRealOpen).sort((a,b)=>num(a.fillTime)-num(b.fillTime)).map(p=>{
-    const symbol=recoverSymbol('',p)||p.symbol,q=repairSetup(p,symbol),alt=(live.top||[]).find(x=>x?.symbol===symbol);
-    const last=ff(lastPrices.get(symbol),p.lastMarkPrice,q.last,alt?.last);
-    if(!ff(q.buy)&&ff(q.lower))q.buy=buyFor(q,symbol);
-    return {...clone(q),...clone(p),symbol,last,active:true,validated:!!validated[symbol]}
-  });
-  const activeSy=new Set(active.map(x=>x.symbol));
-  const vals=Object.values(validated).filter(v=>v&&recoverSymbol('',v)&&!revalidateBlock[recoverSymbol('',v)]).map(v=>{
-    const symbol=recoverSymbol('',v),q=repairSetup(v,symbol),alt=(live.top||[]).find(x=>x?.symbol===symbol);
-    const last=ff(lastPrices.get(symbol),q.last,alt?.last);if(last>0){q.last=last;validated[symbol].last=last}
-    if(!ff(q.buy)&&ff(q.lower))q.buy=buyFor(q,symbol);
-    return {...clone(q),symbol,validated:true,last}
-  }).filter(q=>!activeSy.has(q.symbol)).sort((a,b)=>num(a.validatedAt)-num(b.validatedAt));
-  const valSy=new Set([...activeSy,...vals.map(x=>x.symbol)]);
-  const scan=(live.scanRows?.length?live.scanRows:(live.top||[])).filter(q=>q&&q.symbol&&!valSy.has(q.symbol)&&!dismissed[q.symbol]);
-  return [...active,...vals,...scan]
-}
-function renderTop(){const rows=displayRows(),body=$('topBody');body.innerHTML='';rows.forEach((q,i)=>{const tr=document.createElement('tr');if(q.symbol===selectedSymbol)tr.classList.add('selected');if(validated[q.symbol])tr.classList.add('worked');const last=ff(lastPrices.get(q.symbol),q.last),rg=repairChannel(q),buy=ff(validated[q.symbol]?.buy,q.buy,(ff(rg.lower)>0?buyFor({...q,...rg},q.symbol):0)),sale=rowSalePrice(q),dist=last>0&&buy>0?(last-buy)/last:q.dist;const vals=[i+1,null,showPrice(last),showPrice(rg.upper),showPrice(rg.median),showPrice(rg.lower),showPrice(buy),showPrice(sale),buy>0?(dist<=0?'MAINTENANT':pct(Math.max(0,dist))):'—',null];vals.forEach((v,j)=>{const td=document.createElement('td');if(j===1){td.innerHTML=`${q.symbol}<span class="perp">PERP</span>`}else if(j===9){td.className='statuscell';const st=document.createElement('span');st.className='statusText';st.textContent=rowStatus(q);td.appendChild(st);attachSwipeDelete(tr,q,td)}else td.textContent=String(v);tr.appendChild(td)});tr.onclick=e=>{if(e.target.closest('.trashbtn'))return;closeTrash();selectedSymbol=q.symbol;meta.selectedSymbol=q.symbol;persist();render();loadChart(q.symbol,currentTF,true)};body.appendChild(tr)});if(!rows.length){body.innerHTML='<tr><td colspan="10" class="empty">Aucun jeton affiché.</td></tr>'}$('selectionCount').textContent=`${Object.keys(validated).length} validé(s) · ${live.scanRows?.length||0} scanné(s) · ${rows.length} affiché(s)`}
-function progressLeft(p){const min=-num(p.maxLoss,40),max=Math.max(num(p.targetProfit,40),40),v=Math.max(min,Math.min(max,num(p.unrealizedPnl)));return ((v-min)/(max-min))*100}
-function renderActive(){const wrap=$('activeWrap');wrap.innerHTML='';if($('activeMaxNote'))$('activeMaxNote').textContent=`maximum ${maxActive()} achetée(s) simultanément`;$('activeSection').style.display=state.open.length?'block':'none';state.open.forEach(p0=>{const p=ensureOpenMeta(p0),px=num(lastPrices.get(p.symbol),num(p.lastMarkPrice,p.fillPrice)),pnl=pnlAt(p,px);p.unrealizedPnl=pnl;p.lastMarkPrice=px;const card=document.createElement('div');card.className='posCard';card.innerHTML=`<div class="posTop"><div class="posSym">${p.symbol} <span class="perp">PERP</span></div><div class="posPnl ${pnl>=0?'pos':'neg'}">${moneySigned(pnl)}</div></div><div class="posGrid"><span>Prix d'achat</span><b>${price(p.fillPrice)}</b><span>Prix actuel</span><b>${price(px)}</b><span>Plus haut atteint</span><b>${moneySigned(p.maxProfit||0)}</b><span>Objectif</span><b>+${num(p.targetProfit,40).toFixed(2)} $ · ${price(p.targetPrice)}</b><span>Protection</span><b class="${p.protectionArmed?'protectOn':'protectOff'}">${p.protectionArmed?`ACTIVE · +${num(p.protectionFloor,20)} $`:`à +${num(p.protectionArm,30)} $`}</b><span>Stop-limit</span><b>décl. -${num(p.stopTriggerLoss,39).toFixed(2)} $ → limite -${num(p.maxLoss,40).toFixed(2)} $</b></div><div class="miniTrack"><i style="left:calc(${progressLeft(p)}% - 1px)"></i></div><button class="btn danger closeNow">FERMER MAINTENANT</button>`;card.querySelector('button').onclick=()=>manualClose(p.symbol);wrap.appendChild(card)});state.open=state.open.map(ensureOpenMeta)}
-function renderKpis(){const gl=gainsLosses(),active=state.open.filter(isRealOpen).length;$('kWatch').textContent=String(Object.keys(validated).length);$('kActive').textContent=`${active}/${maxActive()}`;$('kGains').textContent=`+$${gl.gains.toFixed(2)}`;$('kLosses').textContent=`-$${gl.loss.toFixed(2)}`}
-function renderHistory(){const gl=gainsLosses();$('histGain').textContent=`+$${gl.gains.toFixed(2)}`;$('histLoss').textContent=`-$${gl.loss.toFixed(2)}`;const b=$('histBody');b.innerHTML='';[...tradeHistory].sort((a,b)=>num(b.exitTime)-num(a.exitTime)).forEach(h=>{const tr=document.createElement('tr');const vals=[when(h.exitTime),h.symbol,price(h.fillPrice),price(h.exitPrice),moneySigned(h.pnl)];vals.forEach((v,i)=>{const td=document.createElement('td');td.textContent=v;if(i===4)td.className='pnlCell '+(num(h.pnl)>=0?'pos':'neg');tr.appendChild(td)});b.appendChild(tr)});if(!tradeHistory.length)b.innerHTML='<tr><td colspan="5" class="empty">Aucun trade terminé.</td></tr>'}
-function render(saveState=true){renderKpis();renderTop();renderActive();renderEditState();renderChart();renderHistory();updateLiveBadge();if(saveState)persist()}
-
-async function loadChart(symbol,tf=currentTF,reset=false){if(!symbol)return;currentTF=tf;meta.tf=tf;document.querySelectorAll('.tf').forEach(b=>b.classList.toggle('on',b.dataset.tf===tf));const req=++chartReq;chartLoading=true;renderChart();try{const lim=tf==='1m'||tf==='5m'||tf==='1h'?1000:700;const raw=await jf(`/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${lim}`);if(req!==chartReq)return;chartData=raw.map(x=>({t:+x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4]}));if(tf==='1h')live.snap[symbol]=raw;if(reset)chartView={visible:Math.min(130,Math.max(50,chartData.length)),offset:0,panX:0,yZoom:1,yShift:0};chartLoading=false;persist();renderChart()}catch(e){if(req===chartReq){chartLoading=false;setStatus(`Graphique : ${e?.message||e}`,true);renderChart()}}}
-function fitCanvas(){const dpr=Math.min(2,window.devicePixelRatio||1),rect=chart.getBoundingClientRect(),w=Math.max(300,Math.round(rect.width*dpr)),h=Math.max(250,Math.round(rect.height*dpr));if(chart.width!==w||chart.height!==h){chart.width=w;chart.height=h}return {W:w,H:h,dpr}}
-function chartGeom(){const {W,H,dpr}=fitCanvas(),pad={l:8*dpr,r:78*dpr,t:18*dpr,b:24*dpr};const total=chartData.length;chartView.visible=Number.isFinite(+chartView.visible)?Math.max(20,Math.min(Math.max(20,total||20),+chartView.visible)):Math.min(130,Math.max(50,total||50));chartView.panX=Number.isFinite(+chartView.panX)?Math.max(-.75,Math.min(.75,+chartView.panX)):0;chartView.yZoom=Number.isFinite(+chartView.yZoom)?Math.max(.2,Math.min(12,+chartView.yZoom)):1;chartView.yShift=Number.isFinite(+chartView.yShift)?Math.max(-2,Math.min(2,+chartView.yShift)):0;const visible=Math.max(20,Math.min(total||20,Math.round(chartView.visible))),gap=Math.round(visible*.45),rightIndex=Math.max(0,total-1),leftIndex=Math.max(0,rightIndex-visible+1),slice=chartData.slice(leftIndex,rightIndex+1);const values=[];for(const c of slice){if(Number.isFinite(c.l)&&c.l>0)values.push(c.l);if(Number.isFinite(c.h)&&c.h>0)values.push(c.h)}const q=working(selectedSymbol);if(q){const rg=repairChannel(q);[rg.upper,rg.lower,rg.median,ff(openBySymbol(selectedSymbol)?.fillPrice,buyFor({...q,...rg},selectedSymbol)),manualSalePriceFor(q,selectedSymbol)].forEach(v=>{if(Number.isFinite(v)&&v>0)values.push(v)});}let lo=Math.min(...values),hi=Math.max(...values);if(!Number.isFinite(lo)||!Number.isFinite(hi)||hi<=lo){lo=0;hi=1}let span=(hi-lo)*1.12||hi*.02||1,mid=(hi+lo)/2+chartView.yShift*span;span/=chartView.yZoom;lo=mid-span/2;hi=mid+span/2;if(lo<0){hi-=lo;lo=0}if(!(hi>lo)){lo=0;hi=Math.max(1,mid*1.02)}const drawableW=W-pad.l-pad.r,xStep=drawableW/(visible+gap),panPx=chartView.panX*drawableW,x=i=>pad.l+(i-leftIndex+.5)*xStep+panPx,y=v=>pad.t+(hi-v)*(H-pad.t-pad.b)/(hi-lo);return {W,H,dpr,pad,visible,gap,leftIndex,rightIndex,slice,lo,hi,xStep,panPx,x,y}}
-
-function centerBarsView(){const q=working(selectedSymbol);if(!q||!chartData.length)return;const rg=repairChannel(q),vals=[rg.lower,rg.median,rg.upper,buyFor({...q,...rg},selectedSymbol)].filter(v=>Number.isFinite(v)&&v>0);if(vals.length<2)return;chartView.yZoom=1;chartView.yShift=0;const base=chartGeom(),baseMid=(base.hi+base.lo)/2,baseSpan=Math.max(base.hi-base.lo,1e-12),lo=Math.min(...vals),hi=Math.max(...vals),mid=(hi+lo)/2,targetSpan=Math.max((hi-lo)*2.5,Math.abs(mid)*0.006,baseSpan*.08,1e-12);chartView.yZoom=Math.max(.2,Math.min(12,baseSpan/targetSpan));chartView.yShift=Math.max(-2,Math.min(2,(mid-baseMid)/baseSpan));renderChart();setStatus('Vue centrée sur les barres — niveaux inchangés.')}
-function positionChartOverlays(g,q){const locked=isLocked(selectedSymbol),saleOnly=!!chartDrafts[selectedSymbol]?._saleOnly,geomLocked=locked||saleOnly,r=chart.getBoundingClientRect(),sx=r.width/g.W,sy=r.height/g.H,plotL=g.pad.l+g.panPx,plotW=g.W-g.pad.l-g.pad.r,sp=channelSpan(q),hx=plotL+plotW*(sp.left+sp.right)/2;for(const [id,v] of [['handleSup',q?ff(q.upper,q.sup,q.baseGeom?.upper):0],['handleMed',q?ff(q.median,q.med,q.baseGeom?.median):0],['handleInf',q?ff(q.lower,q.inf,q.baseGeom?.lower):0]]){const el=$(id);if(!el)continue;if(geomLocked||!(v>0)||chartLoading||!chartData.length){el.style.display='none';continue}el.style.display='block';el.style.left=`${hx*sx}px`;el.style.top=`${g.y(v)*sy}px`}for(const [id,f] of [['handleLenLeft',sp.left],['handleLenRight',sp.right]]){const el=$(id);if(!el)continue;if(geomLocked||!q||chartLoading||!chartData.length){el.style.display='none';continue}el.style.display='block';el.style.left=`${(plotL+plotW*f)*sx}px`;el.style.top=`${g.y(ff(q.median,q.med,q.baseGeom?.median))*sy}px`}const sale=$('handleSale'),salePx=manualSalePriceFor(q,selectedSymbol);if(sale){if((locked&&!saleOnly)||!(salePx>0)||chartLoading||!chartData.length){sale.style.display='none'}else{sale.style.display='block';sale.style.left=`${(g.W-g.pad.r-10*g.dpr+g.panPx)*sx}px`;sale.style.top=`${g.y(salePx)*sy}px`}}$('priceScaleTouch').style.display=selectedSymbol&&chartData.length&&!chartLoading?'block':'none'}
-function renderChart(){const g=chartGeom();ctx.clearRect(0,0,g.W,g.H);ctx.fillStyle='#080d14';ctx.fillRect(0,0,g.W,g.H);ctx.font=`${10*g.dpr}px sans-serif`;if(chartLoading){positionChartOverlays(g,null);ctx.fillStyle='#94a3b8';ctx.fillText('Chargement…',18*g.dpr,30*g.dpr);return}if(!selectedSymbol||!chartData.length){positionChartOverlays(g,null);ctx.fillStyle='#94a3b8';ctx.fillText('Sélectionne un jeton.',18*g.dpr,30*g.dpr);return}ctx.strokeStyle='#1c2b3d';ctx.lineWidth=g.dpr;for(let i=0;i<=5;i++){const yy=g.pad.t+i*(g.H-g.pad.t-g.pad.b)/5;ctx.beginPath();ctx.moveTo(g.pad.l,yy);ctx.lineTo(g.W-g.pad.r,yy);ctx.stroke();ctx.fillStyle='#8ea0b8';ctx.fillText(price(g.hi-i*(g.hi-g.lo)/5),g.W-g.pad.r+5*g.dpr,yy+3*g.dpr)}const cw=Math.max(1.2*g.dpr,g.xStep*.58);g.slice.forEach((c,j)=>{const idx=g.leftIndex+j,xx=g.x(idx),up=c.c>=c.o;ctx.strokeStyle=up?'#22c55e':'#ef4444';ctx.fillStyle=ctx.strokeStyle;ctx.lineWidth=g.dpr;ctx.beginPath();ctx.moveTo(xx,g.y(c.h));ctx.lineTo(xx,g.y(c.l));ctx.stroke();const yt=g.y(Math.max(c.o,c.c)),yb=g.y(Math.min(c.o,c.c));ctx.fillRect(xx-cw/2,yt,cw,Math.max(g.dpr,yb-yt))});ctx.save();ctx.font=`bold ${12*g.dpr}px sans-serif`;ctx.fillStyle='#e2e8f0';ctx.fillText(selectedSymbol,Math.max(10*g.dpr,g.pad.l+4*g.dpr),g.pad.t+14*g.dpr);ctx.restore();const q=working(selectedSymbol);drawCurrentPrice(g);if(q){drawChannel(g,q);drawBuy(g,q);drawManualSale(g,q)}positionChartOverlays(g,q);$('chartTitle').textContent=`${selectedSymbol} · ${currentTF.toUpperCase()}`;$('buyLegend').textContent=''}
-function drawChannel(g,q){const sp=channelSpan(q),plotL=g.pad.l+g.panPx,plotW=g.W-g.pad.l-g.pad.r,sx=plotL+plotW*sp.left,lineEx=plotL+plotW*sp.right;ctx.save();ctx.lineWidth=.45*g.dpr;const vals=[[ff(q.upper,q.sup,q.baseGeom?.upper),'#22d3ee',[],true],[ff(q.median,q.med,q.baseGeom?.median),'#f59e0b',[5*g.dpr,4*g.dpr],false],[ff(q.lower,q.inf,q.baseGeom?.lower),'#22d3ee',[],true]];for(const [v,color,dash,showValue] of vals){if(!(v>0))continue;ctx.strokeStyle=color;ctx.fillStyle=color;ctx.setLineDash(dash);ctx.beginPath();ctx.moveTo(sx,g.y(v));ctx.lineTo(lineEx,g.y(v));ctx.stroke();ctx.setLineDash([]);if(showValue){ctx.font=`bold ${9*g.dpr}px sans-serif`;const txt=price(v);const tx=Math.min(lineEx+4*g.dpr,g.W-g.pad.r-ctx.measureText(txt).width-3*g.dpr);ctx.fillText(txt,tx,g.y(v)-3*g.dpr)}}ctx.restore()}
-function drawCurrentPrice(g){const raw=num(lastPrices.get(selectedSymbol),num(chartData.at(-1)?.c));if(!(raw>0))return;const minY=g.pad.t+6*g.dpr,maxY=g.H-g.pad.b-6*g.dpr,yy=Math.max(minY,Math.min(maxY,g.y(raw)));ctx.save();ctx.strokeStyle='#cbd5e1';ctx.fillStyle='#e2e8f0';ctx.lineWidth=.7*g.dpr;ctx.setLineDash([2*g.dpr,4*g.dpr]);ctx.beginPath();ctx.moveTo(g.pad.l,yy);ctx.lineTo(g.W-g.pad.r,yy);ctx.stroke();ctx.setLineDash([]);ctx.font=`bold ${9*g.dpr}px sans-serif`;ctx.fillText(`PRIX ${price(raw)}`,g.W-g.pad.r+4*g.dpr,yy-3*g.dpr);ctx.restore()}
-function drawBuy(g,q){const p=openBySymbol(selectedSymbol),v=p?num(p.fillPrice):buyFor(q,selectedSymbol),sx=g.pad.l+g.panPx+g.xStep*Math.max(4,g.visible*.12),ex=g.W-g.pad.r+g.panPx,yy=g.y(v);if(!(v>0))return;ctx.save();ctx.strokeStyle='#22c55e';ctx.fillStyle='#4ade80';ctx.lineWidth=(p?1.2:.75)*g.dpr;ctx.setLineDash(p?[]:[3*g.dpr,5*g.dpr]);ctx.beginPath();ctx.moveTo(sx,yy);ctx.lineTo(ex,yy);ctx.stroke();ctx.setLineDash([]);ctx.font=`bold ${9*g.dpr}px sans-serif`;const txt=price(v);ctx.fillText(txt,Math.max(sx,Math.min(ex-ctx.measureText(txt).width-4*g.dpr,g.W-g.pad.r-ctx.measureText(txt).width-3*g.dpr)),yy-4*g.dpr);ctx.restore()}
-function drawManualSale(g,q){
-  const v=manualSalePriceFor(q,selectedSymbol);if(!(v>0))return;
-  const sx=g.pad.l+g.panPx+g.xStep*Math.max(3,g.visible*.08),ex=g.W-g.pad.r+g.panPx,yy=g.y(v);
-  const ref=openBySymbol(selectedSymbol)||{fillPrice:ff(q.buy,buyFor(q,selectedSymbol)),notional:notional(cfg(selectedSymbol))};
-  const pnl=pnlAt(ref,v);
-  ctx.save();ctx.strokeStyle='#ef4444';ctx.fillStyle='#fca5a5';ctx.lineWidth=1*g.dpr;ctx.setLineDash([6*g.dpr,4*g.dpr]);ctx.beginPath();ctx.moveTo(sx,yy);ctx.lineTo(ex,yy);ctx.stroke();ctx.setLineDash([]);ctx.font=`bold ${9*g.dpr}px sans-serif`;const txt=`VENTE ${price(v)} ${moneySigned(pnl)}`;ctx.fillText(txt,Math.max(sx,ex-ctx.measureText(txt).width-4*g.dpr),yy-4*g.dpr);ctx.restore()
-}
-
-function hitTest(clientX,clientY,pointerType='mouse'){const r=chart.getBoundingClientRect(),g=chartGeom(),x=(clientX-r.left)*(g.W/r.width),y=(clientY-r.top)*(g.H/r.height),q=working(selectedSymbol);if(!q)return {type:'pan'};const saleOnly=!!chartDrafts[selectedSymbol]?._saleOnly,salePx=manualSalePriceFor(q,selectedSymbol);if(isLocked(selectedSymbol)&&!saleOnly)return {type:'pan',locked:true};if(salePx>0&&Math.abs(y-g.y(salePx))<(pointerType==='touch'?12:7)*g.dpr&&x>g.pad.l&&x<g.W-g.pad.r)return {type:'sale'};if(saleOnly)return {type:'pan'};if(pointerType!=='touch'){for(const key of ['upper','median','lower']){if(Math.abs(y-g.y(num(q[key])))<5*g.dpr&&x>g.pad.l+g.xStep*3&&x<g.W-g.pad.r)return {type:'line',key}}}return {type:'pan'}}
-let gesture=null;
-function startGesture(x,y,pointerType='mouse',pointerId=null){const h=hitTest(x,y,pointerType),q=working(selectedSymbol);gesture={...h,x,y,pointerType,pointerId,intent:h.type==='pan'&&pointerType==='touch'?'pending':'active',startView:clone(chartView),start:q?clone(q):null}}
-function moveGesture(x,y){if(!gesture||!selectedSymbol)return;const saleOnly=!!chartDrafts[selectedSymbol]?._saleOnly;if(isLocked(selectedSymbol)&&!saleOnly&&(gesture.type==='line'||gesture.type==='handle'||gesture.type==='length'||gesture.type==='sale'))return;if(saleOnly&&gesture.type!=='sale'&&gesture.type!=='pan'&&gesture.type!=='yscale')return;const r=chart.getBoundingClientRect(),dy=y-gesture.y,dx=x-gesture.x,g=chartGeom();if(gesture.type==='pan'){const plotCssW=Math.max(1,r.width*(g.W-g.pad.l-g.pad.r)/g.W);chartView.panX=Math.max(-.75,Math.min(.75,num(gesture.startView.panX,0)+dx/plotCssW));renderChart();return}if(gesture.type==='yscale'){chartView.yZoom=Math.max(.2,Math.min(12,gesture.startView.yZoom*Math.exp(-dy/160)));renderChart();return}let q=chartDrafts[selectedSymbol]||markDraft(selectedSymbol);if(!q)return;const target=q,startTarget=gesture.start,priceDelta=-dy/r.height*(g.hi-g.lo),plotCssW=Math.max(1,r.width*(g.W-g.pad.l-g.pad.r)/g.W),fracDelta=dx/plotCssW;const startSpan=channelSpan(startTarget);if(gesture.type==='sale'){target.manualSaleEnabled=true;target.manualSalePrice=Math.max(1e-12,num(startTarget.manualSalePrice,plannedTargetPrice(selectedSymbol))+priceDelta);renderEditState();renderChart();return}if(saleOnly)return;if(gesture.type==='length'){if(gesture.key==='left')target.channelLeft=Math.max(.02,Math.min(startSpan.right-.06,startSpan.left+fracDelta));else target.channelRight=Math.min(.98,Math.max(startSpan.left+.06,startSpan.right+fracDelta));applyGeometry(q);renderEditState();renderChart();return}if(gesture.type==='line'){target.upper=num(startTarget.upper)+priceDelta;target.median=num(startTarget.median)+priceDelta;target.lower=num(startTarget.lower)+priceDelta;const width=startSpan.right-startSpan.left,shift=Math.max(-startSpan.left+.02,Math.min(.98-startSpan.right,fracDelta));target.channelLeft=startSpan.left+shift;target.channelRight=target.channelLeft+width}else if(gesture.type==='handle'){if(gesture.key==='upper'){target.upper=Math.max(num(target.lower)*1.000001,num(startTarget.upper)+priceDelta);target.median=(num(target.upper)+num(target.lower))/2}else if(gesture.key==='lower'){target.lower=Math.min(num(target.upper)*.999999,num(startTarget.lower)+priceDelta);target.median=(num(target.upper)+num(target.lower))/2}else{target.upper=num(startTarget.upper)+priceDelta;target.median=num(startTarget.median)+priceDelta;target.lower=num(startTarget.lower)+priceDelta;const width=startSpan.right-startSpan.left,shift=Math.max(-startSpan.left+.02,Math.min(.98-startSpan.right,fracDelta));target.channelLeft=startSpan.left+shift;target.channelRight=target.channelLeft+width}}applyGeometry(q);renderEditState();renderChart()}
-function finishGesture(){if(gesture){gesture=null;persist()}}
-chart.addEventListener('pointerdown',e=>{startGesture(e.clientX,e.clientY,e.pointerType||'mouse',e.pointerId);if(gesture&&gesture.type!=='pan')chart.setPointerCapture?.(e.pointerId)});chart.addEventListener('pointermove',e=>{if(!gesture)return;if(gesture.type==='pan'&&gesture.pointerType==='touch'&&gesture.intent==='pending'){const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y;if(Math.hypot(dx,dy)<7)return;if(Math.abs(dy)>Math.abs(dx)*1.12){gesture=null;return}if(Math.abs(dx)>Math.abs(dy)*1.12){gesture.intent='active';chart.setPointerCapture?.(e.pointerId)}else return}moveGesture(e.clientX,e.clientY)});chart.addEventListener('pointerup',finishGesture);chart.addEventListener('pointercancel',()=>{gesture=null});
-function bindDirectGesture(el,type,key=null){el.addEventListener('pointerdown',e=>{if((type==='handle'||type==='length')&&(isLocked(selectedSymbol)||chartDrafts[selectedSymbol]?._saleOnly))return;if(type==='sale'&&isLocked(selectedSymbol)&&!chartDrafts[selectedSymbol]?._saleOnly)return;e.preventDefault();e.stopPropagation();const q=working(selectedSymbol);gesture={type,key,x:e.clientX,y:e.clientY,pointerType:e.pointerType||'touch',pointerId:e.pointerId,intent:'active',startView:clone(chartView),start:q?clone(q):null};el.setPointerCapture?.(e.pointerId)});el.addEventListener('pointermove',e=>{if(!gesture||gesture.pointerId!==e.pointerId)return;e.preventDefault();e.stopPropagation();moveGesture(e.clientX,e.clientY)});el.addEventListener('pointerup',e=>{e.preventDefault();e.stopPropagation();finishGesture()});el.addEventListener('pointercancel',()=>{gesture=null})}
-bindDirectGesture($('handleSup'),'handle','upper');bindDirectGesture($('handleMed'),'handle','median');bindDirectGesture($('handleInf'),'handle','lower');bindDirectGesture($('handleLenLeft'),'length','left');bindDirectGesture($('handleLenRight'),'length','right');bindDirectGesture($('handleSale'),'sale');bindDirectGesture($('priceScaleTouch'),'yscale');
-let pinch=null;chart.addEventListener('touchstart',e=>{if(e.touches.length===2){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);pinch={d,visible:chartView.visible};gesture=null}},{passive:true});chart.addEventListener('touchmove',e=>{if(e.touches.length===2&&pinch){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);chartView.visible=Math.max(20,Math.min(Math.max(30,chartData.length),pinch.visible*pinch.d/Math.max(1,d)));renderChart()}},{passive:true});chart.addEventListener('touchend',e=>{if(e.touches.length<2)pinch=null},{passive:true});
-function validateSelected(){gesture=null;const d=chartDrafts[selectedSymbol];if(d?._saleOnly&&validated[selectedSymbol]){const out=validated[selectedSymbol];out.manualSaleEnabled=!!d.manualSaleEnabled;out.manualSalePrice=out.manualSaleEnabled?num(d.manualSalePrice,0):0;syncManualSaleToTokenSettings(selectedSymbol,out);const p=openBySymbol(selectedSymbol);if(p){p.manualSaleEnabled=out.manualSaleEnabled;p.manualSalePrice=out.manualSalePrice;if(out.manualSaleEnabled&&out.manualSalePrice>num(p.fillPrice)){p.targetPrice=out.manualSalePrice;p.targetProfit=pnlAt(p,out.manualSalePrice)}else{const c=p.frozenCfg||cfg(selectedSymbol);p.manualSaleEnabled=false;p.manualSalePrice=0;p.targetProfit=num(c.targetProfit,40);p.targetPrice=priceForPnl(p,p.targetProfit)}ensureOpenMeta(p)}delete chartDrafts[selectedSymbol];persist();arm();setStatus(out.manualSaleEnabled?`${selectedSymbol} : vente manuelle validée et verrouillée à ${price(out.manualSalePrice)}`:`${selectedSymbol} : vente manuelle supprimée et modification validée`);render();return}const q=freshDraft(selectedSymbol)||working(selectedSymbol);if(!q)return;const clean=clone(q);delete clean._wasValidated;delete clean._validatedBackup;delete clean._saleOnly;const out={...clean,symbol:selectedSymbol,upper:num(q.upper),lower:num(q.lower),median:(num(q.upper)+num(q.lower))/2,validatedAt:Date.now(),tf:currentTF,draft:false,market:'PERP'};out.buy=ff(q.buy,hasGeom(out)?buyFor(out,selectedSymbol):0);out.baseGeom=hasGeom(out)?geomCopy(out):(out.baseGeom||{});validated[selectedSymbol]=out;delete revalidateBlock[selectedSymbol];syncManualSaleToTokenSettings(selectedSymbol,out);delete chartDrafts[selectedSymbol];persist();arm();setStatus(`${selectedSymbol} validé, surveillé et verrouillé`);render()}
-function unlockSelected(){const q=validated[selectedSymbol];if(!q)return;chartDrafts[selectedSymbol]={...clone(q),baseGeom:geomCopy(q),draft:true,_wasValidated:true,_validatedBackup:clone(q)};delete validated[selectedSymbol];state.pending=(state.pending||[]).filter(p=>p.symbol!==selectedSymbol);persist();arm();setStatus(`${selectedSymbol} dévalidé : les barres peuvent maintenant être modifiées.`)}
-function cancelDraft(){const d=chartDrafts[selectedSymbol];if(!d)return;if(d._saleOnly){delete chartDrafts[selectedSymbol];persist();render();setStatus(`${selectedSymbol} : modification de vente annulée.`);return}if(d._wasValidated&&d._validatedBackup){validated[selectedSymbol]=clone(d._validatedBackup);delete chartDrafts[selectedSymbol];persist();arm();setStatus(`${selectedSymbol} remis en VALIDÉ — barres verrouillées.`);return}delete chartDrafts[selectedSymbol];persist();render()}
-
-function updateTokenTargetPreview(){
-  const sym=selectedSymbol;if(!sym)return;
-  const px=plannedTargetPrice(sym,num($('tTarget').value,40),num($('tMargin').value,100),num($('tLev').value,10));
-  $('tTargetPricePreview').value=px>0?price(px):'—';
-  $('tExactSalePrice').disabled=!$('tExactSale').checked;
-}
-function populateSettings(){const c=settings;$('gMargin').value=c.margin;$('gLev').value=c.leverage;$('gTarget').value=c.targetProfit;$('gLoss').value=c.maxLoss;$('gOffset').value=c.buyOffsetPct;$('gProtArm').value=c.protectionArm;$('gProtFloor').value=c.protectionFloor;$('gMaxActive').value=maxActive();$('sCount').value=c.scanCount;$('sMaxPrice').value=c.maxTokenPrice;$('sRecent').checked=!!c.preferRecent;$('sAuto').checked=!!c.autoScan;$('scanMeta').textContent=`${Object.keys(validated).length} jeton(s) validé(s) · ${live.scanRows?.length||0} ligne(s) du dernier scan · ${Object.keys(dismissed).length} supprimé(s)`;const sym=selectedSymbol,t=tokenSettings[sym]||{};$('tokenName').innerHTML=`<span>${sym||'Aucun jeton sélectionné'}</span>`;$('tOverride').checked=!!t.enabled;const base={...settings,...t};$('tMargin').value=base.margin;$('tLev').value=base.leverage;$('tTarget').value=base.targetProfit;$('tLoss').value=base.maxLoss;$('tOffset').value=base.buyOffsetPct;$('tProtArm').value=base.protectionArm;$('tProtFloor').value=base.protectionFloor;const q=working(sym),exactOn=!!(q?.manualSaleEnabled??t.manualSaleEnabled),exactPx=num(q?.manualSalePrice,t.manualSalePrice);$('tExactSale').checked=exactOn;$('tExactSalePrice').value=exactPx>0?exactPx:'';$('closeNowZone').style.display=openBySymbol(sym)?'block':'none';setTokenInputsEnabled();updateTokenTargetPreview()}
-function setTokenInputsEnabled(){const on=$('tOverride').checked;['tMargin','tLev','tTarget','tLoss','tOffset','tProtArm','tProtFloor'].forEach(id=>$(id).disabled=!on);$('tExactSale').disabled=false;$('tExactSalePrice').disabled=!$('tExactSale').checked;updateTokenTargetPreview()}
-function saveSettingsFromModal(){const s={...settings,margin:num($('gMargin').value,100),leverage:num($('gLev').value,10),targetProfit:num($('gTarget').value,40),maxLoss:num($('gLoss').value,40),buyOffsetPct:num($('gOffset').value,.1),protectionArm:num($('gProtArm').value,30),protectionFloor:num($('gProtFloor').value,20),maxActivePositions:Math.max(1,Math.floor(num($('gMaxActive').value,3))),scanCount:Math.max(10,Math.min(200,num($('sCount').value,50))),maxTokenPrice:Math.max(.00000001,num($('sMaxPrice').value,1)),preferRecent:$('sRecent').checked,autoScan:$('sAuto').checked};if(s.protectionFloor>s.protectionArm){setStatus('Le gain protégé doit être inférieur ou égal au seuil d’activation.',true);return false}settings=s;const sym=selectedSymbol;if(sym){if($('tOverride').checked){const t={enabled:true,margin:num($('tMargin').value,s.margin),leverage:num($('tLev').value,s.leverage),targetProfit:num($('tTarget').value,s.targetProfit),maxLoss:num($('tLoss').value,s.maxLoss),buyOffsetPct:num($('tOffset').value,s.buyOffsetPct),protectionArm:num($('tProtArm').value,s.protectionArm),protectionFloor:num($('tProtFloor').value,s.protectionFloor)};if(t.protectionFloor>t.protectionArm){setStatus('Pour ce jeton, le gain protégé doit être ≤ au seuil d’activation.',true);return false}tokenSettings[sym]=t}else if(!($('tExactSale').checked)) delete tokenSettings[sym];const exactOn=$('tExactSale').checked,exactPx=num($('tExactSalePrice').value,0);if(exactOn&&exactPx>0){tokenSettings[sym]={...(tokenSettings[sym]||{}),manualSaleEnabled:true,manualSalePrice:exactPx};const q=chartDrafts[sym]||validated[sym]||working(sym);if(q){q.manualSaleEnabled=true;q.manualSalePrice=exactPx}}else{if(tokenSettings[sym]){tokenSettings[sym].manualSaleEnabled=false;tokenSettings[sym].manualSalePrice=0}const q=chartDrafts[sym]||validated[sym];if(q){q.manualSaleEnabled=false;q.manualSalePrice=0}}if(validated[sym]&&!openBySymbol(sym)){validated[sym].buy=buyFor(validated[sym],sym)}}persist();arm();return true}
-function openModal(id){$(id).classList.add('open');if(id==='settingsModal')populateSettings();if(id==='historyModal')renderHistory()}
-function closeModal(id){$(id).classList.remove('open')}
-
-function toggleManualSale(){
-  const symbol=selectedSymbol,base=working(symbol);
-  if(!symbol||!base){setStatus('Sélectionne d’abord un jeton avec un graphe.',true);return}
-  let d=chartDrafts[symbol];
-  if(isLocked(symbol)&&!d){
-    d={...clone(validated[symbol]),baseGeom:geomCopy(validated[symbol]),draft:true,_saleOnly:true,_wasValidated:true,_validatedBackup:clone(validated[symbol])};
-    chartDrafts[symbol]=d;
-  }else if(!d){
-    d=markDraft(symbol);if(!d)return;
-  }
-  d.manualSaleEnabled=!d.manualSaleEnabled;
-  if(d.manualSaleEnabled&&!(num(d.manualSalePrice)>0)) d.manualSalePrice=plannedTargetPrice(symbol);
-  if(!d.manualSaleEnabled)d.manualSalePrice=0;
-  persist();renderEditState();renderChart();
-  setStatus(d.manualSaleEnabled?`VENTE MANUELLE affichée à ${price(d.manualSalePrice)} — déplace la ligne rouge puis valide.`:'VENTE MANUELLE masquée — valide pour confirmer la suppression.')
-}
-
-async function immediateBuySelected(){
-  const symbol=selectedSymbol;
-  if(!symbol){setStatus('Sélectionne d’abord un jeton.',true);return}
-  if(openBySymbol(symbol)){setStatus(`${symbol} est déjà ACTIF.`,true);return}
-  if(state.open.filter(isRealOpen).length>=maxActive()){setStatus(`Limite atteinte : ${maxActive()} position(s) active(s).`,true);return}
-  const base=working(symbol)||(live.scanRows||[]).find(q=>q?.symbol===symbol)||null;
-  if(!base){setStatus(`Aucune donnée exploitable pour ${symbol}.`,true);return}
-  let px=num(lastPrices.get(symbol),num(base.last,num(chartData.at(-1)?.c)));
-  try{const r=await jf(`/fapi/v1/ticker/price?symbol=${symbol}`);px=num(r?.price,px)}catch(_){}
-  if(!(px>0)){setStatus(`Prix actuel indisponible pour ${symbol}.`,true);return}
-  let q=validated[symbol];
-  if(!q){
-    const clean=clone(base);delete clean._wasValidated;delete clean._validatedBackup;delete clean._saleOnly;
-    q={...clean,symbol,validatedAt:Date.now(),tf:currentTF,draft:false,market:'PERP',last:px};
-    if(hasGeom(q)){q.median=(num(q.upper)+num(q.lower))/2;q.buy=ff(q.buy,buyFor(q,symbol));q.baseGeom=geomCopy(q)}
-    else q.buy=px;
-    validated[symbol]=q;
-  }
-  delete revalidateBlock[symbol];
-  delete chartDrafts[symbol];
-  q=validated[symbol];
-  const c=cfg(symbol),n=notional(c),t=Date.now();
-  const p=ensureOpenMeta({...clone(q),symbol,status:'OPEN',fillPrice:px,fillTime:t,lastMarkPrice:px,unrealizedPnl:0,maxProfit:0,frozenCfg:clone(c),margin:c.margin,leverage:c.leverage,notional:n,targetProfit:c.targetProfit,maxLoss:c.maxLoss,protectionArm:c.protectionArm,protectionFloor:c.protectionFloor,belowInfSince:null,belowInfTicks:0});
-  state.open.push(p);state.pending=state.pending.filter(x=>x.symbol!==symbol);lastPrices.set(symbol,px);persist();render();syncRealtime();setStatus(`${symbol} acheté immédiatement à ${price(px)} · validé automatiquement · stop-limit inclus`)
-}
-
-async function restFallback(force=false){if(rtConnected()&&!force)return;const sy=[...new Set([...Object.keys(validated),...state.open.map(x=>x.symbol)])];for(const symbol of sy){try{const r=await jf(`/fapi/v1/klines?symbol=${symbol}&interval=1m&limit=2`);const c=r.at(-1);if(!c)continue;const lo=+c[3],hi=+c[2],cl=+c[4],t=+c[6]||Date.now();lastPrices.set(symbol,cl);const p=openBySymbol(symbol);if(p){p.maxProfit=Math.max(num(p.maxProfit),pnlAt(p,hi));if(p.maxProfit>=num(p.protectionArm,30))p.protectionArmed=true;if(hi>=num(p.targetPrice)){closePosition(symbol,num(p.targetPrice),'TARGET');continue}if(p.protectionArmed&&lo<=priceForPnl(p,num(p.protectionFloor,20))){closePosition(symbol,priceForPnl(p,num(p.protectionFloor,20)),'PROTECTION');continue}if(p.stopLimitEnabled&&lo<=num(p.stopTriggerPrice)){closePosition(symbol,num(p.hardStopPrice),'STOP_LIMIT');continue}p.lastMarkPrice=cl;p.unrealizedPnl=pnlAt(p,cl)}else if(validated[symbol]&&!revalidateBlock[symbol]&&lo<=num(validated[symbol].buy)&&state.open.filter(isRealOpen).length<maxActive()){queueHit(symbol,num(validated[symbol].buy),t)}}catch(_){}}persist();render()}
-
-
-function preferLandscape(){try{const o=screen.orientation;if(o&&typeof o.lock==='function')o.lock('landscape').catch(()=>{})}catch(_){}}
-document.addEventListener('pointerdown',preferLandscape,{once:true,passive:true});
-$('scanBtn').onclick=()=>scan(true);$('immediateBuyBtn').onclick=immediateBuySelected;$('manualSaleBtn').onclick=toggleManualSale;$('settingsBtn').onclick=()=>openModal('settingsModal');$('historyBtn').onclick=()=>openModal('historyModal');$('validateBtn').onclick=validateSelected;$('cancelBtn').onclick=cancelDraft;$('unlockBtn').onclick=unlockSelected;$('jumpChartBtn').onclick=()=>document.getElementById('chartBox').scrollIntoView({behavior:'smooth',block:'start'});$('jumpListBtn').onclick=()=>document.querySelector('.tablebox').scrollIntoView({behavior:'smooth',block:'start'});$('resetViewBtn').onclick=()=>{chartView={visible:Math.min(130,Math.max(50,chartData.length)),offset:0,panX:0,yZoom:1,yShift:0};renderChart();setStatus('Vue recentrée sur les bougies et les niveaux.')};$('centerBarsBtn').onclick=centerBarsView;$('fullBtn').onclick=()=>{const b=$('chartBox');b.classList.toggle('fullscreenChart');document.body.style.overflow=b.classList.contains('fullscreenChart')?'hidden':'';setTimeout(renderChart,50)};document.querySelectorAll('.tf').forEach(b=>b.onclick=()=>loadChart(selectedSymbol,b.dataset.tf,true));document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>closeModal(b.dataset.close));document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));document.querySelectorAll('.pane').forEach(x=>x.classList.remove('on'));b.classList.add('on');$(b.dataset.pane).classList.add('on')});$('tOverride').onchange=setTokenInputsEnabled;$('tExactSale').onchange=()=>{setTokenInputsEnabled();if($('tExactSale').checked&&!num($('tExactSalePrice').value))$('tExactSalePrice').value=$('tTargetPricePreview').value==='—'?'':$('tTargetPricePreview').value};['tMargin','tLev','tTarget'].forEach(id=>$(id).addEventListener('input',updateTokenTargetPreview));$('saveSettingsBtn').onclick=()=>{if(saveSettingsFromModal()){closeModal('settingsModal');setStatus('Réglages enregistrés.')}};$('restoreDismissedBtn').onclick=()=>{dismissed={};persist();populateSettings();setStatus('Jetons supprimés réintégrés pour les prochains scans.')} ;$('tokenDefaultsBtn').onclick=()=>{if(selectedSymbol)delete tokenSettings[selectedSymbol];populateSettings()};$('closeNowSettingsBtn').onclick=()=>{if(selectedSymbol){manualClose(selectedSymbol);closeModal('settingsModal')}};
-$('resetClosedBtn').onclick=()=>{if(!confirm('Effacer les gains/pertes et les trades fermés ? Les positions actives et les jetons validés restent intacts.'))return;tradeHistory=[];state.closed=[];persist();render();setStatus('Gains et trades fermés remis à zéro.')};$('resetSimBtn').onclick=()=>{if(!confirm('Réinitialiser les positions de simulation ? Les jetons validés et les barres restent intacts.'))return;state.open=[];state.pending=[];persist();arm();setStatus('Simulation réinitialisée. Les jetons validés restent surveillés.')};
-window.addEventListener('resize',renderChart);window.addEventListener('online',()=>{syncRealtime();restFallback()});document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();if(Date.now()-num(meta.lastScanAt)>5*60*1000&&settings.autoScan)scan()}});
-
-for(const [sym,q0] of Object.entries(validated)){const q=repairSetup(q0,sym);if(!ff(q.buy)&&ff(q.lower))q.buy=buyFor(q,sym);validated[sym]=q}
-const cleanedLegacyStops=cleanupLegacyDuplicateStops(),purgedLegacyReactivations=purgeLegacyReactivations();if(purgedLegacyReactivations){setStatus(`${purgedLegacyReactivations} ancienne(s) réactivation(s) automatique(s) neutralisée(s). Revalidation manuelle obligatoire.`)}else if(restoredValidatedCount){setStatus(`${restoredValidatedCount} jeton(s) validé(s) récupéré(s) automatiquement.`)}else if(cleanedLegacyStops){setStatus(`${cleanedLegacyStops} ancienne(s) perte(s) stop dupliquée(s) retirée(s) de l'historique.`)}
-
-// Restore validated geometry from older states as safely as possible.
-for(const [sym,q0] of Object.entries(validated)){if(!q0||typeof q0!=='object')continue;const q=repairSetup(q0,sym);if(!ff(q.buy)&&ff(q.lower))q.buy=buyFor(q,sym);validated[sym]=q}
-arm();render();syncRealtime();if(selectedSymbol)loadChart(selectedSymbol,currentTF,true);if(settings.autoScan&&(!live.top?.length||Date.now()-num(meta.lastScanAt)>10*60*1000))scan();setInterval(()=>{if(!rtConnected())restFallback()},5000);setInterval(()=>{if(rtConnected())restFallback(true)},60000);
-})();
+function devalidateSelected(){const s=selectedSymbol;if(!s)return;delete validated[s];delete missedSignals[s];delete revalidateBlock[s];delete manualTokens[s];save();syncRealtime();renderAll();setStatus(`${s} : surveillance annulée, retiré de la liste.`)}
+function tokenDefaults(){if(!selectedSymbol)return;if(openBySymbol(selectedSymbol))return setStatus(`${selectedSymbol} est actif : réinitialisation interdite. Seuls le prix déterminé de VENTE et les protections peuvent être modifiés.`,true);if(validated[selectedSymbol])return setStatus(`${selectedSymbol} est surveillé : annule d’abord l’achat surveillé.`,true);delete tokenSettings[selectedSymbol];delete validated[selectedSymbol];delete revalidateBlock[selectedSymbol];delete missedSignals[selectedSymbol];delete manualTokens[selectedSymbol];save();syncRealtime();renderAll();setStatus(`${selectedSymbol} revenu aux réglages par défaut.`)}
+function positionCfg(s){const c=cfg(s);return{margin:n(c.margin),leverage:n(c.leverage),marginType:'ISOLATED',notional:notional(c),binanceQty:n(c.binanceQty),binanceEffectiveNotional:n(c.binanceEffectiveNotional),targetProfit:n(c.targetProfit),maxLoss:n(c.maxLoss),protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit)))}}
+function createPosition(s,entry,source){if(openBySymbol(s)||openPositions.length>=settings.maxActive)return null;const c=positionCfg(s),kind=source==='ACHAT IMMÉDIAT'?'MARKET':'LIMIT',bd=futuresDraft(s,c.margin,c.leverage,kind,entry);if(!bd.ok){setStatus(`${s} : activation bloquée par les limites Binance — ${bd.error}.`,true);return null}c.binanceQty=bd.qty;c.notional=bd.effectiveNotional||c.notional;const exact=tokenExactSale(s)>entry?tokenExactSale(s):0,targetPrice=exact||priceForPnl(entry,c.notional,c.targetProfit),targetProfit=exact?exactProfitFor(entry,exact,{margin:c.notional/c.leverage,leverage:c.leverage}):c.targetProfit,baseTargetProfit=Math.max(1,n(tokenSettings[s]?.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),p={symbol:s,entryPrice:n(entry),openedAt:Date.now(),source,margin:c.margin,leverage:c.leverage,marginType:'ISOLATED',notional:c.notional,binanceQty:c.binanceQty,targetProfit,baseTargetProfit,targetPrice,manualSaleTarget:!!exact,maxLoss:c.maxLoss,maxProfit:0,protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),protectionFloorActive:0,stopExitPrice:priceForPnl(entry,c.notional,-c.maxLoss)};openPositions.push(p);history.push({symbol:s,entryPrice:p.entryPrice,exitPrice:null,pnl:null,reason:'ACHAT',openedAt:p.openedAt,closedAt:null,status:'OPEN'});delete validated[s];delete revalidateBlock[s];delete missedSignals[s];save();syncRealtime();renderAll();tradeAlert('buy');return p}
+function closePosition(s,exit,reason){const i=openPositions.findIndex(p=>p.symbol===s);if(i<0)return false;const p=openPositions[i],ep=n(exit,lastPrices.get(s)||p.entryPrice),pl=pnlAt(p,ep);openPositions.splice(i,1);const closedAt=Date.now(),hi=history.findIndex(h=>h.symbol===s&&h.status==='OPEN'&&n(h.openedAt)===n(p.openedAt));if(hi>=0)history[hi]={...history[hi],entryPrice:p.entryPrice,exitPrice:ep,pnl:pl,reason,closedAt,status:'CLOSED'};else history.push({symbol:s,entryPrice:p.entryPrice,exitPrice:ep,pnl:pl,reason,openedAt:p.openedAt,closedAt,status:'CLOSED'});delete validated[s];delete revalidateBlock[s];delete missedSignals[s];delete manualTokens[s];save();processWaitingSignals();syncRealtime();renderAll();tradeAlert('sell');setStatus(`${s} fermé ${money(pl)} — ${reason}. Le jeton a été retiré de la liste.`);return true}
+async function currentMarketPrice(s){try{const d=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(s)}`),p=n(d.price);if(p)lastPrices.set(s,p);return p}catch(_){return 0}}
+async function instantBuySelected(){const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);if(openBySymbol(s))return setStatus(`${s} a déjà une position active.`,true);if(openPositions.length>=settings.maxActive)return setStatus(`Impossible : ${settings.maxActive} positions sont déjà actives.`,true);const mark=await currentMarketPrice(s);if(!(mark>0))return setStatus(`Prix Binance indisponible pour ${s}. Achat non lancé.`,true);const p=createPosition(s,mark,'ACHAT IMMÉDIAT');if(p)setStatus(`${s} acheté immédiatement à ${price(mark)}.`)}
+async function manualClose(s){const p=openBySymbol(s);if(!p)return;const mark=await currentMarketPrice(s);if(!(mark>0))return setStatus(`${s} : prix Binance actuel indisponible. Vente simulée non exécutée plutôt que d’utiliser un prix ancien.`,true);closePosition(s,mark,'VENTE MANUELLE')}
+function tickPosition(p,mark){const pl=pnlAt(p,mark),eps=1e-7;p.maxProfit=Math.max(n(p.maxProfit),pl);p.protectionStages=normalizeProtections(p.protectionStages,n(p.baseTargetProfit,n(p.targetProfit,settings.targetProfit)));let floor=n(p.protectionFloorActive);for(const st of p.protectionStages){if(st.enabled&&p.maxProfit>=st.arm-eps)floor=Math.max(floor,st.floor)}if(floor!==n(p.protectionFloorActive)){p.protectionFloorActive=floor;p.protectionArmedAt=Date.now();save()}if(p.manualSaleTarget){if(mark>=p.targetPrice)return closePosition(p.symbol,p.targetPrice,'VENTE DÉTERMINÉE')}else if(pl>=p.targetProfit-eps)return closePosition(p.symbol,p.targetPrice,'OBJECTIF');if(n(p.protectionFloorActive)>0&&pl<=n(p.protectionFloorActive)+eps)return closePosition(p.symbol,priceForPnl(p.entryPrice,p.notional,n(p.protectionFloorActive)),'PROTECTION +'+n(p.protectionFloorActive).toFixed(0));if(pl<=-(p.maxLoss-1))return closePosition(p.symbol,priceForPnl(p.entryPrice,p.notional,-p.maxLoss),'STOP')}
+function expireWaitingSignals(){let changed=false;const now=Date.now();for(const [s,m] of Object.entries(missedSignals)){if(m?.state==='waiting'&&now>=n(m.expiresAt)){m.state='expired';delete validated[s];changed=true}}if(changed){save();syncRealtime()}}
+function startWaitingSignal(s){const v=validated[s];if(!v||missedSignals[s]?.state)return;missedSignals[s]={state:'waiting',startedAt:Date.now(),expiresAt:Date.now()+50000,buy:n(v.buy)};save();renderAll();setStatus(`${s} : prix d’achat touché mais limite de positions atteinte. Délai d’activation : 50 secondes.`,true);setTimeout(()=>{const m=missedSignals[s];if(m?.state==='waiting'&&Date.now()>=n(m.expiresAt)){m.state='expired';delete validated[s];save();syncRealtime();renderAll();setStatus(`${s} : OBJECTIF DÉPASSÉ !! Jeton gelé.`,true)}},50100)}
+function processWaitingSignals(){expireWaitingSignals();for(const [s,m] of Object.entries(missedSignals)){if(m?.state!=='waiting'||openPositions.length>=settings.maxActive)continue;const mark=n(lastPrices.get(s)),buy=n(m.buy);if(mark>0&&buy>0&&mark<=buy){delete missedSignals[s];const p=createPosition(s,mark,'BUY RETARD ≤50s');if(p)setStatus(`${s} activé avec retard dans la limite des 50 secondes.`)}}}
+function tickValidated(s,mark){if(openBySymbol(s)||revalidateBlock[s])return;const v=validated[s],buy=n(v?.buy);if(!(buy>0)||!(mark>0))return;const wait=missedSignals[s];if(wait?.state==='expired')return;if(wait?.state==='waiting'){if(Date.now()>=n(wait.expiresAt)){wait.state='expired';delete validated[s];save();syncRealtime();renderAll();return setStatus(`${s} : OBJECTIF DÉPASSÉ !! Jeton gelé.`,true)}if(openPositions.length<settings.maxActive&&mark<=buy){delete missedSignals[s];return createPosition(s,mark,'BUY RETARD ≤50s')}return}if(buy>mark*100||buy<mark/100){delete validated[s];revalidateBlock[s]=Date.now();save();syncRealtime();renderAll();return setStatus(`${s} : BUY incohérent avec Binance. Achat bloqué, vérifie la décimale.`,true)}if(v.armedAbove!==true){if(mark>buy){v.armedAbove=true;v.lastSeen=mark;save()}else{v.lastSeen=mark}return}const prev=n(v.lastSeen,mark);v.lastSeen=mark;if(prev>buy&&mark<=buy){if(openPositions.length>=settings.maxActive)return startWaitingSignal(s);createPosition(s,buy,'BUY DÉTERMINÉ')}}
+function scheduleCursorSave(){if(cursorSaveTimer)return;cursorSaveTimer=setTimeout(()=>{cursorSaveTimer=null;save()},1500)}
+function trackingStartTime(s){const p=openBySymbol(s),v=validated[s];return Math.max(0,n(p?.lastAggTime,n(v?.lastAggTime,n(p?.openedAt,n(v?.validatedAt,Date.now()-2000)))))}
+function rememberAggCursor(s,id,t){if(Number.isFinite(+id))lastAggIds.set(s,+id);if(Number.isFinite(+t)){lastAggTimes.set(s,+t);const p=openBySymbol(s),v=validated[s];if(p){p.lastAggId=+id;p.lastAggTime=+t}else if(v){v.lastAggId=+id;v.lastAggTime=+t}scheduleCursorSave()}}
+function onMark(s,mark){if(!s||!mark)return;lastPrices.set(s,mark);const p=openBySymbol(s);if(p)tickPosition(p,mark);else tickValidated(s,mark);scheduleLiveRender()}
+function processAggTrade(s,q){if(!q)return;const id=n(q.a,-1),t=n(q.T,n(q.E,Date.now())),prevId=lastAggIds.get(s);if(Number.isFinite(prevId)&&id>=0&&id<=prevId)return;onMark(s,n(q.p));rememberAggCursor(s,id,t)}
+async function recoverMissedAggTrades(s){if(!trackedSymbols().has(s)||recoveringSymbols.has(s))return;recoveringSymbols.add(s);pendingAggTrades.set(s,[]);try{let start=Math.max(Date.now()-48*3600*1000,trackingStartTime(s)-250),fromId=null,pages=0;while(trackedSymbols().has(s)&&pages<25){const path=fromId==null?`/fapi/v1/aggTrades?symbol=${encodeURIComponent(s)}&startTime=${Math.floor(start)}&limit=1000`:`/fapi/v1/aggTrades?symbol=${encodeURIComponent(s)}&fromId=${fromId}&limit=1000`;const rows=await jf(path);if(!Array.isArray(rows)||!rows.length)break;for(const q of rows){if(!trackedSymbols().has(s))break;processAggTrade(s,q)}pages++;if(rows.length<1000)break;fromId=n(rows[rows.length-1]?.a,-1)+1;if(!(fromId>0))break;await new Promise(r=>setTimeout(r,40))}if(pages>=25)setStatus(`${s} : coupure de flux très longue, récupération partielle des transactions.`,true)}catch(_){/* REST de récupération indisponible : le secours ticker reste actif */}finally{const queued=pendingAggTrades.get(s)||[];recoveringSymbols.delete(s);pendingAggTrades.delete(s);queued.sort((a,b)=>n(a.a)-n(b.a)||n(a.T)-n(b.T));for(const q of queued)if(trackedSymbols().has(s))processAggTrade(s,q)}}
+function recoverAllTracked(){for(const s of trackedSymbols())recoverMissedAggTrades(s)}
+function wsStreamName(s){return s.toLowerCase()+'@aggTrade'}
+function sendWsControl(method,params){if(!ws||ws.readyState!==WebSocket.OPEN||!params.length)return false;try{ws.send(JSON.stringify({method,params,id:wsRequestId++}));return true}catch(_){return false}}
+function reconcileRealtimeSubscriptions(){if(!ws||ws.readyState!==WebSocket.OPEN)return;const desired=new Set([...trackedSymbols()].map(wsStreamName)),add=[...desired].filter(x=>!wsSubscribed.has(x)),remove=[...wsSubscribed].filter(x=>!desired.has(x));if(add.length&&sendWsControl('SUBSCRIBE',add))add.forEach(x=>wsSubscribed.add(x));if(remove.length&&sendWsControl('UNSUBSCRIBE',remove))remove.forEach(x=>wsSubscribed.delete(x))}
+function connectRealtime(){if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;try{ws=new WebSocket('wss://fstream.binance.com/ws');ws.onopen=()=>{wsLive=true;wsSubscribed.clear();if(wsReconnectTimer){clearTimeout(wsReconnectTimer);wsReconnectTimer=null}reconcileRealtimeSubscriptions();recoverAllTracked();renderKpis()};ws.onmessage=e=>{try{const q=JSON.parse(e.data);if(q&&q.e==='aggTrade'&&(validated[q.s]||openBySymbol(q.s))){if(recoveringSymbols.has(q.s)){const a=pendingAggTrades.get(q.s)||[];a.push(q);pendingAggTrades.set(q.s,a)}else processAggTrade(q.s,q)}}catch(_){}};ws.onerror=()=>{wsLive=false;renderKpis()};ws.onclose=()=>{wsLive=false;ws=null;wsSubscribed.clear();renderKpis();binancePulse();if(trackedSymbols().size&&navigator.onLine!==false){if(wsReconnectTimer)clearTimeout(wsReconnectTimer);wsReconnectTimer=setTimeout(()=>{wsReconnectTimer=null;connectRealtime()},250)}}}catch(_){wsLive=false;ws=null;renderKpis()}}
+function syncRealtime(){const tracked=trackedSymbols();if(tracked.size){connectRealtime();reconcileRealtimeSubscriptions();if(wsLive)recoverAllTracked();if(!fallbackTimer){fallbackTimer=setInterval(binancePulse,4000);binancePulse()}}else{reconcileRealtimeSubscriptions();if(fallbackTimer){clearInterval(fallbackTimer);fallbackTimer=null}}renderKpis()}
+async function binancePulse(){const tracked=trackedSymbols();if(!tracked.size)return;if(wsLive&&ws&&ws.readyState===WebSocket.OPEN)return;try{const all=await jf('/fapi/v1/ticker/price');for(const q of all)if(tracked.has(q.symbol))onMark(q.symbol,n(q.price))}catch(_){}}
+function renderAll(){renderTable();renderKpis();renderPositions();renderHistory();fillGeneral();fillToken()}
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));document.querySelectorAll('.pane').forEach(x=>x.classList.remove('on'));b.classList.add('on');$(b.dataset.pane).classList.add('on');$('settingsSymbol').style.visibility=b.dataset.pane==='botPane'?'hidden':'visible';if(b.dataset.pane==='botPane')fillBot();if(b.dataset.pane==='futuresPane')fillFutures()});
+$('manualTokenAddBtn').onclick=addManualToken;$('manualTokenInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addManualToken()}});$('selectedCard').onclick=()=>selectedSymbol&&openTokenSettings(selectedSymbol,true);$('saveTokenBtn').onclick=saveToken;$('saveFuturesBtn').onclick=saveFutures;$('saveBotBtn').onclick=saveBot;$('instantBuyBtn').onclick=instantBuySelected;$('devalidateBtn').onclick=devalidateSelected;$('tokenDefaultsBtn').onclick=tokenDefaults;$('tokenCloseNowBtn').onclick=()=>{if(selectedSymbol&&confirm(`AVERTISSEMENT — Confirmer la vente immédiate de ${selectedSymbol} ?\n\nCette action fermera la position au prix disponible.`))manualClose(selectedSymbol)};
+// Les réglages BOT restent en brouillon tant que « Enregistrer BOT » n’est pas validé.
+// Aucun changement de Position max / Jour-Nuit / Son / Vibration n’est appliqué automatiquement.
+['fMargin','fLev'].forEach(id=>$(id).addEventListener('input',()=>{if(!selectedSymbol)return;const m=Math.max(1,n($('fMargin').value,settings.margin)),l=clamp(n($('fLev').value,settings.leverage),1,125),d=futuresDraft(selectedSymbol,m,l,'LIMIT');$('fSummary').textContent=`Marge : ISOLÉE · Notionnel demandé : $${(m*l).toFixed(2)}${d.qty>0?` · effectif ≈ $${d.effectiveNotional.toFixed(2)}`:''}`;$('fLimits').textContent=limitsText(selectedSymbol,m,l);updateTokenPreview()}));['tExactBuyPrice','tExactSalePrice'].forEach(id=>$(id).addEventListener('input',updateTokenPreview));$('tTarget').addEventListener('input',()=>{if($('tTarget').dataset.exactAuto!=='1'){$('tTarget').dataset.manualTarget=$('tTarget').value;syncProtectionsToTarget(Math.max(0,n($('tTarget').value,settings.targetProfit)))}updateTokenPreview()});['tExactBuy','tExactSale'].forEach(id=>$(id).addEventListener('change',updateTokenPreview));
+$('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();save()});
+$('resetClosedBtn').onclick=()=>{if(!confirm('Effacer les gains, pertes et trades fermés ?'))return;history=[];save();renderAll()};$('resetSimBtn').onclick=()=>{if(!confirm('Réinitialiser les positions simulées et les achats surveillés ?'))return;openPositions=[];validated={};revalidateBlock={};missedSignals={};manualTokens={};save();syncRealtime();renderAll();setStatus('Simulation réinitialisée.')};
+document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio()},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll()}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
+load();applyTheme();renderAll();ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();
 </script>
 </body>
 </html>
