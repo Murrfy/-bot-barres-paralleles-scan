@@ -1,7 +1,15 @@
 import crypto from 'node:crypto';
 
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const REDIS_URL =
+  process.env.UPSTASH_REDIS_REST_URL ||
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_URL ||
+  process.env.KV_REST_API_URL ||
+  process.env.UPSTASH_REDIS_REST_REDIS_URL;
+
+const REDIS_TOKEN =
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN ||
+  process.env.KV_REST_API_TOKEN;
 const SYNC_SECRET = process.env.ZENITH_SYNC_SECRET;
 
 const PREFIX = 'zenith:v1';
@@ -86,6 +94,8 @@ export default async function handler(req, res) {
     return send(res, 200, {
       ok: true,
       configured: Boolean(REDIS_URL && REDIS_TOKEN && SYNC_SECRET),
+      redisConfigured: Boolean(REDIS_URL && REDIS_TOKEN),
+      authConfigured: Boolean(SYNC_SECRET),
       mode: 'SYNC_SAFE_SIMULATION',
       masterTtlSeconds: MASTER_TTL_SECONDS,
     });
