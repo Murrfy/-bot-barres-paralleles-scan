@@ -395,6 +395,44 @@ export default async function handler(req, res) {
     }
 
 
+    if (action === 'master-preflight' && req.method === 'GET') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+
+      const [currentMaster, controllerRaw, emergencyStop, pending, processing] = await Promise.all([
+        masterDeviceId(),
+        redis(['GET', KEY_CONTROLLER_STATE]),
+        emergencyStopActive(),
+        redis(['LLEN', KEY_PENDING]),
+        redis(['LLEN', KEY_PROCESSING]),
+      ]);
+
+      let controllerState = null;
+      try { controllerState = controllerRaw ? JSON.parse(controllerRaw) : null; } catch {}
+
+      const canAcquireLease = !currentMaster || currentMaster === device.deviceId;
+      const reasons = [];
+      if (!controllerState) reasons.push('NO_CONTROLLER_STATE');
+      if (!emergencyStop) reasons.push('EMERGENCY_STOP_NOT_ACTIVE');
+      if (REAL_TRADING_ENABLED) reasons.push('REAL_TRADING_ENV_ARMED');
+      if (!canAcquireLease) reasons.push('MASTER_LEASE_CONFLICT');
+
+      return send(res, 200, {
+        ok: true,
+        readyForStandby: reasons.length === 0,
+        canAcquireLease,
+        controllerRevision: Number(controllerState?.revision || 0),
+        controllerStateHash: String(controllerState?.stateHash || ''),
+        emergencyStopActive: Boolean(emergencyStop),
+        realTradingEnabled: REAL_TRADING_ENABLED,
+        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
+        currentMaster,
+        pendingCommands: Number(pending || 0),
+        processingCommands: Number(processing || 0),
+        reasons,
+      });
+    }
+
     if (action === 'controller-state' && req.method === 'GET') {
       const device = await requireDevice(req, res, ['controller', 'master']);
       if (!device) return;
