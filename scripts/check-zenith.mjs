@@ -178,7 +178,7 @@ if (!masterStandby.includes("api('master-heartbeat','POST'") ||
 }
 if (!index.includes('masterAppliedRevision') ||
     !index.includes('MASTER DÉSYNCHRONISÉ') ||
-    !index.includes("JSON.stringify(remoteState?.data||{})===JSON.stringify(payload)")) {
+    !index.includes("stableStringify(remoteState?.data||{})===stableStringify(payload)")) {
   fail('iPhone must show MASTER applied revision and avoid no-op controller revisions');
 }
 
