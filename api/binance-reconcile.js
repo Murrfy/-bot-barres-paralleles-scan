@@ -108,11 +108,14 @@ async function jsonFetch(url, init = {}) {
   }
 }
 
-async function signedGet(path, apiKey, secret, serverTime) {
+async function signedGet(path, apiKey, secret, serverTime, extra = {}) {
   const params = new URLSearchParams({
     timestamp: String(serverTime),
     recvWindow: String(RECV_WINDOW),
   });
+  for (const [key, value] of Object.entries(extra || {})) {
+    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+  }
 
   const signature = crypto
     .createHmac('sha256', secret)
@@ -194,6 +197,30 @@ function normalizeActualOrder(o) {
   };
 }
 
+function normalizeActualAlgoOrder(o) {
+  return {
+    orderClass: 'ALGO',
+    symbol: String(o.symbol || '').toUpperCase(),
+    algoId: String(o.algoId ?? ''),
+    clientAlgoId: String(o.clientAlgoId ?? ''),
+    side: String(o.side || ''),
+    positionSide: String(o.positionSide || ''),
+    type: String(o.orderType || o.type || ''),
+    status: String(o.algoStatus || ''),
+    origQty: String(o.quantity ?? ''),
+    executedQty: '',
+    price: String(o.price ?? ''),
+    stopPrice: String(o.triggerPrice ?? ''),
+    triggerPrice: String(o.triggerPrice ?? ''),
+    reduceOnly: Boolean(o.reduceOnly),
+    closePosition: Boolean(o.closePosition),
+    timeInForce: String(o.timeInForce || ''),
+    workingType: String(o.workingType || ''),
+    priceProtect: Boolean(o.priceProtect),
+    updateTime: number(o.updateTime ?? o.createTime),
+  };
+}
+
 function expectedPositions(runtimeState) {
   const data = runtimeState?.data || {};
   const list = Array.isArray(data.binancePositions) ? data.binancePositions : [];
@@ -223,6 +250,8 @@ function expectedOrders(runtimeState) {
       symbol: String(x.symbol || '').toUpperCase(),
       orderId: String(x.orderId ?? ''),
       clientOrderId: String(x.clientOrderId ?? ''),
+      algoId: String(x.algoId ?? ''),
+      clientAlgoId: String(x.clientAlgoId ?? ''),
       type: String(x.type || ''),
       side: String(x.side || ''),
       positionSide: String(x.positionSide || ''),
@@ -232,6 +261,8 @@ function expectedOrders(runtimeState) {
 }
 
 function orderKey(order) {
+  if (String(order?.algoId || '')) return `algo:${String(order.algoId)}`;
+  if (String(order?.clientAlgoId || '')) return `algo-client:${String(order.clientAlgoId)}`;
   if (String(order?.orderId || '')) return `id:${String(order.orderId)}`;
   if (String(order?.clientOrderId || '')) return `client:${String(order.clientOrderId)}`;
   return '';
@@ -368,9 +399,10 @@ export default async function handler(req, res) {
     const serverTime = number(time?.serverTime, NaN);
     if (!Number.isFinite(serverTime)) throw new Error('Heure Binance indisponible.');
 
-    const [positions, openOrders] = await Promise.all([
+    const [positions, openOrders, openAlgoOrders] = await Promise.all([
       signedGet('/fapi/v3/positionRisk', apiKey, secret, serverTime),
       signedGet('/fapi/v1/openOrders', apiKey, secret, serverTime),
+      signedGet('/fapi/v1/openAlgoOrders', apiKey, secret, serverTime, { algoType: 'CONDITIONAL' }),
     ]);
 
     let runtimeState = null;
@@ -380,10 +412,17 @@ export default async function handler(req, res) {
       .filter(p => Math.abs(number(p.positionAmt)) > 0)
       .map(normalizeActualPosition);
 
-    const actualOrders = (Array.isArray(openOrders) ? openOrders : [])
-      .map(normalizeActualOrder);
+    const standardOrders = (Array.isArray(openOrders) ? openOrders : [])
+      .map(o => ({ orderClass: 'STANDARD', ...normalizeActualOrder(o) }));
+
+    const algoOrders = (Array.isArray(openAlgoOrders) ? openAlgoOrders : [])
+      .map(normalizeActualAlgoOrder);
+
+    const actualOrders = [...standardOrders, ...algoOrders];
 
     const result = reconcile(runtimeState, actualPositions, actualOrders);
+    result.actual.standardOrders = standardOrders.length;
+    result.actual.algoOrders = algoOrders.length;
     const observedAt = Date.now();
 
     const report = {
