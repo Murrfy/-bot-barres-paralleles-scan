@@ -155,7 +155,10 @@ const DEFAULT_PROTECTIONS=Array.from({length:29},(_,i)=>({enabled:true,arm:105+i
 function protectionCountForTarget(target){const t=Math.max(0,n(target,3000));return Math.max(0,Math.floor((t-106)/100)+1)}
 function defaultProtection(i){return{enabled:true,arm:105+i*100,floor:100+i*100}}
 const DEFAULTS={margin:1000,leverage:10,marginType:'ISOLATED',maxActive:3,targetProfit:3000,maxLoss:400,protectionStages:DEFAULT_PROTECTIONS,exitExecutionPolicy:{normalExit:'LIMIT_EXACT_GTC',protectiveExit:'LIMIT_IOC_ADAPTIVE',primaryPriceMatch:'OPPONENT',fallback:'MARKET_LAST_RESORT'},theme:'dark',sound:true,vibrate:true,showProtections:true};
-const $=id=>document.getElementById(id),n=(v,d=0)=>Number.isFinite(+v)?+v:d,parsePrice=(v,d=0)=>{if(typeof v==='number')return Number.isFinite(v)?v:d;let x=String(v??'').trim().replace(/\s/g,'');if(!x)return d;if(x.includes(',')&&!x.includes('.'))x=x.replace(',','.');else if(x.includes(',')&&x.includes('.')){const lc=x.lastIndexOf(','),ld=x.lastIndexOf('.');x=lc>ld?x.replace(/\./g,'').replace(',','.'):x.replace(/,/g,'')}const z=Number(x);return Number.isFinite(z)?z:d},clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),clone=x=>x==null?x:JSON.parse(JSON.stringify(x));
+const $=id=>document.getElementById(id),n=(v,d=0)=>Number.isFinite(+v)?+v:d;
+function stableStringify(value){if(value===null||typeof value!=='object')return JSON.stringify(value);if(Array.isArray(value))return '['+value.map(item=>item===undefined?'null':stableStringify(item)).join(',')+']';const parts=[];for(const key of Object.keys(value).sort()){const encoded=stableStringify(value[key]);if(encoded!==undefined)parts.push(JSON.stringify(key)+':'+encoded)}return '{'+parts.join(',')+'}'}
+async function sha256Hex(value){const bytes=new TextEncoder().encode(value),digest=await crypto.subtle.digest('SHA-256',bytes);return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('')}
+const parsePrice=(v,d=0)=>{if(typeof v==='number')return Number.isFinite(v)?v:d;let x=String(v??'').trim().replace(/\s/g,'');if(!x)return d;if(x.includes(',')&&!x.includes('.'))x=x.replace(',','.');else if(x.includes(',')&&x.includes('.')){const lc=x.lastIndexOf(','),ld=x.lastIndexOf('.');x=lc>ld?x.replace(/\./g,'').replace(',','.'):x.replace(/,/g,'')}const z=Number(x);return Number.isFinite(z)?z:d},clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),clone=x=>x==null?x:JSON.parse(JSON.stringify(x));
 const money=v=>`${v>=0?'+':'-'}$${Math.abs(n(v)).toFixed(2)}`;
 const price=v=>{v=n(v);if(!v)return '—';if(v>=1000)return v.toFixed(2);if(v>=1)return v.toFixed(4);if(v>=.01)return v.toFixed(6);return v.toPrecision(6)};
 const fmtDate=t=>new Date(t).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
@@ -164,10 +167,11 @@ let exchangeMap=new Map(),lastPrices=new Map(),ws=null,wsLive=false,fallbackTime
 const lastAggIds=new Map(),lastAggTimes=new Map(),recoveringSymbols=new Set(),pendingAggTrades=new Map();
 let cursorSaveTimer=null;
 let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
-const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1';
+const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
 let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,error:''};
+let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
 function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}}
@@ -182,8 +186,16 @@ function renderControllerIdentity(){
       b.textContent='IPHONE CONTRÔLEUR OK';
       b.classList.add('on');
     }
+  }else if(controllerIdentity.paired&&controllerIdentity.role==='master'){
+    if(masterRuntimeState.synchronized&&masterRuntimeState.heartbeatFresh&&!masterRuntimeState.error){
+      b.textContent='IPAD MASTER OK · R'+String(masterRuntimeState.appliedRevision||0);
+      b.classList.add('on');
+    }else{
+      b.textContent='IPAD MASTER EN SÉCURITÉ';
+      b.classList.remove('on');
+    }
   }else{
-    b.textContent=controllerIdentity.error?'CONTRÔLEUR HORS LIGNE':'IPHONE NON JUMELÉ';
+    b.textContent=controllerIdentity.error?'APPAREIL HORS LIGNE':'APPAREIL NON JUMELÉ';
     b.classList.remove('on');
   }
 }
@@ -301,17 +313,21 @@ async function refreshControllerIdentity(){
     });
     let q={};try{q=await r.json()}catch(_){q={}}
     const role=String(q?.device?.role||'');
-    if(!r.ok||q?.ok!==true||role!=='controller'){
+    if(!r.ok||q?.ok!==true||!['controller','master'].includes(role)){
       controllerIdentity={paired:false,role,lastOk:0,error:q?.code||q?.error||('HTTP '+r.status)};
       renderControllerIdentity();
       return false;
     }
-    localStorage.setItem(ZENITH_DEVICE_ROLE_KEY,'controller');
-    controllerIdentity={paired:true,role:'controller',lastOk:Date.now(),error:''};
+    localStorage.setItem(ZENITH_DEVICE_ROLE_KEY,role);
+    controllerIdentity={paired:true,role,lastOk:Date.now(),error:''};
     renderControllerIdentity();
     renderMasterControls();
-    scheduleControllerCloudStateSync();
-    refreshMasterControls();
+    if(role==='controller'){
+      scheduleControllerCloudStateSync();
+      refreshMasterControls();
+    }else{
+      startMasterRuntimeLoop();
+    }
     return true;
   }catch(e){
     controllerIdentity={...controllerIdentity,paired:false,error:e?.message||'Connexion impossible'};
@@ -319,6 +335,118 @@ async function refreshControllerIdentity(){
     return false;
   }
 }
+
+function masterLocalEntryAllowed(){
+  if(controllerIdentity.role!=='master')return true;
+  return masterRuntimeState.mode==='RUNNING'&&masterRuntimeState.synchronized===true&&masterRuntimeState.heartbeatFresh===true&&!masterRuntimeState.error;
+}
+function masterEntryBlockMessage(){
+  if(controllerIdentity.role!=='master')return '';
+  if(masterRuntimeState.mode==='PAUSED')return 'MASTER en pause';
+  if(masterRuntimeState.mode==='PAUSE_PENDING')return 'pause MASTER en attente';
+  if(!masterRuntimeState.heartbeatFresh)return 'heartbeat MASTER absent';
+  if(!masterRuntimeState.synchronized)return 'MASTER désynchronisé';
+  return masterRuntimeState.error||'MASTER non prêt';
+}
+async function masterRuntimeApi(action,method='GET',body){
+  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
+  const r=await fetch('/api/zenith-sync?action='+action,{
+    method,cache:'no-store',
+    headers:{Accept:'application/json',Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},
+    ...(body?{body:JSON.stringify(body)}:{})
+  });
+  const q=await r.json().catch(()=>({}));
+  return {r,q};
+}
+function masterRuntimeSnapshot(){
+  return {
+    executionMode:'SIMULATION',
+    mode:'SIMULATION',
+    openPositions:clone(openPositions),
+    activePositions:openPositions.length,
+    openOrders:[],
+    openOrderCount:0
+  };
+}
+async function postMasterRuntimeState(){
+  const {r,q}=await masterRuntimeApi('state','POST',{
+    controllerRevision:masterRuntimeState.controllerRevision,
+    appliedRevision:masterRuntimeState.appliedRevision,
+    data:masterRuntimeSnapshot()
+  });
+  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  return true;
+}
+async function applyMasterControllerState(state){
+  if(!state||!state.data||typeof state.data!=='object')throw new Error('CONTROLLER_STATE_INVALID');
+  const revision=Math.max(0,n(state.revision,0)),stateHash=String(state.stateHash||'');
+  if(!Number.isInteger(revision)||revision<=0||!stateHash)throw new Error('CONTROLLER_STATE_INVALID');
+  const computed=await sha256Hex(stableStringify(state.data));
+  if(computed!==stateHash)throw new Error('CONTROLLER_STATE_HASH_MISMATCH');
+
+  let current={};
+  try{current=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}')||{}}catch(_){current={}}
+  const data=state.data;
+  localStorage.setItem(STORAGE_KEY,JSON.stringify({
+    ...current,
+    settings:data.settings&&typeof data.settings==='object'?data.settings:{},
+    tokenSettings:data.tokenSettings&&typeof data.tokenSettings==='object'?data.tokenSettings:{},
+    manualTokens:data.manualTokens&&typeof data.manualTokens==='object'?data.manualTokens:{},
+    validated:data.validated&&typeof data.validated==='object'?data.validated:{}
+  }));
+  localStorage.setItem(ZENITH_MASTER_APPLIED_REV_KEY,String(revision));
+  load();applyTheme();renderAll();syncRealtime();
+  return {revision,stateHash};
+}
+async function masterRuntimeCycle(){
+  if(masterRuntimeBusy||controllerIdentity.role!=='master'||document.hidden)return false;
+  masterRuntimeBusy=true;
+  try{
+    const hb=await masterRuntimeApi('master-heartbeat','POST',{});
+    if(!hb.r.ok||hb.q?.ok!==true){
+      masterRuntimeState={...masterRuntimeState,leaseActive:false,heartbeatFresh:false,synchronized:false,error:String(hb.q?.code||hb.q?.error||('HTTP '+hb.r.status))};
+      renderControllerIdentity();
+      return false;
+    }
+    masterRuntimeState.mode=String(hb.q.masterMode||'PAUSED');
+    masterRuntimeState.leaseActive=true;
+    masterRuntimeState.heartbeatFresh=true;
+    masterRuntimeState.error='';
+
+    await postMasterRuntimeState();
+
+    const st=await masterRuntimeApi('master-config-status');
+    if(!st.r.ok||st.q?.ok!==true)throw new Error(st.q?.code||st.q?.error||('HTTP '+st.r.status));
+    masterRuntimeState.controllerRevision=Math.max(0,n(st.q.controllerRevision,0));
+    masterRuntimeState.appliedRevision=Math.max(0,n(st.q.appliedRevision,0));
+    masterRuntimeState.synchronized=st.q.synchronized===true;
+
+    if(st.q.applyAllowed===true&&st.q.controllerState){
+      const applied=await applyMasterControllerState(st.q.controllerState);
+      const ack=await masterRuntimeApi('master-config-ack','POST',applied);
+      if(!ack.r.ok||ack.q?.ok!==true)throw new Error(ack.q?.code||ack.q?.error||('HTTP '+ack.r.status));
+      masterRuntimeState.appliedRevision=applied.revision;
+      masterRuntimeState.controllerRevision=applied.revision;
+      masterRuntimeState.synchronized=true;
+      await postMasterRuntimeState();
+    }
+
+    renderControllerIdentity();
+    return masterRuntimeState.synchronized;
+  }catch(e){
+    masterRuntimeState={...masterRuntimeState,heartbeatFresh:false,synchronized:false,error:String(e?.message||'MASTER_RUNTIME_ERROR')};
+    renderControllerIdentity();
+    return false;
+  }finally{
+    masterRuntimeBusy=false;
+  }
+}
+function startMasterRuntimeLoop(){
+  if(controllerIdentity.role!=='master')return;
+  masterRuntimeCycle();
+  if(!masterRuntimeTimer)masterRuntimeTimer=setInterval(masterRuntimeCycle,8000);
+}
+
 function controllerCloudStatePayload(){
   return {
     settings:clone(settings),
@@ -353,8 +481,8 @@ async function syncControllerCloudStateNow(){
 
     if(localRevision===null){
       if(remoteState){
-        const localJson=JSON.stringify(payload);
-        const remoteJson=JSON.stringify(remoteState?.data||{});
+        const localJson=stableStringify(payload);
+        const remoteJson=stableStringify(remoteState?.data||{});
         if(localJson!==remoteJson){
           controllerSyncState={conflict:true,lastOk:0,error:'REVISION_BOOTSTRAP_CONFLICT'};
           renderControllerIdentity();
@@ -374,7 +502,8 @@ async function syncControllerCloudStateNow(){
       return false;
     }
 
-    if(remoteState&&JSON.stringify(remoteState?.data||{})===JSON.stringify(payload)){
+    const payloadHash=await sha256Hex(stableStringify(payload));
+    if(remoteState&&stableStringify(remoteState?.data||{})===stableStringify(payload)&&String(remoteState?.stateHash||'')===payloadHash){
       controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
       renderControllerIdentity();
       return true;
@@ -546,7 +675,7 @@ async function saveToken(){
 function devalidateSelected(){const s=selectedSymbol;if(!s)return;delete validated[s];delete missedSignals[s];delete revalidateBlock[s];delete manualTokens[s];save();syncRealtime();renderAll();setStatus(`${s} : surveillance annulée, retiré de la liste.`)}
 function tokenDefaults(){if(!selectedSymbol)return;if(openBySymbol(selectedSymbol))return setStatus(`${selectedSymbol} est actif : réinitialisation interdite. Seuls le prix déterminé de VENTE et les protections peuvent être modifiés.`,true);if(validated[selectedSymbol])return setStatus(`${selectedSymbol} est surveillé : annule d’abord l’achat surveillé.`,true);delete tokenSettings[selectedSymbol];delete validated[selectedSymbol];delete revalidateBlock[selectedSymbol];delete missedSignals[selectedSymbol];delete manualTokens[selectedSymbol];save();syncRealtime();renderAll();setStatus(`${selectedSymbol} revenu aux réglages par défaut.`)}
 function positionCfg(s){const c=cfg(s);return{margin:n(c.margin),leverage:n(c.leverage),marginType:'ISOLATED',notional:notional(c),binanceQty:n(c.binanceQty),binanceEffectiveNotional:n(c.binanceEffectiveNotional),targetProfit:n(c.targetProfit),maxLoss:n(c.maxLoss),protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit)))}}
-function createPosition(s,entry,source){if(openBySymbol(s)||openPositions.length>=settings.maxActive)return null;const c=positionCfg(s),kind=source==='ACHAT IMMÉDIAT'?'MARKET':'LIMIT',bd=futuresDraft(s,c.margin,c.leverage,kind,entry);if(!bd.ok){setStatus(`${s} : activation bloquée par les limites Binance — ${bd.error}.`,true);return null}c.binanceQty=bd.qty;c.notional=bd.effectiveNotional||c.notional;const exact=tokenExactSale(s)>entry?tokenExactSale(s):0,targetPrice=exact||priceForPnl(entry,c.notional,c.targetProfit),targetProfit=exact?exactProfitFor(entry,exact,{margin:c.notional/c.leverage,leverage:c.leverage}):c.targetProfit,baseTargetProfit=Math.max(1,n(tokenSettings[s]?.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),p={symbol:s,entryPrice:n(entry),openedAt:Date.now(),source,margin:c.margin,leverage:c.leverage,marginType:'ISOLATED',notional:c.notional,binanceQty:c.binanceQty,targetProfit,baseTargetProfit,targetPrice,manualSaleTarget:!!exact,maxLoss:c.maxLoss,maxProfit:0,protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),protectionFloorActive:0,stopExitPrice:priceForPnl(entry,c.notional,-c.maxLoss)};openPositions.push(p);history.push({symbol:s,entryPrice:p.entryPrice,exitPrice:null,pnl:null,reason:'ACHAT',openedAt:p.openedAt,closedAt:null,status:'OPEN'});delete validated[s];delete revalidateBlock[s];delete missedSignals[s];save();syncRealtime();renderAll();tradeAlert('buy');return p}
+function createPosition(s,entry,source){if(!masterLocalEntryAllowed()){setStatus('Nouvelle entrée bloquée : '+masterEntryBlockMessage()+'. Les positions déjà ouvertes restent protégées.',true);return null}if(openBySymbol(s)||openPositions.length>=settings.maxActive)return null;const c=positionCfg(s),kind=source==='ACHAT IMMÉDIAT'?'MARKET':'LIMIT',bd=futuresDraft(s,c.margin,c.leverage,kind,entry);if(!bd.ok){setStatus(`${s} : activation bloquée par les limites Binance — ${bd.error}.`,true);return null}c.binanceQty=bd.qty;c.notional=bd.effectiveNotional||c.notional;const exact=tokenExactSale(s)>entry?tokenExactSale(s):0,targetPrice=exact||priceForPnl(entry,c.notional,c.targetProfit),targetProfit=exact?exactProfitFor(entry,exact,{margin:c.notional/c.leverage,leverage:c.leverage}):c.targetProfit,baseTargetProfit=Math.max(1,n(tokenSettings[s]?.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),p={symbol:s,entryPrice:n(entry),openedAt:Date.now(),source,margin:c.margin,leverage:c.leverage,marginType:'ISOLATED',notional:c.notional,binanceQty:c.binanceQty,targetProfit,baseTargetProfit,targetPrice,manualSaleTarget:!!exact,maxLoss:c.maxLoss,maxProfit:0,protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),protectionFloorActive:0,stopExitPrice:priceForPnl(entry,c.notional,-c.maxLoss)};openPositions.push(p);history.push({symbol:s,entryPrice:p.entryPrice,exitPrice:null,pnl:null,reason:'ACHAT',openedAt:p.openedAt,closedAt:null,status:'OPEN'});delete validated[s];delete revalidateBlock[s];delete missedSignals[s];save();syncRealtime();renderAll();tradeAlert('buy');return p}
 function closePosition(s,exit,reason){const i=openPositions.findIndex(p=>p.symbol===s);if(i<0)return false;const p=openPositions[i],ep=n(exit,lastPrices.get(s)||p.entryPrice),pl=pnlAt(p,ep);openPositions.splice(i,1);const closedAt=Date.now(),hi=history.findIndex(h=>h.symbol===s&&h.status==='OPEN'&&n(h.openedAt)===n(p.openedAt));if(hi>=0)history[hi]={...history[hi],entryPrice:p.entryPrice,exitPrice:ep,pnl:pl,reason,closedAt,status:'CLOSED'};else history.push({symbol:s,entryPrice:p.entryPrice,exitPrice:ep,pnl:pl,reason,openedAt:p.openedAt,closedAt,status:'CLOSED'});delete validated[s];delete revalidateBlock[s];delete missedSignals[s];delete manualTokens[s];save();processWaitingSignals();syncRealtime();renderAll();tradeAlert('sell');setStatus(`${s} fermé ${money(pl)} — ${reason}. Le jeton a été retiré de la liste.`);return true}
 async function currentMarketPrice(s){try{const d=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(s)}`),p=n(d.price);if(p)lastPrices.set(s,p);return p}catch(_){return 0}}
 async function instantBuySelected(){const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);if(openBySymbol(s))return setStatus(`${s} a déjà une position active.`,true);if(openPositions.length>=settings.maxActive)return setStatus(`Impossible : ${settings.maxActive} positions sont déjà actives.`,true);const mark=await currentMarketPrice(s);if(!(mark>0))return setStatus(`Prix Binance indisponible pour ${s}. Achat non lancé.`,true);const p=createPosition(s,mark,'ACHAT IMMÉDIAT');if(p)setStatus(`${s} acheté immédiatement à ${price(mark)}.`)}
@@ -578,7 +707,7 @@ $('manualTokenAddBtn').onclick=addManualToken;$('manualTokenInput').addEventList
 $('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();save()});
 $('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');
 $('resetClosedBtn').onclick=()=>{if(!confirm('Effacer les gains, pertes et trades fermés ?'))return;history=[];save();renderAll()};$('resetSimBtn').onclick=()=>{if(!confirm('Réinitialiser les positions simulées et les achats surveillés ?'))return;openPositions=[];validated={};revalidateBlock={};missedSignals={};manualTokens={};save();syncRealtime();renderAll();setStatus('Simulation réinitialisée.')};
-document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio()},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls()}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
+document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio()},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master')masterRuntimeCycle()}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
 load();applyTheme();renderAll();ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startControllerIdentityCheck();
 </script>
 </body>

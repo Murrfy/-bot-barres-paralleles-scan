@@ -182,6 +182,24 @@ if (!index.includes('masterAppliedRevision') ||
   fail('iPhone must show MASTER applied revision and avoid no-op controller revisions');
 }
 
+if (!sync.includes('stableStringify') ||
+    !sync.includes('MASTER_RUNTIME_UNAVAILABLE') ||
+    !sync.includes('RUNTIME_STATE_INVALID')) {
+  fail('MASTER synchronization must use canonical hashes and validated runtime snapshots');
+}
+if (!index.includes("role==='master'") ||
+    !index.includes("masterRuntimeApi('master-heartbeat','POST'") ||
+    !index.includes("masterRuntimeApi('state','POST'") ||
+    !index.includes("masterRuntimeApi('master-config-status'") ||
+    !index.includes("masterRuntimeApi('master-config-ack','POST'") ||
+    !index.includes('masterLocalEntryAllowed()') ||
+    !index.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
+  fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
+}
+if (!masterStandby.includes('stableStringify(state.data)')) {
+  fail('MASTER standby must verify controller state with the canonical hash');
+}
+
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');
 if (!replaceController.includes('restoreCentralState') ||
     !replaceController.includes('zenith_controller_revision_v1')) {

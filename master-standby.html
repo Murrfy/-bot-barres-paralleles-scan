@@ -46,6 +46,16 @@ async function api(action,method='GET',body){
   const q=await r.json().catch(()=>({}));
   return {r,q};
 }
+function stableStringify(value){
+  if(value===null||typeof value!=='object')return JSON.stringify(value);
+  if(Array.isArray(value))return '['+value.map(item=>item===undefined?'null':stableStringify(item)).join(',')+']';
+  const parts=[];
+  for(const key of Object.keys(value).sort()){
+    const encoded=stableStringify(value[key]);
+    if(encoded!==undefined)parts.push(JSON.stringify(key)+':'+encoded);
+  }
+  return '{'+parts.join(',')+'}';
+}
 async function sha256Hex(value){
   const bytes=new TextEncoder().encode(value);
   const digest=await crypto.subtle.digest('SHA-256',bytes);
@@ -55,7 +65,7 @@ async function applyControllerState(state){
   if(!state||!state.data||typeof state.data!=='object')throw new Error('CONTROLLER_STATE_INVALID');
   const revision=Number(state.revision||0),stateHash=String(state.stateHash||'');
   if(!Number.isInteger(revision)||revision<=0||!stateHash)throw new Error('CONTROLLER_STATE_INVALID');
-  const computed=await sha256Hex(JSON.stringify(state.data));
+  const computed=await sha256Hex(stableStringify(state.data));
   if(computed!==stateHash)throw new Error('CONTROLLER_STATE_HASH_MISMATCH');
 
   let current={};

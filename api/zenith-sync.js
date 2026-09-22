@@ -60,6 +60,19 @@ function sha256(v) {
   return crypto.createHash('sha256').update(String(v)).digest('hex');
 }
 
+function stableStringify(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return '[' + value.map(item => item === undefined ? 'null' : stableStringify(item)).join(',') + ']';
+  }
+  const parts = [];
+  for (const key of Object.keys(value).sort()) {
+    const encoded = stableStringify(value[key]);
+    if (encoded !== undefined) parts.push(JSON.stringify(key) + ':' + encoded);
+  }
+  return '{' + parts.join(',') + '}';
+}
+
 function bearer(req) {
   const h = String(req.headers.authorization || '');
   return h.startsWith('Bearer ') ? h.slice(7).trim() : '';
@@ -327,7 +340,7 @@ function parseStoredJson(raw) {
   try { return raw ? JSON.parse(raw) : null; } catch { return null; }
 }
 
-function masterConfigSyncStatus(controllerState, appliedState, runtimeState, expectedMasterDeviceId = '') {
+function masterConfigSyncStatus(controllerState, appliedState, runtimeState, expectedMasterDeviceId = '', runtimeRequired = REAL_TRADING_ENABLED) {
   const controllerRevision = Number(controllerState?.revision || 0);
   const controllerStateHash = String(controllerState?.stateHash || '');
   const appliedRevision = Number(appliedState?.revision || 0);
@@ -336,19 +349,33 @@ function masterConfigSyncStatus(controllerState, appliedState, runtimeState, exp
   const activity = inspectRuntimeActivity(runtimeState);
   const controllerPresent = controllerRevision > 0 && Boolean(controllerStateHash);
   const masterIdentityMatches = !expectedMasterDeviceId || appliedMasterDeviceId === String(expectedMasterDeviceId);
-  const synchronized = controllerPresent &&
+  const configMatched = controllerPresent &&
     appliedRevision === controllerRevision &&
     appliedStateHash === controllerStateHash &&
     masterIdentityMatches;
-  const needsApply = controllerPresent && !synchronized;
-  const applyDeferred = needsApply && (activity.activePositions > 0 || activity.openOrders > 0);
+
+  const runtimePresent = Boolean(runtimeState?.data && typeof runtimeState.data === 'object');
+  const runtimeAgeMs = Date.now() - Number(runtimeState?.updatedAt || 0);
+  const runtimeFresh = runtimePresent && Number.isFinite(runtimeAgeMs) && runtimeAgeMs >= 0 && runtimeAgeMs <= 30000;
+  const runtimeFailClosed = Boolean(runtimeRequired && !runtimeFresh);
+  const runtimeReason = !runtimePresent ? 'MASTER_RUNTIME_UNAVAILABLE' : !runtimeFresh ? 'MASTER_RUNTIME_STALE' : '';
+
+  const synchronized = configMatched && !runtimeFailClosed;
+  const needsApply = controllerPresent && !configMatched;
+  const applyDeferred = needsApply && (
+    activity.activePositions > 0 ||
+    activity.openOrders > 0 ||
+    runtimeFailClosed
+  );
   const reason = !controllerPresent
     ? 'NO_CONTROLLER_STATE'
-    : synchronized
-      ? 'SYNCED'
-      : applyDeferred
-        ? 'MASTER_CONFIG_APPLY_DEFERRED'
-        : 'MASTER_CONFIG_OUT_OF_SYNC';
+    : runtimeFailClosed
+      ? runtimeReason
+      : configMatched
+        ? 'SYNCED'
+        : applyDeferred
+          ? 'MASTER_CONFIG_APPLY_DEFERRED'
+          : 'MASTER_CONFIG_OUT_OF_SYNC';
 
   return {
     controllerPresent,
@@ -359,11 +386,15 @@ function masterConfigSyncStatus(controllerState, appliedState, runtimeState, exp
     appliedAt: Number(appliedState?.appliedAt || 0),
     appliedMasterDeviceId,
     synchronized,
+    configMatched,
     needsApply,
     applyAllowed: needsApply && !applyDeferred,
     applyDeferred,
     failClosed: !synchronized,
     reason,
+    runtimePresent,
+    runtimeFresh,
+    runtimeAgeMs: Number.isFinite(runtimeAgeMs) ? runtimeAgeMs : null,
     activity,
   };
 }
@@ -1196,11 +1227,12 @@ export default async function handler(req, res) {
       if (!configSync.controllerState) {
         return send(res, 409, { ok: false, code: 'NO_CONTROLLER_STATE' });
       }
-      if (configSync.status.activity.activePositions > 0 || configSync.status.activity.openOrders > 0) {
+      if (!configSync.status.synchronized && !configSync.status.applyAllowed) {
         return send(res, 423, {
           ok: false,
-          code: 'MASTER_CONFIG_APPLY_DEFERRED',
+          code: configSync.status.reason || 'MASTER_CONFIG_APPLY_DEFERRED',
           activity: configSync.status.activity,
+          runtimeFresh: configSync.status.runtimeFresh,
         });
       }
 
@@ -1278,7 +1310,7 @@ export default async function handler(req, res) {
       }
 
       const updatedAt = Date.now();
-      const stateHash = sha256(JSON.stringify(safeData));
+      const stateHash = sha256(stableStringify(safeData));
       const snapshotTemplate = {
         version: 1,
         revision: 0,
@@ -1362,11 +1394,20 @@ export default async function handler(req, res) {
       if (!(await hasMasterLease(device.deviceId))) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
+      const data = req.body?.data;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return send(res, 400, { ok: false, code: 'RUNTIME_STATE_INVALID' });
+      }
+      if (JSON.stringify(data).length > 500000) {
+        return send(res, 413, { ok: false, code: 'RUNTIME_STATE_TOO_LARGE' });
+      }
       const snapshot = {
-        version: 1,
+        version: 2,
         updatedAt: Date.now(),
         masterDeviceId: device.deviceId,
-        data: req.body?.data ?? null,
+        controllerRevision: Math.max(0, Number(req.body?.controllerRevision || 0)),
+        appliedRevision: Math.max(0, Number(req.body?.appliedRevision || 0)),
+        data,
       };
       await redis(['SET', KEY_STATE, JSON.stringify(snapshot)]);
       return send(res, 200, { ok: true, state: snapshot });

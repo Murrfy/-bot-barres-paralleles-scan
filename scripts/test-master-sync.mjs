@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 const source = fs.readFileSync('api/zenith-sync.js', 'utf8');
-const { masterConfigSyncStatus } = await import(
+const { masterConfigSyncStatus, stableStringify } = await import(
   'data:text/javascript;base64,' +
-  Buffer.from(source + '\nexport { masterConfigSyncStatus };').toString('base64')
+  Buffer.from(source + '\nexport { masterConfigSyncStatus, stableStringify };').toString('base64')
 );
 
 const controller = (revision = 3, hash = 'hash-3') => ({
@@ -74,4 +74,23 @@ test('missing controller state is fail-closed', () => {
   assert.equal(s.synchronized, false);
   assert.equal(s.reason, 'NO_CONTROLLER_STATE');
   assert.equal(s.failClosed, true);
+});
+
+test('canonical controller hashing ignores object key order', () => {
+  const a = { settings: { z: 1, a: 2 }, validated: { BTC: { buy: 3 } } };
+  const b = { validated: { BTC: { buy: 3 } }, settings: { a: 2, z: 1 } };
+  assert.equal(stableStringify(a), stableStringify(b));
+});
+
+test('real-mode synchronization fails closed without a fresh MASTER runtime', () => {
+  const missing = masterConfigSyncStatus(controller(), applied(), null, 'master-1', true);
+  assert.equal(missing.synchronized, false);
+  assert.equal(missing.failClosed, true);
+  assert.equal(missing.reason, 'MASTER_RUNTIME_UNAVAILABLE');
+
+  const staleRuntime = runtime();
+  staleRuntime.updatedAt = Date.now() - 31000;
+  const stale = masterConfigSyncStatus(controller(), applied(), staleRuntime, 'master-1', true);
+  assert.equal(stale.synchronized, false);
+  assert.equal(stale.reason, 'MASTER_RUNTIME_STALE');
 });
