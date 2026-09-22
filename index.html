@@ -36,7 +36,8 @@
   <div class="top">
     <div><div class="brand">Zenith — Bot sans graphique</div><div class="sub">Binance Futures USDⓈ-M · PERP USDT · simulation uniquement</div></div>
     <span id="liveBadge" class="live">LIVE 0</span>
-    <span id="accountBadge" class="live">BINANCE —</span>\n    <span id="controllerBadge" class="live">CONTRÔLEUR —</span>
+    <span id="accountBadge" class="live">BINANCE —</span>
+    <span id="controllerBadge" class="live">CONTRÔLEUR —</span>
     <button id="resetClosedBtn" class="btn">Réinitialiser gains / fermés</button>
     <button id="resetSimBtn" class="btn danger">Réinitialiser simulation</button>
   </div>
@@ -157,7 +158,9 @@ let settings=clone(DEFAULTS),tokenSettings={},manualTokens={},validated={},reval
 let exchangeMap=new Map(),lastPrices=new Map(),ws=null,wsLive=false,fallbackTimer=null,uiRenderPending=false,wsSubscribed=new Set(),wsReconnectTimer=null,wsRequestId=1;
 const lastAggIds=new Map(),lastAggTimes=new Map(),recoveringSymbols=new Set(),pendingAggTrades=new Map();
 let cursorSaveTimer=null;
-let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;\nconst ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1';\nlet controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null;
+let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
+const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1';
+let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null;
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
 function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}}
