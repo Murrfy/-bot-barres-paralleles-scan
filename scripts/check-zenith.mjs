@@ -134,8 +134,10 @@ if (!sync.includes("await setMasterMode('PAUSE_PENDING')") ||
     !sync.includes("'MASTER_RUNTIME_STALE'")) {
   fail('MASTER pause must block new entries immediately and remain pending until activity is safely drained');
 }
-if (!sync.includes("'MASTER_PAUSED'") || !sync.includes("currentMode === 'PAUSED'")) {
-  fail('MASTER command consumption must stop while paused');
+if (!sync.includes("'MASTER_PAUSED'") ||
+    !sync.includes("modeBeforeClaim === 'PAUSED'") ||
+    !sync.includes("modeNow === 'PAUSED'")) {
+  fail('MASTER command consumption must stop while paused, including a post-claim race check');
 }
 if (!sync.includes('freshCleanReconciliation') ||
     !sync.includes("'BINANCE_RECONCILIATION_REQUIRED'")) {
