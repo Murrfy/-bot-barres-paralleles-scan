@@ -60,6 +60,9 @@ if (!sync.includes("KEY_EMERGENCY_STOP")) {
 if (!sync.includes("'EXECUTION_LOCKED'")) {
   fail('api/zenith-sync.js must reject future execution commands while locked');
 }
+if (!sync.includes("'MASTER_ACTIVATION_REQUIRED'") || !sync.includes("action === 'master-authorize'")) {
+  fail('api/zenith-sync.js must require controller authorization before first MASTER lease');
+}
 
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
