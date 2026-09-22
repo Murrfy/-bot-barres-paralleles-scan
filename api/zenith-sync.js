@@ -27,6 +27,7 @@ const KEY_AUDIT = `${PREFIX}:audit`;
 const KEY_PENDING = `${PREFIX}:commands:pending`;
 const KEY_PROCESSING = `${PREFIX}:commands:processing`;
 const KEY_DEAD = `${PREFIX}:commands:dead`;
+const KEY_EMERGENCY_STOP = `${PREFIX}:safety:emergency-stop`;
 const MASTER_TTL_SECONDS = 20;
 const COMMAND_CLAIM_TTL_MS = 90 * 1000;
 const COMMAND_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 30;
@@ -178,6 +179,12 @@ async function acquireOrRenewMaster(deviceId) {
   ].join('\n');
   const ok = await redis(['EVAL', script, '1', KEY_MASTER, String(deviceId), String(MASTER_TTL_SECONDS)]);
   return Number(ok) === 1;
+}
+
+async function emergencyStopActive() {
+  const value = await redis(['GET', KEY_EMERGENCY_STOP]);
+  if (value === null || value === undefined || value === '') return true;
+  return String(value) !== '0';
 }
 
 async function recoverStaleProcessing(deviceId) {
@@ -349,13 +356,14 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res);
       if (!device) return;
 
-      const [currentMaster, controllerDevice, masterDevice, pending, processing, controllerRaw] = await Promise.all([
+      const [currentMaster, controllerDevice, masterDevice, pending, processing, controllerRaw, emergencyStop] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('controller'),
         roleDeviceId('master'),
         redis(['LLEN', KEY_PENDING]),
         redis(['LLEN', KEY_PROCESSING]),
         redis(['GET', KEY_CONTROLLER_STATE]),
+        emergencyStopActive(),
       ]);
 
       let controllerRevision = 0;
@@ -372,6 +380,7 @@ export default async function handler(req, res) {
         ok: true,
         executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
         realTradingEnabled: REAL_TRADING_ENABLED,
+        emergencyStopActive: Boolean(emergencyStop),
         masterLeaseActive: Boolean(currentMaster),
         currentMaster,
         controllerRegistered: Boolean(controllerDevice),
@@ -524,6 +533,17 @@ export default async function handler(req, res) {
       if (!/^[A-Z0-9_:-]{1,64}$/.test(type)) {
         return send(res, 400, { ok: false, code: 'COMMAND_TYPE_INVALID' });
       }
+      if (type.startsWith('EXEC_')) {
+        const halted = await emergencyStopActive();
+        if (!REAL_TRADING_ENABLED || halted) {
+          return send(res, 423, {
+            ok: false,
+            code: 'EXECUTION_LOCKED',
+            realTradingEnabled: REAL_TRADING_ENABLED,
+            emergencyStopActive: halted,
+          });
+        }
+      }
       if (!/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId)) {
         return send(res, 400, { ok: false, code: 'CLIENT_COMMAND_ID_REQUIRED' });
       }
@@ -635,6 +655,27 @@ export default async function handler(req, res) {
       const removed = await redis(['LREM', KEY_PROCESSING, '1', raw]);
       if (Number(removed) > 0) await redis(['LPUSH', KEY_PENDING, raw]);
       return send(res, 200, { ok: true, requeued: Number(removed) > 0 });
+    }
+
+    if (action === 'emergency-stop' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller', 'master']);
+      if (!device) return;
+
+      const at = Date.now();
+      await redis(['SET', KEY_EMERGENCY_STOP, '1']);
+      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+        at,
+        kind: 'EMERGENCY_STOP_SET',
+        deviceId: device.deviceId,
+        role: device.role,
+      })]);
+      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+
+      return send(res, 200, {
+        ok: true,
+        emergencyStopActive: true,
+        executionMode: 'STOPPED',
+      });
     }
 
     if (action === 'audit' && req.method === 'GET') {
