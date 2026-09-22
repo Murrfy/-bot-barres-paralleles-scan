@@ -160,6 +160,28 @@ if (!masterAdmin.includes('cancelPauseBtn') ||
   fail('iPad MASTER admin UI must allow cancelling a queued pause');
 }
 
+if (!sync.includes('KEY_MASTER_CONFIG_ACK') ||
+    !sync.includes('KEY_MASTER_HEARTBEAT') ||
+    !sync.includes("action === 'master-config-status'") ||
+    !sync.includes("action === 'master-config-ack'") ||
+    !sync.includes("'MASTER_CONFIG_OUT_OF_SYNC'") ||
+    !sync.includes("'MASTER_CONFIG_APPLY_DEFERRED'")) {
+  fail('MASTER must heartbeat, apply central revisions, acknowledge them, and fail closed on desynchronization');
+}
+
+const masterStandby = fs.readFileSync('master-standby.html', 'utf8');
+if (!masterStandby.includes("api('master-heartbeat','POST'") ||
+    !masterStandby.includes("api('master-config-status'") ||
+    !masterStandby.includes("api('master-config-ack','POST'") ||
+    !masterStandby.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
+  fail('MASTER standby page must verify, apply, and acknowledge controller revisions');
+}
+if (!index.includes('masterAppliedRevision') ||
+    !index.includes('MASTER DÉSYNCHRONISÉ') ||
+    !index.includes("JSON.stringify(remoteState?.data||{})===JSON.stringify(payload)")) {
+  fail('iPhone must show MASTER applied revision and avoid no-op controller revisions');
+}
+
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');
 if (!replaceController.includes('restoreCentralState') ||
     !replaceController.includes('zenith_controller_revision_v1')) {

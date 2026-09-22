@@ -31,7 +31,11 @@ const KEY_DEAD = `${PREFIX}:commands:dead`;
 const KEY_EMERGENCY_STOP = `${PREFIX}:safety:emergency-stop`;
 const KEY_MASTER_MODE = `${PREFIX}:master-mode`;
 const KEY_RECONCILE_LAST = `${PREFIX}:reconcile:last`;
+const KEY_MASTER_CONFIG_ACK = `${PREFIX}:master-config:applied`;
+const KEY_MASTER_HEARTBEAT = `${PREFIX}:master-heartbeat`;
 const MASTER_TTL_SECONDS = 20;
+const MASTER_HEARTBEAT_TTL_SECONDS = 60;
+const MASTER_HEARTBEAT_STALE_MS = 30 * 1000;
 const MASTER_ACTIVATION_TTL_SECONDS = 120;
 const COMMAND_CLAIM_TTL_MS = 90 * 1000;
 const COMMAND_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 30;
@@ -317,6 +321,77 @@ function inspectRuntimeActivity(snapshot) {
       ['openOrderCount', 'openOrdersCount', 'pendingOrderCount']
     ),
   };
+}
+
+function parseStoredJson(raw) {
+  try { return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+
+function masterConfigSyncStatus(controllerState, appliedState, runtimeState, expectedMasterDeviceId = '') {
+  const controllerRevision = Number(controllerState?.revision || 0);
+  const controllerStateHash = String(controllerState?.stateHash || '');
+  const appliedRevision = Number(appliedState?.revision || 0);
+  const appliedStateHash = String(appliedState?.stateHash || '');
+  const appliedMasterDeviceId = String(appliedState?.masterDeviceId || '');
+  const activity = inspectRuntimeActivity(runtimeState);
+  const controllerPresent = controllerRevision > 0 && Boolean(controllerStateHash);
+  const masterIdentityMatches = !expectedMasterDeviceId || appliedMasterDeviceId === String(expectedMasterDeviceId);
+  const synchronized = controllerPresent &&
+    appliedRevision === controllerRevision &&
+    appliedStateHash === controllerStateHash &&
+    masterIdentityMatches;
+  const needsApply = controllerPresent && !synchronized;
+  const applyDeferred = needsApply && (activity.activePositions > 0 || activity.openOrders > 0);
+  const reason = !controllerPresent
+    ? 'NO_CONTROLLER_STATE'
+    : synchronized
+      ? 'SYNCED'
+      : applyDeferred
+        ? 'MASTER_CONFIG_APPLY_DEFERRED'
+        : 'MASTER_CONFIG_OUT_OF_SYNC';
+
+  return {
+    controllerPresent,
+    controllerRevision,
+    controllerStateHash,
+    appliedRevision,
+    appliedStateHash,
+    appliedAt: Number(appliedState?.appliedAt || 0),
+    appliedMasterDeviceId,
+    synchronized,
+    needsApply,
+    applyAllowed: needsApply && !applyDeferred,
+    applyDeferred,
+    failClosed: !synchronized,
+    reason,
+    activity,
+  };
+}
+
+async function readMasterConfigSync(expectedMasterDeviceId = '') {
+  const [controllerRaw, appliedRaw, runtimeRaw] = await Promise.all([
+    redis(['GET', KEY_CONTROLLER_STATE]),
+    redis(['GET', KEY_MASTER_CONFIG_ACK]),
+    redis(['GET', KEY_STATE]),
+  ]);
+  const controllerState = parseStoredJson(controllerRaw);
+  const appliedState = parseStoredJson(appliedRaw);
+  const runtimeState = parseStoredJson(runtimeRaw);
+  return {
+    controllerState,
+    appliedState,
+    runtimeState,
+    status: masterConfigSyncStatus(controllerState, appliedState, runtimeState, expectedMasterDeviceId),
+  };
+}
+
+function heartbeatStatus(raw, expectedMasterDeviceId = '') {
+  const heartbeat = parseStoredJson(raw);
+  const at = Number(heartbeat?.at || 0);
+  const ageMs = Date.now() - at;
+  const identityMatches = !expectedMasterDeviceId || String(heartbeat?.masterDeviceId || '') === String(expectedMasterDeviceId);
+  const fresh = Boolean(heartbeat) && identityMatches && Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= MASTER_HEARTBEAT_STALE_MS;
+  return { heartbeat, at, ageMs: Number.isFinite(ageMs) ? ageMs : null, fresh };
 }
 
 async function freshCleanReconciliation(maxAgeMs = 30000) {
@@ -758,6 +833,22 @@ export default async function handler(req, res) {
         currentMode = pauseTransition.masterMode;
       }
 
+      const configSync = await readMasterConfigSync(device.deviceId);
+      const heartbeat = {
+        version: 1,
+        at: Date.now(),
+        masterDeviceId: device.deviceId,
+        masterMode: currentMode,
+        controllerRevision: configSync.status.controllerRevision,
+        appliedRevision: configSync.status.appliedRevision,
+        synchronized: configSync.status.synchronized,
+        syncReason: configSync.status.reason,
+      };
+      await redis([
+        'SET', KEY_MASTER_HEARTBEAT, JSON.stringify(heartbeat),
+        'EX', String(MASTER_HEARTBEAT_TTL_SECONDS)
+      ]);
+
       return send(res, 200, {
         ok: true,
         master: true,
@@ -766,6 +857,8 @@ export default async function handler(req, res) {
         currentMaster: await masterDeviceId(),
         masterMode: currentMode,
         pauseTransition,
+        configSync: configSync.status,
+        heartbeat,
         ttlSeconds: MASTER_TTL_SECONDS,
       });
     }
@@ -939,6 +1032,12 @@ export default async function handler(req, res) {
       if (Number(pending || 0) > 0) blockers.push('PENDING_COMMAND');
       if (Number(processing || 0) > 0) blockers.push('PROCESSING_COMMAND');
 
+      const configSync = await readMasterConfigSync(currentMaster);
+      if (!configSync.status.synchronized) blockers.push('MASTER_CONFIG_OUT_OF_SYNC');
+      const heartbeatRaw = await redis(['GET', KEY_MASTER_HEARTBEAT]);
+      const heartbeat = heartbeatStatus(heartbeatRaw, currentMaster);
+      if (!heartbeat.fresh) blockers.push('MASTER_HEARTBEAT_STALE');
+
       let reconciliation = null;
       if (REAL_TRADING_ENABLED) {
         reconciliation = await freshCleanReconciliation();
@@ -998,6 +1097,10 @@ export default async function handler(req, res) {
         controllerStateHash = String(parsed?.stateHash || '');
       } catch {}
 
+      const configSync = await readMasterConfigSync(currentMaster || masterDevice || '');
+      const heartbeatRaw = await redis(['GET', KEY_MASTER_HEARTBEAT]);
+      const heartbeat = heartbeatStatus(heartbeatRaw, currentMaster || masterDevice || '');
+
       return send(res, 200, {
         ok: true,
         executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
@@ -1013,6 +1116,15 @@ export default async function handler(req, res) {
         controllerRevision,
         controllerUpdatedAt,
         controllerStateHash,
+        masterAppliedRevision: configSync.status.appliedRevision,
+        masterAppliedAt: configSync.status.appliedAt,
+        masterSyncStatus: configSync.status.reason,
+        masterSyncFailClosed: configSync.status.failClosed,
+        masterConfigApplyAllowed: configSync.status.applyAllowed,
+        masterConfigApplyDeferred: configSync.status.applyDeferred,
+        masterHeartbeatAt: heartbeat.at,
+        masterHeartbeatAgeMs: heartbeat.ageMs,
+        masterHeartbeatFresh: heartbeat.fresh,
         commandClaimTtlMs: COMMAND_CLAIM_TTL_MS,
       });
     }
@@ -1055,6 +1167,80 @@ export default async function handler(req, res) {
         pendingCommands: Number(pending || 0),
         processingCommands: Number(processing || 0),
         reasons,
+      });
+    }
+
+    if (action === 'master-config-status' && req.method === 'GET') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+      if (!(await hasMasterLease(device.deviceId))) {
+        return send(res, 409, { ok: false, code: 'NOT_MASTER' });
+      }
+      const configSync = await readMasterConfigSync(device.deviceId);
+      return send(res, 200, {
+        ok: true,
+        controllerState: configSync.controllerState,
+        appliedState: configSync.appliedState,
+        ...configSync.status,
+      });
+    }
+
+    if (action === 'master-config-ack' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+      if (!(await hasMasterLease(device.deviceId))) {
+        return send(res, 409, { ok: false, code: 'NOT_MASTER' });
+      }
+
+      const configSync = await readMasterConfigSync(device.deviceId);
+      if (!configSync.controllerState) {
+        return send(res, 409, { ok: false, code: 'NO_CONTROLLER_STATE' });
+      }
+      if (configSync.status.activity.activePositions > 0 || configSync.status.activity.openOrders > 0) {
+        return send(res, 423, {
+          ok: false,
+          code: 'MASTER_CONFIG_APPLY_DEFERRED',
+          activity: configSync.status.activity,
+        });
+      }
+
+      const revision = Number(req.body?.revision);
+      const stateHash = String(req.body?.stateHash || '');
+      if (!Number.isInteger(revision) || revision <= 0 || !stateHash) {
+        return send(res, 400, { ok: false, code: 'MASTER_CONFIG_ACK_INVALID' });
+      }
+      if (revision !== configSync.status.controllerRevision || stateHash !== configSync.status.controllerStateHash) {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_CONFIG_REVISION_CHANGED',
+          controllerRevision: configSync.status.controllerRevision,
+          controllerStateHash: configSync.status.controllerStateHash,
+        });
+      }
+
+      const applied = {
+        version: 1,
+        revision,
+        stateHash,
+        appliedAt: Date.now(),
+        masterDeviceId: device.deviceId,
+      };
+      await redis(['SET', KEY_MASTER_CONFIG_ACK, JSON.stringify(applied)]);
+      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+        at: applied.appliedAt,
+        kind: 'MASTER_CONFIG_APPLIED',
+        deviceId: device.deviceId,
+        revision,
+        stateHash,
+      })]);
+      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+
+      return send(res, 200, {
+        ok: true,
+        applied,
+        synchronized: true,
+        controllerRevision: revision,
+        appliedRevision: revision,
       });
     }
 
@@ -1204,6 +1390,17 @@ export default async function handler(req, res) {
       if (modeAtSubmit === 'PAUSE_PENDING' && !allowedWhilePending) {
         return send(res, 423, { ok: false, code: 'MASTER_PAUSE_PENDING', masterMode: modeAtSubmit });
       }
+      const activeMaster = await masterDeviceId();
+      const configSync = await readMasterConfigSync(activeMaster);
+      if (!configSync.status.synchronized && !allowedWhilePending) {
+        return send(res, 423, {
+          ok: false,
+          code: 'MASTER_CONFIG_OUT_OF_SYNC',
+          masterSyncStatus: configSync.status.reason,
+          controllerRevision: configSync.status.controllerRevision,
+          appliedRevision: configSync.status.appliedRevision,
+        });
+      }
       if (type.startsWith('EXEC_')) {
         const halted = await emergencyStopActive();
         if (!REAL_TRADING_ENABLED || halted) {
@@ -1281,6 +1478,7 @@ export default async function handler(req, res) {
         return send(res, 423, { ok: false, code: 'MASTER_PAUSED', masterMode: currentMode });
       }
 
+      const configSync = await readMasterConfigSync(device.deviceId);
       const recovery = await recoverStaleProcessing(device.deviceId);
       const raw = await claimNextCommand(device.deviceId);
       if (!raw) return send(res, 200, { ok: true, command: null, recovery });
@@ -1290,6 +1488,24 @@ export default async function handler(req, res) {
 
       let command = null;
       try { command = JSON.parse(raw); } catch {}
+
+      if (!configSync.status.synchronized && !commandAllowedDuringPausePending(command?.type)) {
+        await redis(['LREM', KEY_PROCESSING, '1', raw]);
+        await redis(['LPUSH', KEY_DEAD, JSON.stringify({
+          raw,
+          rejectedAt: Date.now(),
+          rejectedReason: 'MASTER_CONFIG_OUT_OF_SYNC',
+          controllerRevision: configSync.status.controllerRevision,
+          appliedRevision: configSync.status.appliedRevision,
+        })]);
+        return send(res, 200, {
+          ok: true,
+          command: null,
+          syncRejected: true,
+          masterSyncStatus: configSync.status.reason,
+          recovery,
+        });
+      }
 
       if (currentMode === 'PAUSE_PENDING' && !commandAllowedDuringPausePending(command?.type)) {
         await redis(['LREM', KEY_PROCESSING, '1', raw]);

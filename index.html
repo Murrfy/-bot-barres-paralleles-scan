@@ -167,7 +167,7 @@ let binanceAccount={connected:false,configured:false,walletBalance:null,availabl
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
-let masterControlState={mode:'',masterLeaseActive:false,error:''};
+let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,error:''};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
 function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}}
@@ -195,26 +195,30 @@ function renderMasterControls(){
   if(!visible){cancelBtn.hidden=true;return}
   const mode=String(masterControlState.mode||'');
   cancelBtn.hidden=mode!=='PAUSE_PENDING';
+  const rev='R'+String(masterControlState.masterAppliedRevision||0)+'/'+String(masterControlState.controllerRevision||0);
   if(masterControlState.error){
     badge.textContent='MASTER NON VÉRIFIÉ';
     badge.classList.remove('on');
+  }else if(masterControlState.masterSyncFailClosed){
+    badge.textContent='MASTER DÉSYNCHRONISÉ · '+rev;
+    badge.classList.remove('on');
   }else if(mode==='RUNNING'){
-    badge.textContent='MASTER EN MARCHE';
+    badge.textContent='MASTER EN MARCHE · '+rev;
     badge.classList.add('on');
   }else if(mode==='PAUSE_PENDING'){
-    badge.textContent='PAUSE EN ATTENTE';
+    badge.textContent='PAUSE EN ATTENTE · '+rev;
     badge.classList.remove('on');
   }else{
-    badge.textContent='MASTER EN PAUSE';
+    badge.textContent='MASTER EN PAUSE · '+rev;
     badge.classList.remove('on');
   }
   pauseBtn.disabled=mode==='PAUSED'||mode==='PAUSE_PENDING';
-  resumeBtn.disabled=mode==='RUNNING'||mode==='PAUSE_PENDING'||masterControlState.masterLeaseActive!==true;
+  resumeBtn.disabled=mode==='RUNNING'||mode==='PAUSE_PENDING'||masterControlState.masterLeaseActive!==true||masterControlState.masterSyncFailClosed||!masterControlState.masterHeartbeatFresh;
   cancelBtn.disabled=mode!=='PAUSE_PENDING'||masterControlState.masterLeaseActive!==true;
 }
 async function refreshMasterControls(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
-    masterControlState={mode:'',masterLeaseActive:false,error:''};
+    masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,error:''};
     renderMasterControls();
     return false;
   }
@@ -230,6 +234,10 @@ async function refreshMasterControls(){
     masterControlState={
       mode:String(q.masterMode||'PAUSED'),
       masterLeaseActive:q.masterLeaseActive===true,
+      controllerRevision:Math.max(0,n(q.controllerRevision,0)),
+      masterAppliedRevision:Math.max(0,n(q.masterAppliedRevision,0)),
+      masterSyncFailClosed:q.masterSyncFailClosed!==false,
+      masterHeartbeatFresh:q.masterHeartbeatFresh===true,
       error:''
     };
     renderMasterControls();
@@ -364,6 +372,12 @@ async function syncControllerCloudStateNow(){
       controllerSyncState={conflict:true,lastOk:0,error:'REVISION_CONFLICT'};
       renderControllerIdentity();
       return false;
+    }
+
+    if(remoteState&&JSON.stringify(remoteState?.data||{})===JSON.stringify(payload)){
+      controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
+      renderControllerIdentity();
+      return true;
     }
 
     const r=await fetch('/api/zenith-sync?action=controller-state',{

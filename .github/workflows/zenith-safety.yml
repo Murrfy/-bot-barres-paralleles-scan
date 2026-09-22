@@ -31,3 +31,5 @@ jobs:
         run: node --test scripts/test-reconcile.mjs
       - name: Test shared MASTER administration
         run: node --test scripts/test-master-admin.mjs
+      - name: Test MASTER configuration synchronization
+        run: node --test scripts/test-master-sync.mjs
