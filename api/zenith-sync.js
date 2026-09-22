@@ -454,7 +454,7 @@ export default async function handler(req, res) {
     }
 
     if (action === 'controller-replacement-authorize' && req.method === 'POST') {
-      const device = await requireDevice(req, res, ['master']);
+      const device = await requireDevice(req, res, ['controller', 'master']);
       if (!device) return;
 
       if (!MASTER_ADMIN_CODE) {
@@ -732,6 +732,7 @@ export default async function handler(req, res) {
         at,
         kind: 'MASTER_PAUSED',
         deviceId: device.deviceId,
+        requestedByRole: device.role,
       })]);
       await redis(['LTRIM', KEY_AUDIT, '0', '199']);
 
@@ -745,7 +746,7 @@ export default async function handler(req, res) {
     }
 
     if (action === 'master-resume' && req.method === 'POST') {
-      const device = await requireDevice(req, res, ['master']);
+      const device = await requireDevice(req, res, ['controller', 'master']);
       if (!device) return;
 
       if (!MASTER_ADMIN_CODE) {
@@ -754,7 +755,22 @@ export default async function handler(req, res) {
       if (!timingSafeEqualText(String(req.body?.adminCode || ''), MASTER_ADMIN_CODE)) {
         return send(res, 401, { ok: false, code: 'MASTER_ADMIN_CODE_INVALID' });
       }
-      if (!(await hasMasterLease(device.deviceId))) {
+      const [currentMaster, registeredMaster] = await Promise.all([
+        masterDeviceId(),
+        roleDeviceId('master'),
+      ]);
+      if (!currentMaster) {
+        return send(res, 409, { ok: false, code: 'MASTER_LEASE_REQUIRED' });
+      }
+      if (!registeredMaster || String(currentMaster) !== String(registeredMaster)) {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_LEASE_CONFLICT',
+          currentMaster,
+          registeredMaster,
+        });
+      }
+      if (device.role === 'master' && String(currentMaster) !== String(device.deviceId)) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
 
@@ -791,6 +807,7 @@ export default async function handler(req, res) {
         at,
         kind: 'MASTER_RESUMED',
         deviceId: device.deviceId,
+        requestedByRole: device.role,
         realTradingEnabled: REAL_TRADING_ENABLED,
       })]);
       await redis(['LTRIM', KEY_AUDIT, '0', '199']);

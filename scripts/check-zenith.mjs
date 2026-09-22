@@ -105,6 +105,15 @@ if (!sync.includes('freshCleanReconciliation') ||
     !sync.includes("'BINANCE_RECONCILIATION_REQUIRED'")) {
   fail('real MASTER resume must require fresh clean Binance reconciliation');
 }
+if (!sync.includes("requireDevice(req, res, ['controller', 'master'])")) {
+  fail('MASTER pause/resume must be callable by both controller and MASTER');
+}
+if (!index.includes('masterPauseBtn') ||
+    !index.includes('masterResumeBtn') ||
+    !index.includes("controllerMasterAction('master-pause')") ||
+    !index.includes("controllerMasterAction('master-resume')")) {
+  fail('iPhone controller UI must expose protected MASTER pause/resume controls');
+}
 
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');
 if (!replaceController.includes('restoreCentralState') ||
