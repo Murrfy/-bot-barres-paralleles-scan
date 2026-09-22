@@ -54,6 +54,12 @@ if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'")) {
 if (!sync.includes("'SIMULATION_LOCKED'")) {
   fail('api/zenith-sync.js must expose SIMULATION_LOCKED when real trading is not armed');
 }
+if (!sync.includes("KEY_EMERGENCY_STOP")) {
+  fail('api/zenith-sync.js must keep the persistent emergency-stop key');
+}
+if (!sync.includes("'EXECUTION_LOCKED'")) {
+  fail('api/zenith-sync.js must reject future execution commands while locked');
+}
 
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
