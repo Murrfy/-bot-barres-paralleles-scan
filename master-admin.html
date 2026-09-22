@@ -36,10 +36,11 @@ button:disabled{opacity:.5}
     <input id="adminCode" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Code administrateur">
 
     <button id="pauseBtn">Mettre le MASTER en pause</button>
+    <button id="cancelPauseBtn" hidden>Annuler la pause en attente</button>
     <button id="resumeBtn">Reprendre le MASTER</button>
     <button id="replaceBtn">Autoriser le remplacement de l’iPhone</button>
 
-    <div id="status" class="status">Prêt. La pause sera refusée si une position, un ordre ou une commande est encore actif.</div>
+    <div id="status" class="status">Prêt. Si une position est active, la pause sera mise en attente jusqu’à la fermeture de la dernière position.</div>
     <div id="recoveryCode" class="status code" hidden></div>
     <div class="small">Le code temporaire expire après 10 minutes et ne peut servir qu’une seule fois. Le code ADMIN n’est jamais stocké dans le navigateur.</div>
   </div>
@@ -94,7 +95,11 @@ async function refreshMasterMode(){
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true) throw new Error(q?.code||q?.error||('HTTP '+r.status));
     const mode=String(q.masterMode||'PAUSED');
-    setBox('masterMode','MASTER : '+(mode==='RUNNING'?'EN MARCHE':'EN PAUSE'),mode==='RUNNING'?'ok':'warn');
+    const cancelBtn=$('cancelPauseBtn');
+    cancelBtn.hidden=mode!=='PAUSE_PENDING';
+    if(mode==='RUNNING')setBox('masterMode','MASTER : EN MARCHE','ok');
+    else if(mode==='PAUSE_PENDING')setBox('masterMode','MASTER : PAUSE EN ATTENTE','warn');
+    else setBox('masterMode','MASTER : EN PAUSE','warn');
   }catch(e){
     setBox('masterMode','État MASTER non vérifié : '+String(e?.message||'erreur')+'.','err');
   }
@@ -108,8 +113,13 @@ async function setMasterMode(action){
     return;
   }
   $('pauseBtn').disabled=true;
+  $('cancelPauseBtn').disabled=true;
   $('resumeBtn').disabled=true;
-  setBox('status',action==='master-pause'?'Vérification avant pause…':'Vérification avant reprise…');
+  setBox('status',action==='master-pause'
+    ?'Vérification avant pause…'
+    :action==='master-pause-cancel'
+      ?'Annulation de la pause en attente…'
+      :'Vérification avant reprise…');
   try{
     const r=await fetch('/api/zenith-sync?action='+action,{
       method:'POST',
@@ -126,12 +136,19 @@ async function setMasterMode(action){
       throw new Error((q?.code||q?.error||('HTTP '+r.status))+blockers);
     }
     $('adminCode').value='';
-    setBox('status',q.masterMode==='PAUSED'?'MASTER mis en pause. Aucune nouvelle commande de trading ne sera consommée.':'MASTER repris après contrôles de sécurité.','ok');
+    if(q.masterMode==='PAUSE_PENDING'){
+      setBox('status','Pause programmée. Le MASTER continue de gérer les positions actives mais n’ouvrira plus de nouvelle position.','ok');
+    }else if(action==='master-pause-cancel'){
+      setBox('status','Pause en attente annulée. MASTER maintenu en marche.','ok');
+    }else{
+      setBox('status',q.masterMode==='PAUSED'?'MASTER mis en pause. Aucune nouvelle commande de trading ne sera consommée.':'MASTER repris après contrôles de sécurité.','ok');
+    }
     await refreshMasterMode();
   }catch(e){
     setBox('status','Action refusée : '+String(e?.message||'erreur')+'.','err');
   }finally{
     $('pauseBtn').disabled=false;
+    $('cancelPauseBtn').disabled=false;
     $('resumeBtn').disabled=false;
   }
 }
@@ -175,6 +192,7 @@ async function authorizeReplacement(){
 }
 
 $('pauseBtn').addEventListener('click',()=>setMasterMode('master-pause'));
+$('cancelPauseBtn').addEventListener('click',()=>setMasterMode('master-pause-cancel'));
 $('resumeBtn').addEventListener('click',()=>setMasterMode('master-resume'));
 $('replaceBtn').addEventListener('click',authorizeReplacement);
 $('adminCode').addEventListener('keydown',e=>{if(e.key==='Enter')authorizeReplacement()});

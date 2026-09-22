@@ -108,11 +108,31 @@ if (!sync.includes('freshCleanReconciliation') ||
 if (!sync.includes("requireDevice(req, res, ['controller', 'master'])")) {
   fail('MASTER pause/resume must be callable by both controller and MASTER');
 }
+if (!sync.includes("'PAUSE_PENDING'") ||
+    !sync.includes("action === 'master-pause-cancel'") ||
+    !sync.includes("'MASTER_PAUSE_QUEUED'") ||
+    !sync.includes("'MASTER_PAUSE_COMPLETED'")) {
+  fail('MASTER must support queued pause after active positions close');
+}
+if (!sync.includes('PAUSE_PENDING_ALLOWED_COMMANDS') ||
+    !sync.includes("'MASTER_PAUSE_PENDING_UNSAFE_COMMAND'")) {
+  fail('queued pause must block new entry commands while allowing explicit close/protection commands');
+}
+if (!index.includes('masterCancelPauseBtn') ||
+    !index.includes("controllerMasterAction('master-pause-cancel')")) {
+  fail('iPhone controller UI must allow cancelling a queued MASTER pause');
+}
 if (!index.includes('masterPauseBtn') ||
     !index.includes('masterResumeBtn') ||
     !index.includes("controllerMasterAction('master-pause')") ||
     !index.includes("controllerMasterAction('master-resume')")) {
   fail('iPhone controller UI must expose protected MASTER pause/resume controls');
+}
+
+const masterAdmin = fs.readFileSync('master-admin.html', 'utf8');
+if (!masterAdmin.includes('cancelPauseBtn') ||
+    !masterAdmin.includes("setMasterMode('master-pause-cancel')")) {
+  fail('iPad MASTER admin UI must allow cancelling a queued pause');
 }
 
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');
