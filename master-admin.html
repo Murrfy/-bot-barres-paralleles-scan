@@ -26,19 +26,20 @@ button:disabled{opacity:.5}
 <div class="wrap">
   <div class="card">
     <h1>Zenith — Admin MASTER</h1>
-    <div class="sub">Accès local exceptionnel depuis l’iPad MASTER.</div>
+    <div class="sub">Administration depuis l’iPhone contrôleur ou l’iPad MASTER.</div>
     <div class="notice">Cette page ne modifie pas les réglages du bot. Elle sert uniquement aux opérations administratives critiques.</div>
 
-    <div id="identity" class="status">Vérification MASTER…</div>
+    <a id="backLink" href="/">Retour à Zenith</a>
+    <div id="identity" class="status">Vérification de l’appareil…</div>
     <div id="masterMode" class="status">État MASTER…</div>
 
     <label for="adminCode">Code ADMIN MASTER</label>
     <input id="adminCode" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Code administrateur">
 
-    <button id="pauseBtn">Mettre le MASTER en pause</button>
-    <button id="cancelPauseBtn" hidden>Annuler la pause en attente</button>
-    <button id="resumeBtn">Reprendre le MASTER</button>
-    <button id="replaceBtn">Autoriser le remplacement de l’iPhone</button>
+    <button id="pauseBtn" disabled>Mettre le MASTER en pause</button>
+    <button id="cancelPauseBtn" disabled hidden>Annuler la pause en attente</button>
+    <button id="resumeBtn" disabled>Reprendre le MASTER</button>
+    <button id="replaceBtn" disabled hidden>Autoriser le remplacement de l’iPhone</button>
 
     <div id="status" class="status">Prêt. Si une position est active, la pause sera mise en attente jusqu’à la fermeture de la dernière position.</div>
     <div id="recoveryCode" class="status code" hidden></div>
@@ -48,6 +49,18 @@ button:disabled{opacity:.5}
 <script>
 const TOKEN_KEY='zenith_device_token_v1';
 const $=id=>document.getElementById(id);
+let adminRole='', verifiedState=null, busy=false, checking=false;
+function renderActions(){
+  const valid=!!adminRole&&!!verifiedState&&!busy&&!checking;
+  const mode=verifiedState?.masterMode;
+  $('pauseBtn').disabled=!valid||!['RUNNING'].includes(mode);
+  $('cancelPauseBtn').hidden=mode!=='PAUSE_PENDING';
+  $('cancelPauseBtn').disabled=!valid||mode!=='PAUSE_PENDING'||verifiedState.masterLeaseActive!==true;
+  $('resumeBtn').disabled=!valid||mode!=='PAUSED'||verifiedState.masterLeaseActive!==true;
+  $('replaceBtn').hidden=adminRole!=='master';
+  $('replaceBtn').disabled=!valid||adminRole!=='master';
+}
+
 
 function setBox(id,msg,type=''){
   const el=$(id);
@@ -56,65 +69,60 @@ function setBox(id,msg,type=''){
 }
 
 async function verifyMaster(){
+  if(checking)return false;
+  checking=true;verifiedState=null;renderActions();
   const token=localStorage.getItem(TOKEN_KEY)||'';
-  if(!token){
-    setBox('identity','Aucun jeton MASTER trouvé dans ce navigateur.','err');
-    $('pauseBtn').disabled=true;
-    $('resumeBtn').disabled=true;
-    $('replaceBtn').disabled=true;
-    return false;
-  }
   try{
+    if(!token)throw new Error('Appareil non jumelé');
     const r=await fetch('/api/zenith-sync?action=whoami',{
-      headers:{Authorization:'Bearer '+token,Accept:'application/json'},
-      cache:'no-store'
+      headers:{Authorization:'Bearer '+token,Accept:'application/json'},cache:'no-store'
     });
     const q=await r.json().catch(()=>({}));
-    if(!r.ok||q?.ok!==true||q?.device?.role!=='master'){
-      throw new Error(q?.code||q?.error||('ROLE_'+String(q?.device?.role||'UNKNOWN')));
-    }
-    setBox('identity','Identité vérifiée : cet iPad est le MASTER enregistré.','ok');
-    await refreshMasterMode();
-    return true;
+    const role=String(q?.device?.role||'');
+    if(!r.ok||q?.ok!==true||!['controller','master'].includes(role))throw new Error(q?.code||'Appareil non autorisé');
+    adminRole=role;
+    $('backLink').href=role==='master'?'/master-standby.html':'/';
+    setBox('identity',role==='master'?'iPad MASTER vérifié.':'iPhone contrôleur vérifié.','ok');
+    return await refreshMasterMode();
   }catch(e){
-    setBox('identity','Vérification MASTER refusée : '+String(e?.message||'erreur')+'.','err');
-    $('pauseBtn').disabled=true;
-    $('resumeBtn').disabled=true;
-    $('replaceBtn').disabled=true;
+    adminRole='';verifiedState=null;
+    setBox('identity','Vérification refusée : '+String(e?.message||'erreur')+'.','err');
+    setBox('masterMode','État MASTER non vérifié.','err');
     return false;
-  }
+  }finally{checking=false;renderActions()}
 }
 
 async function refreshMasterMode(){
   const token=localStorage.getItem(TOKEN_KEY)||'';
   try{
     const r=await fetch('/api/zenith-sync?action=safety',{
-      headers:{Authorization:'Bearer '+token,Accept:'application/json'},
-      cache:'no-store'
+      headers:{Authorization:'Bearer '+token,Accept:'application/json'},cache:'no-store'
     });
     const q=await r.json().catch(()=>({}));
-    if(!r.ok||q?.ok!==true) throw new Error(q?.code||q?.error||('HTTP '+r.status));
-    const mode=String(q.masterMode||'PAUSED');
-    const cancelBtn=$('cancelPauseBtn');
-    cancelBtn.hidden=mode!=='PAUSE_PENDING';
-    if(mode==='RUNNING')setBox('masterMode','MASTER : EN MARCHE','ok');
-    else if(mode==='PAUSE_PENDING')setBox('masterMode','MASTER : PAUSE EN ATTENTE','warn');
+    if(!r.ok||q?.ok!==true||!['RUNNING','PAUSE_PENDING','PAUSED'].includes(q.masterMode))throw new Error(q?.code||'État MASTER invalide');
+    verifiedState=q;
+    if(q.masterMode==='RUNNING')setBox('masterMode','MASTER : EN MARCHE','ok');
+    else if(q.masterMode==='PAUSE_PENDING')setBox('masterMode','MASTER : PAUSE EN ATTENTE — nouvelles entrées bloquées ; gestion des positions existantes maintenue.','warn');
     else setBox('masterMode','MASTER : EN PAUSE','warn');
+    return true;
   }catch(e){
+    verifiedState=null;
     setBox('masterMode','État MASTER non vérifié : '+String(e?.message||'erreur')+'.','err');
-  }
+    return false;
+  }finally{renderActions()}
 }
 
 async function setMasterMode(action){
+  if(busy||checking||!adminRole||!verifiedState)return;
+  if(!['master-pause','master-pause-cancel','master-resume'].includes(action))return;
   const token=localStorage.getItem(TOKEN_KEY)||'';
   const adminCode=$('adminCode').value;
   if(!adminCode){
     setBox('status','Entre le code ADMIN MASTER.','err');
     return;
   }
-  $('pauseBtn').disabled=true;
-  $('cancelPauseBtn').disabled=true;
-  $('resumeBtn').disabled=true;
+  busy=true;renderActions();
+  $('adminCode').value='';
   setBox('status',action==='master-pause'
     ?'Vérification avant pause…'
     :action==='master-pause-cancel'
@@ -147,13 +155,14 @@ async function setMasterMode(action){
   }catch(e){
     setBox('status','Action refusée : '+String(e?.message||'erreur')+'.','err');
   }finally{
-    $('pauseBtn').disabled=false;
-    $('cancelPauseBtn').disabled=false;
-    $('resumeBtn').disabled=false;
+    $('adminCode').value='';
+    await verifyMaster();
+    busy=false;renderActions();
   }
 }
 
 async function authorizeReplacement(){
+  if(busy||checking||adminRole!=='master'||!verifiedState)return;
   const token=localStorage.getItem(TOKEN_KEY)||'';
   const adminCode=$('adminCode').value;
   if(!adminCode){
@@ -161,7 +170,8 @@ async function authorizeReplacement(){
     return;
   }
 
-  $('replaceBtn').disabled=true;
+  busy=true;renderActions();
+  $('adminCode').value='';
   setBox('status','Création de l’autorisation temporaire…');
   $('recoveryCode').hidden=true;
 
@@ -187,7 +197,9 @@ async function authorizeReplacement(){
   }catch(e){
     setBox('status','Autorisation refusée : '+String(e?.message||'erreur')+'.','err');
   }finally{
-    $('replaceBtn').disabled=false;
+    $('adminCode').value='';
+    await verifyMaster();
+    busy=false;renderActions();
   }
 }
 
@@ -195,7 +207,12 @@ $('pauseBtn').addEventListener('click',()=>setMasterMode('master-pause'));
 $('cancelPauseBtn').addEventListener('click',()=>setMasterMode('master-pause-cancel'));
 $('resumeBtn').addEventListener('click',()=>setMasterMode('master-resume'));
 $('replaceBtn').addEventListener('click',authorizeReplacement);
-$('adminCode').addEventListener('keydown',e=>{if(e.key==='Enter')authorizeReplacement()});
+// Enter never triggers an unrelated critical operation.
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){$('adminCode').value='';verifiedState=null;renderActions()}
+  else if(!busy)verifyMaster();
+});
+setInterval(()=>{if(!document.hidden&&!busy&&!checking)verifyMaster()},30000);
 verifyMaster();
 </script>
 </body>

@@ -29,3 +29,5 @@ jobs:
         run: node --check api/zenith-sync.js
       - name: Test reconciliation failure scenarios
         run: node --test scripts/test-reconcile.mjs
+      - name: Test shared MASTER administration
+        run: node --test scripts/test-master-admin.mjs
