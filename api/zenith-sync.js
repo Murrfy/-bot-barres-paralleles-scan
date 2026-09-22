@@ -12,10 +12,13 @@ const REDIS_TOKEN =
   process.env.KV_REST_API_TOKEN;
 
 const PAIRING_CODE = process.env.ZENITH_PAIRING_CODE || '';
+const MASTER_PAIRING_CODE = process.env.ZENITH_MASTER_PAIRING_CODE || '';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 
 const PREFIX = 'zenith:v1';
 const KEY_MASTER = `${PREFIX}:master`;
+const KEY_CONTROLLER_DEVICE = `${PREFIX}:role-device:controller`;
+const KEY_MASTER_DEVICE = `${PREFIX}:role-device:master`;
 const KEY_STATE = `${PREFIX}:state`;
 const KEY_CONTROLLER_STATE = `${PREFIX}:controller-state`;
 const KEY_CONTROLLER_REV = `${PREFIX}:controller-state:rev`;
@@ -100,6 +103,30 @@ async function authDevice(req) {
   }
 }
 
+function roleDeviceKey(role) {
+  return role === 'master' ? KEY_MASTER_DEVICE : KEY_CONTROLLER_DEVICE;
+}
+
+async function claimOrVerifyRoleDevice(role, deviceId) {
+  const key = roleDeviceKey(role);
+  const script = [
+    "local current = redis.call('GET', KEYS[1])",
+    "if not current then",
+    "  redis.call('SET', KEYS[1], ARGV[1])",
+    "  return 1",
+    "end",
+    "if current == ARGV[1] then return 1 end",
+    "return 0"
+  ].join('\n');
+  const ok = await redis(['EVAL', script, '1', key, String(deviceId)]);
+  return Number(ok) === 1;
+}
+
+async function roleDeviceId(role) {
+  const value = await redis(['GET', roleDeviceKey(role)]);
+  return value ? String(value) : '';
+}
+
 async function touchDevice(device) {
   if (!device?.tokenHash) return;
   const updated = { ...device, lastSeenAt: Date.now() };
@@ -115,6 +142,10 @@ async function requireDevice(req, res, roles) {
   }
   if (roles && !roles.includes(device.role)) {
     send(res, 403, { ok: false, code: 'ROLE_FORBIDDEN' });
+    return null;
+  }
+  if (!(await claimOrVerifyRoleDevice(device.role, device.deviceId))) {
+    send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
     return null;
   }
   await touchDevice(device);
@@ -152,6 +183,7 @@ export default async function handler(req, res) {
       ok: true,
       redisConfigured: Boolean(REDIS_URL && REDIS_TOKEN),
       pairingConfigured: Boolean(PAIRING_CODE),
+      masterPairingConfigured: Boolean(MASTER_PAIRING_CODE),
       pairingDisabled: PAIRING_DISABLED,
       mode: 'SYNC_SAFE_SIMULATION',
       masterTtlSeconds: MASTER_TTL_SECONDS,
@@ -161,7 +193,6 @@ export default async function handler(req, res) {
   try {
     if (action === 'pair' && req.method === 'POST') {
       if (PAIRING_DISABLED) return send(res, 403, { ok: false, code: 'PAIRING_DISABLED' });
-      if (!PAIRING_CODE) return send(res, 503, { ok: false, code: 'PAIRING_NOT_CONFIGURED' });
       if (!(await pairRateAllowed(req))) return send(res, 429, { ok: false, code: 'PAIRING_RATE_LIMIT' });
 
       const supplied = String(req.body?.pairingCode || '');
@@ -169,11 +200,27 @@ export default async function handler(req, res) {
       const role = String(req.body?.role || '').trim();
       const deviceName = String(req.body?.deviceName || '').trim().slice(0, 80);
 
-      if (!timingSafeEqualText(supplied, PAIRING_CODE)) {
-        return send(res, 401, { ok: false, code: 'PAIRING_CODE_INVALID' });
-      }
       if (!deviceId || !['controller', 'master'].includes(role)) {
         return send(res, 400, { ok: false, code: 'PAIRING_REQUEST_INVALID' });
+      }
+
+      const expectedPairingCode = role === 'master' ? MASTER_PAIRING_CODE : PAIRING_CODE;
+      if (!expectedPairingCode) {
+        return send(res, 503, {
+          ok: false,
+          code: role === 'master' ? 'MASTER_PAIRING_NOT_CONFIGURED' : 'PAIRING_NOT_CONFIGURED'
+        });
+      }
+      if (!timingSafeEqualText(supplied, expectedPairingCode)) {
+        return send(res, 401, { ok: false, code: 'PAIRING_CODE_INVALID' });
+      }
+
+      const claimedDeviceId = await roleDeviceId(role);
+      if (claimedDeviceId && claimedDeviceId !== deviceId) {
+        return send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
+      }
+      if (role === 'master' && !(await claimOrVerifyRoleDevice(role, deviceId))) {
+        return send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
       }
 
       const token = crypto.randomBytes(32).toString('base64url');
