@@ -298,8 +298,8 @@ async function quarantineCommandsForDevice(deviceId) {
   return { pending, processing };
 }
 
-async function authDevice(req) {
-  for (const token of deviceTokenCandidates(req)) {
+async function authDevice(req, allowBearer = false) {
+  for (const token of deviceTokenCandidates(req, { allowBearer })) {
     const hash = sha256(token);
     const raw = await redis(['GET', `${PREFIX}:device:${hash}`]);
     if (!raw) continue;
@@ -363,8 +363,8 @@ async function touchDevice(device) {
   return { expired:false, remainingSeconds };
 }
 
-async function requireDevice(req, res, roles) {
-  const device = await authDevice(req);
+async function requireDevice(req, res, roles, { allowBearer = false } = {}) {
+  const device = await authDevice(req, allowBearer);
   if (!device) {
     clearDeviceSessionCookie(res);
     send(res, 401, { ok: false, code: 'UNAUTHORIZED_DEVICE' });
@@ -1271,7 +1271,9 @@ export default async function handler(req, res) {
     }
 
     if (action === 'whoami' && req.method === 'GET') {
-      const device = await requireDevice(req, res);
+      // One-time legacy migration: whoami may consume an old Bearer token,
+      // immediately set the HttpOnly cookie, and the UI deletes localStorage.
+      const device = await requireDevice(req, res, undefined, { allowBearer: true });
       if (!device) return;
       return send(res, 200, {
         ok: true,
