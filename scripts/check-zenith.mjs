@@ -171,7 +171,7 @@ if (!userStreamState.includes('needsReconciliation = true') ||
 }
 
 const controllerRealCommand = fs.readFileSync('lib/controller-real-command.mjs','utf8');
-for (const required of ['EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY','PROTECTIVE_IOC','HEDGE_MODE_UNSUPPORTED','clientCommandId','CANCEL_TARGET_IS_REDUCE_ONLY']) {
+for (const required of ['EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY','PROTECTIVE_IOC','HEDGE_MODE_UNSUPPORTED','clientCommandId','CANCEL_TARGET_IS_REDUCE_ONLY','closeAll: true']) {
   if (!controllerRealCommand.includes(required)) fail(`iPhone real-close command invariant missing: ${required}`);
 }
 if (controllerRealCommand.includes("'EXEC_OPEN_POSITION'")) {
@@ -189,7 +189,7 @@ if (!index.includes('Positions réelles Binance') ||
 }
 
 const masterCommandDispatch = fs.readFileSync('lib/master-command-dispatch.mjs','utf8');
-for (const required of ['masterExecutionEligible','EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY','/api/binance-protective-execute','MASTER_COMMAND_NOT_IMPLEMENTED']) {
+for (const required of ['masterExecutionEligible','EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY','/api/binance-protective-execute','MASTER_COMMAND_NOT_IMPLEMENTED','CLOSE_ALL_REQUIRED','closeAll:true']) {
   if (!masterCommandDispatch.includes(required)) fail(`MASTER command dispatcher invariant missing: ${required}`);
 }
 if (masterCommandDispatch.includes('EXEC_OPEN_POSITION') && !masterCommandDispatch.includes("supported:false")) {
@@ -239,6 +239,15 @@ for (const required of [
 }
 if (protectiveExecute.includes('EXEC_OPEN_POSITION')) {
   fail('protective execution API must never open a new position');
+}
+if (!protectiveExecute.includes("'FULL_CLOSE_QUANTITY_REQUIRED'") ||
+    !protectiveExecute.includes("priceMatch:String(req.body?.priceMatch||'OPPONENT')")) {
+  fail('protective execution must be full-close only and pass audited adaptive priceMatch into the order planner');
+}
+
+const protectiveCloseState = fs.readFileSync('lib/protective-close-state.mjs','utf8');
+for (const required of ["OPPONENT_5","OPPONENT_10","MARKET_LAST_RESORT","safeToRetry","inconsistentFilled","terminalSeen"]) {
+  if (!protectiveCloseState.includes(required)) fail(`protective close state invariant missing: ${required}`);
 }
 
 const orderIntent = fs.readFileSync('lib/order-intent.mjs', 'utf8');
@@ -415,9 +424,13 @@ if (!index.includes('masterExecutionCycle') ||
     !index.includes("masterRuntimeApi('command-next','POST'") ||
     !index.includes("masterCommandDisposition('command-ack'") ||
     !index.includes("masterCommandDisposition('command-requeue'") ||
-    !index.includes("fetch(dispatch.endpoint") ||
-    !index.includes("setInterval(masterExecutionCycle,1000)")) {
-  fail('iPad MASTER must poll, strictly dispatch, acknowledge and safely requeue protective execution commands');
+    !index.includes("masterCommandDisposition('command-fail'") ||
+    !index.includes("fetch('/api/binance-protective-execute'") ||
+    !index.includes('evaluateFullProtectiveClose') ||
+    !index.includes('PROTECTIVE_CLOSE_ATTEMPTS') ||
+    !index.includes('MARKET_CLOSE_NOT_CONFIRMED') ||
+    !index.includes("setInterval(masterExecutionCycle,750)")) {
+  fail('iPad MASTER must confirm protective closes from live inventory, escalate LIMIT-first, and never ACK on dispatch alone');
 }
 if (!sync.includes('deferReason') || !sync.includes('requestedDelayMs') || !sync.includes('Math.min(30000')) {
   fail('MASTER command requeue must support bounded retry backoff without extending command expiry');
@@ -554,6 +567,15 @@ if (!sync.includes("'MASTER_RUNTIME_NOT_REAL'") ||
 }
 if (!sync.includes('pushDeadLetter') || !sync.includes("redis(['LTRIM', KEY_DEAD")) {
   fail('dead-letter queue must be bounded');
+}
+if (!sync.includes('execClosePayloadStatus') ||
+    !sync.includes("'CLOSE_ALL_REQUIRED'") ||
+    !sync.includes("'COMMAND_PAYLOAD_INVALID'") ||
+    !sync.includes("action === 'command-fail'") ||
+    !sync.includes("'EXECUTION_ACK_NOT_CONFIRMED'") ||
+    !sync.includes('runtimeClosePositionQuantity') ||
+    !sync.includes('freshConsistentReconciliation(device.deviceId)')) {
+  fail('EXEC_CLOSE_POSITION must be full-close only and require fresh reconciled zero-position proof before ACK');
 }
 
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');

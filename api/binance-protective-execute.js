@@ -214,12 +214,13 @@ export default async function handler(req,res){
   const liveQty=quantity(livePosition);
   if(!livePosition||!(liveQty>0))return send(res,409,{ok:false,code:'POSITION_NOT_FOUND',writeAttempted:false});
   if(requestedQty>liveQty+1e-12)return send(res,409,{ok:false,code:'CLOSE_QUANTITY_EXCEEDS_POSITION',liveQuantity:liveQty,writeAttempted:false});
+  if(Math.abs(requestedQty-liveQty)>1e-12)return send(res,409,{ok:false,code:'FULL_CLOSE_QUANTITY_REQUIRED',liveQuantity:liveQty,writeAttempted:false});
   if(String(livePosition.positionSide||'BOTH').toUpperCase()!=='BOTH'){
     return send(res,409,{ok:false,code:'HEDGE_MODE_UNSUPPORTED',writeAttempted:false});
   }
 
   const exitMode=String(req.body?.exitMode||'PROTECTIVE_IOC').toUpperCase();
-  if(!['PROTECTIVE_IOC','NORMAL_LIMIT','MARKET_LAST_RESORT'].includes(exitMode)){
+  if(!['PROTECTIVE_IOC','MARKET_LAST_RESORT'].includes(exitMode)){
     return send(res,400,{ok:false,code:'EXIT_MODE_INVALID',writeAttempted:false});
   }
 
@@ -233,6 +234,7 @@ export default async function handler(req,res){
       exitMode,
       targetPrice:Number(req.body?.targetPrice||0),
       attempt:Number(req.body?.attempt||0),
+      priceMatch:String(req.body?.priceMatch||'OPPONENT'),
     });
   }catch(e){
     return send(res,400,{ok:false,code:e?.message||'EXIT_PLAN_INVALID',writeAttempted:false});
@@ -266,6 +268,7 @@ export default async function handler(req,res){
       symbol,
       direction:dir,
       exitMode,
+      priceMatch:String(plan.params.priceMatch||''),
       clientOrderId:plan.params.newClientOrderId,
       disposition:result.disposition,
       writeAttempted:result.writeAttempted===true,
