@@ -16,6 +16,7 @@ const REDIS_TOKEN =
   process.env.KV_REST_API_TOKEN;
 
 const PREFIX = 'zenith:v1';
+const BINANCE_READ_RATE_LIMIT_PER_MINUTE = 12;
 
 function sha256(v) {
   return crypto.createHash('sha256').update(String(v)).digest('hex');
@@ -67,6 +68,22 @@ async function requireZenithDevice(req) {
     } catch {}
   }
   return null;
+}
+
+async function binanceReadRateAllowed(deviceId) {
+  const bucket = Math.floor(Date.now() / 60000);
+  const key = `${PREFIX}:rate:binance-read:${sha256(deviceId)}:${bucket}`;
+  const script = [
+    "local count = redis.call('INCR', KEYS[1])",
+    "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
+    "return count"
+  ].join('\n');
+  const count = Number(await redis(['EVAL', script, '1', key, '120'])) || 0;
+  return count <= BINANCE_READ_RATE_LIMIT_PER_MINUTE;
+}
+
+function retryAfterSeconds() {
+  return Math.max(1, 60 - (Math.floor(Date.now() / 1000) % 60));
 }
 
 function send(res, status, body) {
@@ -150,6 +167,24 @@ export default async function handler(req, res) {
       ok: false,
       code: 'UNAUTHORIZED_DEVICE',
       error: 'Appareil Zenith non autorisé.',
+    });
+  }
+
+  try {
+    if (!(await binanceReadRateAllowed(device.deviceId))) {
+      const retryAfter = retryAfterSeconds();
+      res.setHeader('Retry-After', String(retryAfter));
+      return send(res, 429, {
+        ok: false,
+        code: 'BINANCE_READ_RATE_LIMIT',
+        retryAfterSeconds: retryAfter,
+      });
+    }
+  } catch (e) {
+    return send(res, 503, {
+      ok: false,
+      code: e?.code || 'RATE_LIMIT_BACKEND_ERROR',
+      error: 'Protection anti-abus indisponible.',
     });
   }
 
