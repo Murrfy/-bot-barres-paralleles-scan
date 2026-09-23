@@ -8,14 +8,14 @@ const writeFiles = [
   'api/binance-protective-update-execute.js',
 ];
 
-test('Vercel previews and development deployments cannot enable Binance writes', () => {
+test('Vercel Binance writes require production on the main Git branch', () => {
   for (const file of writeFiles) {
     const source = fs.readFileSync(file, 'utf8');
     assert.ok(source.includes("process.env.VERCEL_ENV"), file + ' must inspect VERCEL_ENV');
     assert.ok(source.includes("VERCEL_PRODUCTION_WRITE_ALLOWED"), file + ' must define production write gate');
     assert.ok(
-      source.includes("!process.env.VERCEL_ENV||process.env.VERCEL_ENV==='production'"),
-      file + ' must allow writes only on Vercel production or outside Vercel'
+      source.includes("!process.env.VERCEL_ENV||(process.env.VERCEL_ENV==='production'&&process.env.VERCEL_GIT_COMMIT_REF==='main')"),
+      file + ' must allow Vercel writes only on production main, while keeping non-Vercel hosting compatible'
     );
     const compact = source.replace(/\s+/g, '');
     const writeGateUses = (compact.match(/writesEnabled=Boolean\([^)]*VERCEL_PRODUCTION_WRITE_ALLOWED/g) || []).length;
@@ -25,15 +25,15 @@ test('Vercel previews and development deployments cannot enable Binance writes',
 
 test('central execution arm and command gate reject non-production Vercel deployments', () => {
   const source = fs.readFileSync('api/zenith-sync.js', 'utf8');
-  assert.ok(source.includes("const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || process.env.VERCEL_ENV === 'production';"));
+  assert.ok(source.includes("const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || (process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main');"));
   assert.ok(source.includes("reason:'NON_PRODUCTION_DEPLOYMENT'"));
   assert.ok(source.includes("reason: 'NON_PRODUCTION_DEPLOYMENT'"));
   assert.ok(source.includes("code:'NON_PRODUCTION_DEPLOYMENT'"));
 });
 
-test('Binance user-stream mutations are blocked outside Vercel production', () => {
+test('Binance user-stream mutations require Vercel production main', () => {
   const source = fs.readFileSync('api/binance-user-stream-session.js', 'utf8');
-  assert.ok(source.includes("const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || process.env.VERCEL_ENV === 'production';"));
+  assert.ok(source.includes("const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || (process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main');"));
   assert.ok(source.includes("['start', 'keepalive', 'close'].includes(action)"));
   assert.ok(source.includes("'NON_PRODUCTION_DEPLOYMENT'"));
 });
