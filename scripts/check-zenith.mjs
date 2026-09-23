@@ -105,6 +105,17 @@ if (!binancePreflight.includes('READ_ONLY_PREFLIGHT') || !binancePreflight.inclu
   fail('entry preflight must explicitly remain read-only');
 }
 
+const orderIntent = fs.readFileSync('lib/order-intent.mjs', 'utf8');
+for (const required of ['deterministicClientOrderId','CLIENT_ORDER_ID_MAX_LENGTH = 36',"writeAllowed: false","reduceOnly: 'true'","priceMatch = 'OPPONENT'"]) {
+  if (!orderIntent.includes(required)) fail(`order planning safety invariant missing: ${required}`);
+}
+if (!orderIntent.includes("ENTRY_PREFLIGHT_MAX_AGE_MS = 5000") ||
+    !orderIntent.includes("'ENTRY_PREFLIGHT_STALE'") ||
+    !orderIntent.includes("'POSITION_MODE_NOT_ONE_WAY'") ||
+    !orderIntent.includes("'MARGIN_TYPE_NOT_ISOLATED'")) {
+  fail('entry order planning must require a fresh one-way isolated risk snapshot');
+}
+
 const riskPolicy = fs.readFileSync('lib/risk-policy.mjs', 'utf8');
 if (!riskPolicy.includes('maxActivePositions: 3') ||
     !riskPolicy.includes('maxLeverage: 10') ||

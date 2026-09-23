@@ -41,3 +41,5 @@ jobs:
         run: node --test scripts/test-entry-preflight.mjs
       - name: Test secure device session
         run: node --test scripts/test-device-session.mjs
+      - name: Test deterministic order planning
+        run: node --test scripts/test-order-intent.mjs
