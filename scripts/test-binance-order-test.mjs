@@ -56,7 +56,7 @@ test('test-order rate limit blocks before any Binance request',async()=>{
     const res={headers:{},setHeader(k,v){this.headers[k]=String(v)},status(n){this.code=n;return this},json(body){this.body=body;return body}};
     const req={
       method:'POST',
-      headers:{authorization:'Bearer master-token'},
+      headers:{authorization:'Bearer master-token',host:'zenith.test','x-forwarded-proto':'https',origin:'https://zenith.test'},
       body:{params:{symbol:'BTCUSDT',side:'SELL',type:'MARKET',quantity:'0.02',reduceOnly:'true',newClientOrderId:'zth-EXT-abcdef1234567890'}}
     };
     await handler(req,res);
