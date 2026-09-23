@@ -188,6 +188,8 @@ jobs:
         run: node --test scripts/test-binance-order-cancel.mjs
       - name: Test protective execution arm gate
         run: node --test scripts/test-protective-arm-gate.mjs
+      - name: Test protective dispatch ownership fence
+        run: node --test scripts/test-protective-dispatch-ownership-fence.mjs
       - name: Test atomic real execution arm commit
         run: node --test scripts/test-real-execution-arm-atomic.mjs
       - name: Test protective close confirmation and escalation
