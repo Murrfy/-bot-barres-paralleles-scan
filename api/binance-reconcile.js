@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates } from '../lib/device-session.mjs';
+import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -381,21 +382,42 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
   if (missingProtections.length) reasons.push('MISSING_BINANCE_PROTECTION');
 
   const maxLossProtectionCounts = new Map();
+  const unsafeMaxLossProtections = [];
   for (const position of actualPositions) {
     const key = positionKey(position);
     const entryPrice = number(position.entryPrice, NaN);
+    const quantity = positionQty(position);
     const expectedSide = position.direction === 'LONG' ? 'SELL' : 'BUY';
-    const valid = actualOrders.filter(order => {
-      if (String(order?.orderClass || '').toUpperCase() !== 'ALGO') return false;
-      if (String(order?.symbol || '').toUpperCase() !== position.symbol) return false;
-      if (String(order?.positionSide || '').toUpperCase() !== String(position.positionSide || '').toUpperCase()) return false;
-      if (String(order?.side || '').toUpperCase() !== expectedSide) return false;
-      if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') return false;
-      if (order?.closePosition !== true) return false;
+    const valid = [];
+    for (const order of actualOrders) {
+      if (String(order?.orderClass || '').toUpperCase() !== 'ALGO') continue;
+      if (String(order?.symbol || '').toUpperCase() !== position.symbol) continue;
+      if (String(order?.positionSide || '').toUpperCase() !== String(position.positionSide || '').toUpperCase()) continue;
+      if (String(order?.side || '').toUpperCase() !== expectedSide) continue;
+      if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') continue;
+      if (order?.closePosition !== true) continue;
       const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
-      if (!(entryPrice > 0) || !(trigger > 0)) return false;
-      return position.direction === 'LONG' ? trigger < entryPrice : trigger > entryPrice;
-    });
+      if (!(entryPrice > 0) || !(trigger > 0) || !(quantity > 0)) continue;
+      const lossSide = position.direction === 'LONG' ? trigger < entryPrice : trigger > entryPrice;
+      if (!lossSide) continue;
+      const impliedLossUsd = position.direction === 'LONG'
+        ? (entryPrice - trigger) * quantity
+        : (trigger - entryPrice) * quantity;
+      if (impliedLossUsd > REAL_RISK_LIMITS.maxLossUsd + 1e-8) {
+        unsafeMaxLossProtections.push({
+          key,
+          symbol: position.symbol,
+          direction: position.direction,
+          triggerPrice: trigger,
+          impliedLossUsd,
+          hardMaxLossUsd: REAL_RISK_LIMITS.maxLossUsd,
+          clientAlgoId: String(order?.clientAlgoId || ''),
+          algoId: String(order?.algoId || ''),
+        });
+        continue;
+      }
+      valid.push(order);
+    }
     maxLossProtectionCounts.set(key, valid.length);
   }
   const missingMaxLossProtections = actualPositions
@@ -434,6 +456,7 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
       missingProtections,
       missingMaxLossProtections,
       ambiguousMaxLossProtections,
+      unsafeMaxLossProtections,
     },
   };
 }
