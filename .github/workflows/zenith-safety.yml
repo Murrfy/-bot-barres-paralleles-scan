@@ -95,6 +95,8 @@ jobs:
         run: node --test scripts/test-real-protection-level-wiring.mjs
       - name: Test exact missing-protection repair gate
         run: node --test scripts/test-protective-repair-gate.mjs
+      - name: Test protective ACK order-leg identity
+        run: node --test scripts/test-protective-ack-leg-id.mjs
       - name: Test protective repair wiring
         run: node --test scripts/test-protective-repair-wiring.mjs
       - name: Test protective update conflict guards
