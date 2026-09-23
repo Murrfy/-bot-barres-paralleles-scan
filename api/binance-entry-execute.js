@@ -30,6 +30,7 @@ const REAL_TRADING_ENABLED=process.env.ZENITH_REAL_TRADING_ENABLED==='1';
 const BINANCE_WRITE_ENABLED=process.env.ZENITH_BINANCE_WRITE_ENABLED==='1';
 const PAIRING_DISABLED=process.env.ZENITH_PAIRING_DISABLED==='1';
 const REAL_ENTRY_WRITE_ENABLED=process.env.ZENITH_REAL_ENTRY_WRITE_ENABLED==='1';
+const VERCEL_PRODUCTION_WRITE_ALLOWED=!process.env.VERCEL_ENV||process.env.VERCEL_ENV==='production';
 
 function send(res,status,body){
   res.setHeader('Cache-Control','no-store, max-age=0');
@@ -182,7 +183,7 @@ export default async function handler(req,res){
     }
 
     const writesEnabled=Boolean(
-      REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED
+      REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED
     );
     if(!writesEnabled){
       return send(res,423,{

@@ -39,6 +39,7 @@ const REDIS_TOKEN =
 const REAL_TRADING_ENABLED=process.env.ZENITH_REAL_TRADING_ENABLED==='1';
 const BINANCE_WRITE_ENABLED=process.env.ZENITH_BINANCE_WRITE_ENABLED==='1';
 const PAIRING_DISABLED=process.env.ZENITH_PAIRING_DISABLED==='1';
+const VERCEL_PRODUCTION_WRITE_ALLOWED=!process.env.VERCEL_ENV||process.env.VERCEL_ENV==='production';
 
 function send(res,status,body){
   res.setHeader('Cache-Control','no-store, max-age=0');
@@ -275,7 +276,7 @@ export default async function handler(req,res){
       );
       if(!target)return send(res,409,{ok:false,code:'ORPHAN_CLEANUP_TARGET_NOT_CONFIRMED',writeAttempted:false});
 
-      const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED);
+      const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED);
       if(!writesEnabled)return send(res,423,{
         ok:false,code:'BINANCE_WRITE_LOCKED',realTradingEnabled:REAL_TRADING_ENABLED,
         binanceWriteEnabled:BINANCE_WRITE_ENABLED,pairingDisabled:PAIRING_DISABLED,writeAttempted:false
@@ -368,7 +369,7 @@ export default async function handler(req,res){
       if(!emergency)return send(res,423,{ok:false,code:'EMERGENCY_MAX_LOSS_PROTECTION_REQUIRED',writeAttempted:false});
     }
 
-    const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED);
+    const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED);
     if(!writesEnabled)return send(res,423,{
       ok:false,code:'BINANCE_WRITE_LOCKED',realTradingEnabled:REAL_TRADING_ENABLED,
       binanceWriteEnabled:BINANCE_WRITE_ENABLED,pairingDisabled:PAIRING_DISABLED,writeAttempted:false
