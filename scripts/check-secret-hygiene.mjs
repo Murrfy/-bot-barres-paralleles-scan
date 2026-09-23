@@ -94,6 +94,12 @@ for (const file of filesUnder(ROOT)) {
     for (const match of text.matchAll(rule.re)) {
       const full = String(match[0] || '');
       if (/process\.env\./.test(full)) continue;
+
+      const testFixture = file.rel.startsWith(path.normalize('scripts/test-'));
+      const assignedValue = String(match[1] || match[2] || '');
+      const explicitTestSentinel = /^(?:test-only|api-key|api-key-test|secret|redis-token|https:\/\/redis\.test)$/.test(assignedValue);
+      if (rule.name === 'hardcoded sensitive configuration' && testFixture && explicitTestSentinel) continue;
+
       failures.push({
         file: file.rel,
         line: lineNumber(text, match.index || 0),
