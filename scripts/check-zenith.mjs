@@ -862,5 +862,13 @@ if (!replaceController.includes('restoreCentralState') ||
   fail('replace-controller.html must restore central configuration and revision before opening Zenith');
 }
 
+const realEntryExecuteRate = fs.readFileSync('api/binance-entry-execute.js','utf8');
+if (!realEntryExecuteRate.includes('ENTRY_EXECUTION_RATE_LIMIT_PER_MINUTE=6') ||
+    !realEntryExecuteRate.includes('entryExecutionRateAllowed') ||
+    !realEntryExecuteRate.includes("'ENTRY_EXECUTION_RATE_LIMIT'") ||
+    !realEntryExecuteRate.includes("res.setHeader('Retry-After'")) {
+  fail('real entry execution must be rate-limited before Binance without affecting protective exits');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
