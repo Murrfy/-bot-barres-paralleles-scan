@@ -5,6 +5,7 @@ import { placeStandardOrderIdempotent } from '../lib/binance-order-writer.mjs';
 import { findCoveringEntryProtection } from '../lib/entry-protection-gate.mjs';
 import { runLiveEntryPreflight } from './binance-entry-preflight.js';
 import { validateExecutionArmRecord, executionReadiness } from './binance-protective-execute.js';
+import { binanceApiPermissionBlockers, fetchBinanceApiPermissions } from '../lib/binance-api-permissions.mjs';
 
 const PREFIX='zenith:v1';
 const KEY_MASTER=`${PREFIX}:master`;
@@ -169,6 +170,26 @@ export default async function handler(req,res){
     const before=await readExecutionState();
     const beforeReason=entryReadinessReason(before,master.deviceId);
     if(beforeReason)return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:beforeReason,writeAttempted:false});
+
+    let permissions;
+    try{
+      permissions=await fetchBinanceApiPermissions({apiKey,secret});
+    }catch(e){
+      return send(res,503,{
+        ok:false,
+        code:e?.code||'ENTRY_BINANCE_API_PERMISSION_CHECK_FAILED',
+        writeAttempted:false,
+      });
+    }
+    const permissionBlockers=binanceApiPermissionBlockers(permissions);
+    if(permissionBlockers.length){
+      return send(res,423,{
+        ok:false,
+        code:'ENTRY_BINANCE_API_PERMISSIONS_UNSAFE',
+        blockers:permissionBlockers,
+        writeAttempted:false,
+      });
+    }
 
     const preflight=await runLiveEntryPreflight({
       apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:limitPrice,
