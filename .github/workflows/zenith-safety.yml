@@ -58,6 +58,8 @@ jobs:
         run: node --test scripts/test-orphan-protection-cleanup.mjs
       - name: Test shared MASTER administration
         run: node --test scripts/test-master-admin.mjs
+      - name: Test MASTER admin secret policy
+        run: node --test scripts/test-admin-secret-policy.mjs
       - name: Test atomic auth rate-limit counters
         run: node --test scripts/test-auth-rate-limit-atomic.mjs
       - name: Test MASTER configuration synchronization
