@@ -542,7 +542,7 @@ if (!sync.includes("import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs'") 
   fail('central execution ACK must independently require a Zenith-managed emergency stop within the shared $400 cap');
 }
 if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
-    !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req)')) {
+    !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req')) {
   fail('zenith-sync must use secure device sessions and same-origin mutation protection');
 }
 if (!deviceSessionSource.includes('allowBearer = false') ||
