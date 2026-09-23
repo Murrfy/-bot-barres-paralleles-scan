@@ -39,3 +39,5 @@ jobs:
         run: node --test scripts/test-command-safety.mjs
       - name: Test real-entry risk preflight
         run: node --test scripts/test-entry-preflight.mjs
+      - name: Test secure device session
+        run: node --test scripts/test-device-session.mjs

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation } from '../lib/device-session.mjs';
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -78,11 +79,6 @@ function stableStringify(value) {
     if (encoded !== undefined) parts.push(JSON.stringify(key) + ':' + encoded);
   }
   return '{' + parts.join(',') + '}';
-}
-
-function bearer(req) {
-  const h = String(req.headers.authorization || '');
-  return h.startsWith('Bearer ') ? h.slice(7).trim() : '';
 }
 
 function clientIp(req) {
@@ -213,18 +209,17 @@ async function quarantineCommandsForDevice(deviceId) {
 }
 
 async function authDevice(req) {
-  const token = bearer(req);
-  if (!token) return null;
-  const hash = sha256(token);
-  const raw = await redis(['GET', `${PREFIX}:device:${hash}`]);
-  if (!raw) return null;
-  try {
-    const device = JSON.parse(raw);
-    if (!device?.deviceId || !['controller', 'master'].includes(device?.role)) return null;
-    return { ...device, tokenHash: hash };
-  } catch {
-    return null;
+  for (const token of deviceTokenCandidates(req)) {
+    const hash = sha256(token);
+    const raw = await redis(['GET', `${PREFIX}:device:${hash}`]);
+    if (!raw) continue;
+    try {
+      const device = JSON.parse(raw);
+      if (!device?.deviceId || !['controller', 'master'].includes(device?.role)) continue;
+      return { ...device, tokenHash: hash, sessionToken: token };
+    } catch {}
   }
+  return null;
 }
 
 function roleDeviceKey(role) {
@@ -260,12 +255,14 @@ async function touchDevice(device) {
   if (!device?.tokenHash) return;
   const updated = { ...device, lastSeenAt: Date.now() };
   delete updated.tokenHash;
+  delete updated.sessionToken;
   await redis(['SET', `${PREFIX}:device:${device.tokenHash}`, JSON.stringify(updated)]);
 }
 
 async function requireDevice(req, res, roles) {
   const device = await authDevice(req);
   if (!device) {
+    clearDeviceSessionCookie(res);
     send(res, 401, { ok: false, code: 'UNAUTHORIZED_DEVICE' });
     return null;
   }
@@ -278,7 +275,10 @@ async function requireDevice(req, res, roles) {
     return null;
   }
   await touchDevice(device);
-  return device;
+  setDeviceSessionCookie(res, device.sessionToken);
+  const safeDevice = { ...device };
+  delete safeDevice.sessionToken;
+  return safeDevice;
 }
 
 async function masterDeviceId() {
@@ -726,6 +726,10 @@ async function rejectClaimedCommand(raw, reason, extra = {}) {
 export default async function handler(req, res) {
   const action = String(req.query?.action || 'health');
 
+  if (!sameOriginMutation(req)) {
+    return send(res, 403, { ok: false, code: 'ORIGIN_FORBIDDEN' });
+  }
+
   if (action === 'health' && req.method === 'GET') {
     return send(res, 200, {
       ok: true,
@@ -790,7 +794,8 @@ export default async function handler(req, res) {
         lastSeenAt: Date.now(),
       };
       await redis(['SET', `${PREFIX}:device:${tokenHash}`, JSON.stringify(record)]);
-      return send(res, 201, { ok: true, token, device: record });
+      setDeviceSessionCookie(res, token);
+      return send(res, 201, { ok: true, sessionReady: true, device: record });
     }
 
     if (action === 'controller-replacement-authorize' && req.method === 'POST') {
@@ -925,9 +930,10 @@ export default async function handler(req, res) {
         await redis(['LTRIM', KEY_AUDIT, '0', '199']);
       } catch {}
 
+      setDeviceSessionCookie(res, token);
       return send(res, 200, {
         ok: true,
-        token,
+        sessionReady: true,
         device: deviceRecord,
         state,
         previousControllerDeviceId: oldControllerDeviceId,
