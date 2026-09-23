@@ -95,6 +95,12 @@ if (!binanceRead.includes("'UNAUTHORIZED_DEVICE'") || !binanceRead.includes('req
 if (!binanceRead.includes('role-device:controller') || !binanceRead.includes('role-device:master')) {
   fail('api/binance-read.js must reject tokens from devices that no longer own their Zenith role');
 }
+if (!binanceRead.includes('BINANCE_READ_RATE_LIMIT_PER_MINUTE = 12') ||
+    !binanceRead.includes('binanceReadRateAllowed') ||
+    !binanceRead.includes("'BINANCE_READ_RATE_LIMIT'") ||
+    !binanceRead.includes("res.setHeader('Retry-After'")) {
+  fail('api/binance-read.js must rate-limit authenticated account reads before contacting Binance');
+}
 if (!binanceRead.includes('/fapi/v1/openAlgoOrders')) {
   fail('api/binance-read.js must count Binance algo TP/SL orders');
 }
