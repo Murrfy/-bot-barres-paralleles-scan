@@ -621,8 +621,12 @@ if (!sync.includes("KEY_EMERGENCY_STOP")) {
 if (!sync.includes("'EXECUTION_LOCKED'")) {
   fail('api/zenith-sync.js must reject future execution commands while locked');
 }
-if (!sync.includes("'MASTER_ACTIVATION_REQUIRED'") || !sync.includes("action === 'master-authorize'")) {
-  fail('api/zenith-sync.js must require controller authorization before first MASTER lease');
+if (!sync.includes("'MASTER_ACTIVATION_REQUIRED'") ||
+    !sync.includes("action === 'master-authorize'") ||
+    !sync.includes('verifyMasterAdminCode(req, res, device)') ||
+    !index.includes('masterAuthorizeBtn') ||
+    !index.includes('controllerAuthorizeMaster')) {
+  fail('MASTER lease activation must require explicit iPhone controller ADMIN authorization');
 }
 if (!sync.includes("ZENITH_MASTER_ADMIN_CODE") ||
     !sync.includes("action === 'controller-replacement-authorize'") ||
