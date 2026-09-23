@@ -1,0 +1,8 @@
+{
+  "name": "zenith-bot",
+  "private": true,
+  "version": "0.0.0",
+  "engines": {
+    "node": "24.x"
+  }
+}
