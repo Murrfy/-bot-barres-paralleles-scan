@@ -14,6 +14,7 @@ test('Zenith enforces core browser security headers', () => {
   assert.equal(map.get('referrer-policy'), 'no-referrer');
   assert.equal(map.get('cross-origin-opener-policy'), 'same-origin');
   assert.equal(map.get('cross-origin-resource-policy'), 'same-origin');
+  assert.equal(map.get('x-robots-tag'), 'noindex, nofollow, noarchive, nosnippet');
 
   const permissions = map.get('permissions-policy') || '';
   for (const denied of ['camera=()','microphone=()','geolocation=()','payment=()','usb=()']) {
