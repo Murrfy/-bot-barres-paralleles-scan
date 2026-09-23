@@ -71,6 +71,12 @@ for (const file of htmlFiles) {
   }
 }
 
+const zenithSyncSource = fs.readFileSync('api/zenith-sync.js','utf8');
+if (!zenithSyncSource.includes("const ZENITH_CONTROL_MUTATION_ALLOWED = !process.env.VERCEL_ENV || VERCEL_PRODUCTION_WRITE_ALLOWED;") ||
+    !zenithSyncSource.includes("'NON_PRODUCTION_CONTROL_MUTATION'")) {
+  fail('zenith-sync must block Vercel preview/non-main POST control mutations');
+}
+
 const index = fs.readFileSync('index.html', 'utf8');
 const deviceSession = fs.readFileSync('lib/device-session.mjs', 'utf8');
 for (const required of ["__Host-zenith_device","HttpOnly","Secure","SameSite=Strict","Priority=High","sameOriginMutation","deviceTokenCandidates"]) {
