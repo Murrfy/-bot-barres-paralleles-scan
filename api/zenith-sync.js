@@ -3,6 +3,7 @@ import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSess
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
+import { jsonStructureStatus, plainJsonObject } from '../lib/json-structure.mjs';
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -2251,18 +2252,42 @@ export default async function handler(req, res) {
       }
 
       const data = req.body?.data;
-      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      if (!plainJsonObject(data)) {
         return send(res, 400, { ok: false, code: 'CONTROLLER_STATE_INVALID' });
       }
 
-      const safeData = {
-        settings: data.settings && typeof data.settings === 'object' ? data.settings : {},
-        tokenSettings: data.tokenSettings && typeof data.tokenSettings === 'object' ? data.tokenSettings : {},
-        manualTokens: data.manualTokens && typeof data.manualTokens === 'object' ? data.manualTokens : {},
-        validated: data.validated && typeof data.validated === 'object' ? data.validated : {},
-      };
+      const safeData = {};
+      for (const field of ['settings', 'tokenSettings', 'manualTokens', 'validated']) {
+        const value = data[field];
+        if (value == null) {
+          safeData[field] = {};
+          continue;
+        }
+        if (!plainJsonObject(value)) {
+          return send(res, 400, {
+            ok: false,
+            code: 'CONTROLLER_STATE_BLOCK_INVALID',
+            field,
+          });
+        }
+        safeData[field] = value;
+      }
+
       if (JSON.stringify(safeData).length > 250000) {
         return send(res, 413, { ok: false, code: 'CONTROLLER_STATE_TOO_LARGE' });
+      }
+      const controllerStructure = jsonStructureStatus(safeData, {
+        maxDepth: 16,
+        maxNodes: 20000,
+        maxArrayLength: 2000,
+        maxObjectKeys: 2000,
+      });
+      if (!controllerStructure.ok) {
+        return send(res, 400, {
+          ok: false,
+          code: 'CONTROLLER_STATE_STRUCTURE_INVALID',
+          reason: controllerStructure.reason,
+        });
       }
 
       const updatedAt = Date.now();
@@ -2351,11 +2376,24 @@ export default async function handler(req, res) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
       const data = req.body?.data;
-      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      if (!plainJsonObject(data)) {
         return send(res, 400, { ok: false, code: 'RUNTIME_STATE_INVALID' });
       }
       if (JSON.stringify(data).length > 500000) {
         return send(res, 413, { ok: false, code: 'RUNTIME_STATE_TOO_LARGE' });
+      }
+      const runtimeStructure = jsonStructureStatus(data, {
+        maxDepth: 20,
+        maxNodes: 40000,
+        maxArrayLength: 10000,
+        maxObjectKeys: 5000,
+      });
+      if (!runtimeStructure.ok) {
+        return send(res, 400, {
+          ok: false,
+          code: 'RUNTIME_STATE_STRUCTURE_INVALID',
+          reason: runtimeStructure.reason,
+        });
       }
       const snapshot = {
         version: 2,
