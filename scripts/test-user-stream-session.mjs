@@ -4,6 +4,8 @@ import test from 'node:test';
 process.env.UPSTASH_REDIS_REST_URL = 'https://redis.test';
 process.env.UPSTASH_REDIS_REST_TOKEN = 'test-only';
 process.env.BINANCE_API_KEY = 'api-key-test';
+process.env.VERCEL_ENV = 'production';
+process.env.VERCEL_GIT_COMMIT_REF = 'main';
 
 const { default: handler } = await import('../api/binance-user-stream-session.js?test=' + Date.now());
 const sessionKey = 'zenith:v1:binance-user-stream';
