@@ -318,7 +318,7 @@ export default async function handler(req,res){
       const ambiguous=e?.ambiguous===true;
       return send(res,502,{
         ok:false,code:ambiguous?'ORPHAN_CLEANUP_RESULT_AMBIGUOUS':'BINANCE_ORPHAN_CLEANUP_FAILED',
-        error:e?.message||'Orphan protection cleanup failed.',binanceCode:e?.code??null,
+        error:'Orphan protection cleanup failed.',binanceCode:e?.code??null,
         ambiguous,writeAttempted:ambiguous,
       });
     }
@@ -527,7 +527,7 @@ export default async function handler(req,res){
     const ambiguous=e?.ambiguous===true;
     return send(res,502,{
       ok:false,code:ambiguous?'PROTECTIVE_UPDATE_RESULT_AMBIGUOUS':'BINANCE_PROTECTIVE_UPDATE_FAILED',
-      error:e?.message||'Protective update failed.',binanceCode:e?.code??null,
+      error:'Protective update failed.',binanceCode:e?.code??null,
       ambiguous,writeAttempted:ambiguous,
     });
   }
