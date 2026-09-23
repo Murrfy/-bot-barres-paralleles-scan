@@ -77,7 +77,7 @@ test('MAX-LOSS STOP_MARKET must trigger on the loss side of the entry', () => {
 });
 
 test('multiple valid MAX-LOSS close-all stops fail closed as ambiguous', () => {
-  const second = { ...emergency, algoId:80, clientAlgoId:'zth-MAX-second', triggerPrice:'47000' };
+  const second = { ...emergency, algoId:80, clientAlgoId:'zth-MAX-second', triggerPrice:'49700' };
   const result = reconcile(
     runtime([position], [emergency, second]),
     [normalized],
