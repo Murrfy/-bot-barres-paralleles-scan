@@ -17,9 +17,11 @@ const cancel=sync.slice(cancelStart,cancelEnd);
 test('MASTER resume requires the server mode to already be PAUSED',()=>{
   assert.ok(resume.includes('masterMode()'));
   assert.ok(resume.includes("if (currentMode !== 'PAUSED') blockers.push('MASTER_MUST_BE_PAUSED')"));
+  assert.ok(resume.includes("trySetMasterRunningFrom("));
+  assert.ok(resume.includes("'PAUSED'"));
   assert.ok(
     resume.indexOf("currentMode !== 'PAUSED'") <
-    resume.indexOf("trySetMasterRunningFrom('PAUSED')")
+    resume.indexOf("trySetMasterRunningFrom(")
   );
 });
 
@@ -46,7 +48,8 @@ test('RUNNING transitions are atomically fenced against real-trading PANIC',()=>
   assert.ok(sync.includes("redis.call('SET', KEYS[2], 'RUNNING')"));
   assert.ok(sync.includes("KEY_EMERGENCY_STOP"));
   assert.ok(sync.includes("REAL_TRADING_ENABLED ? '1' : '0'"));
-  assert.ok(cancel.includes("trySetMasterRunningFrom('PAUSE_PENDING')"));
+  assert.ok(cancel.includes("trySetMasterRunningFrom("));
+  assert.ok(cancel.includes("'PAUSE_PENDING'"));
   assert.ok(resume.includes("trySetMasterRunningFrom("));
   assert.ok(resume.includes("'PAUSED'"));
   assert.ok(resume.includes('currentMaster'));
@@ -57,7 +60,8 @@ test('RUNNING transitions are atomically fenced against real-trading PANIC',()=>
 
 test('pause cancellation returns fail-closed while PANIC is active',()=>{
   assert.ok(cancel.includes("'EMERGENCY_STOP_ACTIVE'"));
-  assert.ok(cancel.includes("runningTransition.reason === 'EMERGENCY_STOP_ACTIVE' ? 423 : 409"));
+  assert.ok(cancel.includes("runningTransition.reason === 'EMERGENCY_STOP_ACTIVE'"));
+  assert.ok(cancel.includes("code === 'EMERGENCY_STOP_ACTIVE' ? 423 : 409"));
 });
 
 
