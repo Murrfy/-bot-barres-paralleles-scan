@@ -67,7 +67,7 @@ function renderActions(){
   $('clearPanicBtn').hidden=!(verifiedState?.emergencyStopActive===true&&verifiedState?.realTradingEnabled===true);
   $('clearPanicBtn').disabled=!valid||$('clearPanicBtn').hidden||mode!=='PAUSED'||verifiedState.masterLeaseActive!==true||verifiedState.masterSyncFailClosed||verifiedState.masterHeartbeatFresh!==true;
   $('replaceBtn').hidden=adminRole!=='master';
-  $('replaceBtn').disabled=!valid||adminRole!=='master';
+  $('replaceBtn').disabled=!valid||adminRole!=='master'||verifiedState.masterLeaseActive!==true;
 }
 
 
