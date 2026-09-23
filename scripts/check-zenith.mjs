@@ -460,6 +460,10 @@ if (!sync.includes('ALLOWED_COMMAND_TYPES') ||
 }
 if (!sync.includes("'COMMAND_EXPIRED'") ||
     !sync.includes("'COMMAND_QUEUE_FULL'") ||
+    !sync.includes("'__DEFERRED__:'") ||
+    !sync.includes('deferredCommandPayload') ||
+    !sync.includes('deferClaimedCommand') ||
+    !sync.includes('executionDeferred') ||
     !sync.includes('modeBeforeClaim') ||
     !sync.includes('modeNow') ||
     !sync.includes('executionGate(command.type, halted)') ||
