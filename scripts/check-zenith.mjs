@@ -192,8 +192,8 @@ const masterCommandDispatch = fs.readFileSync('lib/master-command-dispatch.mjs',
 for (const required of ['masterExecutionEligible','EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY','/api/binance-protective-execute','MASTER_COMMAND_NOT_IMPLEMENTED','CLOSE_ALL_REQUIRED','closeAll:true']) {
   if (!masterCommandDispatch.includes(required)) fail(`MASTER command dispatcher invariant missing: ${required}`);
 }
-if (masterCommandDispatch.includes('EXEC_OPEN_POSITION') && !masterCommandDispatch.includes("supported:false")) {
-  fail('MASTER dispatcher must never route entry execution');
+for (const required of ['EXEC_OPEN_POSITION','/api/binance-entry-execute','REAL_ENTRY_LIMIT_ONLY']) {
+  if (!masterCommandDispatch.includes(required)) fail(`MASTER real-entry dispatcher invariant missing: ${required}`);
 }
 
 const binanceOrderWriter = fs.readFileSync('lib/binance-order-writer.mjs','utf8');
@@ -212,6 +212,33 @@ for (const required of [
 }
 if ((binanceOrderWriter.match(/method: 'POST'/g)||[]).length !== 1) {
   fail('Binance order writer must have exactly one standard-order POST path');
+}
+
+const entryExecute = fs.readFileSync('api/binance-entry-execute.js','utf8');
+for (const required of [
+  "ZENITH_REAL_TRADING_ENABLED",
+  "ZENITH_REAL_ENTRY_ENABLED",
+  "ZENITH_BINANCE_WRITE_ENABLED",
+  "ZENITH_PAIRING_DISABLED",
+  "EXECUTION_NOT_ARMED",
+  "ENTRY_MASTER_NOT_RUNNING",
+  "EMERGENCY_STOP_ACTIVE",
+  "MASTER_CONFIG_OUT_OF_SYNC",
+  "BINANCE_RECONCILIATION_STALE",
+  "deterministicClientOrderId",
+  "placeStandardOrderIdempotent",
+  "queryOrderByClientId",
+  "confirmationRequired:true",
+  "REAL_ENTRY_LIMIT_ONLY"
+]) {
+  if (!entryExecute.includes(required)) fail(`real entry execution invariant missing: ${required}`);
+}
+if (entryExecute.includes("orderType:'MARKET'") || entryExecute.includes('orderType:"MARKET"')) {
+  fail('real entry execution must stay LIMIT-only until deliberately expanded');
+}
+const entryExecutionState = fs.readFileSync('lib/entry-execution-state.mjs','utf8');
+for (const required of ['evaluateEntryAcceptance','USER_STREAM_NOT_READY','ENTRY_ORDER_TERMINAL_UNFILLED','ENTRY_POSITION_EXCEEDS_PLAN']) {
+  if (!entryExecutionState.includes(required)) fail(`entry acceptance state invariant missing: ${required}`);
 }
 
 const protectiveExecute = fs.readFileSync('api/binance-protective-execute.js','utf8');
@@ -302,9 +329,11 @@ for (const file of ['api/binance-read.js','api/binance-reconcile.js','api/binanc
 }
 
 if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'") ||
+    !sync.includes("process.env.ZENITH_REAL_ENTRY_ENABLED === '1'") ||
     !sync.includes("process.env.ZENITH_BINANCE_WRITE_ENABLED === '1'") ||
-    !sync.includes("'BINANCE_WRITE_DISABLED'")) {
-  fail('api/zenith-sync.js must keep both explicit real-trading and Binance-write environment locks');
+    !sync.includes("'BINANCE_WRITE_DISABLED'") ||
+    !sync.includes("'REAL_ENTRY_DISABLED'")) {
+  fail('api/zenith-sync.js must keep explicit global, entry-specific and Binance-write locks');
 }
 if (!sync.includes("'SIMULATION_LOCKED'")) {
   fail('api/zenith-sync.js must expose SIMULATION_LOCKED when real trading is not armed');
@@ -423,6 +452,10 @@ if (!index.includes("role==='master'") ||
 if (!index.includes('masterExecutionCycle') ||
     !index.includes("masterRuntimeApi('command-next','POST'") ||
     !index.includes("masterCommandDisposition('command-ack'") ||
+    !index.includes("fetch('/api/binance-entry-execute'") ||
+    !index.includes('runMasterOpenEntry') ||
+    !index.includes('runMasterCancelEntry') ||
+    !index.includes("import('/lib/entry-execution-state.mjs')") ||
     !index.includes("masterCommandDisposition('command-requeue'") ||
     !index.includes("masterCommandDisposition('command-fail'") ||
     !index.includes("fetch('/api/binance-protective-execute'") ||
