@@ -351,7 +351,8 @@ export default async function handler(req,res){
 
       let result;
       if(orderClass==='STANDARD'){
-        if(!(await requireFinalProtectiveMaster(res,master)))return;\n        result=await cancelReduceOnlyOrderIdempotent({
+        if(!(await requireFinalProtectiveMaster(res,master)))return;
+        result=await cancelReduceOnlyOrderIdempotent({
           apiKey,secret,symbol,clientOrderId:target.clientOrderId,
           expectedSide:target.side,writesEnabled:true,timestamp:Date.now()
         });
@@ -364,7 +365,8 @@ export default async function handler(req,res){
           ...(target.triggerPrice?{triggerPrice:target.triggerPrice}:{}),
           ...(target.price?{price:target.price}:{}),
         };
-        if(!(await requireFinalProtectiveMaster(res,master)))return;\n        result=await cancelAlgoOrderIdempotent({
+        if(!(await requireFinalProtectiveMaster(res,master)))return;
+        result=await cancelAlgoOrderIdempotent({
           apiKey,secret,symbol,clientAlgoId:target.clientAlgoId,
           expected,writesEnabled:true,timestamp:Date.now()
         });
@@ -466,7 +468,8 @@ export default async function handler(req,res){
            !bool(old.reduceOnly)||String(old.side||'').toUpperCase()!==expectedSide){
           return send(res,409,{ok:false,code:'PREVIOUS_EXIT_IDENTITY_MISMATCH',writeAttempted:false});
         }
-        if(!(await requireFinalProtectiveMaster(res,master)))return;\n        result=await cancelReduceOnlyOrderIdempotent({
+        if(!(await requireFinalProtectiveMaster(res,master)))return;
+        result=await cancelReduceOnlyOrderIdempotent({
           apiKey,secret,symbol:update.symbol,clientOrderId:update.previousClientOrderId,
           expectedSide,writesEnabled:true,timestamp:Date.now()
         });
@@ -485,7 +488,8 @@ export default async function handler(req,res){
             writeAttempted:false
           });
         }
-        if(!(await requireFinalProtectiveMaster(res,master)))return;\n        result=await placeStandardOrderIdempotent({
+        if(!(await requireFinalProtectiveMaster(res,master)))return;
+        result=await placeStandardOrderIdempotent({
           apiKey,secret,orderParams:plan.params,writesEnabled:true,timestamp:Date.now()
         });
       }
@@ -545,7 +549,8 @@ export default async function handler(req,res){
           expected.price=String(oldPrice);
           expected.triggerPrice=String(oldTrigger);
         }
-        if(!(await requireFinalProtectiveMaster(res,master)))return;\n        result=await cancelAlgoOrderIdempotent({
+        if(!(await requireFinalProtectiveMaster(res,master)))return;
+        result=await cancelAlgoOrderIdempotent({
           apiKey,secret,symbol:update.symbol,clientAlgoId:update.previousClientAlgoId,
           expected,writesEnabled:true,timestamp:Date.now()
         });
@@ -582,7 +587,8 @@ export default async function handler(req,res){
             writeAttempted:false
           });
         }
-        if(!(await requireFinalProtectiveMaster(res,master)))return;\n        result=await placeAlgoOrderIdempotent({
+        if(!(await requireFinalProtectiveMaster(res,master)))return;
+        result=await placeAlgoOrderIdempotent({
           apiKey,secret,algoParams:plan.params,writesEnabled:true,timestamp:Date.now()
         });
       }
