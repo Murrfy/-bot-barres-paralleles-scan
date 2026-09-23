@@ -337,6 +337,7 @@ async function realExecutionArmStatus(expectedMasterDeviceId = '') {
   const record = parseStoredJson(raw);
   if (!record || record.version !== 1) return { armed:false, reason:'REAL_EXECUTION_NOT_ARMED', record:null };
   if (!REAL_TRADING_ENABLED) return { armed:false, reason:'REAL_TRADING_DISABLED', record };
+  if (!DEPLOYMENT_SHA) return { armed:false, reason:'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING', record };
   if (expectedMasterDeviceId && String(record.masterDeviceId || '') !== String(expectedMasterDeviceId)) {
     return { armed:false, reason:'REAL_EXECUTION_ARM_MASTER_CHANGED', record };
   }
@@ -1229,6 +1230,7 @@ export default async function handler(req, res) {
       if (!(await verifyMasterAdminCode(req, res, device))) return;
       if (!REAL_TRADING_ENABLED) return send(res, 423, { ok:false, code:'REAL_TRADING_DISABLED' });
       if (!PAIRING_DISABLED) return send(res, 423, { ok:false, code:'PAIRING_MUST_BE_DISABLED' });
+      if (!DEPLOYMENT_SHA) return send(res, 423, { ok:false, code:'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING' });
 
       const [currentMaster, registeredMaster, currentMode, halted, pending, processing, runtimeRaw] = await Promise.all([
         masterDeviceId(),

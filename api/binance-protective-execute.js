@@ -9,6 +9,9 @@ const KEY_MASTER_DEVICE=`${PREFIX}:role-device:master`;
 const KEY_STATE=`${PREFIX}:state`;
 const KEY_RECONCILE_LAST=`${PREFIX}:reconcile:last`;
 const KEY_AUDIT=`${PREFIX}:audit`;
+const KEY_REAL_EXECUTION_ARMED=`${PREFIX}:safety:real-execution-armed`;
+const KEY_MASTER_MODE=`${PREFIX}:master-mode`;
+const DEPLOYMENT_SHA=String(process.env.VERCEL_GIT_COMMIT_SHA||'');
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -77,6 +80,18 @@ function runtimePosition(runtimeState,symbol,dir){
   const list=Array.isArray(runtimeState?.data?.binancePositions)?runtimeState.data.binancePositions:[];
   return list.find(p=>String(p?.symbol||'').toUpperCase()===symbol&&direction(p)===dir)||null;
 }
+function validateExecutionArmRecord(record,masterDeviceId,deploymentSha=DEPLOYMENT_SHA){
+  if(!deploymentSha)return 'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING';
+  if(!record||record.version!==1)return 'REAL_EXECUTION_NOT_ARMED';
+  if(String(record.masterDeviceId||'')!==String(masterDeviceId||''))return 'REAL_EXECUTION_ARM_MASTER_CHANGED';
+  if(String(record.deploymentSha||'')!==String(deploymentSha))return 'REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED';
+  return '';
+}
+function protectiveModeReason(mode){
+  const normalized=String(mode||'').toUpperCase();
+  if(normalized==='RUNNING'||normalized==='PAUSE_PENDING')return '';
+  return 'MASTER_PAUSED';
+}
 function executionReadiness(runtimeState,report,masterDeviceId){
   const age=Date.now()-Number(runtimeState?.updatedAt||0);
   if(!runtimeState?.data||String(runtimeState?.masterDeviceId||'')!==String(masterDeviceId))return 'MASTER_RUNTIME_WRONG_DEVICE';
@@ -106,13 +121,21 @@ export default async function handler(req,res){
   const secret=process.env.BINANCE_API_SECRET;
   if(!apiKey||!secret)return send(res,503,{ok:false,code:'MISSING_ENV'});
 
-  const [runtimeRaw,reportRaw]=await Promise.all([
+  const [runtimeRaw,reportRaw,armRaw,masterModeRaw]=await Promise.all([
     redis(['GET',KEY_STATE]),
     redis(['GET',KEY_RECONCILE_LAST]),
+    redis(['GET',KEY_REAL_EXECUTION_ARMED]),
+    redis(['GET',KEY_MASTER_MODE]),
   ]);
-  let runtimeState=null,report=null;
+  let runtimeState=null,report=null,armRecord=null;
   try{runtimeState=runtimeRaw?JSON.parse(runtimeRaw):null}catch{}
   try{report=reportRaw?JSON.parse(reportRaw):null}catch{}
+  try{armRecord=armRaw?JSON.parse(armRaw):null}catch{}
+
+  const armReason=validateExecutionArmRecord(armRecord,master.deviceId);
+  if(armReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_ARMED',reason:armReason,writeAttempted:false});
+  const modeReason=protectiveModeReason(masterModeRaw);
+  if(modeReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:modeReason,writeAttempted:false});
 
   const readinessReason=executionReadiness(runtimeState,report,master.deviceId);
   if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
@@ -203,3 +226,5 @@ export default async function handler(req,res){
     });
   }
 }
+
+export { validateExecutionArmRecord, protectiveModeReason, executionReadiness };
