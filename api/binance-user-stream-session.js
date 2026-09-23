@@ -281,7 +281,7 @@ export default async function handler(req, res) {
     return send(res, e?.status === 401 || e?.status === 403 ? 502 : 503, {
       ok: false,
       code: e?.code || 'USER_STREAM_SESSION_ERROR',
-      error: e?.message || 'Binance user stream session unavailable.',
+      error: 'Binance user stream session unavailable.',
       binanceCode: e?.binanceCode,
       tradingWriteAttempted: false,
     });
