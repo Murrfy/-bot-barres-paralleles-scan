@@ -2053,9 +2053,10 @@ export default async function handler(req, res) {
       if (!device) return;
 
       if (!(await verifyMasterAdminCode(req, res, device))) return;
-      const [currentMaster, registeredMaster] = await Promise.all([
+      const [currentMaster, registeredMaster, currentMode] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('master'),
+        masterMode(),
       ]);
       if (!currentMaster) {
         return send(res, 409, { ok: false, code: 'MASTER_LEASE_REQUIRED' });
@@ -2079,6 +2080,7 @@ export default async function handler(req, res) {
       ]);
 
       const blockers = [];
+      if (currentMode !== 'PAUSED') blockers.push('MASTER_MUST_BE_PAUSED');
       if (!controllerRaw) blockers.push('NO_CONTROLLER_STATE');
       if (Number(pending || 0) > 0) blockers.push('PENDING_COMMAND');
       if (Number(processing || 0) > 0) blockers.push('PROCESSING_COMMAND');
