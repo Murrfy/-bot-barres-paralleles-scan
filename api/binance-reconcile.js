@@ -271,6 +271,19 @@ function orderKey(order) {
   return '';
 }
 
+function zenithManagedOrderId(order) {
+  const id = String(order?.clientAlgoId || order?.clientOrderId || '');
+  return /^zth-[A-Za-z0-9._:-]+$/.test(id) ? id : '';
+}
+
+function orderProtectsPosition(order, position) {
+  if (String(order?.symbol || '').toUpperCase() !== String(position?.symbol || '').toUpperCase()) return false;
+  if (String(order?.positionSide || '').toUpperCase() !== String(position?.positionSide || '').toUpperCase()) return false;
+  const expectedSide = direction(position) === 'LONG' ? 'SELL' : 'BUY';
+  if (String(order?.side || '').toUpperCase() !== expectedSide) return false;
+  return order?.reduceOnly === true || order?.closePosition === true;
+}
+
 function reconcile(runtimeState, actualPositions, actualOrders) {
   const runtimeMode = String(runtimeState?.data?.executionMode || runtimeState?.data?.mode || '').toUpperCase();
   const runtimeIsReal = runtimeMode === 'REAL';
@@ -330,6 +343,13 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
   if (quantityMismatches.length) reasons.push('BINANCE_POSITION_QUANTITY_MISMATCH');
   if (untrackedOrders.length) reasons.push('UNTRACKED_BINANCE_ORDER');
   if (missingOrders.length) reasons.push('MISSING_BINANCE_ORDER');
+
+  const orphanZenithProtectiveOrders = actualOrders.filter(order =>
+    Boolean(zenithManagedOrderId(order)) &&
+    (order?.reduceOnly === true || order?.closePosition === true) &&
+    !actualPositions.some(position => orderProtectsPosition(order, position))
+  );
+  if (orphanZenithProtectiveOrders.length) reasons.push('ORPHAN_ZENITH_PROTECTIVE_ORDER');
 
   if (!runtimeState || !runtimeState.data || typeof runtimeState.data !== 'object') reasons.push('RUNTIME_STATE_UNAVAILABLE');
   const runtimeAge = Date.now() - Number(runtimeState?.updatedAt);
@@ -410,6 +430,7 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
       untrackedOrders,
       missingOrders,
       orderMismatches,
+      orphanZenithProtectiveOrders,
       missingProtections,
       missingMaxLossProtections,
       ambiguousMaxLossProtections,

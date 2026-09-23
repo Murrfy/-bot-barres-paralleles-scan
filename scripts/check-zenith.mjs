@@ -325,6 +325,25 @@ if (!binanceReconcile.includes('runtimeDataHash') || !binanceReconcile.includes(
   fail('Binance reconciliation must hash canonical runtime data separately from heartbeat timestamps');
 }
 
+if (!binanceReconcile.includes('ORPHAN_ZENITH_PROTECTIVE_ORDER') ||
+    !binanceReconcile.includes('zenithManagedOrderId(order)') ||
+    !binanceReconcile.includes('orphanZenithProtectiveOrders')) {
+  fail('Binance reconciliation must fail closed on Zenith protective orders left open without a matching position');
+}
+if (!protectiveUpdateExecute.includes('EXEC_CLEAN_ORPHAN_PROTECTION') ||
+    !protectiveUpdateExecute.includes("path:'/fapi/v3/positionRisk'") ||
+    !protectiveUpdateExecute.includes('ORPHAN_CLEANUP_POSITION_NOT_FLAT') ||
+    !protectiveUpdateExecute.includes('cancelReduceOnlyOrderIdempotent') ||
+    !protectiveUpdateExecute.includes('cancelAlgoOrderIdempotent')) {
+  fail('orphan cleanup must cancel only after direct Binance flat-position proof using idempotent cancel primitives');
+}
+if (!index.includes('orphanZenithCleanupOrders(q.report)') ||
+    !index.includes('ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED') ||
+    !index.includes('COMPTE BINANCE INACCESSIBLE') ||
+    index.includes('BINANCE HORS LIGNE')) {
+  fail('MASTER must auto-clean confirmed Zenith orphans and UI must distinguish private account access from public Binance market data');
+}
+
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
 if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
     !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req)')) {

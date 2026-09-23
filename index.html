@@ -218,7 +218,7 @@ const MASTER_AUTO_HIGHWATER_KEY='zenith_master_auto_protection_highwater_v1';
 let masterAutoProtection={pending:new Set(),highWater:new Map(),lastError:'',lastActionAt:0};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
-function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}renderRealPositions();renderRealEntryOrders()}
+function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'COMPTE BINANCE INACCESSIBLE':'COMPTE BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'prix publics Binance disponibles · compte Futures privé inaccessible':'portefeuille Futures Binance · connexion serveur requise'}renderRealPositions();renderRealEntryOrders()}
 async function loadControllerRealCommandModule(){
   if(controllerRealCommandModule)return controllerRealCommandModule;
   controllerRealCommandModule=await import('/lib/controller-real-command.mjs');
@@ -925,6 +925,50 @@ async function reconcileMasterUserStream(secondPass=false){
       return false;
     }
     const {stateModule,dispatchModule}=await loadMasterUserStreamModules();
+    const orphanCleanupTargets=dispatchModule.orphanZenithCleanupOrders(q.report);
+    if(orphanCleanupTargets.length){
+      if(secondPass){
+        const reason='ORPHAN_CLEANUP_RECONCILIATION_FAILED';
+        await invalidateMasterStream(reason);
+        masterUserStream.lastError=reason;
+        return false;
+      }
+      for(const target of orphanCleanupTargets){
+        const body={
+          type:'EXEC_CLEAN_ORPHAN_PROTECTION',phase:'CANCEL_ORPHAN',
+          symbol:target.symbol,orderClass:target.orderClass,
+          ...(target.orderClass==='ALGO'
+            ?{clientAlgoId:target.clientAlgoId}
+            :{clientOrderId:target.clientOrderId})
+        };
+        const cleaned=await callMasterProtectiveUpdateExecute(body);
+        if(!cleaned.r.ok||cleaned.q?.ok!==true){
+          const reason='ORPHAN_CLEANUP_'+String(cleaned.q?.code||cleaned.q?.error||('HTTP_'+cleaned.r.status));
+          await invalidateMasterStream(reason);
+          masterUserStream.lastError=reason;
+          return false;
+        }
+        const clientId=target.orderClass==='ALGO'?target.clientAlgoId:target.clientOrderId;
+        const order=await waitForStreamOrder({
+          kind:target.orderClass==='ALGO'?'ALGO':'STANDARD',
+          clientId,terminal:true
+        },3000);
+        const status=String(order?.status||'').toUpperCase();
+        const safe=target.orderClass==='ALGO'
+          ?['CANCELED','EXPIRED','REJECTED'].includes(status)
+          :['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status);
+        if(!safe){
+          const reason='ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED';
+          await invalidateMasterStream(reason);
+          masterUserStream.lastError=reason;
+          return false;
+        }
+      }
+      await publishMasterStreamState();
+      masterUserStream.reconcileBusy=false;
+      return reconcileMasterUserStream(true);
+    }
+
     const repairTarget=dispatchModule.protectionOnlyMismatchTarget(q.report);
     const reconciliationAcceptable=q.report.failClosed===false||Boolean(repairTarget);
     if(!reconciliationAcceptable){

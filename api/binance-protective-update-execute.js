@@ -2,12 +2,13 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { buildProtectiveAlgoPlan } from '../lib/protective-update-intent.mjs';
-import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition, protectiveRepairTarget } from '../lib/protective-command.mjs';
+import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition, protectiveRepairTarget, orphanZenithCleanupOrders } from '../lib/protective-command.mjs';
 import { validateMaxLossTrigger } from '../lib/real-protection-levels.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import {
   placeStandardOrderIdempotent,
   cancelReduceOnlyOrderIdempotent,
+  signedBinanceRequest,
 } from '../lib/binance-order-writer.mjs';
 import {
   placeAlgoOrderIdempotent,
@@ -192,6 +193,22 @@ function priceFilterReason(symbolInfo,price){
   }
   return '';
 }
+async function directSymbolFlat(symbol,apiKey,secret){
+  const rows=await signedBinanceRequest({
+    baseUrl:BASE,path:'/fapi/v3/positionRisk',method:'GET',
+    apiKey,secret,params:{symbol},timestamp:Date.now()
+  });
+  if(!Array.isArray(rows)||!rows.length)throw new Error('DIRECT_POSITION_PROOF_MISSING');
+  const same=rows.filter(p=>String(p?.symbol||'').toUpperCase()===symbol);
+  if(!same.length)throw new Error('DIRECT_POSITION_PROOF_MISSING');
+  for(const p of same){
+    const amount=n(p?.positionAmt,NaN);
+    if(!Number.isFinite(amount))throw new Error('DIRECT_POSITION_PROOF_INVALID');
+    if(Math.abs(amount)>0)return false;
+  }
+  return true;
+}
+
 async function symbolInfo(symbol){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);
   try{
@@ -213,16 +230,80 @@ export default async function handler(req,res){
   if(!master)return send(res,401,{ok:false,code:'MASTER_REQUIRED',writeAttempted:false});
 
   const type=String(req.body?.type||'').toUpperCase(),phase=String(req.body?.phase||'').toUpperCase();
-  if(!['EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION'].includes(type)||!['CANCEL_OLD','PLACE_NEW'].includes(phase)){
+  const orphanCleanup=type==='EXEC_CLEAN_ORPHAN_PROTECTION'&&phase==='CANCEL_ORPHAN';
+  if(!orphanCleanup&&
+     (!['EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION'].includes(type)||!['CANCEL_OLD','PLACE_NEW'].includes(phase))){
     return send(res,400,{ok:false,code:'PROTECTIVE_UPDATE_OPERATION_INVALID',writeAttempted:false});
+  }
+
+  const apiKey=process.env.BINANCE_API_KEY,secret=process.env.BINANCE_API_SECRET;
+  if(!apiKey||!secret)return send(res,503,{ok:false,code:'MISSING_ENV',writeAttempted:false});
+
+  if(orphanCleanup){
+    try{
+      const state=await readState();
+      const targets=orphanZenithCleanupOrders(state.report);
+      const symbol=String(req.body?.symbol||'').toUpperCase();
+      const orderClass=String(req.body?.orderClass||'').toUpperCase();
+      const clientOrderId=String(req.body?.clientOrderId||'');
+      const clientAlgoId=String(req.body?.clientAlgoId||'');
+      const target=targets.find(row=>
+        row.symbol===symbol&&row.orderClass===orderClass&&
+        (orderClass==='ALGO'?row.clientAlgoId===clientAlgoId:row.clientOrderId===clientOrderId)
+      );
+      if(!target)return send(res,409,{ok:false,code:'ORPHAN_CLEANUP_TARGET_NOT_CONFIRMED',writeAttempted:false});
+
+      const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED);
+      if(!writesEnabled)return send(res,423,{
+        ok:false,code:'BINANCE_WRITE_LOCKED',realTradingEnabled:REAL_TRADING_ENABLED,
+        binanceWriteEnabled:BINANCE_WRITE_ENABLED,pairingDisabled:PAIRING_DISABLED,writeAttempted:false
+      });
+
+      const flat=await directSymbolFlat(symbol,apiKey,secret);
+      if(!flat)return send(res,409,{ok:false,code:'ORPHAN_CLEANUP_POSITION_NOT_FLAT',writeAttempted:false});
+
+      let result;
+      if(orderClass==='STANDARD'){
+        result=await cancelReduceOnlyOrderIdempotent({
+          apiKey,secret,symbol,clientOrderId:target.clientOrderId,
+          expectedSide:target.side,writesEnabled:true,timestamp:Date.now()
+        });
+      }else{
+        const expected={
+          symbol,clientAlgoId:target.clientAlgoId,side:target.side,
+          positionSide:'BOTH',type:target.type,
+          ...(target.closePosition?{closePosition:'true'}:{}),
+          ...(target.reduceOnly?{reduceOnly:'true'}:{}),
+          ...(target.triggerPrice?{triggerPrice:target.triggerPrice}:{}),
+          ...(target.price?{price:target.price}:{}),
+        };
+        result=await cancelAlgoOrderIdempotent({
+          apiKey,secret,symbol,clientAlgoId:target.clientAlgoId,
+          expected,writesEnabled:true,timestamp:Date.now()
+        });
+      }
+
+      await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+        at:Date.now(),kind:'BINANCE_ORPHAN_PROTECTION_CLEANUP',deviceId:master.deviceId,
+        symbol,orderClass,clientOrderId:target.clientOrderId||'',
+        clientAlgoId:target.clientAlgoId||'',disposition:String(result?.disposition||''),
+        writeAttempted:result?.writeAttempted===true,
+      })]);
+      await redis(['LTRIM',KEY_AUDIT,'0','199']);
+      return send(res,200,{ok:true,type,phase,target,result,flatProof:true});
+    }catch(e){
+      const ambiguous=e?.ambiguous===true;
+      return send(res,502,{
+        ok:false,code:ambiguous?'ORPHAN_CLEANUP_RESULT_AMBIGUOUS':'BINANCE_ORPHAN_CLEANUP_FAILED',
+        error:e?.message||'Orphan protection cleanup failed.',binanceCode:e?.code??null,
+        ambiguous,writeAttempted:ambiguous,
+      });
+    }
   }
 
   let update;
   try{update=normalizeProtectiveUpdatePayload(type,req.body)}
   catch(e){return send(res,400,{ok:false,code:e?.message||'PROTECTIVE_UPDATE_PAYLOAD_INVALID',writeAttempted:false})}
-
-  const apiKey=process.env.BINANCE_API_KEY,secret=process.env.BINANCE_API_SECRET;
-  if(!apiKey||!secret)return send(res,503,{ok:false,code:'MISSING_ENV',writeAttempted:false});
 
   try{
     const state=await readState();
