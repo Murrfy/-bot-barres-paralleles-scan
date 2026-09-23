@@ -55,6 +55,8 @@ const CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60;
 const CONTROLLER_REPLACEMENT_RATE_LIMIT = 5;
 const MASTER_ADMIN_FAILURE_LIMIT = 5;
 const MASTER_ADMIN_LOCK_SECONDS = 15 * 60;
+const AUTH_SECRET_INPUT_MAX_CHARS = 256;
+const REPLACEMENT_CODE_INPUT_MAX_CHARS = 64;
 const RUNTIME_STATE_STALE_MS = 30 * 1000;
 const COMMAND_MAX_AGE_MS = 2 * 60 * 1000;
 const COMMAND_QUEUE_MAX = 100;
@@ -241,6 +243,12 @@ async function verifyMasterAdminCode(req, res, device) {
     return false;
   }
 
+  const supplied = String(req.body?.adminCode || '');
+  if (supplied.length > AUTH_SECRET_INPUT_MAX_CHARS) {
+    send(res, 400, { ok: false, code: 'MASTER_ADMIN_CODE_INPUT_TOO_LARGE' });
+    return false;
+  }
+
   const key = masterAdminFailureKey(device);
   const existing = Number(await redis(['GET', key])) || 0;
   if (existing >= MASTER_ADMIN_FAILURE_LIMIT) {
@@ -249,7 +257,6 @@ async function verifyMasterAdminCode(req, res, device) {
     return false;
   }
 
-  const supplied = String(req.body?.adminCode || '');
   if (!timingSafeEqualText(supplied, MASTER_ADMIN_CODE)) {
     const failures = await incrementWithExpiry(key, MASTER_ADMIN_LOCK_SECONDS);
     if (failures >= MASTER_ADMIN_FAILURE_LIMIT) {
@@ -1093,6 +1100,9 @@ export default async function handler(req, res) {
       if (!(await pairRateAllowed(req))) return send(res, 429, { ok: false, code: 'PAIRING_RATE_LIMIT' });
 
       const supplied = String(req.body?.pairingCode || '');
+      if (supplied.length > AUTH_SECRET_INPUT_MAX_CHARS) {
+        return send(res, 400, { ok: false, code: 'PAIRING_CODE_INPUT_TOO_LARGE' });
+      }
       const deviceId = String(req.body?.deviceId || '').trim();
       const role = String(req.body?.role || '').trim();
       const deviceName = String(req.body?.deviceName || '').trim().slice(0, 80);
@@ -1191,6 +1201,9 @@ export default async function handler(req, res) {
       }
 
       const recoveryCode = String(req.body?.recoveryCode || '');
+      if (recoveryCode.length > REPLACEMENT_CODE_INPUT_MAX_CHARS) {
+        return send(res, 400, { ok: false, code: 'CONTROLLER_REPLACEMENT_CODE_INPUT_TOO_LARGE' });
+      }
       const newDeviceId = String(req.body?.deviceId || '').trim();
       const deviceName = String(req.body?.deviceName || 'iPhone contrôleur Zenith').trim().slice(0, 80);
 
