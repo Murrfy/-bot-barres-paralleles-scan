@@ -3,6 +3,8 @@ import { deviceTokenCandidates, sameOriginMutation } from '../lib/device-session
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { buildProtectiveAlgoPlan } from '../lib/protective-update-intent.mjs';
 import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition, protectiveRepairTarget } from '../lib/protective-command.mjs';
+import { validateMaxLossTrigger } from '../lib/real-protection-levels.mjs';
+import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import {
   placeStandardOrderIdempotent,
   cancelReduceOnlyOrderIdempotent,
@@ -236,6 +238,23 @@ export default async function handler(req,res){
 
     const position=runtimePosition(state.runtimeState,update.symbol,update.direction);
     const live=validateUpdateAgainstLivePosition(update,position);
+    if(type==='EXEC_UPDATE_PROTECTION'&&update.protectionKind==='MAX_LOSS'){
+      try{
+        validateMaxLossTrigger({
+          position,
+          triggerPrice:update.triggerPrice,
+          hardMaxLossUsd:REAL_RISK_LIMITS.maxLossUsd,
+        });
+      }catch(e){
+        return send(res,409,{
+          ok:false,
+          code:e?.message||'MAX_LOSS_TRIGGER_INVALID',
+          impliedLossUsd:Number.isFinite(Number(e?.impliedLossUsd))?Number(e.impliedLossUsd):null,
+          hardMaxLossUsd:REAL_RISK_LIMITS.maxLossUsd,
+          writeAttempted:false,
+        });
+      }
+    }
     const emergency=emergencyProtection(state.runtimeState,update,live.entryPrice,
       type==='EXEC_UPDATE_PROTECTION'&&update.protectionKind==='MAX_LOSS'&&phase==='CANCEL_OLD'
         ?update.previousClientAlgoId:''
