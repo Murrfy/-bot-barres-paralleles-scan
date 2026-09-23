@@ -17,7 +17,7 @@ test('MASTER revoke is controller-only and ADMIN protected',()=>{
 });
 
 test('MASTER revoke fails closed and checks live Binance before invalidating MASTER',()=>{
-  assert.ok(block.includes("redis(['SET', KEY_EMERGENCY_STOP, '1'])"));
+  assert.ok(block.includes('await assertEmergencyStop()'));
   assert.ok(block.includes("setMasterMode('PAUSE_PENDING')"));
   assert.ok(block.includes('fetchLiveBinanceActivity()'));
   assert.ok(block.includes("'BINANCE_ACTIVITY_CHECK_FAILED'"));
