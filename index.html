@@ -1492,7 +1492,7 @@ async function runMasterProtectiveUpdate(command,raw,dispatch){
     return true;
   }
 
-  async function placeNew(){
+  async function placeNew({deferReconcile=false}={}){
     const {r,q}=await callMasterProtectiveUpdateExecute({...body,phase:'PLACE_NEW'});
     if(!r.ok||q?.ok!==true){
       await handleMasterMutationFailure(raw,r,q,'PROTECTIVE_PLACE_NEW');
@@ -1511,6 +1511,12 @@ async function runMasterProtectiveUpdate(command,raw,dispatch){
       return '';
     }
     await publishMasterStreamState();
+    if(deferReconcile){
+      // MAX-LOSS replacement temporarily has two valid close-all stops.
+      // Publish the stream-confirmed new stop so CANCEL_OLD can prove it exists,
+      // then perform full reconciliation only after the previous stop is gone.
+      return clientId;
+    }
     const reconciled=await awaitMasterReconciliation();
     if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
       await failMasterCommand(raw,'POST_PLACE_RECONCILIATION_FAILED');
@@ -1521,7 +1527,7 @@ async function runMasterProtectiveUpdate(command,raw,dispatch){
 
   let newClientId='';
   if(maxLoss||progressive){
-    newClientId=await placeNew();
+    newClientId=await placeNew({deferReconcile:maxLoss});
     if(!newClientId)return false;
     if(!(await cancelOld(newClientId)))return false;
   }else{
