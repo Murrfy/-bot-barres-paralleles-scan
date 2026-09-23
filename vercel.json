@@ -42,7 +42,7 @@
         },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'sha256-0O2r7eOxaDsCJmWspOwEgG5ZmdAfbFr0lb5fPs26ygQ=' 'sha256-2DbiVM8m1WUuULaIlHX0BRonIyQiCo9DOOzXXypsByY=' 'sha256-Ve+fu9IzpcY/GkNQpR3whhqcCs6OxnTi63IisZsLDnY=' 'sha256-cphn7oCd4Yt7MctAHKcKsBjWur9zG+Y8URdN5giOv7I=' 'sha256-l3YRQ9BEAs0WZf3qpAKEXm7QOOh934psgQaNV+orfxg=' 'sha256-pmDP0m8aWlgw/2f834gtUANOXiSTJRlzWOdCDgQ9dzY=' 'sha256-s9zZh8bWToucTXq7wvpKIyx1grFlqTDp7qWfZK9D324='; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://fapi.binance.com wss://fstream.binance.com; img-src 'self' data:; font-src 'self'; media-src 'self'; worker-src 'none';"
+          "value": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'sha256-Ve+fu9IzpcY/GkNQpR3whhqcCs6OxnTi63IisZsLDnY=' 'sha256-cphn7oCd4Yt7MctAHKcKsBjWur9zG+Y8URdN5giOv7I=' 'sha256-gQMKoBv6jGc9p82u0G4rv21zzK+rkYSyVsgQVA8iPWc=' 'sha256-iFrY0VXDSYB9zMyooKbNxjTZvhQiG2h9ntiAL67iyYc=' 'sha256-mdpdxBQEuJht5yBbOHj+XtPKBqPntbQfimtv1saJg/s=' 'sha256-pmDP0m8aWlgw/2f834gtUANOXiSTJRlzWOdCDgQ9dzY=' 'sha256-yfcszdwtU67Vm5mOk59z4zm+6sfmfwOHxwDy7mY+eiw='; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://fapi.binance.com wss://fstream.binance.com; img-src 'self' data:; font-src 'self'; media-src 'self'; worker-src 'none';"
         }
       ]
     }
