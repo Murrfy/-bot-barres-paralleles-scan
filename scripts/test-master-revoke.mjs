@@ -94,3 +94,12 @@ test('iPhone controller exposes explicit confirmed MASTER revoke control',()=>{
   assert.ok(index.includes('id="adminCodeInput" type="password"'));
   assert.ok(index.includes("$('masterRevokeBtn').onclick=controllerRevokeMaster"));
 });
+
+
+test('MASTER revoke refuses definitive revocation while a user-stream mutation is in flight',()=>{
+  assert.ok(block.includes("redis.call('GET', KEYS[16])"));
+  assert.ok(block.includes("'EVAL', revokeScript, '16'"));
+  assert.ok(block.includes('KEY_USER_STREAM_MUTATION_LOCK'));
+  assert.ok(block.includes("'USER_STREAM_MUTATION_IN_FLIGHT'"));
+  assert.ok(block.indexOf("redis.call('GET', KEYS[16])") < block.indexOf("redis.call('DEL', KEYS[5])"));
+});
