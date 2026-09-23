@@ -244,7 +244,7 @@ async function setMasterMode(action){
 }
 
 async function authorizeReplacement(){
-  if(busy||checking||adminRole!=='master'||!verifiedState)return;
+  if(busy||checking||adminRole!=='master'||!verifiedState||verifiedState.masterLeaseActive!==true)return;
   const token=localStorage.getItem(TOKEN_KEY)||'';
   const adminCode=$('adminCode').value;
   if(!adminCode){
