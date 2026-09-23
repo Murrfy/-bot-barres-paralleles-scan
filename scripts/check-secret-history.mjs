@@ -5,6 +5,7 @@ const SAFE_TEST_VALUES = new Set([
   'api-key',
   'api-key-test',
   'secret',
+  'secret-test',
   'redis-token',
   'pairing-code',
   'master-pairing-code',
