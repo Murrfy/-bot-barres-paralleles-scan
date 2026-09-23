@@ -326,6 +326,13 @@ if (!protectiveUpdateExecute.includes('NEW_PROGRESSIVE_PROTECTION_NOT_CONFIRMED'
     !index.includes("phase:'CANCEL_OLD',newClientAlgoId:clientId")) {
   fail('progressive protection replacement must confirm the new STOP+LIMIT before canceling the old protection');
 }
+
+if (!index.includes('async function placeNew({deferReconcile=false}={})') ||
+    !index.includes('newClientId=await placeNew({deferReconcile:maxLoss})') ||
+    !index.includes('if(deferReconcile){') ||
+    !index.includes('await publishMasterStreamState();')) {
+  fail('MAX-LOSS replacement must publish the stream-confirmed new stop and defer full reconciliation until the old stop is canceled');
+}
 if (!index.includes("import('/lib/real-protection-levels.mjs')") ||
     !index.includes('OBJECTIF AUTO') ||
     !index.includes('PERTE MAX AUTO')) {
