@@ -994,6 +994,16 @@ if (!safetyWorkflowRunner.includes('runs-on: ubuntu-24.04') ||
   fail('Zenith safety CI runner must stay pinned to Ubuntu 24.04');
 }
 
+const credentialSeparationSource = fs.readFileSync('api/zenith-sync.js','utf8');
+for (const required of [
+  'binanceCredentialSeparationBlockers',
+  'BINANCE_TRADING_KEY_MUST_DIFFER_FROM_READ_KEY'
+]) {
+  if (!credentialSeparationSource.includes(required)) {
+    fail(`Binance credential separation invariant missing: ${required}`);
+  }
+}
+
 const syncAdminSecretPolicy = fs.readFileSync('api/zenith-sync.js','utf8');
 for (const required of [
   'MASTER_ADMIN_CODE_TOO_WEAK',
