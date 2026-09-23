@@ -35,3 +35,21 @@ test('max-loss replacement allows exactly old and new Zenith protections',()=>{
     orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',closePosition:true,clientAlgoId:'manual-stop'
   }]),update,'MAX_LOSS',['zth-MAX-old','zth-MAX-new']).length,1);
 });
+
+
+test('progressive replacement temporarily allows only the identified old and new Zenith protections',()=>{
+  const orders=[
+    {orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP',timeInForce:'GTC',reduceOnly:true,clientAlgoId:'zth-PRO-old'},
+    {orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP',timeInForce:'GTC',reduceOnly:true,clientAlgoId:'zth-PRO-new'},
+  ];
+  assert.equal(conflictingProtectiveOrders(runtime(orders),update,'PROGRESSIVE',['zth-PRO-old','zth-PRO-new']).length,0);
+  const withExternal=[...orders,{
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',timeInForce:'GTC',reduceOnly:true,clientAlgoId:'manual-stop'
+  }];
+  assert.deepEqual(
+    conflictingProtectiveOrders(runtime(withExternal),update,'PROGRESSIVE',['zth-PRO-old','zth-PRO-new'])
+      .map(x=>x.clientAlgoId),
+    ['manual-stop']
+  );
+});
