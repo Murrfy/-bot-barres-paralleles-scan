@@ -121,6 +121,14 @@ for (const forbidden of ['/fapi/v1/order','/fapi/v1/algoOrder','BINANCE_API_SECR
   if (userStreamSession.includes(forbidden)) fail(`user-stream session must never access trading write/secret path: ${forbidden}`);
 }
 
+const masterRuntimeInventory = fs.readFileSync('lib/master-runtime-inventory.mjs', 'utf8');
+for (const required of ['binancePositions','binanceOrders','openPositions','openOrders','userStream','TERMINAL_ALGO']) {
+  if (!masterRuntimeInventory.includes(required)) fail(`MASTER runtime inventory projection missing: ${required}`);
+}
+if (!masterRuntimeInventory.includes("executionMode: mode") || !masterRuntimeInventory.includes("failClosed: state?.failClosed !== false")) {
+  fail('MASTER runtime inventory must preserve execution mode and fail closed on unsafe stream state');
+}
+
 const userStreamState = fs.readFileSync('lib/user-stream-state.mjs', 'utf8');
 for (const required of ['ORDER_TRADE_UPDATE','ACCOUNT_UPDATE','ALGO_UPDATE','listenKeyExpired','RECONCILIATION_REQUIRED_AFTER_CONNECT','STREAM_EVENT_OUT_OF_ORDER']) {
   if (!userStreamState.includes(required)) fail(`user-stream safety invariant missing: ${required}`);
@@ -166,6 +174,9 @@ if (!binanceReconcile.includes("'MISMATCH'") || !binanceReconcile.includes('fail
 }
 if (!binanceReconcile.includes('/fapi/v1/openAlgoOrders')) {
   fail('api/binance-reconcile.js must reconcile Binance algo TP/SL orders');
+}
+if (!binanceReconcile.includes('runtimeDataHash') || !binanceReconcile.includes('stableStringify(runtimeState?.data ?? null)')) {
+  fail('Binance reconciliation must hash canonical runtime data separately from heartbeat timestamps');
 }
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
