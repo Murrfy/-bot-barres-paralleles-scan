@@ -826,6 +826,166 @@ async function callMasterProtectiveExecute(body){
   const q=await r.json().catch(()=>({}));
   return {r,q};
 }
+async function callMasterProtectiveUpdateExecute(body){
+  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
+  const r=await fetch('/api/binance-protective-update-execute',{
+    method:'POST',cache:'no-store',
+    headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+    body:JSON.stringify(body)
+  });
+  const q=await r.json().catch(()=>({}));
+  return {r,q};
+}
+function streamStandardOrderByClientId(clientOrderId){
+  const wanted=String(clientOrderId||'');
+  return Object.values(masterUserStream.state?.standardOrders||{}).find(o=>String(o?.clientOrderId||'')===wanted)||null;
+}
+function streamAlgoOrderByClientId(clientAlgoId){
+  const wanted=String(clientAlgoId||'');
+  return Object.values(masterUserStream.state?.algoOrders||{}).find(o=>String(o?.clientAlgoId||'')===wanted)||null;
+}
+function terminalStandardStatus(status){
+  return ['FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(String(status||'').toUpperCase());
+}
+function terminalAlgoStatus(status){
+  return ['CANCELED','TRIGGERED','FINISHED','REJECTED','EXPIRED'].includes(String(status||'').toUpperCase());
+}
+async function waitForStreamOrder({kind,clientId,terminal=false},timeoutMs=3000){
+  const deadline=Date.now()+Math.max(300,n(timeoutMs,3000));
+  let order=null;
+  while(Date.now()<deadline){
+    order=kind==='ALGO'?streamAlgoOrderByClientId(clientId):streamStandardOrderByClientId(clientId);
+    if(order){
+      const isTerminal=kind==='ALGO'?terminalAlgoStatus(order.status):terminalStandardStatus(order.status);
+      if((terminal&&isTerminal)||(!terminal&&!isTerminal))return order;
+    }
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  return order;
+}
+async function safeAckAfterReconcile(raw,executionProof,retryReason='EXECUTION_ACK_RETRY'){
+  try{
+    const reconciled=await reconcileMasterUserStream();
+    if(reconciled!==true||masterRuntimeState.userStreamReady!==true)throw new Error('RECONCILIATION_NOT_READY');
+    await ackMasterCommand(raw,executionProof);
+    return true;
+  }catch(e){
+    await requeueMasterCommand(raw,retryReason+'_'+String(e?.message||'RECONCILE'),1500);
+    return false;
+  }
+}
+async function handleMasterMutationFailure(raw,r,q,prefix){
+  const reason=String(q?.code||q?.reason||q?.error||('HTTP_'+r.status));
+  const ambiguous=q?.ambiguous===true||q?.result?.ambiguous===true;
+  if(ambiguous||q?.writeAttempted===true){
+    await failMasterCommand(raw,prefix+'_AMBIGUOUS_'+reason);
+    masterExecution.lastError=prefix+'_AMBIGUOUS_'+reason;
+    return false;
+  }
+  if(['EXECUTION_NOT_READY','EXECUTION_NOT_ARMED','BINANCE_WRITE_LOCKED'].includes(reason)){
+    await requeueMasterCommand(raw,prefix+'_'+reason,1500);
+    return false;
+  }
+  await failMasterCommand(raw,prefix+'_'+reason);
+  masterExecution.lastError=prefix+'_'+reason;
+  return false;
+}
+async function runMasterCancelEntry(command,raw,dispatch){
+  const {r,q}=await callMasterProtectiveExecute(dispatch.body);
+  if(!r.ok||q?.ok!==true)return handleMasterMutationFailure(raw,r,q,'CANCEL_ENTRY');
+  const status=String(q?.result?.order?.status||'').toUpperCase();
+  if(status==='FILLED'||q?.result?.disposition==='ALREADY_FILLED'){
+    await failMasterCommand(raw,'ENTRY_ALREADY_FILLED');
+    scheduleMasterStreamReconcile(100);
+    return false;
+  }
+  const clientOrderId=String(dispatch.body?.clientOrderId||'');
+  const terminal=terminalStandardStatus(status)
+    ?q.result.order
+    :await waitForStreamOrder({kind:'STANDARD',clientId:clientOrderId,terminal:true},3000);
+  const terminalStatus=String(terminal?.status||status||'').toUpperCase();
+  if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus)){
+    await failMasterCommand(raw,'ENTRY_CANCEL_NOT_CONFIRMED');
+    masterExecution.lastError='ENTRY_CANCEL_NOT_CONFIRMED';
+    return false;
+  }
+  return safeAckAfterReconcile(raw,{terminalStatus},'EXEC_CANCEL_ACK_RETRY');
+}
+async function runMasterProtectiveUpdate(command,raw,dispatch){
+  const body={...dispatch.body};
+  const type=String(dispatch.type||'').toUpperCase();
+  const progressive=type==='EXEC_UPDATE_PROTECTION'&&String(body.protectionKind||'').toUpperCase()==='PROGRESSIVE';
+  const maxLoss=type==='EXEC_UPDATE_PROTECTION'&&String(body.protectionKind||'').toUpperCase()==='MAX_LOSS';
+  const previousId=type==='EXEC_UPDATE_EXIT'
+    ?String(body.previousClientOrderId||'')
+    :String(body.previousClientAlgoId||'');
+
+  async function cancelOld(newClientAlgoId=''){
+    if(!previousId)return true;
+    const {r,q}=await callMasterProtectiveUpdateExecute({
+      ...body,phase:'CANCEL_OLD',newClientAlgoId
+    });
+    if(!r.ok||q?.ok!==true)return handleMasterMutationFailure(raw,r,q,'PROTECTIVE_CANCEL_OLD');
+    const kind=type==='EXEC_UPDATE_EXIT'?'STANDARD':'ALGO';
+    const order=await waitForStreamOrder({kind,clientId:previousId,terminal:true},3000);
+    const status=String(order?.status||q?.result?.order?.status||q?.result?.algoOrder?.algoStatus||'').toUpperCase();
+    const safeTerminal=kind==='STANDARD'
+      ?['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status)
+      :['CANCELED','EXPIRED','REJECTED'].includes(status);
+    if(!safeTerminal){
+      await failMasterCommand(raw,'PREVIOUS_PROTECTIVE_ORDER_CANCEL_NOT_CONFIRMED');
+      masterExecution.lastError='PREVIOUS_PROTECTIVE_ORDER_CANCEL_NOT_CONFIRMED';
+      return false;
+    }
+    const reconciled=await reconcileMasterUserStream();
+    if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
+      await failMasterCommand(raw,'POST_CANCEL_RECONCILIATION_FAILED');
+      return false;
+    }
+    return true;
+  }
+
+  async function placeNew(){
+    const {r,q}=await callMasterProtectiveUpdateExecute({...body,phase:'PLACE_NEW'});
+    if(!r.ok||q?.ok!==true){
+      await handleMasterMutationFailure(raw,r,q,'PROTECTIVE_PLACE_NEW');
+      return '';
+    }
+    const clientId=String(q?.plan?.params?.newClientOrderId||q?.plan?.params?.clientAlgoId||'');
+    if(!clientId){
+      await failMasterCommand(raw,'PROTECTIVE_NEW_CLIENT_ID_MISSING');
+      return '';
+    }
+    const kind=type==='EXEC_UPDATE_EXIT'?'STANDARD':'ALGO';
+    const order=await waitForStreamOrder({kind,clientId,terminal:false},3500);
+    if(!order){
+      await failMasterCommand(raw,'PROTECTIVE_NEW_ORDER_NOT_STREAM_CONFIRMED');
+      masterExecution.lastError='PROTECTIVE_NEW_ORDER_NOT_STREAM_CONFIRMED';
+      return '';
+    }
+    const reconciled=await reconcileMasterUserStream();
+    if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
+      await failMasterCommand(raw,'POST_PLACE_RECONCILIATION_FAILED');
+      return '';
+    }
+    return clientId;
+  }
+
+  let newClientId='';
+  if(maxLoss){
+    newClientId=await placeNew();
+    if(!newClientId)return false;
+    if(!(await cancelOld(newClientId)))return false;
+  }else{
+    if(!(await cancelOld()))return false;
+    newClientId=await placeNew();
+    if(!newClientId)return false;
+  }
+
+  const ok=await safeAckAfterReconcile(raw,{newClientId},'EXEC_PROTECTIVE_UPDATE_ACK_RETRY');
+  if(!ok)return false;
+  return true;
+}
 async function waitForFullCloseState({symbol,direction,beforeQuantity,clientOrderId},timeoutMs=2500){
   const {closeModule}=await loadMasterUserStreamModules();
   const deadline=Date.now()+Math.max(250,n(timeoutMs,2500));
@@ -981,7 +1141,17 @@ async function masterExecutionCycle(){
       return false;
     }
 
-    const ok=await runMasterFullClose(command,raw);
+    let ok=false;
+    if(dispatch.type==='EXEC_CLOSE_POSITION'){
+      ok=await runMasterFullClose(command,raw);
+    }else if(dispatch.type==='EXEC_CANCEL_ENTRY'){
+      ok=await runMasterCancelEntry(command,raw,dispatch);
+    }else if(dispatch.type==='EXEC_UPDATE_EXIT'||dispatch.type==='EXEC_UPDATE_PROTECTION'){
+      ok=await runMasterProtectiveUpdate(command,raw,dispatch);
+    }else{
+      await failMasterCommand(raw,'MASTER_COMMAND_NOT_IMPLEMENTED');
+      return false;
+    }
     if(ok){
       masterExecution.lastError='';
       scheduleMasterStreamReconcile(100);
