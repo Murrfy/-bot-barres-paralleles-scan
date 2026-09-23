@@ -128,8 +128,8 @@ export default async function handler(req,res){
   }catch(e){
     return send(res,503,{ok:false,code:e?.code||'RATE_LIMIT_BACKEND_ERROR',matchingEngineSubmitted:false,tradingWriteAttempted:false});
   }
-  const apiKey=process.env.BINANCE_API_KEY,secret=process.env.BINANCE_API_SECRET;
-  if(!apiKey||!secret)return send(res,503,{ok:false,code:'MISSING_ENV'});
+  const apiKey=process.env.BINANCE_TRADING_API_KEY,secret=process.env.BINANCE_TRADING_API_SECRET;
+  if(!apiKey||!secret)return send(res,503,{ok:false,code:'BINANCE_TRADING_CREDENTIALS_MISSING'});
 
   let params;
   try{params=cleanParams(req.body?.params)}catch(e){return send(res,400,{ok:false,code:e?.message||'PARAMS_INVALID'})}
