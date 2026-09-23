@@ -851,9 +851,20 @@ async function controllerMasterAction(action){
 async function refreshControllerIdentity(){
   const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   try{
+    if(token){
+      const mr=await fetch('/api/zenith-sync?action=session-migrate',{
+        method:'POST',cache:'no-store',
+        headers:{Accept:'application/json',Authorization:'Bearer '+token}
+      });
+      const mq=await mr.json().catch(()=>({}));
+      if(!mr.ok||mq?.ok!==true||mq?.sessionReady!==true){
+        throw new Error(mq?.code||mq?.error||('HTTP '+mr.status));
+      }
+      localStorage.removeItem(ZENITH_DEVICE_TOKEN_KEY);
+    }
     const r=await fetch('/api/zenith-sync?action=whoami',{
       cache:'no-store',
-      headers:{Accept:'application/json',Authorization:'Bearer '+token}
+      headers:{Accept:'application/json'}
     });
     let q={};try{q=await r.json()}catch(_){q={}}
     const role=String(q?.device?.role||'');
@@ -2078,7 +2089,7 @@ async function refreshBinanceAccount(){
   try{
     const r=await fetch('/api/binance-read',{
       cache:'no-store',
-      headers:{Accept:'application/json',...(token?{}:{})}
+      headers:{Accept:'application/json'}
     });
     let q={};try{q=await r.json()}catch(_){q={}}
     if(!r.ok||q?.ok!==true){
