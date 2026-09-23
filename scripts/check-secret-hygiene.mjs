@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const ROOT = process.cwd();
 const SELF = path.normalize('scripts/check-secret-hygiene.mjs');
@@ -71,21 +72,23 @@ function lineNumber(text, index) {
 
 const failures = [];
 
-for (const file of filesUnder(ROOT)) {
-  if (file.forceEnvFileFailure) {
-    failures.push({ file: file.rel, line: 1, rule: 'committed environment file' });
-    continue;
-  }
+function explicitFakeTestCredential(file, ruleName, match) {
+  if (ruleName !== 'hardcoded sensitive configuration') return false;
+  const testFixture = String(file || '').startsWith(path.normalize('scripts/test-'));
+  const assignedValue = String(match?.[1] || match?.[2] || '');
+  return testFixture &&
+    /^(?:test-only|api-key|api-key-test|secret|redis-token|https:\/\/redis\.test)$/.test(assignedValue);
+}
 
-  const text = fs.readFileSync(file.abs, 'utf8');
-
+function scanTextForRules({ text, file, source, lineOffset = 0 }) {
   const privateKeyMarker = ['-----BEGIN ', 'PRIVATE KEY-----'].join('');
   const privateIndex = text.indexOf(privateKeyMarker);
   if (privateIndex >= 0) {
     failures.push({
-      file: file.rel,
-      line: lineNumber(text, privateIndex),
-      rule: 'private key material'
+      file,
+      line: lineOffset + lineNumber(text, privateIndex),
+      rule: 'private key material',
+      source
     });
   }
 
@@ -94,28 +97,118 @@ for (const file of filesUnder(ROOT)) {
     for (const match of text.matchAll(rule.re)) {
       const full = String(match[0] || '');
       if (/process\.env\./.test(full)) continue;
-
-      const testFixture = file.rel.startsWith(path.normalize('scripts/test-'));
-      const assignedValue = String(match[1] || match[2] || '');
-      const explicitTestSentinel = /^(?:test-only|api-key|api-key-test|secret|redis-token|https:\/\/redis\.test)$/.test(assignedValue);
-      if (rule.name === 'hardcoded sensitive configuration' && testFixture && explicitTestSentinel) continue;
+      if (explicitFakeTestCredential(file, rule.name, match)) continue;
 
       failures.push({
-        file: file.rel,
-        line: lineNumber(text, match.index || 0),
-        rule: rule.name
+        file,
+        line: lineOffset + lineNumber(text, match.index || 0),
+        rule: rule.name,
+        source
       });
     }
   }
 }
 
+for (const file of filesUnder(ROOT)) {
+  if (file.forceEnvFileFailure) {
+    failures.push({ file: file.rel, line: 1, rule: 'committed environment file' });
+    continue;
+  }
+
+  const text = fs.readFileSync(file.abs, 'utf8');
+  scanTextForRules({
+    text,
+    file: file.rel,
+    source: 'working-tree'
+  });
+}
+
+function scanReachableHistory() {
+  let patch = '';
+  try {
+    patch = execFileSync(
+      'git',
+      [
+        'log',
+        'HEAD',
+        '--format=__ZENITH_COMMIT__%H',
+        '--patch',
+        '--no-ext-diff',
+        '--unified=0',
+        '--',
+        '.',
+        ':(exclude)scripts/check-secret-hygiene.mjs'
+      ],
+      { cwd: ROOT, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }
+    );
+  } catch (e) {
+    console.error('Historical secret scan could not read Git history.');
+    process.exit(1);
+  }
+
+  let commit = '';
+  let file = '';
+  let newLine = 0;
+
+  for (const rawLine of patch.split('\n')) {
+    if (rawLine.startsWith('__ZENITH_COMMIT__')) {
+      commit = rawLine.slice('__ZENITH_COMMIT__'.length).trim();
+      file = '';
+      newLine = 0;
+      continue;
+    }
+
+    if (rawLine.startsWith('+++ ')) {
+      const target = rawLine.slice(4).trim();
+      file = target === '/dev/null' ? '' : target.replace(/^b\//, '');
+      if (
+        file &&
+        path.basename(file).startsWith('.env') &&
+        path.basename(file) !== '.env.example'
+      ) {
+        failures.push({
+          file,
+          line: 1,
+          rule: 'committed environment file',
+          source: 'history:' + commit
+        });
+      }
+      continue;
+    }
+
+    const hunk = rawLine.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+    if (hunk) {
+      newLine = Number(hunk[1]) || 0;
+      continue;
+    }
+
+    if (!file || rawLine.startsWith('--- ')) continue;
+
+    if (rawLine.startsWith('+') && !rawLine.startsWith('+++')) {
+      const added = rawLine.slice(1);
+      scanTextForRules({
+        text: added,
+        file: path.normalize(file),
+        source: 'history:' + commit,
+        lineOffset: Math.max(0, newLine - 1)
+      });
+      newLine += 1;
+      continue;
+    }
+
+    if (!rawLine.startsWith('-') && !rawLine.startsWith('\\')) newLine += 1;
+  }
+}
+
+scanReachableHistory();
+
 if (failures.length) {
   console.error('Secret hygiene check FAILED.');
   for (const failure of failures) {
-    console.error('- ' + failure.file + ':' + failure.line + ' — ' + failure.rule);
+    console.error('- ' + failure.file + ':' + failure.line + ' — ' + failure.rule + ' [' + (failure.source || 'unknown') + ']');
   }
   console.error('Move secrets to server-side environment variables and rotate any exposed credential.');
   process.exit(1);
 }
 
-console.log('Secret hygiene check passed: no committed secret patterns detected.');
+console.log('Secret hygiene check passed: working tree and reachable Git history contain no blocked secret patterns.');
