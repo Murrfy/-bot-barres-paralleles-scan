@@ -902,6 +902,15 @@ if (!sync.includes("if (wasActive && currentMode !== 'RUNNING')") ||
     !sync.includes("'EMERGENCY_STOP_REASSERTED'")) {
   fail('repeated PANIC must be idempotent without weakening reassertion if MASTER is unexpectedly running');
 }
+if (!sync.includes('KEY_EMERGENCY_STOP_EPOCH') ||
+    !sync.includes('async function assertEmergencyStop()') ||
+    !sync.includes("redis.call('INCR', KEYS[2])") ||
+    !sync.includes("'EMERGENCY_STOP_CHANGED_DURING_CLEAR'") ||
+    !sync.includes("if epoch ~= ARGV[1] then return -1 end") ||
+    !sync.includes("if mode ~= 'PAUSED' then return -3 end") ||
+    !sync.includes("if lease ~= ARGV[2] or registered ~= ARGV[2] then return -4 end")) {
+  fail('PANIC clear must be atomically fenced against a newer PANIC assertion and MASTER state changes');
+}
 if (!index.includes('panicStopBtn') || !index.includes('panicClearBtn') ||
     !index.includes('controllerPanicStop') || !index.includes('controllerClearPanic')) {
   fail('iPhone controller must expose PANIC STOP and protected re-arm controls');
