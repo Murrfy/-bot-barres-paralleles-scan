@@ -22,6 +22,7 @@ const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
 const VERCEL_PRODUCTION_WRITE_ALLOWED = process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main';
+const ZENITH_CONTROL_MUTATION_ALLOWED = !process.env.VERCEL_ENV || VERCEL_PRODUCTION_WRITE_ALLOWED;
 const BINANCE_API_BASE = 'https://api.binance.com';
 const BINANCE_API_RESTRICTIONS_PATH = '/sapi/v1/account/apiRestrictions';
 const BINANCE_API_TIME_PATH = '/api/v3/time';
@@ -1109,6 +1110,12 @@ export default async function handler(req, res) {
     const bodyStatus = requestBodyStatus(req, 768 * 1024);
     if (!bodyStatus.ok) {
       return send(res, 413, { ok:false, code:'REQUEST_BODY_TOO_LARGE', maxBytes:bodyStatus.maxBytes });
+    }
+    if (!ZENITH_CONTROL_MUTATION_ALLOWED) {
+      return send(res, 423, {
+        ok:false,
+        code:'NON_PRODUCTION_CONTROL_MUTATION',
+      });
     }
   }
 
