@@ -148,3 +148,5 @@ jobs:
         run: node --test scripts/test-user-stream-seed.mjs
       - name: Test Binance protective order validation without matching-engine submission
         run: node --test scripts/test-binance-order-test.mjs
+      - name: Test Binance API permission safety gate
+        run: node --test scripts/test-binance-api-permissions.mjs
