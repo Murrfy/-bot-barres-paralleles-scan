@@ -29,6 +29,14 @@ test('__Host cookie is HttpOnly Secure Strict and host-only', () => {
   assert.equal(/(?:^|;)\s*Domain=/i.test(cookie),false);
 });
 
+test('secure cookie can be shortened to the server-side remaining lifetime', () => {
+  const cookie=buildDeviceSessionCookie('abc123',123);
+  assert.ok(cookie.includes('Max-Age=123'));
+  assert.ok(cookie.includes('HttpOnly'));
+  assert.ok(cookie.includes('Secure'));
+  assert.ok(cookie.includes('SameSite=Strict'));
+});
+
 test('clear cookie keeps secure host-only attributes', () => {
   const cookie=buildClearDeviceSessionCookie();
   assert.ok(cookie.includes('Max-Age=0'));
