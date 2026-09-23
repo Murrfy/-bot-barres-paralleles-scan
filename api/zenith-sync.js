@@ -674,9 +674,24 @@ async function emergencyStopActive() {
 }
 
 async function realExecutionArmStatus(expectedMasterDeviceId = '') {
-  const raw = await redis(['GET', KEY_REAL_EXECUTION_ARMED]);
+  const [raw, registeredMaster, leasedMaster, masterRoleEpochRaw] = await Promise.all([
+    redis(['GET', KEY_REAL_EXECUTION_ARMED]),
+    redis(['GET', KEY_MASTER_DEVICE]),
+    redis(['GET', KEY_MASTER]),
+    redis(['GET', roleAssignmentKey(PREFIX, 'master')]),
+  ]);
   const record = parseStoredJson(raw);
   if (!record || record.version !== 1) return { armed:false, reason:'REAL_EXECUTION_NOT_ARMED', record:null };
+  const recordMaster = String(record.masterDeviceId || '');
+  if (!registeredMaster || recordMaster !== String(registeredMaster)) {
+    return { armed:false, reason:'REAL_EXECUTION_ARM_MASTER_CHANGED', record };
+  }
+  if (!leasedMaster || recordMaster !== String(leasedMaster)) {
+    return { armed:false, reason:'MASTER_LEASE_REQUIRED', record };
+  }
+  if (!masterRoleEpochRaw || String(record.masterRoleEpoch || '') !== String(masterRoleEpochRaw)) {
+    return { armed:false, reason:'REAL_EXECUTION_ARM_ROLE_EPOCH_CHANGED', record };
+  }
   if (!REAL_TRADING_ENABLED) return { armed:false, reason:'REAL_TRADING_DISABLED', record };
   const adminSecretBlockers = adminSecretPolicyBlockers();
   if (adminSecretBlockers.length) return { armed:false, reason:adminSecretBlockers[0], blockers:adminSecretBlockers, record };
@@ -2015,7 +2030,7 @@ export default async function handler(req, res) {
       if (!PAIRING_DISABLED) return send(res, 423, { ok:false, code:'PAIRING_MUST_BE_DISABLED' });
       if (!DEPLOYMENT_SHA) return send(res, 423, { ok:false, code:'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING' });
 
-      const [currentMaster, registeredMaster, currentMode, halted, pending, processing, runtimeRaw] = await Promise.all([
+      const [currentMaster, registeredMaster, currentMode, halted, pending, processing, runtimeRaw, masterRoleEpochRaw] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('master'),
         masterMode(),
@@ -2023,12 +2038,15 @@ export default async function handler(req, res) {
         redis(['LLEN', KEY_PENDING]),
         redis(['LLEN', KEY_PROCESSING]),
         redis(['GET', KEY_STATE]),
+        redis(['GET', roleAssignmentKey(PREFIX, 'master')]),
       ]);
       const blockers = [
         ...adminSecretPolicyBlockers(),
         ...binanceCredentialSeparationBlockers(),
       ];
       if (!currentMaster || !registeredMaster || String(currentMaster) !== String(registeredMaster)) blockers.push('MASTER_LEASE_REQUIRED');
+      const masterRoleEpoch = Number(masterRoleEpochRaw || 0);
+      if (!Number.isFinite(masterRoleEpoch) || masterRoleEpoch <= 0) blockers.push('MASTER_ROLE_EPOCH_REQUIRED');
       if (device.role === 'master' && String(currentMaster) !== String(device.deviceId)) blockers.push('NOT_MASTER');
       if (currentMode !== 'PAUSED') blockers.push('MASTER_MUST_BE_PAUSED');
       if (!halted) blockers.push('EMERGENCY_STOP_MUST_BE_ACTIVE');
@@ -2074,6 +2092,7 @@ export default async function handler(req, res) {
         version:1,
         armedAt:Date.now(),
         masterDeviceId:currentMaster,
+        masterRoleEpoch,
         controllerRevision:configSync.status.controllerRevision,
         deploymentSha:DEPLOYMENT_SHA,
         reconciliationObservedAt:Number(reconciliation?.report?.observedAt || 0),
@@ -2081,7 +2100,51 @@ export default async function handler(req, res) {
         binanceApiIpRestricted:apiPermissions?.ipRestrict === true,
         adminSecretPolicyVersion:1,
       };
-      await redis(['SET', KEY_REAL_EXECUTION_ARMED, JSON.stringify(record)]);
+      const armCommitScript = [
+        "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if registered ~= ARGV[1] then return -1 end",
+        "local lease = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if lease ~= ARGV[1] then return -2 end",
+        "local mode = tostring(redis.call('GET', KEYS[3]) or 'PAUSED')",
+        "if mode ~= 'PAUSED' then return -3 end",
+        "local panic = tostring(redis.call('GET', KEYS[4]) or '')",
+        "if panic ~= '1' then return -4 end",
+        "if redis.call('LLEN', KEYS[5]) > 0 or redis.call('LLEN', KEYS[6]) > 0 then return -5 end",
+        "local roleEpoch = tostring(redis.call('GET', KEYS[7]) or '')",
+        "if roleEpoch ~= ARGV[2] then return -6 end",
+        "redis.call('SET', KEYS[8], ARGV[3])",
+        "return 1"
+      ].join('\n');
+      const armCommitResult = Number(await redis([
+        'EVAL', armCommitScript, '8',
+        KEY_MASTER_DEVICE,
+        KEY_MASTER,
+        KEY_MASTER_MODE,
+        KEY_EMERGENCY_STOP,
+        KEY_PENDING,
+        KEY_PROCESSING,
+        roleAssignmentKey(PREFIX, 'master'),
+        KEY_REAL_EXECUTION_ARMED,
+        String(currentMaster),
+        String(masterRoleEpoch),
+        JSON.stringify(record),
+      ]));
+      if (armCommitResult !== 1) {
+        const reason = armCommitResult === -1
+          ? 'MASTER_ROLE_CHANGED_DURING_ARM'
+          : armCommitResult === -2
+            ? 'MASTER_LEASE_CHANGED_DURING_ARM'
+            : armCommitResult === -3
+              ? 'MASTER_MUST_BE_PAUSED'
+              : armCommitResult === -4
+                ? 'EMERGENCY_STOP_MUST_BE_ACTIVE'
+                : armCommitResult === -5
+                  ? 'COMMAND_QUEUE_CHANGED_DURING_ARM'
+                  : armCommitResult === -6
+                    ? 'MASTER_ROLE_EPOCH_CHANGED_DURING_ARM'
+                    : 'REAL_EXECUTION_ARM_COMMIT_FAILED';
+        return send(res, 409, { ok:false, code:'REAL_EXECUTION_ARM_RACE_BLOCKED', blockers:[reason] });
+      }
       await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
         at:record.armedAt,kind:'REAL_EXECUTION_ARMED',deviceId:device.deviceId,
         requestedByRole:device.role,masterDeviceId:currentMaster,deploymentSha:DEPLOYMENT_SHA

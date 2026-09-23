@@ -962,6 +962,17 @@ if (!sync.includes('KEY_REAL_EXECUTION_ARMED') ||
     !sync.includes("'REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED'")) {
   fail('real execution must require an explicit admin arm bound to the current MASTER and deployment');
 }
+if (!sync.includes('const armCommitScript = [') ||
+    !sync.includes("if registered ~= ARGV[1] then return -1 end") ||
+    !sync.includes("if lease ~= ARGV[1] then return -2 end") ||
+    !sync.includes("if mode ~= 'PAUSED' then return -3 end") ||
+    !sync.includes("if panic ~= '1' then return -4 end") ||
+    !sync.includes("if roleEpoch ~= ARGV[2] then return -6 end") ||
+    !sync.includes("'EVAL', armCommitScript, '8'") ||
+    !sync.includes("'REAL_EXECUTION_ARM_RACE_BLOCKED'") ||
+    !sync.includes("'REAL_EXECUTION_ARM_ROLE_EPOCH_CHANGED'")) {
+  fail('real execution arm must atomically fence MASTER role, lease, mode, PANIC, queues and role epoch');
+}
 if (!sync.includes("BINANCE_API_RESTRICTIONS_PATH = '/sapi/v1/account/apiRestrictions'") ||
     !sync.includes('fetchBinanceApiPermissions') ||
     !sync.includes('binanceApiPermissionBlockers') ||
