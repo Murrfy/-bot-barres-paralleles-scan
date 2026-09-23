@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleSessionKey } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
 import { protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
@@ -62,6 +62,8 @@ async function requireCurrentMaster(req){
     if(!raw)continue;
     let device=null;try{device=JSON.parse(raw)}catch{}
     if(!deviceSessionRecordActive(device)||!device?.deviceId||device.role!=='master')continue;
+    const activeSessionHash=await redis(['GET',roleSessionKey('master')]);
+    if(activeSessionHash&&String(activeSessionHash)!==tokenHash)continue;
     const [registered,lease]=await Promise.all([
       redis(['GET',KEY_MASTER_DEVICE]),
       redis(['GET',KEY_MASTER]),
