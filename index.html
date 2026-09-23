@@ -211,8 +211,8 @@ let controllerRealCommandModule=null,controllerRealProtectionModule=null,realClo
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
-let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
-let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,realExecutionArmed:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
+let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterConfigApplyDeferred:false,masterConfigProtectiveDeferredSafe:false,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
+let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,configDeferredSafe:false,heartbeatFresh:false,userStreamReady:false,realExecutionArmed:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
 let masterWakeLock={sentinel:null,requesting:false,lastAttemptAt:0,error:''};
 let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEvents:[],reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
 let masterExecution={busy:false,timer:null,lastError:'',lastCommandId:''};
@@ -698,7 +698,10 @@ function renderControllerIdentity(){
       b.classList.add('on');
     }
   }else if(controllerIdentity.paired&&controllerIdentity.role==='master'){
-    if(masterRuntimeState.synchronized&&masterRuntimeState.heartbeatFresh&&!masterRuntimeState.error){
+    if(masterRuntimeState.configDeferredSafe&&masterRuntimeState.heartbeatFresh&&!masterRuntimeState.error){
+      b.textContent='IPAD MASTER · CONFIG EN ATTENTE · PROTECTIONS ACTIVES · R'+String(masterRuntimeState.appliedRevision||0);
+      b.classList.toggle('on',masterRuntimeState.userStreamReady===true);
+    }else if(masterRuntimeState.synchronized&&masterRuntimeState.heartbeatFresh&&!masterRuntimeState.error){
       b.textContent='IPAD MASTER LECTURE SEULE · R'+String(masterRuntimeState.appliedRevision||0)+(masterRuntimeState.userStreamReady?' · BINANCE WS':' · WS EN SÉCURITÉ');
       b.classList.toggle('on',masterRuntimeState.userStreamReady===true);
     }else{
@@ -724,6 +727,9 @@ function renderMasterControls(){
   if(masterControlState.error){
     badge.textContent='MASTER NON VÉRIFIÉ';
     badge.classList.remove('on');
+  }else if(masterControlState.masterConfigProtectiveDeferredSafe&&mode==='RUNNING'){
+    badge.textContent='MASTER EN MARCHE · CONFIG EN ATTENTE · '+rev;
+    badge.classList.add('on');
   }else if(masterControlState.masterSyncFailClosed){
     badge.textContent='MASTER DÉSYNCHRONISÉ · '+rev;
     badge.classList.remove('on');
@@ -765,6 +771,8 @@ async function refreshMasterControls(){
       controllerRevision:Math.max(0,n(q.controllerRevision,0)),
       masterAppliedRevision:Math.max(0,n(q.masterAppliedRevision,0)),
       masterSyncFailClosed:q.masterSyncFailClosed!==false,
+      masterConfigApplyDeferred:q.masterConfigApplyDeferred===true,
+      masterConfigProtectiveDeferredSafe:q.masterConfigProtectiveDeferredSafe===true,
       masterHeartbeatFresh:q.masterHeartbeatFresh===true,
       emergencyStopActive:q.emergencyStopActive!==false,
       realTradingEnabled:q.realTradingEnabled===true,
@@ -892,13 +900,14 @@ async function refreshControllerIdentity(){
 
 function masterLocalEntryAllowed(){
   if(controllerIdentity.role!=='master')return true;
-  return masterRuntimeState.mode==='RUNNING'&&masterRuntimeState.synchronized===true&&masterRuntimeState.heartbeatFresh===true&&!masterRuntimeState.error;
+  return masterRuntimeState.mode==='RUNNING'&&masterRuntimeState.synchronized===true&&masterRuntimeState.configDeferredSafe!==true&&masterRuntimeState.heartbeatFresh===true&&!masterRuntimeState.error;
 }
 function masterEntryBlockMessage(){
   if(controllerIdentity.role!=='master')return '';
   if(masterRuntimeState.mode==='PAUSED')return 'MASTER en pause';
   if(masterRuntimeState.mode==='PAUSE_PENDING')return 'pause MASTER en attente';
   if(!masterRuntimeState.heartbeatFresh)return 'heartbeat MASTER absent';
+  if(masterRuntimeState.configDeferredSafe)return 'nouvelle configuration en attente';
   if(!masterRuntimeState.synchronized)return 'MASTER désynchronisé';
   return masterRuntimeState.error||'MASTER non prêt';
 }
@@ -1809,7 +1818,7 @@ async function executeMasterAutoProgressive(plan){
 }
 async function runMasterAutoProtection(symbol,mark){
   if(controllerIdentity.role!=='master'||document.hidden)return false;
-  if(!masterRuntimeState.synchronized||!masterRuntimeState.heartbeatFresh)return false;
+  if(!(masterRuntimeState.synchronized||masterRuntimeState.configDeferredSafe)||!masterRuntimeState.heartbeatFresh)return false;
   const {dispatchModule,autoProtectionModule}=await loadMasterUserStreamModules();
   if(!dispatchModule.masterExecutionEligible({
     role:controllerIdentity.role,
@@ -1903,7 +1912,7 @@ async function masterRuntimeCycle(){
   try{
     const hb=await masterRuntimeApi('master-heartbeat','POST',{});
     if(!hb.r.ok||hb.q?.ok!==true){
-      masterRuntimeState={...masterRuntimeState,leaseActive:false,heartbeatFresh:false,synchronized:false,userStreamReady:false,error:String(hb.q?.code||hb.q?.error||('HTTP '+hb.r.status))};
+      masterRuntimeState={...masterRuntimeState,leaseActive:false,heartbeatFresh:false,synchronized:false,configDeferredSafe:false,userStreamReady:false,error:String(hb.q?.code||hb.q?.error||('HTTP '+hb.r.status))};
       renderControllerIdentity();
       releaseMasterWakeLock();
       if(masterUserStream.ws)closeMasterUserStream('MASTER_LEASE_LOST',false);
@@ -1926,12 +1935,19 @@ async function masterRuntimeCycle(){
     masterRuntimeState.appliedRevision=Math.max(0,n(st.q.appliedRevision,0));
     const controllerState=st.q.controllerState||null;
     const controllerStateHash=String(st.q.controllerStateHash||controllerState?.stateHash||'');
-    let localConfigMatches=false;
+    const appliedState=st.q.appliedState||null;
+    const appliedStateHash=String(appliedState?.stateHash||'');
+    let localConfigMatches=false,localAppliedConfigMatches=false;
     if(controllerState?.data&&controllerStateHash){
       const localHash=await sha256Hex(stableStringify(controllerCloudStatePayload()));
       localConfigMatches=localHash===controllerStateHash;
+      localAppliedConfigMatches=Boolean(appliedStateHash)&&localHash===appliedStateHash;
     }
     masterRuntimeState.synchronized=st.q.synchronized===true&&localConfigMatches;
+    masterRuntimeState.configDeferredSafe=
+      st.q.protectiveDeferredSafe===true&&
+      st.q.applyDeferred===true&&
+      localAppliedConfigMatches;
 
     if(st.q.synchronized===true&&!localConfigMatches){
       const activity=st.q.activity||{};
@@ -1947,6 +1963,7 @@ async function masterRuntimeCycle(){
       masterRuntimeState.appliedRevision=applied.revision;
       masterRuntimeState.controllerRevision=applied.revision;
       masterRuntimeState.synchronized=true;
+      masterRuntimeState.configDeferredSafe=false;
       masterRuntimeState.error='';
       await postMasterRuntimeState();
     }else if(st.q.applyAllowed===true&&controllerState){
@@ -1956,16 +1973,20 @@ async function masterRuntimeCycle(){
       masterRuntimeState.appliedRevision=applied.revision;
       masterRuntimeState.controllerRevision=applied.revision;
       masterRuntimeState.synchronized=true;
+      masterRuntimeState.configDeferredSafe=false;
       masterRuntimeState.error='';
       await postMasterRuntimeState();
+    }else if(masterRuntimeState.configDeferredSafe){
+      masterRuntimeState.error='';
     }else if(st.q.synchronized!==true){
+      masterRuntimeState.configDeferredSafe=false;
       masterRuntimeState.error=String(st.q.reason||'MASTER_CONFIG_OUT_OF_SYNC');
     }
 
     renderControllerIdentity();
     return masterRuntimeState.synchronized;
   }catch(e){
-    masterRuntimeState={...masterRuntimeState,heartbeatFresh:false,synchronized:false,error:String(e?.message||'MASTER_RUNTIME_ERROR')};
+    masterRuntimeState={...masterRuntimeState,heartbeatFresh:false,synchronized:false,configDeferredSafe:false,error:String(e?.message||'MASTER_RUNTIME_ERROR')};
     renderControllerIdentity();
     return false;
   }finally{
