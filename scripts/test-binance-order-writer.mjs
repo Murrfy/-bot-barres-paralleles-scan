@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { placeStandardOrderIdempotent, BinanceRequestError } from '../lib/binance-order-writer.mjs';
+import { placeStandardOrderIdempotent, signedBinanceRequest, BinanceRequestError } from '../lib/binance-order-writer.mjs';
 
 function jsonResponse(body,status=200){return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}})}
 const order={symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'LIMIT',timeInForce:'IOC',quantity:'0.02',reduceOnly:'true',priceMatch:'OPPONENT',newClientOrderId:'zth-EXI-0123456789abcdef01234567'};
@@ -71,4 +71,22 @@ test('unresolved ambiguous POST fails closed and never retries POST',async()=>{
     e=>e instanceof BinanceRequestError&&e.message==='ORDER_RESULT_AMBIGUOUS'&&e.ambiguous===true
   );
   assert.deepEqual(methods,['GET','POST','GET']);
+});
+
+
+test('Binance 429 preserves Retry-After metadata without marking execution ambiguous',async()=>{
+  const fetchImpl=async()=>new Response(
+    JSON.stringify({code:-1003,msg:'Too many requests'}),
+    {status:429,headers:{'Content-Type':'application/json','Retry-After':'17'}}
+  );
+  await assert.rejects(
+    signedBinanceRequest({
+      fetchImpl,path:'/fapi/v1/order',method:'POST',
+      apiKey:'k',secret:'s',params:{symbol:'BTCUSDT'},timestamp:1000
+    }),
+    e=>e instanceof BinanceRequestError &&
+      e.status===429 &&
+      e.retryAfterSeconds===17 &&
+      e.ambiguous===false
+  );
 });
