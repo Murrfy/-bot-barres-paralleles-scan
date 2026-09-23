@@ -100,7 +100,7 @@ function protectiveModeReason(mode){
   if(normalized==='RUNNING'||normalized==='PAUSE_PENDING')return '';
   return 'MASTER_PAUSED';
 }
-function executionReadiness(runtimeState,report,masterDeviceId){
+function executionReadiness(runtimeState,report,masterDeviceId,repairTarget=''){
   const age=Date.now()-Number(runtimeState?.updatedAt||0);
   if(!runtimeState?.data||String(runtimeState?.masterDeviceId||'')!==String(masterDeviceId))return 'MASTER_RUNTIME_WRONG_DEVICE';
   if(!Number.isFinite(age)||age<0||age>30000)return 'MASTER_RUNTIME_STALE';
@@ -108,12 +108,31 @@ function executionReadiness(runtimeState,report,masterDeviceId){
   if(String(data.executionMode||data.mode||'').toUpperCase()!=='REAL')return 'MASTER_RUNTIME_NOT_REAL';
   const stream=data.userStream;
   if(!stream||stream.connected!==true||stream.ready!==true||stream.failClosed!==false||stream.needsReconciliation!==false)return 'USER_STREAM_NOT_READY';
+
   const reportAge=Date.now()-Number(report?.observedAt||0);
-  if(!report||report.version!==2||report.status!=='CLEAN_REAL'||report.failClosed!==false||!Array.isArray(report.reasons)||report.reasons.length)return 'BINANCE_RECONCILIATION_MISMATCH';
+  if(!report||report.version!==2||!Array.isArray(report.reasons))return 'BINANCE_RECONCILIATION_MISMATCH';
   if(!Number.isFinite(reportAge)||reportAge<0||reportAge>10000)return 'BINANCE_RECONCILIATION_STALE';
   const currentDataHash=sha256(stableStringify(data));
   if(String(report.runtimeDataHash||'')!==currentDataHash)return 'BINANCE_RECONCILIATION_RUNTIME_CHANGED';
-  return '';
+
+  const clean=report.status==='CLEAN_REAL'&&report.failClosed===false&&report.reasons.length===0;
+  if(clean)return '';
+
+  const target=String(repairTarget||'').toUpperCase();
+  const missing=Array.isArray(report?.differences?.missingProtections)
+    ?report.differences.missingProtections.map(x=>String(x||'').toUpperCase())
+    :[];
+  const protectionOnly=
+    target &&
+    report.status==='MISMATCH' &&
+    report.failClosed===true &&
+    report.reasons.length===1 &&
+    report.reasons[0]==='MISSING_BINANCE_PROTECTION' &&
+    missing.length===1 &&
+    missing[0]===target;
+  if(protectionOnly)return '';
+
+  return 'BINANCE_RECONCILIATION_MISMATCH';
 }
 
 export default async function handler(req,res){
@@ -145,13 +164,21 @@ export default async function handler(req,res){
   const modeReason=protectiveModeReason(masterModeRaw);
   if(modeReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:modeReason,writeAttempted:false});
 
-  const readinessReason=executionReadiness(runtimeState,report,master.deviceId);
-  if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
-
   const type=String(req.body?.type||'').toUpperCase();
   if(!['EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY'].includes(type)){
     return send(res,400,{ok:false,code:'PROTECTIVE_COMMAND_UNSUPPORTED',writeAttempted:false});
   }
+
+  const repairSymbol=String(req.body?.symbol||'').toUpperCase();
+  const repairDirection=String(req.body?.direction||'').toUpperCase();
+  const repairTarget=
+    type==='EXEC_CLOSE_POSITION' &&
+    /^[A-Z0-9]{3,30}$/.test(repairSymbol) &&
+    ['LONG','SHORT'].includes(repairDirection)
+      ?`${repairSymbol}:${repairDirection}`
+      :'';
+  const readinessReason=executionReadiness(runtimeState,report,master.deviceId,repairTarget);
+  if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
 
   const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED);
 
