@@ -936,6 +936,15 @@ if (!syncTrustedIp.includes("headers['x-vercel-forwarded-for']") ||
   fail('Zenith auth rate limits must prefer Vercel trusted forwarded IP while retaining cloud fallback');
 }
 
+const boundedAuthSource = fs.readFileSync('api/zenith-sync.js','utf8');
+if (!boundedAuthSource.includes('AUTH_SECRET_INPUT_MAX_CHARS = 256') ||
+    !boundedAuthSource.includes('REPLACEMENT_CODE_INPUT_MAX_CHARS = 64') ||
+    !boundedAuthSource.includes("'PAIRING_CODE_INPUT_TOO_LARGE'") ||
+    !boundedAuthSource.includes("'MASTER_ADMIN_CODE_INPUT_TOO_LARGE'") ||
+    !boundedAuthSource.includes("'CONTROLLER_REPLACEMENT_CODE_INPUT_TOO_LARGE'")) {
+  fail('pairing, admin and controller replacement secret inputs must remain explicitly bounded');
+}
+
 const safetyWorkflowRunner = fs.readFileSync('.github/workflows/zenith-safety.yml','utf8');
 if (!safetyWorkflowRunner.includes('runs-on: ubuntu-24.04') ||
     safetyWorkflowRunner.includes('runs-on: ubuntu-latest')) {
