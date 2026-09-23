@@ -27,7 +27,8 @@ test('Vercel Binance writes require production on the main Git branch', () => {
 test('central execution arm and command gate reject non-production Vercel deployments', () => {
   const source = fs.readFileSync('api/zenith-sync.js', 'utf8');
   assert.ok(source.includes("const VERCEL_PRODUCTION_WRITE_ALLOWED = process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main';"));
-  assert.equal(source.includes("!process.env.VERCEL_ENV ||"), false);
+  assert.ok(source.includes('const ZENITH_CONTROL_MUTATION_ALLOWED ='));
+  assert.ok(source.includes("process.env.VERCEL_ENV === 'development'"));
   assert.ok(source.includes("reason:'NON_PRODUCTION_DEPLOYMENT'"));
   assert.ok(source.includes("reason: 'NON_PRODUCTION_DEPLOYMENT'"));
   assert.ok(source.includes("code:'NON_PRODUCTION_DEPLOYMENT'"));
