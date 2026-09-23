@@ -272,6 +272,27 @@ if (!riskPolicy.includes('maxActivePositions: 3') ||
   fail('real-entry risk policy must enforce server-side position, leverage, margin, notional, loss, position-mode and isolated-margin gates');
 }
 
+const realProtectionLevels = fs.readFileSync('lib/real-protection-levels.mjs','utf8');
+for (const required of [
+  'buildRealProtectionLevels',
+  'validateMaxLossTrigger',
+  'REAL_RISK_LIMITS.maxLossUsd',
+  'grossPricePnlOnly: true'
+]) {
+  if (!realProtectionLevels.includes(required)) fail(`real protection level invariant missing: ${required}`);
+}
+const protectiveUpdateExecute = fs.readFileSync('api/binance-protective-update-execute.js','utf8');
+if (!protectiveUpdateExecute.includes('validateMaxLossTrigger({') ||
+    !protectiveUpdateExecute.includes('hardMaxLossUsd:REAL_RISK_LIMITS.maxLossUsd') ||
+    !protectiveUpdateExecute.includes('MAX_LOSS_TRIGGER_INVALID')) {
+  fail('real MAX-LOSS updates must be revalidated server-side against the hard $400 loss cap');
+}
+if (!index.includes("import('/lib/real-protection-levels.mjs')") ||
+    !index.includes('OBJECTIF AUTO') ||
+    !index.includes('PERTE MAX AUTO')) {
+  fail('iPhone controller must expose automatic real objective and max-loss levels from the shared calculator');
+}
+
 const binanceReconcile = fs.readFileSync('api/binance-reconcile.js', 'utf8');
 for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
   if (binanceReconcile.includes(forbidden)) {
