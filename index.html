@@ -49,6 +49,7 @@
     <span id="masterModeBadge" class="live" hidden>MASTER —</span>
     <span id="masterWakeBadge" class="live" hidden>ÉCRAN MASTER —</span>
     <a class="btn" href="/master-admin.html">Administration MASTER</a>
+    <button id="masterAuthorizeBtn" class="btn good" hidden>Autoriser MASTER</button>
     <button id="masterPauseBtn" class="btn danger" hidden>Pause MASTER</button>
     <button id="masterCancelPauseBtn" class="btn" hidden>Annuler pause en attente</button>
     <button id="masterResumeBtn" class="btn good" hidden>Reprendre MASTER</button>
@@ -212,7 +213,7 @@ let controllerRealCommandModule=null,controllerRealProtectionModule=null,realClo
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
-let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
+let masterControlState={mode:'',masterRegistered:false,masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
 let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,realExecutionArmed:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
 let masterWakeLock={sentinel:null,requesting:false,lastAttemptAt:0,error:''};
 let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEvents:[],reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
@@ -711,10 +712,10 @@ function renderControllerIdentity(){
   applyMasterReadOnlyPolicy();
 }
 function renderMasterControls(){
-  const badge=$('masterModeBadge'),pauseBtn=$('masterPauseBtn'),cancelBtn=$('masterCancelPauseBtn'),resumeBtn=$('masterResumeBtn'),panicBtn=$('panicStopBtn'),revokeBtn=$('masterRevokeBtn'),panicClearBtn=$('panicClearBtn');
-  if(!badge||!pauseBtn||!cancelBtn||!resumeBtn||!panicBtn||!revokeBtn||!panicClearBtn)return;
+  const badge=$('masterModeBadge'),authorizeBtn=$('masterAuthorizeBtn'),pauseBtn=$('masterPauseBtn'),cancelBtn=$('masterCancelPauseBtn'),resumeBtn=$('masterResumeBtn'),panicBtn=$('panicStopBtn'),revokeBtn=$('masterRevokeBtn'),panicClearBtn=$('panicClearBtn');
+  if(!badge||!authorizeBtn||!pauseBtn||!cancelBtn||!resumeBtn||!panicBtn||!revokeBtn||!panicClearBtn)return;
   const visible=controllerIdentity.paired&&controllerIdentity.role==='controller';
-  badge.hidden=!visible;pauseBtn.hidden=!visible;resumeBtn.hidden=!visible;panicBtn.hidden=!visible;revokeBtn.hidden=!visible;
+  badge.hidden=!visible;authorizeBtn.hidden=!visible||masterControlState.masterRegistered!==true||masterControlState.masterLeaseActive===true;pauseBtn.hidden=!visible;resumeBtn.hidden=!visible;panicBtn.hidden=!visible;revokeBtn.hidden=!visible;
   if(!visible){cancelBtn.hidden=true;panicClearBtn.hidden=true;return}
   const mode=String(masterControlState.mode||'');
   cancelBtn.hidden=mode!=='PAUSE_PENDING';
@@ -735,6 +736,7 @@ function renderMasterControls(){
     badge.textContent='MASTER EN PAUSE · '+rev;
     badge.classList.remove('on');
   }
+  authorizeBtn.disabled=masterControlState.error||masterControlState.masterRegistered!==true||masterControlState.masterLeaseActive===true;
   pauseBtn.disabled=mode==='PAUSED'||mode==='PAUSE_PENDING';
   resumeBtn.disabled=mode==='RUNNING'||mode==='PAUSE_PENDING'||masterControlState.masterLeaseActive!==true||masterControlState.masterSyncFailClosed||!masterControlState.masterHeartbeatFresh;
   cancelBtn.disabled=mode!=='PAUSE_PENDING'||masterControlState.masterLeaseActive!==true;
@@ -745,7 +747,7 @@ function renderMasterControls(){
 }
 async function refreshMasterControls(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
-    masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
+    masterControlState={mode:'',masterRegistered:false,masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
     renderMasterControls();
     return false;
   }
@@ -758,6 +760,7 @@ async function refreshMasterControls(){
     if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
     masterControlState={
       mode:String(q.masterMode||'PAUSED'),
+      masterRegistered:q.masterRegistered===true,
       masterLeaseActive:q.masterLeaseActive===true,
       controllerRevision:Math.max(0,n(q.controllerRevision,0)),
       masterAppliedRevision:Math.max(0,n(q.masterAppliedRevision,0)),
@@ -774,6 +777,29 @@ async function refreshMasterControls(){
     renderMasterControls();
     return false;
   }
+}
+async function controllerAuthorizeMaster(){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
+  if(masterControlState.masterRegistered!==true)return setStatus('Aucun MASTER enregistré à autoriser.',true);
+  if(masterControlState.masterLeaseActive===true)return setStatus('MASTER déjà actif.');
+  const adminCode=prompt('Code ADMIN MASTER pour autoriser l’iPad MASTER :');
+  if(adminCode===null)return;
+  if(!adminCode)return setStatus('Code ADMIN MASTER requis.',true);
+  const btn=$('masterAuthorizeBtn');if(btn)btn.disabled=true;
+  try{
+    const r=await fetch('/api/zenith-sync?action=master-authorize',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify({adminCode})
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    setStatus('MASTER autorisé temporairement pendant '+String(q.expiresInSeconds||120)+' secondes. L’iPad peut reprendre son lease.');
+    await refreshMasterControls();
+  }catch(e){
+    setStatus('Autorisation MASTER refusée : '+String(e?.message||'erreur')+'.',true);
+    await refreshMasterControls();
+  }finally{if(btn)btn.disabled=false}
 }
 async function controllerPanicStop(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
@@ -2347,7 +2373,7 @@ $('manualTokenAddBtn').onclick=addManualToken;$('manualTokenInput').addEventList
 // Aucun changement de Position max / Jour-Nuit / Son / Vibration n’est appliqué automatiquement.
 ['fMargin','fLev'].forEach(id=>$(id).addEventListener('input',()=>{if(!selectedSymbol)return;const m=Math.max(1,n($('fMargin').value,settings.margin)),l=clamp(n($('fLev').value,settings.leverage),1,125),d=futuresDraft(selectedSymbol,m,l,'LIMIT');$('fSummary').textContent=`Marge : ISOLÉE · Notionnel demandé : $${(m*l).toFixed(2)}${d.qty>0?` · effectif ≈ $${d.effectiveNotional.toFixed(2)}`:''}`;$('fLimits').textContent=limitsText(selectedSymbol,m,l);updateTokenPreview()}));['tExactBuyPrice','tExactSalePrice'].forEach(id=>$(id).addEventListener('input',updateTokenPreview));$('tTarget').addEventListener('input',()=>{if($('tTarget').dataset.exactAuto!=='1'){$('tTarget').dataset.manualTarget=$('tTarget').value;syncProtectionsToTarget(Math.max(0,n($('tTarget').value,settings.targetProfit)))}updateTokenPreview()});['tExactBuy','tExactSale'].forEach(id=>$(id).addEventListener('change',updateTokenPreview));
 $('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();save()});
-$('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('masterRevokeBtn').onclick=controllerRevokeMaster;$('panicClearBtn').onclick=controllerClearPanic;
+$('masterAuthorizeBtn').onclick=controllerAuthorizeMaster;$('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('masterRevokeBtn').onclick=controllerRevokeMaster;$('panicClearBtn').onclick=controllerClearPanic;
 $('resetClosedBtn').onclick=()=>{if(!confirm('Effacer les gains, pertes et trades fermés ?'))return;history=[];save();renderAll()};$('resetSimBtn').onclick=()=>{if(!confirm('Réinitialiser les positions simulées et les achats surveillés ?'))return;openPositions=[];validated={};revalidateBlock={};missedSignals={};manualTokens={};save();syncRealtime();renderAll();setStatus('Simulation réinitialisée.')};
 document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio();if(controllerIdentity.role==='master')syncMasterWakeLock(true)},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){syncMasterWakeLock(true);masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
 load();applyTheme();renderAll();ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startControllerIdentityCheck();
