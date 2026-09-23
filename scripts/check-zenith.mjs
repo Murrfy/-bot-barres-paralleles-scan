@@ -1213,5 +1213,31 @@ if (realEntryPermissionRevalidation.indexOf('fetchBinanceTradingApiPermissions(a
   fail('Binance trading-key permission revalidation must happen before real-entry Futures preflight');
 }
 
+const binanceBackoffSource = fs.readFileSync('lib/binance-write-backoff.mjs','utf8');
+for (const required of [
+  'BINANCE_WRITE_BACKOFF_KEY',
+  'binanceBackoffSecondsFromError',
+  'readBinanceWriteBackoff',
+  'registerBinanceWriteBackoff'
+]) {
+  if (!binanceBackoffSource.includes(required)) fail(`Binance write backoff invariant missing: ${required}`);
+}
+for (const file of [
+  'api/binance-entry-execute.js',
+  'api/binance-protective-execute.js',
+  'api/binance-protective-update-execute.js',
+  'api/binance-order-test.js'
+]) {
+  const source = fs.readFileSync(file,'utf8');
+  for (const required of [
+    'readBinanceWriteBackoff',
+    'registerBinanceWriteBackoff',
+    "'BINANCE_WRITE_BACKOFF_ACTIVE'",
+    "'BINANCE_RATE_LIMITED'"
+  ]) {
+    if (!source.includes(required)) fail(`${file} missing Binance backoff guard: ${required}`);
+  }
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
