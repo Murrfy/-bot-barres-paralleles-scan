@@ -106,6 +106,8 @@ jobs:
         run: node scripts/test-redis-fetch-timeouts.mjs
       - name: Test exact CSP inline script hashes
         run: node scripts/test-csp-inline-script-hashes.mjs
+      - name: Test exact CSP style hashes
+        run: node scripts/test-csp-style-hashes.mjs
       - name: Test Vercel production-only Binance write gate
         run: node --test scripts/test-vercel-production-write-gate.mjs
       - name: Test deterministic order planning
