@@ -493,19 +493,59 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
   };
 }
 
-async function persistReport(report, runtimeRaw = null) {
+async function beginReconciliationAttempt(marker) {
   const script = [
     "local previous = redis.call('GET', KEYS[1])",
     "if previous then",
     "  local ok, value = pcall(cjson.decode, previous)",
     "  if ok and tonumber(value.observedAt or 0) >= tonumber(ARGV[1]) then return 0 end",
     "end",
-    "if ARGV[3] == '1' and (redis.call('GET', KEYS[2]) or '') ~= ARGV[4] then return -1 end",
     "redis.call('SET', KEYS[1], ARGV[2], 'EX', '30')",
     "return 1"
   ].join('\n');
-  return Number(await redis(['EVAL', script, '2', KEY_RECONCILE_LAST, KEY_STATE,
-    String(report.observedAt), JSON.stringify(report), runtimeRaw === null ? '0' : '1', runtimeRaw || '']));
+  return Number(await redis([
+    'EVAL', script, '1',
+    KEY_RECONCILE_LAST,
+    String(marker.observedAt),
+    JSON.stringify(marker),
+  ]));
+}
+
+async function commitReconciliationAttempt(report, runtimeRaw, attemptId) {
+  const script = [
+    "local current = redis.call('GET', KEYS[1])",
+    "if not current then return 0 end",
+    "local ok, value = pcall(cjson.decode, current)",
+    "if not ok or tostring(value.attemptId or '') ~= ARGV[1] then return 0 end",
+    "if (redis.call('GET', KEYS[2]) or '') ~= ARGV[2] then return -1 end",
+    "redis.call('SET', KEYS[1], ARGV[3], 'EX', '30')",
+    "return 1"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL', script, '2',
+    KEY_RECONCILE_LAST,
+    KEY_STATE,
+    String(attemptId || ''),
+    runtimeRaw || '',
+    JSON.stringify(report),
+  ]));
+}
+
+async function failReconciliationAttempt(report, attemptId) {
+  const script = [
+    "local current = redis.call('GET', KEYS[1])",
+    "if not current then return 0 end",
+    "local ok, value = pcall(cjson.decode, current)",
+    "if not ok or tostring(value.attemptId or '') ~= ARGV[1] then return 0 end",
+    "redis.call('SET', KEYS[1], ARGV[2], 'EX', '30')",
+    "return 1"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL', script, '1',
+    KEY_RECONCILE_LAST,
+    String(attemptId || ''),
+    JSON.stringify(report),
+  ]));
 }
 
 export default async function handler(req, res) {
@@ -578,6 +618,34 @@ export default async function handler(req, res) {
   }
 
   const started = Date.now();
+  const attemptId = crypto.randomUUID();
+  const attemptMarker = {
+    version: 2,
+    observedAt: started,
+    completedAt: 0,
+    status: 'IN_PROGRESS',
+    failClosed: true,
+    reasons: ['BINANCE_RECONCILIATION_IN_PROGRESS'],
+    attemptId,
+    deviceRole: device.role,
+  };
+
+  try {
+    const begun = await beginReconciliationAttempt(attemptMarker);
+    if (begun !== 1) {
+      return send(res, 409, {
+        ok: false,
+        code: 'BINANCE_RECONCILIATION_SUPERSEDED',
+        error: 'Une réconciliation Binance plus récente est déjà active.',
+      });
+    }
+  } catch (e) {
+    return send(res, 503, {
+      ok: false,
+      code: e?.code || 'RECONCILIATION_STATE_UNAVAILABLE',
+      error: 'État de réconciliation indisponible.',
+    });
+  }
 
   try {
     const [time, runtimeRaw] = await Promise.all([
@@ -633,13 +701,16 @@ export default async function handler(req, res) {
       serverTime,
       latencyMs: Date.now() - started,
       deviceRole: device.role,
+      attemptId,
       ...result,
     };
 
     const reportHash = sha256(JSON.stringify(report));
     const stored = { ...report, reportHash };
 
-    if (await persistReport(stored, runtimeRaw || '') !== 1) throw new Error('RECONCILIATION_SUPERSEDED_OR_RUNTIME_CHANGED');
+    if (await commitReconciliationAttempt(stored, runtimeRaw || '', attemptId) !== 1) {
+      throw new Error('RECONCILIATION_SUPERSEDED_OR_RUNTIME_CHANGED');
+    }
     await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
       at: observedAt,
       kind: 'BINANCE_RECONCILIATION',
@@ -654,9 +725,19 @@ export default async function handler(req, res) {
 
     return send(res, 200, { ok: true, report: stored });
   } catch (e) {
-    // Invalidate an earlier clean result when the new observation fails.
+    // The IN_PROGRESS marker already invalidated older CLEAN reports. Replace it
+    // with UNAVAILABLE only if this request still owns the same reconciliation attempt.
     try {
-      await persistReport({ version: 2, observedAt: started, status: 'UNAVAILABLE', failClosed: true, reasons: ['BINANCE_RECONCILE_FAILED'] });
+      await failReconciliationAttempt({
+        version: 2,
+        observedAt: started,
+        completedAt: Date.now(),
+        status: 'UNAVAILABLE',
+        failClosed: true,
+        reasons: ['BINANCE_RECONCILE_FAILED'],
+        attemptId,
+        deviceRole: device.role,
+      }, attemptId);
     } catch {}
     return send(res, 502, {
       ok: false,
