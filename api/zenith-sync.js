@@ -174,11 +174,11 @@ async function binanceJson(url, init = {}) {
 }
 
 async function fetchBinanceApiPermissions() {
-  const apiKey = process.env.BINANCE_API_KEY || '';
-  const secret = process.env.BINANCE_API_SECRET || '';
+  const apiKey = process.env.BINANCE_TRADING_API_KEY || '';
+  const secret = process.env.BINANCE_TRADING_API_SECRET || '';
   if (!apiKey || !secret) {
-    const error = new Error('BINANCE_API_CREDENTIALS_MISSING');
-    error.code = 'BINANCE_API_CREDENTIALS_MISSING';
+    const error = new Error('BINANCE_TRADING_CREDENTIALS_MISSING');
+    error.code = 'BINANCE_TRADING_CREDENTIALS_MISSING';
     throw error;
   }
 
