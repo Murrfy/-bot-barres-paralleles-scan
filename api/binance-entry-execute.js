@@ -238,11 +238,14 @@ export default async function handler(req,res){
       symbol:request.symbol,
       leg:'ENTRY',
     });
+    const time=await jsonFetch(`${BASE}/fapi/v1/time`);
+    const serverTime=Number(time?.serverTime);
+    if(!Number.isFinite(serverTime))throw new Error('BINANCE_TIME_UNAVAILABLE');
 
     // Recovery path first: a previous POST may have succeeded while its response was lost.
     try{
       const existing=await queryOrderByClientId({
-        apiKey,secret,symbol:request.symbol,clientOrderId,timestamp:Date.now(),
+        apiKey,secret,symbol:request.symbol,clientOrderId,timestamp:serverTime,
       });
       const mismatch=validateExistingEntry(existing,request,clientOrderId);
       if(mismatch)return send(res,409,{ok:false,code:mismatch,writeAttempted:false});
@@ -273,13 +276,10 @@ export default async function handler(req,res){
       if(!(e instanceof BinanceRequestError)||Number(e.code)!==-2013)throw e;
     }
 
-    const [time,exchangeInfo,ticker]=await Promise.all([
-      jsonFetch(`${BASE}/fapi/v1/time`),
+    const [exchangeInfo,ticker]=await Promise.all([
       jsonFetch(`${BASE}/fapi/v1/exchangeInfo`),
       jsonFetch(`${BASE}/fapi/v1/ticker/price?symbol=${encodeURIComponent(request.symbol)}`),
     ]);
-    const serverTime=Number(time?.serverTime);
-    if(!Number.isFinite(serverTime))throw new Error('BINANCE_TIME_UNAVAILABLE');
 
     const [symbolConfigRaw,bracketsRaw,positionMode,account,positions,standardOrders,algoOrders]=await Promise.all([
       signedGet('/fapi/v1/symbolConfig',apiKey,secret,serverTime,{symbol:request.symbol}),
@@ -335,12 +335,15 @@ export default async function handler(req,res){
       return send(res,409,{ok:false,code:e?.message||'ENTRY_PLAN_INVALID',writeAttempted:false});
     }
 
+    const writeTime=await jsonFetch(`${BASE}/fapi/v1/time`);
+    const writeServerTime=Number(writeTime?.serverTime);
+    if(!Number.isFinite(writeServerTime))throw new Error('BINANCE_WRITE_TIME_UNAVAILABLE');
     const result=await placeStandardOrderIdempotent({
       apiKey,
       secret,
       orderParams:plan.params,
       writesEnabled:true,
-      timestamp:Date.now(),
+      timestamp:writeServerTime,
     });
     if(result?.ok!==true){
       return send(res,502,{ok:false,code:'ENTRY_WRITE_NOT_ACCEPTED',result,writeAttempted:result?.writeAttempted===true});
