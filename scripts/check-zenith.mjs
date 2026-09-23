@@ -160,6 +160,19 @@ if (!userStreamState.includes('needsReconciliation = true') ||
   fail('Binance user-stream state machine must fail closed on reconnect/discontinuity');
 }
 
+const masterCommandDispatch = fs.readFileSync('lib/master-command-dispatch.mjs','utf8');
+for (const required of ["EXEC_CLOSE_POSITION","/api/binance-protective-execute","COMMAND_TYPE_NOT_IMPLEMENTED","TARGET_PRICE_REQUIRED"]) {
+  if (!masterCommandDispatch.includes(required)) fail(`MASTER command dispatch invariant missing: ${required}`);
+}
+if (!index.includes("masterRuntimeApi('command-next','POST'") ||
+    !index.includes("masterRuntimeApi('command-ack','POST'") ||
+    !index.includes("masterRuntimeApi('command-requeue','POST'") ||
+    !index.includes("fetch(plan.endpoint") ||
+    !index.includes("scheduleMasterCommandWorker") ||
+    !index.includes("stopMasterCommandWorker")) {
+  fail('iPad MASTER must consume validated commands, execute protective dispatch, ack only success and requeue failures');
+}
+
 const binanceOrderWriter = fs.readFileSync('lib/binance-order-writer.mjs','utf8');
 for (const required of [
   "queryOrderByClientId",
