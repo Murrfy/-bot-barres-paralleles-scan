@@ -118,6 +118,8 @@ jobs:
         run: node scripts/test-csp-style-hashes.mjs
       - name: Test Vercel production-only Binance write gate
         run: node --test scripts/test-vercel-production-write-gate.mjs
+      - name: Test Vercel preview control mutation gate
+        run: node --test scripts/test-vercel-control-mutation-gate.mjs
       - name: Test deterministic order planning
         run: node --test scripts/test-order-intent.mjs
       - name: Test fail-closed entry protection gate
