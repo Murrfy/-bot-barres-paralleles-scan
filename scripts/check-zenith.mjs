@@ -262,6 +262,11 @@ if (!orderIntent.includes("ENTRY_PREFLIGHT_MAX_AGE_MS = 5000") ||
 }
 
 const riskPolicy = fs.readFileSync('lib/risk-policy.mjs', 'utf8');
+const entryProtectionGate = fs.readFileSync('lib/entry-protection-gate.mjs','utf8');
+if (!entryProtectionGate.includes("import { REAL_RISK_LIMITS } from './risk-policy.mjs'") ||
+    !entryProtectionGate.includes('impliedLossUsd > REAL_RISK_LIMITS.maxLossUsd + 1e-8')) {
+  fail('future real-entry protection gate must reject emergency stops whose implied loss exceeds the shared $400 cap');
+}
 if (!riskPolicy.includes('maxActivePositions: 3') ||
     !riskPolicy.includes('maxLeverage: 10') ||
     !riskPolicy.includes('maxMarginUsdt: 1000') ||
@@ -387,6 +392,11 @@ if (!index.includes("String(o?.timeInForce||'').toUpperCase()==='GTC'") ||
 }
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
+if (!sync.includes("import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs'") ||
+    !sync.includes('function runtimeEmergencyProtection(runtimeState, symbol, direction, entryPrice, quantity, excludeClientAlgoId') ||
+    !sync.includes('impliedLossUsd <= REAL_RISK_LIMITS.maxLossUsd + 1e-8')) {
+  fail('central execution ACK must independently enforce the shared $400 emergency-loss cap with live position quantity');
+}
 if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
     !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req)')) {
   fail('zenith-sync must use secure device sessions and same-origin mutation protection');
