@@ -1053,5 +1053,17 @@ if (!atomicPairSession.includes('const pairSessionScript = [') ||
   fail('pairing must atomically advance the role epoch and create the new device session');
 }
 
+const secretCompareSource = fs.readFileSync('api/zenith-sync.js','utf8');
+const timingStart = secretCompareSource.indexOf('function timingSafeEqualText');
+const timingEnd = timingStart >= 0 ? secretCompareSource.indexOf('\n}', timingStart) + 2 : -1;
+const timingBlock = timingStart >= 0 && timingEnd > timingStart
+  ? secretCompareSource.slice(timingStart, timingEnd)
+  : '';
+if (!timingBlock.includes("createHash('sha256')") ||
+    !timingBlock.includes('crypto.timingSafeEqual') ||
+    timingBlock.includes('.length !==')) {
+  fail('authentication secrets must be compared as fixed-length SHA-256 digests');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
