@@ -27,6 +27,8 @@ jobs:
         run: node --check api/binance-reconcile.js
       - name: Check Binance entry preflight API syntax
         run: node --check api/binance-entry-preflight.js
+      - name: Check Binance real entry execution API syntax
+        run: node --check api/binance-entry-execute.js
       - name: Check protective execution API syntax
         run: node --check api/binance-protective-execute.js
       - name: Check Binance user-stream session API syntax
@@ -47,6 +49,10 @@ jobs:
         run: node --test scripts/test-command-safety.mjs
       - name: Test real-entry risk preflight
         run: node --test scripts/test-entry-preflight.mjs
+      - name: Test guarded real-entry execution
+        run: node --test scripts/test-binance-entry-execute.mjs
+      - name: Test real-entry stream acceptance state
+        run: node --test scripts/test-entry-execution-state.mjs
       - name: Test secure device session
         run: node --test scripts/test-device-session.mjs
       - name: Test deterministic order planning
