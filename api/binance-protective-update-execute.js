@@ -121,6 +121,7 @@ function findAlgo(runtimeState,symbol,clientAlgoId){
 }
 function emergencyProtection(runtimeState,update,entryPrice,excludeClientAlgoId=''){
   const side=sideForDirection(update.direction);
+  const quantity=n(update?.quantity,NaN);
   return runtimeOrders(runtimeState).find(o=>{
     if(String(o?.orderClass||'').toUpperCase()!=='ALGO')return false;
     if(String(o?.symbol||'').toUpperCase()!==update.symbol)return false;
@@ -130,8 +131,13 @@ function emergencyProtection(runtimeState,update,entryPrice,excludeClientAlgoId=
     if(!bool(o?.closePosition))return false;
     if(String(o?.clientAlgoId||'')===String(excludeClientAlgoId||''))return false;
     const trigger=n(o?.triggerPrice??o?.stopPrice);
-    if(!(trigger>0))return false;
-    return update.direction==='LONG'?trigger<entryPrice:trigger>entryPrice;
+    if(!(trigger>0)||!(entryPrice>0)||!(quantity>0))return false;
+    const lossSide=update.direction==='LONG'?trigger<entryPrice:trigger>entryPrice;
+    if(!lossSide)return false;
+    const impliedLossUsd=update.direction==='LONG'
+      ?(entryPrice-trigger)*quantity
+      :(trigger-entryPrice)*quantity;
+    return impliedLossUsd<=REAL_RISK_LIMITS.maxLossUsd+1e-8;
   })||null;
 }
 
