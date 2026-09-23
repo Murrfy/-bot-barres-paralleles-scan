@@ -835,11 +835,17 @@ if (!masterStandby.includes('stableStringify(state.data)')) {
   fail('MASTER standby must verify controller state with the canonical hash');
 }
 
+const requireDeviceStartForRole = sync.indexOf('async function requireDevice');
+const requireDeviceEndForRole = sync.indexOf('async function masterDeviceId', requireDeviceStartForRole);
+const requireDeviceRoleBlock = requireDeviceStartForRole >= 0 && requireDeviceEndForRole > requireDeviceStartForRole
+  ? sync.slice(requireDeviceStartForRole, requireDeviceEndForRole)
+  : '';
 if (sync.includes('claimOrVerifyRoleDevice') ||
-    !sync.includes('async function claimRoleDevice') ||
+    sync.includes('async function claimRoleDevice') ||
+    sync.includes('await claimRoleDevice(role, deviceId)') ||
     !sync.includes('async function verifyRoleDevice') ||
-    !sync.includes('await claimRoleDevice(role, deviceId)') ||
-    !sync.includes('await verifyRoleDevice(device.role, device)')) {
+    !requireDeviceRoleBlock.includes('await verifyRoleDevice(device.role, device)') ||
+    requireDeviceRoleBlock.includes("redis(['SET', roleDeviceKey")) {
   fail('authenticated devices must never auto-claim a missing controller or MASTER role');
 }
 if (!sync.includes('MASTER_ADMIN_FAILURE_LIMIT = 5') ||
