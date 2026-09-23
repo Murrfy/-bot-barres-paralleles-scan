@@ -20,7 +20,7 @@ const MASTER_ADMIN_CODE = process.env.ZENITH_MASTER_ADMIN_CODE || '';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
-const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || process.env.VERCEL_ENV === 'production';
+const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || (process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main');
 const BINANCE_API_BASE = 'https://api.binance.com';
 const BINANCE_API_RESTRICTIONS_PATH = '/sapi/v1/account/apiRestrictions';
 const BINANCE_API_TIME_PATH = '/api/v3/time';
