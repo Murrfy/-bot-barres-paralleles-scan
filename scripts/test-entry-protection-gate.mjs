@@ -44,3 +44,37 @@ test('missing protection fails closed',()=>{
   assert.equal(r.ready,false);
   assert.equal(r.reason,'ENTRY_PROTECTION_NOT_ARMED');
 });
+
+
+test('entry protection refuses a STOP_MARKET whose implied loss exceeds $400',()=>{
+  const safe=findCoveringEntryProtection(runtime([{
+    symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP_MARKET',closePosition:true,reduceOnly:false,
+    triggerPrice:'49600',clientAlgoId:'protect-safe'
+  }]),{symbol:'BTCUSDT',side:'BUY',quantity:1,limitPrice:50000});
+  assert.equal(safe.ready,true);
+
+  const unsafe=findCoveringEntryProtection(runtime([{
+    symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP_MARKET',closePosition:true,reduceOnly:false,
+    triggerPrice:'49599.99',clientAlgoId:'protect-too-far'
+  }]),{symbol:'BTCUSDT',side:'BUY',quantity:1,limitPrice:50000});
+  assert.equal(unsafe.ready,false);
+  assert.equal(unsafe.reason,'ENTRY_PROTECTION_NOT_ARMED');
+});
+
+test('SHORT entry protection applies the same $400 cap',()=>{
+  const safe=findCoveringEntryProtection(runtime([{
+    symbol:'BTCUSDT',side:'BUY',positionSide:'BOTH',
+    type:'STOP_MARKET',closePosition:true,reduceOnly:false,
+    triggerPrice:'50400',clientAlgoId:'protect-short-safe'
+  }]),{symbol:'BTCUSDT',side:'SELL',quantity:1,limitPrice:50000});
+  assert.equal(safe.ready,true);
+
+  const unsafe=findCoveringEntryProtection(runtime([{
+    symbol:'BTCUSDT',side:'BUY',positionSide:'BOTH',
+    type:'STOP_MARKET',closePosition:true,reduceOnly:false,
+    triggerPrice:'50400.01',clientAlgoId:'protect-short-too-far'
+  }]),{symbol:'BTCUSDT',side:'SELL',quantity:1,limitPrice:50000});
+  assert.equal(unsafe.ready,false);
+});
