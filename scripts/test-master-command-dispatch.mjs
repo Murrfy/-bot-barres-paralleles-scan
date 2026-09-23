@@ -33,7 +33,7 @@ test('exact normal close requires explicit target price',()=>{
 });
 
 test('entry and not-yet-implemented protective mutations are never dispatched as writes',()=>{
-  for(const type of ['EXEC_OPEN_POSITION','EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION','EXEC_CANCEL_ENTRY']){
+  for(const type of ['EXEC_OPEN_POSITION','EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION']){
     const d=buildMasterCommandDispatch({id:'command-12345678',type,payload:{}});
     assert.equal(d.supported,false,type);
   }
