@@ -71,6 +71,8 @@ jobs:
         run: node --test scripts/test-controller-real-command.mjs
       - name: Test iPhone real exit and protection commands
         run: node --test scripts/test-controller-protective-command.mjs
+      - name: Test strict iPhone protection inventory
+        run: node --test scripts/test-controller-protection-inventory.mjs
       - name: Test read-only Binance algo order details
         run: node --test scripts/test-binance-read-algo-details.mjs
       - name: Test idempotent Binance order writer
