@@ -267,7 +267,7 @@ export default async function handler(req,res){
     return send(res,502,{
       ok:false,
       code:e?.message==='ORDER_RESULT_AMBIGUOUS'?'ORDER_RESULT_AMBIGUOUS':'BINANCE_ENTRY_EXECUTION_FAILED',
-      error:e?.message||'Binance entry execution failed.',
+      error:'Binance entry execution failed.',
       binanceCode:e?.code??null,
       ambiguous:e?.ambiguous===true,
       writeAttempted:e?.message==='ORDER_RESULT_AMBIGUOUS',
