@@ -20,6 +20,7 @@ const MASTER_ADMIN_CODE = process.env.ZENITH_MASTER_ADMIN_CODE || '';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
+const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || process.env.VERCEL_ENV === 'production';
 
 const PREFIX = 'zenith:v1';
 const KEY_MASTER = `${PREFIX}:master`;
@@ -341,6 +342,7 @@ async function realExecutionArmStatus(expectedMasterDeviceId = '') {
   if (!record || record.version !== 1) return { armed:false, reason:'REAL_EXECUTION_NOT_ARMED', record:null };
   if (!REAL_TRADING_ENABLED) return { armed:false, reason:'REAL_TRADING_DISABLED', record };
   if (!BINANCE_WRITE_ENABLED) return { armed:false, reason:'BINANCE_WRITE_DISABLED', record };
+  if (!VERCEL_PRODUCTION_WRITE_ALLOWED) return { armed:false, reason:'NON_PRODUCTION_DEPLOYMENT', record };
   if (!DEPLOYMENT_SHA) return { armed:false, reason:'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING', record };
   if (expectedMasterDeviceId && String(record.masterDeviceId || '') !== String(expectedMasterDeviceId)) {
     return { armed:false, reason:'REAL_EXECUTION_ARM_MASTER_CHANGED', record };
@@ -494,6 +496,7 @@ function executionGate(type, halted) {
   if (!normalized.startsWith('EXEC_')) return { allowed: true, reason: '' };
   if (!REAL_TRADING_ENABLED) return { allowed: false, reason: 'REAL_TRADING_DISABLED' };
   if (!BINANCE_WRITE_ENABLED) return { allowed: false, reason: 'BINANCE_WRITE_DISABLED' };
+  if (!VERCEL_PRODUCTION_WRITE_ALLOWED) return { allowed: false, reason: 'NON_PRODUCTION_DEPLOYMENT' };
   if (!PAIRING_DISABLED) return { allowed: false, reason: 'PAIRING_OPEN' };
   if (halted && !PROTECTIVE_EXEC_COMMANDS.has(normalized)) {
     return { allowed: false, reason: 'EMERGENCY_STOP_ACTIVE' };
@@ -1347,6 +1350,7 @@ export default async function handler(req, res) {
       if (!(await verifyMasterAdminCode(req, res, device))) return;
       if (!REAL_TRADING_ENABLED) return send(res, 423, { ok:false, code:'REAL_TRADING_DISABLED' });
       if (!BINANCE_WRITE_ENABLED) return send(res, 423, { ok:false, code:'BINANCE_WRITE_DISABLED' });
+      if (!VERCEL_PRODUCTION_WRITE_ALLOWED) return send(res, 423, { ok:false, code:'NON_PRODUCTION_DEPLOYMENT' });
       if (!PAIRING_DISABLED) return send(res, 423, { ok:false, code:'PAIRING_MUST_BE_DISABLED' });
       if (!DEPLOYMENT_SHA) return send(res, 423, { ok:false, code:'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING' });
 
