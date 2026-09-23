@@ -39,8 +39,17 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
   const token=localStorage.getItem(TOKEN_KEY)||'';
   const localRole=localStorage.getItem(ROLE_KEY)||'';
   try{
+    if(token){
+      const mr=await fetch('/api/zenith-sync?action=session-migrate',{
+        method:'POST',cache:'no-store',
+        headers:{Authorization:'Bearer '+token,Accept:'application/json'}
+      });
+      const mq=await mr.json().catch(()=>({}));
+      if(!mr.ok||mq?.ok!==true||mq?.sessionReady!==true)throw new Error(mq?.code||mq?.error||('HTTP '+mr.status));
+      localStorage.removeItem(TOKEN_KEY);
+    }
     const r=await fetch('/api/zenith-sync?action=whoami',{
-      headers:{Authorization:'Bearer '+token,Accept:'application/json'},
+      headers:{Accept:'application/json'},
       cache:'no-store'
     });
     const q=await r.json().catch(()=>({}));
