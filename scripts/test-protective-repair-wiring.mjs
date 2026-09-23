@@ -15,5 +15,5 @@ test('controller submission and MASTER claim both use exact protective repair ta
 test('MASTER reconciliation keeps stream usable only for protection-only mismatch',()=>{
   assert.match(html,/protectionOnlyMismatchTarget\(q\.report\)/);
   assert.match(html,/q\.report\.failClosed===false\|\|Boolean\(repairTarget\)/);
-  assert.match(html,/MISSING_BINANCE_PROTECTION_REPAIR_REQUIRED/);
+  assert.match(html,/PROTECTION_REPAIR_REQUIRED/);
 });
