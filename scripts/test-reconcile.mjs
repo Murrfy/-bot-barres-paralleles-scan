@@ -7,7 +7,10 @@ process.env.UPSTASH_REDIS_REST_URL = 'https://redis.test';
 process.env.UPSTASH_REDIS_REST_TOKEN = 'test-only';
 process.env.BINANCE_API_KEY = 'test-only';
 process.env.BINANCE_API_SECRET = 'test-only';
-const source = fs.readFileSync('api/binance-reconcile.js', 'utf8');
+const source = fs.readFileSync('api/binance-reconcile.js', 'utf8').replace(
+  /^import \{ deviceTokenCandidates \} from '\.\.\/lib\/device-session\.mjs';\n/m,
+  "const deviceTokenCandidates = req => { const h=String(req?.headers?.authorization||''); const t=h.startsWith('Bearer ')?h.slice(7).trim():''; return t?[t]:[]; };\n"
+);
 const { default: handler, reconcile, normalizeActualPosition, normalizeActualOrder } = await import(
   'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, normalizeActualPosition, normalizeActualOrder };').toString('base64')
 );

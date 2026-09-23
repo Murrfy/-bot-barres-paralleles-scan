@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-const source = fs.readFileSync('api/zenith-sync.js', 'utf8');
+const source = fs.readFileSync('api/zenith-sync.js', 'utf8').replace(
+  /^import \{ deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';\n/m,
+  "const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
+);
 const { masterConfigSyncStatus, stableStringify } = await import(
   'data:text/javascript;base64,' +
   Buffer.from(source + '\nexport { masterConfigSyncStatus, stableStringify };').toString('base64')

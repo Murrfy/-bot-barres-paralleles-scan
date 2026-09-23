@@ -5,7 +5,10 @@ import test from 'node:test';
 process.env.ZENITH_REAL_TRADING_ENABLED = '0';
 process.env.ZENITH_PAIRING_DISABLED = '0';
 
-const source = fs.readFileSync('api/zenith-sync.js', 'utf8');
+const source = fs.readFileSync('api/zenith-sync.js', 'utf8').replace(
+  /^import \{ deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';\n/m,
+  "const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
+);
 const { commandTypeAllowed, commandExpired, executionGate } = await import(
   'data:text/javascript;base64,' +
   Buffer.from(source + '\nexport { commandTypeAllowed, commandExpired, executionGate };').toString('base64')
