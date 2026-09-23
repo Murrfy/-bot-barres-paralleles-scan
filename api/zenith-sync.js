@@ -490,21 +490,6 @@ function roleDeviceKey(role) {
   return role === 'master' ? KEY_MASTER_DEVICE : KEY_CONTROLLER_DEVICE;
 }
 
-async function claimRoleDevice(role, deviceId) {
-  const key = roleDeviceKey(role);
-  const script = [
-    "local current = redis.call('GET', KEYS[1])",
-    "if not current then",
-    "  redis.call('SET', KEYS[1], ARGV[1])",
-    "  return 1",
-    "end",
-    "if current == ARGV[1] then return 1 end",
-    "return 0"
-  ].join('\n');
-  const ok = await redis(['EVAL', script, '1', key, String(deviceId)]);
-  return Number(ok) === 1;
-}
-
 async function verifyRoleDevice(role, device) {
   const deviceId = String(device?.deviceId || '');
   const [current, issuedAt] = await Promise.all([
@@ -1382,9 +1367,6 @@ export default async function handler(req, res) {
       if (claimedDeviceId && claimedDeviceId !== deviceId) {
         return send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
       }
-      if (!(await claimRoleDevice(role, deviceId))) {
-        return send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
-      }
 
       const token = crypto.randomBytes(32).toString('base64url');
       const tokenHash = sha256(token);
@@ -1397,18 +1379,26 @@ export default async function handler(req, res) {
         lastSeenAt: createdAt,
       };
       const pairSessionScript = [
+        "local current = redis.call('GET', KEYS[1])",
+        "if current and current ~= ARGV[1] then return 0 end",
         "redis.call('SET', KEYS[1], ARGV[1])",
-        "redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])",
+        "redis.call('SET', KEYS[2], ARGV[2])",
+        "redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[4])",
         "return 1"
       ].join('\n');
-      await redis([
-        'EVAL', pairSessionScript, '2',
+      const pairResult = Number(await redis([
+        'EVAL', pairSessionScript, '3',
+        roleDeviceKey(role),
         roleAssignmentKey(PREFIX, role),
         `${PREFIX}:device:${tokenHash}`,
+        String(deviceId),
         String(createdAt),
         JSON.stringify(record),
         String(DEVICE_SESSION_MAX_AGE_SECONDS),
-      ]);
+      ]));
+      if (pairResult !== 1) {
+        return send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
+      }
       setDeviceSessionCookie(res, token);
       return send(res, 201, { ok: true, sessionReady: true, device: record });
     }

@@ -35,13 +35,14 @@ test('device sessions have an absolute 30-day lifetime instead of sliding foreve
     /'DEVICE_SESSION_EXPIRED'/
   );
 
-  // Fresh pairing atomically advances the role epoch and creates the session with the full lifetime.
+  // Fresh pairing atomically claims the role, advances the epoch and creates the session with the full lifetime.
   assert.match(source, /const pairSessionScript = \[/);
   assert.match(source, /redis\.call\('SET', KEYS\[1\], ARGV\[1\]\)/);
-  assert.match(source, /redis\.call\('SET', KEYS\[2\], ARGV\[2\], 'EX', ARGV\[3\]\)/);
+  assert.match(source, /redis\.call\('SET', KEYS\[2\], ARGV\[2\]\)/);
+  assert.match(source, /redis\.call\('SET', KEYS\[3\], ARGV\[3\], 'EX', ARGV\[4\]\)/);
   assert.match(
     source,
-    /'EVAL', pairSessionScript, '2',[\s\S]*roleAssignmentKey\(PREFIX, role\),[\s\S]*\$\{PREFIX\}:device:\$\{tokenHash\}[\s\S]*String\(DEVICE_SESSION_MAX_AGE_SECONDS\)/
+    /'EVAL', pairSessionScript, '3',[\s\S]*roleDeviceKey\(role\),[\s\S]*roleAssignmentKey\(PREFIX, role\),[\s\S]*\$\{PREFIX\}:device:\$\{tokenHash\}[\s\S]*String\(DEVICE_SESSION_MAX_AGE_SECONDS\)/
   );
 
   // Controller replacement still starts with the full maximum lifetime.

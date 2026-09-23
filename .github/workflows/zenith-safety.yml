@@ -96,6 +96,8 @@ jobs:
         run: node --test scripts/test-entry-preflight-auth.mjs
       - name: Test secure device session
         run: node --test scripts/test-device-session.mjs
+      - name: Test atomic pairing role/session claim
+        run: node --test scripts/test-pairing-atomic-session.mjs
       - name: Test one-shot legacy Bearer migration
         run: node --test scripts/test-bearer-one-shot-migration.mjs
       - name: Test bounded request bodies

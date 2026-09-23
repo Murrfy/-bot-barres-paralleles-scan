@@ -835,11 +835,17 @@ if (!masterStandby.includes('stableStringify(state.data)')) {
   fail('MASTER standby must verify controller state with the canonical hash');
 }
 
+const requireDeviceStartForRole = sync.indexOf('async function requireDevice');
+const requireDeviceEndForRole = sync.indexOf('async function masterDeviceId', requireDeviceStartForRole);
+const requireDeviceRoleBlock = requireDeviceStartForRole >= 0 && requireDeviceEndForRole > requireDeviceStartForRole
+  ? sync.slice(requireDeviceStartForRole, requireDeviceEndForRole)
+  : '';
 if (sync.includes('claimOrVerifyRoleDevice') ||
-    !sync.includes('async function claimRoleDevice') ||
+    sync.includes('async function claimRoleDevice') ||
+    sync.includes('await claimRoleDevice(role, deviceId)') ||
     !sync.includes('async function verifyRoleDevice') ||
-    !sync.includes('await claimRoleDevice(role, deviceId)') ||
-    !sync.includes('await verifyRoleDevice(device.role, device)')) {
+    !requireDeviceRoleBlock.includes('await verifyRoleDevice(device.role, device)') ||
+    requireDeviceRoleBlock.includes("redis(['SET', roleDeviceKey")) {
   fail('authenticated devices must never auto-claim a missing controller or MASTER role');
 }
 if (!sync.includes('MASTER_ADMIN_FAILURE_LIMIT = 5') ||
@@ -1110,10 +1116,15 @@ for (const file of roleEpochApiFiles) {
 
 const atomicPairSession = fs.readFileSync('api/zenith-sync.js','utf8');
 if (!atomicPairSession.includes('const pairSessionScript = [') ||
-    !atomicPairSession.includes("'EVAL', pairSessionScript, '2'") ||
+    !atomicPairSession.includes("'EVAL', pairSessionScript, '3'") ||
+    !atomicPairSession.includes("local current = redis.call('GET', KEYS[1])") ||
+    !atomicPairSession.includes("if current and current ~= ARGV[1] then return 0 end") ||
     !atomicPairSession.includes("redis.call('SET', KEYS[1], ARGV[1])") ||
-    !atomicPairSession.includes("redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])")) {
-  fail('pairing must atomically advance the role epoch and create the new device session');
+    !atomicPairSession.includes("redis.call('SET', KEYS[2], ARGV[2])") ||
+    !atomicPairSession.includes("redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[4])") ||
+    !atomicPairSession.includes('roleDeviceKey(role)') ||
+    !atomicPairSession.includes('roleAssignmentKey(PREFIX, role)')) {
+  fail('pairing must atomically claim the role, advance the role epoch and create the new device session');
 }
 
 const secretCompareSource = fs.readFileSync('api/zenith-sync.js','utf8');
