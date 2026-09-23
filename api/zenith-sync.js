@@ -1976,13 +1976,11 @@ export default async function handler(req, res) {
 
       if (!(await verifyMasterAdminCode(req, res, device))) return;
 
-      const [currentMaster, registeredMaster, currentMode, panicEpochRaw] = await Promise.all([
+      const [currentMaster, registeredMaster, currentMode] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('master'),
         masterMode(),
-        redis(['GET', KEY_EMERGENCY_STOP_EPOCH]),
       ]);
-      const panicEpoch = String(panicEpochRaw || '0');
       if (currentMode !== 'PAUSE_PENDING') {
         return send(res, 409, { ok: false, code: 'MASTER_PAUSE_NOT_PENDING', masterMode: currentMode });
       }
@@ -3245,11 +3243,13 @@ export default async function handler(req, res) {
         return send(res, 423, { ok: false, code: 'PAIRING_MUST_BE_DISABLED' });
       }
 
-      const [currentMaster, registeredMaster, currentMode] = await Promise.all([
+      const [currentMaster, registeredMaster, currentMode, panicEpochRaw] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('master'),
         masterMode(),
+        redis(['GET', KEY_EMERGENCY_STOP_EPOCH]),
       ]);
+      const panicEpoch = String(panicEpochRaw || '0');
       if (!currentMaster || !registeredMaster || String(currentMaster) !== String(registeredMaster)) {
         return send(res, 409, {
           ok: false,
