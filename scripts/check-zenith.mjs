@@ -1157,5 +1157,26 @@ if (!permissionBlock.includes('BINANCE_TRADING_API_KEY') ||
   fail('real execution permission gate must validate the dedicated Binance trading key');
 }
 
+const realEntryPermissionRevalidation = fs.readFileSync('api/binance-entry-execute.js','utf8');
+for (const required of [
+  '/sapi/v1/account/apiRestrictions',
+  'BINANCE_TRADING_API_KEY',
+  'BINANCE_TRADING_API_SECRET',
+  'fetchBinanceTradingApiPermissions',
+  'binanceApiPermissionBlockers',
+  "'BINANCE_API_PERMISSION_REVALIDATION_FAILED'",
+  "'BINANCE_API_PERMISSION_REVALIDATION_BLOCKED'",
+  'BINANCE_API_IP_RESTRICTION_REQUIRED',
+  'BINANCE_API_WITHDRAWALS_MUST_BE_DISABLED'
+]) {
+  if (!realEntryPermissionRevalidation.includes(required)) {
+    fail(`real entry must revalidate safe Binance trading-key permissions before opening: ${required}`);
+  }
+}
+if (realEntryPermissionRevalidation.indexOf('fetchBinanceTradingApiPermissions(apiKey,secret)') >
+    realEntryPermissionRevalidation.indexOf('runLiveEntryPreflight({')) {
+  fail('Binance trading-key permission revalidation must happen before real-entry Futures preflight');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
