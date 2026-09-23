@@ -961,6 +961,16 @@ if (!boundedAuthSource.includes('AUTH_SECRET_INPUT_MAX_CHARS = 256') ||
   fail('pairing, admin and controller replacement secret inputs must remain explicitly bounded');
 }
 
+for (const required of [
+  'PAIR_GLOBAL_RATE_LIMIT = 30',
+  'CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT = 30',
+  'incrementWithGlobalExpiry',
+  ':pair-rate:global:',
+  ':controller-replacement-rate:global:'
+]) {
+  if (!boundedAuthSource.includes(required)) fail(`public auth global rate-limit invariant missing: ${required}`);
+}
+
 const safetyWorkflowRunner = fs.readFileSync('.github/workflows/zenith-safety.yml','utf8');
 if (!safetyWorkflowRunner.includes('runs-on: ubuntu-24.04') ||
     safetyWorkflowRunner.includes('runs-on: ubuntu-latest')) {
