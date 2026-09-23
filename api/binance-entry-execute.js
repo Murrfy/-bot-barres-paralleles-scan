@@ -79,7 +79,7 @@ async function requireCurrentMaster(req){
     if(String(lease||'')!==String(device.deviceId)){
       const e=new Error('MASTER_LEASE_REQUIRED');e.code='MASTER_LEASE_REQUIRED';throw e;
     }
-    return device;
+    return { ...device, roleIssuedAt: String(issuedAt || '') };
   }
   return null;
 }
@@ -169,8 +169,55 @@ async function readExecutionState(){
     runtimeState:parseJson(runtimeRaw),
     report:parseJson(reportRaw),
     armRecord:parseJson(armRaw),
+    armRaw:String(armRaw||''),
     masterMode:String(modeRaw||'PAUSED').toUpperCase(),
     emergencyStopActive:panicRaw===null||panicRaw===undefined||panicRaw===''||String(panicRaw)!=='0',
+  };
+}
+
+async function finalEntryDispatchGate(masterDeviceId,masterRoleEpoch,expectedArmRaw){
+  const script=[
+    "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
+    "if registered ~= ARGV[1] then return -1 end",
+    "local lease = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if lease ~= ARGV[1] then return -2 end",
+    "local mode = tostring(redis.call('GET', KEYS[3]) or 'PAUSED')",
+    "if mode ~= 'RUNNING' then return -3 end",
+    "local panic = tostring(redis.call('GET', KEYS[4]) or '')",
+    "if panic ~= '0' then return -4 end",
+    "local arm = tostring(redis.call('GET', KEYS[5]) or '')",
+    "if arm ~= ARGV[3] then return -5 end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[6]) or '')",
+    "if roleEpoch ~= ARGV[2] then return -6 end",
+    "return 1"
+  ].join('\n');
+  const result=Number(await redis([
+    'EVAL',script,'6',
+    KEY_MASTER_DEVICE,
+    KEY_MASTER,
+    KEY_MASTER_MODE,
+    KEY_EMERGENCY_STOP,
+    KEY_REAL_EXECUTION_ARMED,
+    roleAssignmentKey(PREFIX,'master'),
+    String(masterDeviceId||''),
+    String(masterRoleEpoch||''),
+    String(expectedArmRaw||''),
+  ]));
+  return {
+    ok:result===1,
+    reason:result===-1
+      ?'MASTER_ROLE_CHANGED_DURING_ENTRY'
+      :result===-2
+        ?'MASTER_LEASE_CHANGED_DURING_ENTRY'
+        :result===-3
+          ?'MASTER_NOT_RUNNING_DURING_ENTRY'
+          :result===-4
+            ?'EMERGENCY_STOP_ACTIVE'
+            :result===-5
+              ?'REAL_EXECUTION_ARM_CHANGED_DURING_ENTRY'
+              :result===-6
+                ?'MASTER_ROLE_EPOCH_CHANGED_DURING_ENTRY'
+                :'ENTRY_DISPATCH_GATE_FAILED',
   };
 }
 
@@ -334,6 +381,25 @@ export default async function handler(req,res){
       });
     }
 
+    const dispatchGate=await finalEntryDispatchGate(
+      master.deviceId,
+      master.roleIssuedAt,
+      latest.armRaw
+    );
+    if(!dispatchGate.ok){
+      return send(res,423,{
+        ok:false,
+        code:'ENTRY_EXECUTION_COMMIT_BLOCKED',
+        reason:dispatchGate.reason,
+        writeAttempted:false,
+        plan,
+        protection:protection.order,
+      });
+    }
+
+    // The Redis gate above is the linearization point for entry dispatch versus PANIC/revoke.
+    // If PANIC/revoke wins first, this request cannot reach Binance. If this gate wins first,
+    // the entry is already committed for dispatch and all later calls remain idempotent.
     const result=await placeStandardOrderIdempotent({
       apiKey,
       secret,
