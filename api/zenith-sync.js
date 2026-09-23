@@ -955,22 +955,7 @@ export default async function handler(req, res) {
   if (action === 'health' && req.method === 'GET') {
     return send(res, 200, {
       ok: true,
-      redisConfigured: Boolean(REDIS_URL && REDIS_TOKEN),
-      pairingConfigured: Boolean(PAIRING_CODE),
-      masterPairingConfigured: Boolean(MASTER_PAIRING_CODE),
-      masterAdminConfigured: Boolean(MASTER_ADMIN_CODE),
-      pairingDisabled: PAIRING_DISABLED,
-      realTradingEnabled: REAL_TRADING_ENABLED,
-      binanceWriteEnabled: BINANCE_WRITE_ENABLED,
-      realExecutionEnvironmentReady: Boolean(REAL_TRADING_ENABLED && BINANCE_WRITE_ENABLED && PAIRING_DISABLED),
-      executionMode: REAL_TRADING_ENABLED && BINANCE_WRITE_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
-      mode: 'SYNC_SAFE_SIMULATION',
-      masterTtlSeconds: MASTER_TTL_SECONDS,
-      masterActivationTtlSeconds: MASTER_ACTIVATION_TTL_SECONDS,
-      commandClaimTtlMs: COMMAND_CLAIM_TTL_MS,
-      commandMaxAgeMs: COMMAND_MAX_AGE_MS,
-      commandQueueMax: COMMAND_QUEUE_MAX,
-      commandPayloadMaxBytes: COMMAND_PAYLOAD_MAX_BYTES,
+      service: 'zenith-sync',
     });
   }
 
