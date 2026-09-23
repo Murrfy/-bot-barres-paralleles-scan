@@ -123,12 +123,15 @@ test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance
             if (c[1].includes(':device:')) {
               result = JSON.stringify({
                 role: scenario === 'controller' ? 'controller' : 'master',
-                deviceId: 'current'
+                deviceId: 'current',
+                createdAt: 1800000100000
               });
             } else if (c[1] === 'zenith:v1:role-device:master') {
               result = scenario === 'replaced' ? 'replacement' : scenario === 'missing-owner' ? null : 'current';
             } else if (c[1] === 'zenith:v1:master') {
               result = scenario === 'lease-mismatch' ? 'other-master' : 'current';
+            } else if (c[1] === 'zenith:v1:role-issued-at:master') {
+              result = '1800000000000';
             } else if (c[1] === 'zenith:v1:state') {
               result = state;
             }
