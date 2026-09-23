@@ -17,7 +17,8 @@ test('Vercel previews and development deployments cannot enable Binance writes',
       source.includes("!process.env.VERCEL_ENV||process.env.VERCEL_ENV==='production'"),
       file + ' must allow writes only on Vercel production or outside Vercel'
     );
-    const writeGateUses = (source.match(/writesEnabled=Boolean\([^\n]*VERCEL_PRODUCTION_WRITE_ALLOWED/g) || []).length;
+    const compact = source.replace(/\s+/g, '');
+    const writeGateUses = (compact.match(/writesEnabled=Boolean\([^)]*VERCEL_PRODUCTION_WRITE_ALLOWED/g) || []).length;
     assert.ok(writeGateUses >= 1, file + ' must include production gate in writesEnabled');
   }
 });
