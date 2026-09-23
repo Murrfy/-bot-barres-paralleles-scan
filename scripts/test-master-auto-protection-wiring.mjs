@@ -46,7 +46,7 @@ test('manual/controller progressive replacement also uses place-new-before-cance
   assert.ok(start>=0&&end>start);
   const block=html.slice(start,end);
   assert.match(block,/if\(maxLoss\|\|progressive\)/);
-  assert.match(block,/newClientId=await placeNew\(\)[\s\S]*cancelOld\(newClientId\)/);
+  assert.match(block,/newClientId=await placeNew\(\{deferReconcile:maxLoss\}\)[\s\S]*cancelOld\(newClientId\)/);
 });
 
 
