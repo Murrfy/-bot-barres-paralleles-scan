@@ -3,6 +3,7 @@ import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive } 
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
 import { protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
+import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 
 const PREFIX='zenith:v1';
 const KEY_MASTER=`${PREFIX}:master`;
@@ -130,6 +131,8 @@ function executionReadiness(runtimeState,report,masterDeviceId,repairTarget=''){
 export default async function handler(req,res){
   if(req.method!=='POST')return send(res,405,{ok:false,code:'METHOD_NOT_ALLOWED'});
   if(!sameOriginMutation(req))return send(res,403,{ok:false,code:'ORIGIN_FORBIDDEN'});
+  const bodyStatus=requestBodyStatus(req,64*1024);
+  if(!bodyStatus.ok)return send(res,413,{ok:false,code:'REQUEST_BODY_TOO_LARGE',maxBytes:bodyStatus.maxBytes,writeAttempted:false});
 
   let master=null;
   try{master=await requireCurrentMaster(req)}
