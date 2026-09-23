@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId } from '../lib/device-session.mjs';
+import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
@@ -404,9 +404,15 @@ async function claimRoleDevice(role, deviceId) {
   return Number(ok) === 1;
 }
 
-async function verifyRoleDevice(role, deviceId) {
-  const current = await redis(['GET', roleDeviceKey(role)]);
-  return Boolean(current) && String(current) === String(deviceId);
+async function verifyRoleDevice(role, device) {
+  const deviceId = String(device?.deviceId || '');
+  const [current, issuedAt] = await Promise.all([
+    redis(['GET', roleDeviceKey(role)]),
+    redis(['GET', roleAssignmentKey(PREFIX, role)]),
+  ]);
+  return Boolean(current) &&
+    String(current) === deviceId &&
+    deviceRoleAssignmentActive(device, issuedAt);
 }
 
 async function roleDeviceId(role) {
@@ -496,7 +502,7 @@ async function requireDevice(req, res, roles, { allowBearer = false, rotateBeare
     send(res, 403, { ok: false, code: 'ROLE_FORBIDDEN' });
     return null;
   }
-  if (!(await verifyRoleDevice(device.role, device.deviceId))) {
+  if (!(await verifyRoleDevice(device.role, device))) {
     clearDeviceSessionCookie(res);
     send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
     return null;
@@ -1274,13 +1280,15 @@ export default async function handler(req, res) {
 
       const token = crypto.randomBytes(32).toString('base64url');
       const tokenHash = sha256(token);
+      const createdAt = Date.now();
       const record = {
         deviceId,
         role,
         deviceName,
-        createdAt: Date.now(),
-        lastSeenAt: Date.now(),
+        createdAt,
+        lastSeenAt: createdAt,
       };
+      await redis(['SET', roleAssignmentKey(PREFIX, role), String(createdAt)]);
       await redis(['SET', `${PREFIX}:device:${tokenHash}`, JSON.stringify(record), 'EX', String(DEVICE_SESSION_MAX_AGE_SECONDS)]);
       setDeviceSessionCookie(res, token);
       return send(res, 201, { ok: true, sessionReady: true, device: record });
@@ -1376,18 +1384,21 @@ export default async function handler(req, res) {
         "end",
         "redis.call('SET', KEYS[2], ARGV[1])",
         "redis.call('SET', KEYS[3], ARGV[2], 'EX', ARGV[3])",
+        "redis.call('SET', KEYS[4], ARGV[4])",
         "redis.call('DEL', KEYS[1])",
         "return {1, oldController, ARGV[1]}"
       ].join('\n');
 
       const result = await redis([
-        'EVAL', script, '3',
+        'EVAL', script, '4',
         replacementKey(recoveryCode),
         KEY_CONTROLLER_DEVICE,
         `${PREFIX}:device:${tokenHash}`,
+        roleAssignmentKey(PREFIX, 'controller'),
         newDeviceId,
         JSON.stringify(deviceRecord),
         String(DEVICE_SESSION_MAX_AGE_SECONDS),
+        String(createdAt),
       ]);
 
       const code = Number(Array.isArray(result) ? result[0] : 0);
