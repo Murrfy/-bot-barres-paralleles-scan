@@ -82,6 +82,7 @@ function sha256(v) {
 function binanceApiPermissionBlockers(permission) {
   if (!permission || typeof permission !== 'object') return ['BINANCE_API_PERMISSIONS_UNAVAILABLE'];
   const blockers = [];
+  if (permission.ipRestrict !== true) blockers.push('BINANCE_API_IP_RESTRICTION_REQUIRED');
   if (permission.enableReading !== true) blockers.push('BINANCE_API_READING_REQUIRED');
   if (permission.enableFutures !== true) blockers.push('BINANCE_API_FUTURES_REQUIRED');
   const forbidden = [
