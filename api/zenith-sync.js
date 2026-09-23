@@ -96,6 +96,34 @@ function adminSecretPolicyBlockers({
   return blockers;
 }
 
+function pairingSecretPolicyBlockers({
+  role,
+  pairingCode = PAIRING_CODE,
+  masterPairingCode = MASTER_PAIRING_CODE,
+  adminCode = MASTER_ADMIN_CODE,
+} = {}) {
+  const normalizedRole = String(role || '');
+  const secret = String(normalizedRole === 'master' ? masterPairingCode : pairingCode || '');
+  const other = String(normalizedRole === 'master' ? pairingCode : masterPairingCode || '');
+  const admin = String(adminCode || '');
+  const blockers = [];
+
+  if (!['controller', 'master'].includes(normalizedRole)) {
+    blockers.push('PAIRING_ROLE_INVALID');
+    return blockers;
+  }
+  if (secret.length < 16) {
+    blockers.push(normalizedRole === 'master' ? 'MASTER_PAIRING_CODE_TOO_WEAK' : 'PAIRING_CODE_TOO_WEAK');
+  }
+  if (other && secret && timingSafeEqualText(secret, other)) {
+    blockers.push('PAIRING_CODES_REUSED');
+  }
+  if (admin && secret && timingSafeEqualText(secret, admin)) {
+    blockers.push('PAIRING_CODE_REUSES_ADMIN');
+  }
+  return blockers;
+}
+
 function binanceApiPermissionBlockers(permission) {
   if (!permission || typeof permission !== 'object') return ['BINANCE_API_PERMISSIONS_UNAVAILABLE'];
   const blockers = [];
@@ -1222,6 +1250,16 @@ export default async function handler(req, res) {
           code: role === 'master' ? 'MASTER_PAIRING_NOT_CONFIGURED' : 'PAIRING_NOT_CONFIGURED'
         });
       }
+
+      const pairingPolicyBlockers = pairingSecretPolicyBlockers({ role });
+      if (pairingPolicyBlockers.length) {
+        return send(res, 503, {
+          ok: false,
+          code: 'PAIRING_SECURITY_POLICY_BLOCKED',
+          blockers: pairingPolicyBlockers,
+        });
+      }
+
       if (!timingSafeEqualText(supplied, expectedPairingCode)) {
         return send(res, 401, { ok: false, code: 'PAIRING_CODE_INVALID' });
       }
@@ -2811,6 +2849,6 @@ export default async function handler(req, res) {
   }
 }
 
-export { binanceApiPermissionBlockers, adminSecretPolicyBlockers };
+export { binanceApiPermissionBlockers, adminSecretPolicyBlockers, pairingSecretPolicyBlockers };
 
 export { clientIp };
