@@ -105,18 +105,6 @@ if (!binancePreflight.includes('READ_ONLY_PREFLIGHT') || !binancePreflight.inclu
   fail('entry preflight must explicitly remain read-only');
 }
 
-const binanceOrderWire = fs.readFileSync('lib/binance-order-wire.mjs','utf8');
-for (const required of ["ORDER_PLAN_MUST_REMAIN_NON_EXECUTING","POSITION_SIDE_NOT_ONE_WAY","LIMIT_REQUIRES_EXACTLY_ONE_PRICE_MODE","OPPONENT"]) {
-  if (!binanceOrderWire.includes(required)) fail(`Binance standard-order wire guard missing: ${required}`);
-}
-const binanceOrderTest = fs.readFileSync('api/binance-order-test.js','utf8');
-for (const required of ["/fapi/v1/order/test","matchingEngineSubmitted:false","requireCurrentMaster","sameOriginMutation(req)"]) {
-  if (!binanceOrderTest.includes(required)) fail(`Binance test-order transport invariant missing: ${required}`);
-}
-if (binanceOrderTest.includes("BASE+'/fapi/v1/order'") || binanceOrderTest.includes("`${BASE}/fapi/v1/order`")) {
-  fail('Binance test-order transport must never target the real matching-engine order endpoint');
-}
-
 const runtimeSnapshotApi = fs.readFileSync('api/binance-runtime-snapshot.js','utf8');
 for (const required of ['/fapi/v3/positionRisk','/fapi/v1/openOrders','/fapi/v1/openAlgoOrders',"MASTER_LEASE_REQUIRED","writeAttempted:false"]) {
   if (!runtimeSnapshotApi.includes(required)) fail(`runtime snapshot invariant missing: ${required}`);
@@ -160,6 +148,51 @@ for (const required of ['ORDER_TRADE_UPDATE','ACCOUNT_UPDATE','ALGO_UPDATE','lis
 if (!userStreamState.includes('needsReconciliation = true') ||
     !userStreamState.includes('state.failClosed = true')) {
   fail('Binance user-stream state machine must fail closed on reconnect/discontinuity');
+}
+
+const binanceOrderWire = fs.readFileSync('lib/binance-order-wire.mjs','utf8');
+for (const required of ["ORDER_PLAN_MUST_REMAIN_NON_EXECUTING","POSITION_SIDE_NOT_ONE_WAY","LIMIT_REQUIRES_EXACTLY_ONE_PRICE_MODE","OPPONENT"]) {
+  if (!binanceOrderWire.includes(required)) fail(`Binance standard-order wire guard missing: ${required}`);
+}
+const binanceOrderTest = fs.readFileSync('api/binance-order-test.js','utf8');
+for (const required of ["/fapi/v1/order/test","matchingEngineSubmitted:false","requireCurrentMaster","sameOriginMutation(req)"]) {
+  if (!binanceOrderTest.includes(required)) fail(`Binance test-order transport invariant missing: ${required}`);
+}
+if (binanceOrderTest.includes("BASE+'/fapi/v1/order'") || binanceOrderTest.includes("`${BASE}/fapi/v1/order`")) {
+  fail('Binance test-order transport must never target the real matching-engine order endpoint');
+}
+
+const binanceOrderWriter = fs.readFileSync('lib/binance-order-writer.mjs','utf8');
+for (const required of [
+  "queryOrderByClientId",
+  "origClientOrderId",
+  "disposition: 'WRITE_LOCKED'",
+  "RECOVERED_AFTER_AMBIGUOUS_POST",
+  "ORDER_RESULT_AMBIGUOUS"
+]) {
+  if (!binanceOrderWriter.includes(required)) fail(`Binance idempotent writer invariant missing: ${required}`);
+}
+if ((binanceOrderWriter.match(/method: 'POST'/g)||[]).length !== 1) {
+  fail('Binance order writer must have exactly one standard-order POST path');
+}
+
+const protectiveExecute = fs.readFileSync('api/binance-protective-execute.js','utf8');
+for (const required of [
+  "ZENITH_REAL_TRADING_ENABLED",
+  "ZENITH_BINANCE_WRITE_ENABLED",
+  "ZENITH_PAIRING_DISABLED",
+  "'EXEC_CLOSE_POSITION'",
+  "'BINANCE_WRITE_LOCKED'",
+  "'CLOSE_QUANTITY_EXCEEDS_POSITION'",
+  "'HEDGE_MODE_UNSUPPORTED'",
+  "report.status!=='CLEAN_REAL'",
+  "runtimeDataHash",
+  "placeStandardOrderIdempotent"
+]) {
+  if (!protectiveExecute.includes(required)) fail(`protective execution gate missing: ${required}`);
+}
+if (protectiveExecute.includes('EXEC_OPEN_POSITION')) {
+  fail('protective execution API must never open a new position');
 }
 
 const orderIntent = fs.readFileSync('lib/order-intent.mjs', 'utf8');
