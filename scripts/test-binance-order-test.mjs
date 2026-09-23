@@ -43,7 +43,7 @@ test('test-order rate limit blocks before any Binance request',async()=>{
     if(url==='https://redis.test'){
       const command=JSON.parse(init.body);
       let result=null;
-      if(command[0]==='GET'&&String(command[1]).includes(':device:'))result=JSON.stringify({role:'master',deviceId:'master-1'});
+      if(command[0]==='GET'&&String(command[1]).includes(':device:'))result=JSON.stringify({role:'master',deviceId:'master-1',createdAt:Date.now()});
       else if(command[0]==='GET'&&command[1]==='zenith:v1:role-device:master')result='master-1';
       else if(command[0]==='GET'&&command[1]==='zenith:v1:master')result='master-1';
       else if(command[0]==='EVAL')result=7;
