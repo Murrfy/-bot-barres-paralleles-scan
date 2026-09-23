@@ -942,5 +942,16 @@ if (!safetyWorkflowRunner.includes('runs-on: ubuntu-24.04') ||
   fail('Zenith safety CI runner must stay pinned to Ubuntu 24.04');
 }
 
+const deviceSessionBearer = fs.readFileSync('lib/device-session.mjs','utf8');
+const syncBearerMigration = fs.readFileSync('api/zenith-sync.js','utf8');
+if (!deviceSessionBearer.includes('allowBearer = false') ||
+    !deviceSessionBearer.includes('if (allowBearer) tokens.push(bearerToken(req))')) {
+  fail('Bearer device tokens must be disabled by default and opt-in only for migration');
+}
+if (!syncBearerMigration.includes("action === 'whoami'") ||
+    !syncBearerMigration.includes('requireDevice(req, res, undefined, true)')) {
+  fail('legacy Bearer migration must remain limited to GET whoami');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
