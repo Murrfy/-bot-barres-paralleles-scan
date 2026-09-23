@@ -551,11 +551,17 @@ if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDD
     !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req')) {
   fail('zenith-sync must use secure device sessions and same-origin mutation protection');
 }
+const legacyMigrationStart = sync.indexOf('async function migrateLegacyBearerSession');
+const legacyMigrationEnd = legacyMigrationStart >= 0 ? sync.indexOf('async function masterDeviceId()', legacyMigrationStart) : -1;
+const legacyMigrationBlock = legacyMigrationStart >= 0 && legacyMigrationEnd > legacyMigrationStart
+  ? sync.slice(legacyMigrationStart, legacyMigrationEnd)
+  : '';
 if (!deviceSessionSource.includes('allowBearer = false') ||
     !sync.includes("action === 'whoami' && req.method === 'GET'") ||
-    !sync.includes("{ allowBearer: true }") ||
-    (sync.match(/allowBearer:\s*true/g) || []).length !== 1) {
-  fail('legacy Bearer must be accepted only for one-time whoami migration; normal Zenith API auth must be cookie-only');
+    !legacyMigrationBlock.includes('bearerToken(req)') ||
+    (sync.match(/bearerToken\(req\)/g) || []).length !== 1 ||
+    sync.includes('{ allowBearer: true }')) {
+  fail('legacy Bearer must be accepted only inside the one-time rotating whoami migration; normal Zenith API auth must be cookie-only');
 }
 if (!sync.includes('function deviceSessionRemainingSeconds(device, now = Date.now())') ||
     !sync.includes('absoluteExpiresAt = createdAt + DEVICE_SESSION_MAX_AGE_SECONDS * 1000') ||
@@ -988,6 +994,16 @@ for (const file of [
   if (!body.includes('requestBodyStatus') || !body.includes("'REQUEST_BODY_TOO_LARGE'")) {
     fail(`${file} must reject oversized request bodies before sensitive processing`);
   }
+}
+
+const legacyBearerRotation = fs.readFileSync('api/zenith-sync.js','utf8');
+for (const required of [
+  'migrateLegacyBearerSession',
+  'LEGACY_SESSION_MIGRATION_CONFLICT',
+  "redis.call('DEL', KEYS[1])",
+  "crypto.randomBytes(32).toString('base64url')"
+]) {
+  if (!legacyBearerRotation.includes(required)) fail(`legacy Bearer rotation invariant missing: ${required}`);
 }
 
 if (failed) process.exit(1);
