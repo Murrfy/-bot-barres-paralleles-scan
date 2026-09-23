@@ -55,6 +55,21 @@ test('cookie mutation requires exact same origin', () => {
   assert.equal(sameOriginMutation({...good,headers:{...good.headers,origin:'https://other.vercel.app'}}),false);
 });
 
+test('forwarded host cannot redefine the trusted request origin', () => {
+  const req={
+    method:'POST',
+    headers:{
+      host:'zenithfinal3-ahle.vercel.app',
+      'x-forwarded-host':'evil.example',
+      'x-forwarded-proto':'https',
+      origin:'https://zenithfinal3-ahle.vercel.app',
+      cookie:`${DEVICE_SESSION_COOKIE}=cookie-token`,
+    },
+  };
+  assert.equal(sameOriginMutation(req),true);
+  assert.equal(sameOriginMutation({...req,headers:{...req.headers,origin:'https://evil.example'}}),false);
+});
+
 test('Bearer token never bypasses same-origin mutation checks', () => {
   const base={
     method:'POST',
