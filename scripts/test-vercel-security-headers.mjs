@@ -27,6 +27,7 @@ test('Zenith enforces core browser security headers', () => {
     "object-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",
+    "script-src-attr 'none'",
   ]) {
     assert.ok(csp.includes(invariant), invariant);
   }
