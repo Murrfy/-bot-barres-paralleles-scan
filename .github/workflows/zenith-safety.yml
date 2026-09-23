@@ -26,6 +26,8 @@ jobs:
           package-manager-cache: false
       - name: Check secret hygiene
         run: node scripts/check-secret-hygiene.mjs
+      - name: Check full Git history for secrets
+        run: node scripts/check-secret-history.mjs
       - name: Check HTML and safety invariants
         run: node scripts/check-zenith.mjs
       - name: Test API error sanitization
