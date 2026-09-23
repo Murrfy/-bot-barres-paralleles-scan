@@ -26,6 +26,8 @@ jobs:
           package-manager-cache: false
       - name: Check secret hygiene
         run: node scripts/check-secret-hygiene.mjs
+      - name: Check API error disclosure
+        run: node --test scripts/test-api-error-sanitization.mjs
       - name: Check HTML and safety invariants
         run: node scripts/check-zenith.mjs
       - name: Check Binance read API syntax
