@@ -18,6 +18,7 @@ const MASTER_ADMIN_CODE = process.env.ZENITH_MASTER_ADMIN_CODE || '';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
+const PROTECTIVE_MUTATION_ENABLED = process.env.ZENITH_PROTECTIVE_MUTATION_ENABLED === '1';
 
 const PREFIX = 'zenith:v1';
 const KEY_MASTER = `${PREFIX}:master`;
@@ -392,6 +393,32 @@ function commandTypeAllowed(type) {
   return ALLOWED_COMMAND_TYPES.has(String(type || '').toUpperCase());
 }
 
+function execMutationPayloadStatus(type, payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok:false, reason:'PAYLOAD_OBJECT_REQUIRED' };
+  const normalizedType = String(type || '').toUpperCase();
+  const symbol = String(payload.symbol || '').toUpperCase();
+  const direction = String(payload.direction || '').toUpperCase();
+  const quantity = Number(payload.quantity);
+  if (!/^[A-Z0-9]{3,30}$/.test(symbol)) return { ok:false, reason:'SYMBOL_INVALID' };
+  if (!['LONG','SHORT'].includes(direction)) return { ok:false, reason:'DIRECTION_INVALID' };
+  if (!Number.isFinite(quantity) || quantity <= 0) return { ok:false, reason:'QUANTITY_INVALID' };
+  if (normalizedType === 'EXEC_UPDATE_EXIT') {
+    const targetPrice = Number(payload.targetPrice);
+    const clientOrderId = String(payload.clientOrderId || '');
+    if (!Number.isFinite(targetPrice) || targetPrice <= 0) return { ok:false, reason:'TARGET_PRICE_INVALID' };
+    if (clientOrderId && !/^[.A-Z:/a-z0-9_-]{1,36}$/.test(clientOrderId)) return { ok:false, reason:'CLIENT_ORDER_ID_INVALID' };
+    return { ok:true, symbol, direction, quantity, targetPrice, clientOrderId };
+  }
+  if (normalizedType === 'EXEC_UPDATE_PROTECTION') {
+    const triggerPrice = Number(payload.triggerPrice);
+    const previousClientAlgoId = String(payload.previousClientAlgoId || '');
+    if (!Number.isFinite(triggerPrice) || triggerPrice <= 0) return { ok:false, reason:'TRIGGER_PRICE_INVALID' };
+    if (previousClientAlgoId && !/^[.A-Z:/a-z0-9_-]{1,36}$/.test(previousClientAlgoId)) return { ok:false, reason:'CLIENT_ALGO_ID_INVALID' };
+    return { ok:true, symbol, direction, quantity, triggerPrice, previousClientAlgoId };
+  }
+  return { ok:false, reason:'MUTATION_TYPE_INVALID' };
+}
+
 function execClosePayloadStatus(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok:false, reason:'PAYLOAD_OBJECT_REQUIRED' };
   const symbol = String(payload.symbol || '').toUpperCase();
@@ -404,6 +431,64 @@ function execClosePayloadStatus(payload) {
   if (payload.closeAll !== true) return { ok:false, reason:'CLOSE_ALL_REQUIRED' };
   if (!['PROTECTIVE_IOC','MARKET_LAST_RESORT'].includes(exitMode)) return { ok:false, reason:'EXIT_MODE_INVALID' };
   return { ok:true, symbol, direction, quantity, exitMode, closeAll:true };
+}
+
+function runtimeMutationOrders(runtimeState) {
+  return Array.isArray(runtimeState?.data?.binanceOrders) ? runtimeState.data.binanceOrders : [];
+}
+
+function runtimeExitUpdateConfirmed(runtimeState, payloadStatus, clientOrderId) {
+  const currentQuantity = runtimeClosePositionQuantity(runtimeState, payloadStatus.symbol, payloadStatus.direction);
+  if (!(currentQuantity > 0) || Math.abs(currentQuantity - payloadStatus.quantity) > 1e-12) {
+    return { ok:false, reason:'EXIT_ACK_POSITION_QUANTITY_CHANGED', currentQuantity };
+  }
+  const expectedSide = payloadStatus.direction === 'LONG' ? 'SELL' : 'BUY';
+  const order = runtimeMutationOrders(runtimeState).find(o =>
+    String(o?.orderClass || 'STANDARD').toUpperCase() === 'STANDARD' &&
+    String(o?.symbol || '').toUpperCase() === payloadStatus.symbol &&
+    String(o?.clientOrderId || '') === clientOrderId
+  ) || null;
+  if (!order) return { ok:false, reason:'EXIT_ACK_ORDER_NOT_FOUND', currentQuantity };
+  const matches = String(order.side || '').toUpperCase() === expectedSide &&
+    String(order.positionSide || 'BOTH').toUpperCase() === 'BOTH' &&
+    String(order.type || '').toUpperCase() === 'LIMIT' &&
+    String(order.timeInForce || 'GTC').toUpperCase() === 'GTC' &&
+    (order.reduceOnly === true || order.reduceOnly === 'true') &&
+    Number(order.executedQty || 0) <= 1e-12 &&
+    Math.abs(Number(order.origQty) - payloadStatus.quantity) <= 1e-12 &&
+    Math.abs(Number(order.price) - payloadStatus.targetPrice) <= Math.max(1e-12, Math.abs(payloadStatus.targetPrice) * 1e-10);
+  return { ok:matches, reason:matches?'EXIT_UPDATE_CONFIRMED':'EXIT_ACK_ORDER_MISMATCH', currentQuantity, order };
+}
+
+function runtimeProtectionUpdateConfirmed(runtimeState, payloadStatus, replacementClientAlgoId, previousClientAlgoId = '') {
+  const currentQuantity = runtimeClosePositionQuantity(runtimeState, payloadStatus.symbol, payloadStatus.direction);
+  if (!(currentQuantity > 0) || Math.abs(currentQuantity - payloadStatus.quantity) > 1e-12) {
+    return { ok:false, reason:'PROTECTION_ACK_POSITION_QUANTITY_CHANGED', currentQuantity };
+  }
+  const expectedSide = payloadStatus.direction === 'LONG' ? 'SELL' : 'BUY';
+  const orders = runtimeMutationOrders(runtimeState);
+  const replacement = orders.find(o =>
+    String(o?.orderClass || '').toUpperCase() === 'ALGO' &&
+    String(o?.symbol || '').toUpperCase() === payloadStatus.symbol &&
+    String(o?.clientAlgoId || '') === replacementClientAlgoId
+  ) || null;
+  if (!replacement) return { ok:false, reason:'PROTECTION_ACK_REPLACEMENT_NOT_FOUND', currentQuantity };
+  const replacementMatches = String(replacement.side || '').toUpperCase() === expectedSide &&
+    String(replacement.positionSide || 'BOTH').toUpperCase() === 'BOTH' &&
+    String(replacement.type || '').toUpperCase() === 'STOP_MARKET' &&
+    (replacement.closePosition === true || replacement.closePosition === 'true') &&
+    !(replacement.reduceOnly === true || replacement.reduceOnly === 'true') &&
+    Math.abs(Number(replacement.triggerPrice ?? replacement.stopPrice) - payloadStatus.triggerPrice) <=
+      Math.max(1e-12, Math.abs(payloadStatus.triggerPrice) * 1e-10);
+  if (!replacementMatches) return { ok:false, reason:'PROTECTION_ACK_REPLACEMENT_MISMATCH', currentQuantity, replacement };
+  if (previousClientAlgoId && previousClientAlgoId !== replacementClientAlgoId) {
+    const previousActive = orders.some(o =>
+      String(o?.orderClass || '').toUpperCase() === 'ALGO' &&
+      String(o?.clientAlgoId || '') === previousClientAlgoId
+    );
+    if (previousActive) return { ok:false, reason:'PROTECTION_ACK_PREVIOUS_STILL_ACTIVE', currentQuantity, replacement };
+  }
+  return { ok:true, reason:'PROTECTION_UPDATE_CONFIRMED', currentQuantity, replacement };
 }
 
 function runtimeClosePositionQuantity(runtimeState, symbol, direction) {
@@ -431,6 +516,9 @@ function executionGate(type, halted) {
   const normalized = String(type || '').toUpperCase();
   if (!normalized.startsWith('EXEC_')) return { allowed: true, reason: '' };
   if (!REAL_TRADING_ENABLED) return { allowed: false, reason: 'REAL_TRADING_DISABLED' };
+  if (['EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION'].includes(normalized) && !PROTECTIVE_MUTATION_ENABLED) {
+    return { allowed: false, reason: 'PROTECTIVE_MUTATION_DISABLED' };
+  }
   if (!BINANCE_WRITE_ENABLED) return { allowed: false, reason: 'BINANCE_WRITE_DISABLED' };
   if (!PAIRING_DISABLED) return { allowed: false, reason: 'PAIRING_OPEN' };
   if (halted && !PROTECTIVE_EXEC_COMMANDS.has(normalized)) {
@@ -1811,6 +1899,12 @@ export default async function handler(req, res) {
           maxBytes: COMMAND_PAYLOAD_MAX_BYTES,
         });
       }
+      if (type === 'EXEC_UPDATE_EXIT' || type === 'EXEC_UPDATE_PROTECTION') {
+        const payloadStatus = execMutationPayloadStatus(type, payload);
+        if (!payloadStatus.ok) {
+          return send(res, 400, { ok:false, code:'COMMAND_PAYLOAD_INVALID', reason:payloadStatus.reason });
+        }
+      }
       if (type === 'EXEC_CLOSE_POSITION') {
         const payloadStatus = execClosePayloadStatus(payload);
         if (!payloadStatus.ok) {
@@ -1911,6 +2005,13 @@ export default async function handler(req, res) {
       if (!command || !commandTypeAllowed(command.type)) {
         await rejectClaimedCommand(raw, 'COMMAND_TYPE_NOT_ALLOWED');
         return send(res, 200, { ok: true, command: null, typeRejected: true, recovery });
+      }
+      if (['EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION'].includes(String(command.type || '').toUpperCase())) {
+        const payloadStatus = execMutationPayloadStatus(command.type, command.payload);
+        if (!payloadStatus.ok) {
+          await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason });
+          return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
+        }
       }
       if (String(command.type || '').toUpperCase() === 'EXEC_CLOSE_POSITION') {
         const payloadStatus = execClosePayloadStatus(command.payload);
@@ -2028,6 +2129,56 @@ export default async function handler(req, res) {
       let command = null;
       try { command = JSON.parse(raw); } catch {}
       const commandId = String(command?.id || '');
+
+      if (['EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION'].includes(String(command?.type || '').toUpperCase())) {
+        const type = String(command?.type || '').toUpperCase();
+        const payloadStatus = execMutationPayloadStatus(type, command?.payload);
+        if (!payloadStatus.ok) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_PAYLOAD_INVALID', reason:payloadStatus.reason });
+        }
+        const proof = req.body?.executionProof || {};
+        const readiness = await freshConsistentReconciliation(device.deviceId);
+        if (!readiness.ok) {
+          return send(res, 409, {
+            ok:false,
+            code:'EXECUTION_ACK_RECONCILIATION_REQUIRED',
+            reason:readiness.reason,
+          });
+        }
+
+        let evidence;
+        if (type === 'EXEC_UPDATE_EXIT') {
+          const clientOrderId = String(proof.clientOrderId || '');
+          if (!/^[.A-Z:/a-z0-9_-]{1,36}$/.test(clientOrderId)) {
+            return send(res, 409, { ok:false, code:'EXIT_EXECUTION_ACK_PROOF_INVALID' });
+          }
+          evidence = runtimeExitUpdateConfirmed(readiness.runtimeState, payloadStatus, clientOrderId);
+        } else {
+          const replacementClientAlgoId = String(proof.replacementClientAlgoId || '');
+          const previousClientAlgoId = String(proof.previousClientAlgoId || '');
+          if (!/^[.A-Z:/a-z0-9_-]{1,36}$/.test(replacementClientAlgoId) ||
+              (previousClientAlgoId && !/^[.A-Z:/a-z0-9_-]{1,36}$/.test(previousClientAlgoId))) {
+            return send(res, 409, { ok:false, code:'PROTECTION_EXECUTION_ACK_PROOF_INVALID' });
+          }
+          evidence = runtimeProtectionUpdateConfirmed(
+            readiness.runtimeState,payloadStatus,replacementClientAlgoId,previousClientAlgoId
+          );
+        }
+        if (!evidence.ok) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_NOT_CONFIRMED', reason:evidence.reason });
+        }
+        await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+          at:Date.now(),
+          kind:type === 'EXEC_UPDATE_EXIT' ? 'EXEC_EXIT_UPDATE_CONFIRMED' : 'EXEC_PROTECTION_UPDATE_CONFIRMED',
+          commandId,
+          deviceId:device.deviceId,
+          symbol:payloadStatus.symbol,
+          direction:payloadStatus.direction,
+          executionProof:proof,
+          reconciliationObservedAt:Number(readiness.report?.observedAt || 0),
+        })]);
+        await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      }
 
       if (String(command?.type || '').toUpperCase() === 'EXEC_CLOSE_POSITION') {
         const payloadStatus = execClosePayloadStatus(command?.payload);
