@@ -527,6 +527,23 @@ if (!binanceReconcile.includes("req.method !== 'POST'") ||
 if (!binanceReconcile.includes("'MISMATCH'") || !binanceReconcile.includes('failClosed')) {
   fail('api/binance-reconcile.js must fail closed on Binance/runtime mismatches');
 }
+if (!binanceReconcile.includes('async function beginReconciliationAttempt') ||
+    !binanceReconcile.includes("status: 'IN_PROGRESS'") ||
+    !binanceReconcile.includes("'BINANCE_RECONCILIATION_IN_PROGRESS'") ||
+    !binanceReconcile.includes('async function commitReconciliationAttempt') ||
+    !binanceReconcile.includes("tostring(value.attemptId or '') ~= ARGV[1]") ||
+    !binanceReconcile.includes("(redis.call('GET', KEYS[2]) or '') ~= ARGV[2]") ||
+    !binanceReconcile.includes('async function failReconciliationAttempt') ||
+    !binanceReconcile.includes("'BINANCE_RECONCILIATION_SUPERSEDED'")) {
+  fail('Binance reconciliation must invalidate stale CLEAN state before remote reads and fence success/failure by attempt id');
+}
+const reconciliationHandlerStart = binanceReconcile.indexOf('export default async function handler');
+const reconciliationHandler = reconciliationHandlerStart >= 0 ? binanceReconcile.slice(reconciliationHandlerStart) : '';
+const reconcileBeginCall = reconciliationHandler.indexOf('beginReconciliationAttempt(attemptMarker)');
+const reconcileFirstBinanceCall = reconciliationHandler.indexOf('jsonFetch(');
+if (reconcileBeginCall < 0 || reconcileFirstBinanceCall < 0 || reconcileBeginCall > reconcileFirstBinanceCall) {
+  fail('Binance reconciliation must publish fail-closed IN_PROGRESS before its first Binance request');
+}
 if (!binanceReconcile.includes('BINANCE_RECONCILE_RATE_LIMIT_PER_MINUTE = 30') ||
     !binanceReconcile.includes('reconciliationRateAllowed') ||
     !binanceReconcile.includes("'BINANCE_RECONCILE_RATE_LIMIT'") ||
