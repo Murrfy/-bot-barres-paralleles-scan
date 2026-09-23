@@ -21,7 +21,7 @@ function request() {
   return { method: 'GET', headers: { cookie: '__Host-zenith_device=controller-token' } };
 }
 
-function harness({ rateCount = 1, redisFailure = false } = {}) {
+function harness({ rateCount = 1, redisFailure = false, activeSessionHash = null } = {}) {
   const original = globalThis.fetch;
   let binanceCalls = 0;
 
@@ -32,6 +32,8 @@ function harness({ rateCount = 1, redisFailure = false } = {}) {
       let result = null;
       if (command[0] === 'GET' && String(command[1]).includes(':device:')) {
         result = JSON.stringify({ role: 'controller', deviceId: 'controller-1', createdAt: Date.now() });
+      } else if (command[0] === 'GET' && command[1] === 'zenith:v1:role-session:controller') {
+        result = activeSessionHash;
       } else if (command[0] === 'GET' && command[1] === 'zenith:v1:role-device:controller') {
         result = 'controller-1';
       } else if (command[0] === 'EVAL') {
@@ -94,6 +96,20 @@ test('rate-limit backend failure fails closed before Binance', async () => {
     const res = response();
     await handler(request(), res);
     assert.equal(res.code, 503);
+    assert.equal(h.binanceCalls, 0);
+  } finally {
+    h.restore();
+  }
+});
+
+
+test('superseded controller cookie is rejected before any Binance request', async () => {
+  const h = harness({ activeSessionHash: 'different-active-session-hash' });
+  try {
+    const res = response();
+    await handler(request(), res);
+    assert.equal(res.code, 401);
+    assert.equal(res.body.code, 'UNAUTHORIZED_DEVICE');
     assert.equal(h.binanceCalls, 0);
   } finally {
     h.restore();
