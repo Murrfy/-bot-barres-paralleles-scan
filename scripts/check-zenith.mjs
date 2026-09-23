@@ -226,7 +226,7 @@ for (const required of [
   "cancelEntryOrderIdempotent",
   "'CLOSE_QUANTITY_EXCEEDS_POSITION'",
   "'HEDGE_MODE_UNSUPPORTED'",
-  "report.status!=='CLEAN_REAL'",
+  "protectionOnlyMismatchTarget(report)",
   "runtimeDataHash",
   "placeStandardOrderIdempotent",
   "KEY_REAL_EXECUTION_ARMED",
@@ -562,8 +562,10 @@ if (!sync.includes("'MASTER_RUNTIME_NOT_REAL'") ||
     !sync.includes("'USER_STREAM_NOT_READY'") ||
     !sync.includes("'USER_STREAM_FAIL_CLOSED'") ||
     !sync.includes("'USER_STREAM_RECONCILIATION_REQUIRED'") ||
-    !sync.includes("report.status !== 'CLEAN_REAL'")) {
-  fail('real execution must fail closed unless runtime is REAL, user stream is ready and reconciliation is CLEAN_REAL');
+    !sync.includes('protectionOnlyMismatchTarget(report)') ||
+    !sync.includes('protectiveRepairTarget(type, req.body?.payload)') ||
+    !sync.includes('protectiveRepairTarget(command.type, command.payload)')) {
+  fail('real execution must fail closed unless runtime/stream are ready and reconciliation is CLEAN_REAL, except the exact missing-protection repair target');
 }
 if (!sync.includes('pushDeadLetter') || !sync.includes("redis(['LTRIM', KEY_DEAD")) {
   fail('dead-letter queue must be bounded');
