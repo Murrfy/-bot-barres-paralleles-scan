@@ -534,6 +534,12 @@ if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDD
     !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req)')) {
   fail('zenith-sync must use secure device sessions and same-origin mutation protection');
 }
+if (!sync.includes('function deviceSessionRemainingSeconds(device, now = Date.now())') ||
+    !sync.includes('absoluteExpiresAt = createdAt + DEVICE_SESSION_MAX_AGE_SECONDS * 1000') ||
+    !sync.includes("'DEVICE_SESSION_EXPIRED'") ||
+    !sync.includes('setDeviceSessionCookie(res, device.sessionToken, session.remainingSeconds)')) {
+  fail('Zenith device sessions must have an absolute server-enforced lifetime and matching cookie TTL');
+}
 if (!sync.includes('validDeviceId(deviceId)') ||
     !sync.includes('validDeviceId(newDeviceId)')) {
   fail('pairing and controller replacement must reject malformed or oversized device IDs');
