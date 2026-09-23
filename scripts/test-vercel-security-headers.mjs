@@ -7,6 +7,7 @@ const globalHeaders = config.headers?.find(h => h.source === '/(.*)')?.headers |
 const map = new Map(globalHeaders.map(h => [String(h.key).toLowerCase(), String(h.value)]));
 
 test('Zenith enforces core browser security headers', () => {
+  assert.equal(map.get('cache-control'), 'no-store, max-age=0');
   assert.equal(map.get('strict-transport-security'), 'max-age=31536000');
   assert.equal(map.get('x-content-type-options'), 'nosniff');
   assert.equal(map.get('x-frame-options'), 'DENY');
