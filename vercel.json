@@ -42,7 +42,7 @@
         },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://fapi.binance.com wss://fstream.binance.com; img-src 'self' data:; font-src 'self'; media-src 'self'; worker-src 'none';"
+          "value": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'sha256-LW4QuXF7KfFfkQiFTW5usU54qmcGZWpbQmRgDeZ2hLY=' 'sha256-M6Sj1akv02PfaKpimAAramnDeB+fAjSAHcHpMyzTffE=' 'sha256-ORFHTPRlUXot7/cVXAwM8nAPloLgWpAFb5Y2o30kzAQ=' 'sha256-Ve+fu9IzpcY/GkNQpR3whhqcCs6OxnTi63IisZsLDnY=' 'sha256-cphn7oCd4Yt7MctAHKcKsBjWur9zG+Y8URdN5giOv7I=' 'sha256-pmDP0m8aWlgw/2f834gtUANOXiSTJRlzWOdCDgQ9dzY=' 'sha256-wjPwEz7TwETu59amA8N6hEE6PYcAE6+0Jvys4e56PgE='; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://fapi.binance.com wss://fstream.binance.com; img-src 'self' data:; font-src 'self'; media-src 'self'; worker-src 'none';"
         }
       ]
     }
