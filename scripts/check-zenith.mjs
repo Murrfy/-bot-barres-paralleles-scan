@@ -51,6 +51,16 @@ if (!index.includes("Authorization:'Bearer '+token")) {
   fail('index.html must authenticate Binance account reads with the paired device token');
 }
 
+for (const [name, source] of [
+  ['api/zenith-sync.js', fs.readFileSync('api/zenith-sync.js', 'utf8')],
+  ['api/binance-read.js', fs.readFileSync('api/binance-read.js', 'utf8')],
+  ['api/binance-reconcile.js', fs.readFileSync('api/binance-reconcile.js', 'utf8')],
+]) {
+  for (const secretName of ['BINANCE_API_KEY','BINANCE_API_SECRET','UPSTASH_REDIS_REST_TOKEN']) {
+    const literal = new RegExp(secretName + "\\s*=\\s*['\\\"][^'\\\"]+['\\\"]");
+    if (literal.test(source)) fail(`${name} contains a hard-coded secret assignment for ${secretName}`);
+  }
+}
 const binanceRead = fs.readFileSync('api/binance-read.js', 'utf8');
 for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
   if (binanceRead.includes(forbidden)) {
@@ -62,6 +72,25 @@ if (!binanceRead.includes("'UNAUTHORIZED_DEVICE'") || !binanceRead.includes('req
 }
 if (!binanceRead.includes('role-device:controller') || !binanceRead.includes('role-device:master')) {
   fail('api/binance-read.js must reject tokens from devices that no longer own their Zenith role');
+}
+if (!binanceRead.includes('/fapi/v1/openAlgoOrders')) {
+  fail('api/binance-read.js must count Binance algo TP/SL orders');
+}
+
+const binanceReconcile = fs.readFileSync('api/binance-reconcile.js', 'utf8');
+for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
+  if (binanceReconcile.includes(forbidden)) {
+    fail(`api/binance-reconcile.js must remain read-only; forbidden endpoint found: ${forbidden}`);
+  }
+}
+if (!binanceReconcile.includes("'UNAUTHORIZED_DEVICE'") || !binanceReconcile.includes('requireZenithDevice')) {
+  fail('api/binance-reconcile.js must require a paired Zenith device');
+}
+if (!binanceReconcile.includes("'MISMATCH'") || !binanceReconcile.includes('failClosed')) {
+  fail('api/binance-reconcile.js must fail closed on Binance/runtime mismatches');
+}
+if (!binanceReconcile.includes('/fapi/v1/openAlgoOrders')) {
+  fail('api/binance-reconcile.js must reconcile Binance algo TP/SL orders');
 }
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
@@ -97,15 +126,18 @@ if (!sync.includes("const KEY_MASTER_MODE") ||
     !sync.includes("action === 'master-resume'")) {
   fail('api/zenith-sync.js must keep protected MASTER pause/resume');
 }
-if (!sync.includes("'MASTER_PAUSE_BLOCKED'") ||
+if (!sync.includes("await setMasterMode('PAUSE_PENDING')") ||
     !sync.includes("'ACTIVE_POSITION'") ||
     !sync.includes("'OPEN_ORDER'") ||
     !sync.includes("'PENDING_COMMAND'") ||
-    !sync.includes("'PROCESSING_COMMAND'")) {
-  fail('MASTER pause must fail closed while trading activity or commands remain');
+    !sync.includes("'PROCESSING_COMMAND'") ||
+    !sync.includes("'MASTER_RUNTIME_STALE'")) {
+  fail('MASTER pause must block new entries immediately and remain pending until activity is safely drained');
 }
-if (!sync.includes("'MASTER_PAUSED'") || !sync.includes("currentMode === 'PAUSED'")) {
-  fail('MASTER command consumption must stop while paused');
+if (!sync.includes("'MASTER_PAUSED'") ||
+    !sync.includes("modeBeforeClaim === 'PAUSED'") ||
+    !sync.includes("modeNow === 'PAUSED'")) {
+  fail('MASTER command consumption must stop while paused, including a post-claim race check');
 }
 if (!sync.includes('freshCleanReconciliation') ||
     !sync.includes("'BINANCE_RECONCILIATION_REQUIRED'")) {
@@ -139,6 +171,103 @@ const masterAdmin = fs.readFileSync('master-admin.html', 'utf8');
 if (!masterAdmin.includes('cancelPauseBtn') ||
     !masterAdmin.includes("setMasterMode('master-pause-cancel')")) {
   fail('iPad MASTER admin UI must allow cancelling a queued pause');
+}
+
+if (!sync.includes('KEY_MASTER_CONFIG_ACK') ||
+    !sync.includes('KEY_MASTER_HEARTBEAT') ||
+    !sync.includes("action === 'master-config-status'") ||
+    !sync.includes("action === 'master-config-ack'") ||
+    !sync.includes("'MASTER_CONFIG_OUT_OF_SYNC'") ||
+    !sync.includes("'MASTER_CONFIG_APPLY_DEFERRED'")) {
+  fail('MASTER must heartbeat, apply central revisions, acknowledge them, and fail closed on desynchronization');
+}
+
+const masterStandby = fs.readFileSync('master-standby.html', 'utf8');
+if (!masterStandby.includes("api('master-heartbeat','POST'") ||
+    !masterStandby.includes("api('master-config-status'") ||
+    !masterStandby.includes("api('master-config-ack','POST'") ||
+    !masterStandby.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
+  fail('MASTER standby page must verify, apply, and acknowledge controller revisions');
+}
+if (!index.includes('masterAppliedRevision') ||
+    !index.includes('MASTER DÉSYNCHRONISÉ') ||
+    !index.includes("stableStringify(remoteState?.data||{})===stableStringify(payload)")) {
+  fail('iPhone must show MASTER applied revision and avoid no-op controller revisions');
+}
+
+if (!sync.includes('stableStringify') ||
+    !sync.includes('MASTER_RUNTIME_UNAVAILABLE') ||
+    !sync.includes('RUNTIME_STATE_INVALID')) {
+  fail('MASTER synchronization must use canonical hashes and validated runtime snapshots');
+}
+if (!index.includes("role==='master'") ||
+    !index.includes("masterRuntimeApi('master-heartbeat','POST'") ||
+    !index.includes("masterRuntimeApi('state','POST'") ||
+    !index.includes("masterRuntimeApi('master-config-status'") ||
+    !index.includes("masterRuntimeApi('master-config-ack','POST'") ||
+    !index.includes('masterLocalEntryAllowed()') ||
+    !index.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
+  fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
+}
+if (!index.includes('applyMasterReadOnlyPolicy') ||
+    !index.includes('IPAD MASTER LECTURE SEULE') ||
+    !index.includes('MASTER_APPLIED_CONFIG_HASH_MISMATCH') ||
+    !index.includes('MASTER_LOCAL_CONFIG_DRIFT_ACTIVE') ||
+    !index.includes("stableStringify(controllerCloudStatePayload())")) {
+  fail('iPad MASTER must be read-only and detect local configuration drift before allowing new entries');
+}
+if (!masterStandby.includes('stableStringify(state.data)')) {
+  fail('MASTER standby must verify controller state with the canonical hash');
+}
+
+if (sync.includes('claimOrVerifyRoleDevice') ||
+    !sync.includes('async function claimRoleDevice') ||
+    !sync.includes('async function verifyRoleDevice') ||
+    !sync.includes('await claimRoleDevice(role, deviceId)') ||
+    !sync.includes('await verifyRoleDevice(device.role, device.deviceId)')) {
+  fail('authenticated devices must never auto-claim a missing controller or MASTER role');
+}
+if (!sync.includes('MASTER_ADMIN_FAILURE_LIMIT = 5') ||
+    !sync.includes('MASTER_ADMIN_LOCK_SECONDS = 15 * 60') ||
+    !sync.includes('verifyMasterAdminCode') ||
+    !sync.includes("'MASTER_ADMIN_LOCKED'")) {
+  fail('MASTER admin code must be protected against repeated guessing');
+}
+if (!sync.includes("'PAIRING_MUST_BE_DISABLED'") || !sync.includes('pairingDisabled: PAIRING_DISABLED')) {
+  fail('real execution must remain locked while device pairing is open');
+}
+if (!index.includes('escapeHtml') || !index.includes('escapeHtml(h.reason)') || !index.includes('escapeHtml(p.symbol)')) {
+  fail('dynamic trading UI strings must be HTML-escaped');
+}
+
+const vercelConfig = JSON.parse(fs.readFileSync('vercel.json', 'utf8'));
+const securityHeaders = JSON.stringify(vercelConfig.headers || []);
+for (const requiredHeader of ['Content-Security-Policy','X-Content-Type-Options','X-Frame-Options','Referrer-Policy','Permissions-Policy']) {
+  if (!securityHeaders.includes(requiredHeader)) fail(`vercel.json missing security header: ${requiredHeader}`);
+}
+if (!securityHeaders.includes("frame-ancestors 'none'") || !securityHeaders.includes("connect-src 'self' https://fapi.binance.com wss://fstream.binance.com")) {
+  fail('Content Security Policy must prevent framing and restrict outbound connections');
+}
+if (!sync.includes('COMMAND_MAX_AGE_MS = 2 * 60 * 1000') ||
+    !sync.includes('COMMAND_QUEUE_MAX = 100') ||
+    !sync.includes('COMMAND_PAYLOAD_MAX_BYTES = 16 * 1024') ||
+    !sync.includes('DEAD_LETTER_MAX = 500')) {
+  fail('command queue must have bounded age, depth, payload size and dead-letter retention');
+}
+if (!sync.includes('ALLOWED_COMMAND_TYPES') ||
+    !sync.includes("'COMMAND_TYPE_NOT_ALLOWED'") ||
+    sync.includes("'EXEC_OPEN_POSITION'")) {
+  fail('command queue must use a protective-only allowlist until real entry execution is audited');
+}
+if (!sync.includes("'COMMAND_EXPIRED'") ||
+    !sync.includes("'COMMAND_QUEUE_FULL'") ||
+    !sync.includes('modeBeforeClaim') ||
+    !sync.includes('modeNow') ||
+    !sync.includes('executionGate(command.type, halted)')) {
+  fail('MASTER must revalidate age, mode and execution lock after a command is claimed');
+}
+if (!sync.includes('pushDeadLetter') || !sync.includes("redis(['LTRIM', KEY_DEAD")) {
+  fail('dead-letter queue must be bounded');
 }
 
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');

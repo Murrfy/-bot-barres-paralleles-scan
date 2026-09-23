@@ -18,66 +18,157 @@ h1{font-size:30px;margin:0 0 8px}.sub{color:#a9bdd3;margin-bottom:20px;line-heig
 <div class="wrap">
   <div class="card">
     <h1>Zenith — MASTER Standby</h1>
-    <div class="sub">Préparation technique uniquement. Cette page n’envoie aucun ordre Binance.</div>
+    <a href="/master-admin.html" style="color:#9bf0c3">Administration MASTER</a>
+    <div class="sub">MASTER central : heartbeat, synchronisation et accusé de révision. Cette page n’envoie aucun ordre Binance réel.</div>
     <div id="identity" class="status">Vérification de l’identité…</div>
     <div id="state" class="status">Vérification de l’état central…</div>
     <div id="preflight" class="status">Pré-contrôle de sécurité…</div>
-    <div id="lease" class="status warn">Le bail MASTER n’est pas demandé automatiquement sur cette page.</div>
+    <div id="lease" class="status warn">Heartbeat MASTER en attente…</div>
+    <div id="sync" class="status">Synchronisation de configuration en attente…</div>
   </div>
 </div>
 <script>
 const TOKEN_KEY='zenith_device_token_v1';
+const STORAGE_KEY='zenith_final3_v3_20260921';
+const MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1';
+let syncBusy=false, heartbeatTimer=null;
 
 function box(id,msg,type=''){
   const e=document.getElementById(id);e.textContent=msg;e.className='status'+(type?' '+type:'');
 }
+async function api(action,method='GET',body){
+  const token=localStorage.getItem(TOKEN_KEY)||'';
+  const r=await fetch('/api/zenith-sync?action='+action,{
+    method,cache:'no-store',
+    headers:{Accept:'application/json',Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},
+    ...(body?{body:JSON.stringify(body)}:{})
+  });
+  const q=await r.json().catch(()=>({}));
+  return {r,q};
+}
+function stableStringify(value){
+  if(value===null||typeof value!=='object')return JSON.stringify(value);
+  if(Array.isArray(value))return '['+value.map(item=>item===undefined?'null':stableStringify(item)).join(',')+']';
+  const parts=[];
+  for(const key of Object.keys(value).sort()){
+    const encoded=stableStringify(value[key]);
+    if(encoded!==undefined)parts.push(JSON.stringify(key)+':'+encoded);
+  }
+  return '{'+parts.join(',')+'}';
+}
+async function sha256Hex(value){
+  const bytes=new TextEncoder().encode(value);
+  const digest=await crypto.subtle.digest('SHA-256',bytes);
+  return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function applyControllerState(state){
+  if(!state||!state.data||typeof state.data!=='object')throw new Error('CONTROLLER_STATE_INVALID');
+  const revision=Number(state.revision||0),stateHash=String(state.stateHash||'');
+  if(!Number.isInteger(revision)||revision<=0||!stateHash)throw new Error('CONTROLLER_STATE_INVALID');
+  const computed=await sha256Hex(stableStringify(state.data));
+  if(computed!==stateHash)throw new Error('CONTROLLER_STATE_HASH_MISMATCH');
 
-(async()=>{
+  let current={};
+  try{current=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}')||{}}catch(_){current={}}
+  const data=state.data;
+  const next={
+    ...current,
+    settings:data.settings&&typeof data.settings==='object'?data.settings:{},
+    tokenSettings:data.tokenSettings&&typeof data.tokenSettings==='object'?data.tokenSettings:{},
+    manualTokens:data.manualTokens&&typeof data.manualTokens==='object'?data.manualTokens:{},
+    validated:data.validated&&typeof data.validated==='object'?data.validated:{}
+  };
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(next));
+  localStorage.setItem(MASTER_APPLIED_REV_KEY,String(revision));
+  return {revision,stateHash};
+}
+async function preflight(){
+  const {r,q}=await api('master-preflight');
+  if(!r.ok||q?.ok!==true){
+    box('preflight','Pré-contrôle refusé : '+String(q?.code||q?.error||('HTTP '+r.status))+'.','err');
+    return false;
+  }
+  if(q.readyForStandby===true){
+    box('preflight','Pré-contrôle OK · état central R'+String(q.controllerRevision||0)+' · aucun conflit MASTER.','ok');
+    return true;
+  }
+  box('preflight','Pré-contrôle : '+String((q.reasons||[]).join(', ')||'non prêt')+'.','warn');
+  return false;
+}
+async function syncCycle(){
+  if(syncBusy||document.hidden)return;
+  syncBusy=true;
+  try{
+    const hb=await api('master-heartbeat','POST',{});
+    if(!hb.r.ok||hb.q?.ok!==true){
+      const code=String(hb.q?.code||hb.q?.error||('HTTP '+hb.r.status));
+      box('lease',code==='MASTER_ACTIVATION_REQUIRED'
+        ?'MASTER prêt · autorisation initiale de l’iPhone requise pour prendre le bail.'
+        :'Heartbeat MASTER refusé : '+code+'.',code==='MASTER_ACTIVATION_REQUIRED'?'warn':'err');
+      box('sync','Synchronisation MASTER suspendue tant que le bail n’est pas actif.','warn');
+      return;
+    }
+
+    const hs=hb.q?.configSync||{};
+    box('lease','Heartbeat MASTER actif · bail renouvelé · mode '+String(hb.q.masterMode||'PAUSED')+'.','ok');
+
+    const st=await api('master-config-status');
+    if(!st.r.ok||st.q?.ok!==true)throw new Error(st.q?.code||st.q?.error||('HTTP '+st.r.status));
+    const q=st.q;
+
+    if(q.synchronized===true){
+      box('state','État central R'+String(q.controllerRevision||0)+' lu et vérifié.','ok');
+      box('sync','MASTER synchronisé · révision appliquée R'+String(q.appliedRevision||0)+'.','ok');
+      return;
+    }
+
+    box('state','État central R'+String(q.controllerRevision||0)+' · MASTER R'+String(q.appliedRevision||0)+'.','warn');
+    if(q.applyDeferred===true){
+      box('sync','Nouvelle configuration différée : position/ordre actif. Les commandes de sortie et protection restent autorisées.','warn');
+      return;
+    }
+    if(q.applyAllowed!==true||!q.controllerState){
+      box('sync','Synchronisation bloquée en sécurité : '+String(q.reason||hs.reason||'MASTER_CONFIG_OUT_OF_SYNC')+'.','err');
+      return;
+    }
+
+    const applied=await applyControllerState(q.controllerState);
+    const ack=await api('master-config-ack','POST',applied);
+    if(!ack.r.ok||ack.q?.ok!==true)throw new Error(ack.q?.code||ack.q?.error||('HTTP '+ack.r.status));
+    box('sync','Configuration appliquée et confirmée · R'+String(applied.revision)+'.','ok');
+  }catch(e){
+    box('lease','Heartbeat/synchronisation non vérifiés.','err');
+    box('sync','MASTER fail-closed : '+String(e?.message||'erreur')+'.','err');
+  }finally{
+    syncBusy=false;
+  }
+}
+async function start(){
   const token=localStorage.getItem(TOKEN_KEY)||'';
   if(!token){
     box('identity','Aucun jeton MASTER trouvé dans ce navigateur.','err');
     box('state','État central non vérifié.','err');
+    box('preflight','Pré-contrôle non vérifié.','err');
     return;
   }
   try{
-    const r=await fetch('/api/zenith-sync?action=whoami',{headers:{Authorization:'Bearer '+token,Accept:'application/json'},cache:'no-store'});
-    const q=await r.json().catch(()=>({}));
-    if(!r.ok||q?.ok!==true||q?.device?.role!=='master') throw new Error(q?.code||q?.error||('ROLE_'+String(q?.device?.role||'UNKNOWN')));
-    box('identity','Identité vérifiée : cet appareil est enregistré comme MASTER.','ok');
-
-    const sr=await fetch('/api/zenith-sync?action=controller-state',{headers:{Authorization:'Bearer '+token,Accept:'application/json'},cache:'no-store'});
-    const sq=await sr.json().catch(()=>({}));
-    if(sr.ok&&sq?.ok===true&&sq?.state){
-      box('state','État central lisible · révision '+String(sq.state.revision||0)+'.','ok');
-    }else if(sr.ok&&sq?.ok===true){
-      box('state','État central accessible, mais aucun état contrôleur n’est encore présent.','warn');
-    }else{
-      box('state','État central non vérifié : '+String(sq?.code||sq?.error||('HTTP '+sr.status))+'.','err');
-    }
-
-    const pr=await fetch('/api/zenith-sync?action=master-preflight',{
-      headers:{Authorization:'Bearer '+token,Accept:'application/json'},
-      cache:'no-store'
-    });
-    const pq=await pr.json().catch(()=>({}));
-    if(!pr.ok||pq?.ok!==true){
-      box('preflight','Pré-contrôle refusé : '+String(pq?.code||pq?.error||('HTTP '+pr.status))+'.','err');
-    }else if(pq.readyForStandby===true){
-      box(
-        'preflight',
-        'Pré-contrôle OK : trading réel verrouillé · arrêt sécurité actif · état central révision '+
-          String(pq.controllerRevision||0)+' · aucun conflit MASTER.',
-        'ok'
-      );
-    }else{
-      box('preflight','Pré-contrôle non prêt : '+String((pq.reasons||[]).join(', ')||'raison inconnue')+'.','warn');
-    }
+    const {r,q}=await api('whoami');
+    if(!r.ok||q?.ok!==true||q?.device?.role!=='master')throw new Error(q?.code||q?.error||('ROLE_'+String(q?.device?.role||'UNKNOWN')));
+    box('identity','Identité vérifiée : cet appareil est le MASTER enregistré.','ok');
+    await preflight();
+    await syncCycle();
+    if(heartbeatTimer)clearInterval(heartbeatTimer);
+    heartbeatTimer=setInterval(syncCycle,8000);
   }catch(e){
     box('identity','Vérification MASTER refusée : '+String(e?.message||'erreur')+'.','err');
     box('state','État central non vérifié.','err');
     box('preflight','Pré-contrôle non vérifié.','err');
+    box('lease','Heartbeat MASTER inactif.','err');
+    box('sync','Synchronisation MASTER inactive.','err');
   }
-})();
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncCycle()});
+start();
 </script>
 </body>
 </html>

@@ -23,5 +23,15 @@ jobs:
         run: node scripts/check-zenith.mjs
       - name: Check Binance read API syntax
         run: node --check api/binance-read.js
+      - name: Check Binance reconciliation API syntax
+        run: node --check api/binance-reconcile.js
       - name: Check Zenith sync API syntax
         run: node --check api/zenith-sync.js
+      - name: Test reconciliation failure scenarios
+        run: node --test scripts/test-reconcile.mjs
+      - name: Test shared MASTER administration
+        run: node --test scripts/test-master-admin.mjs
+      - name: Test MASTER configuration synchronization
+        run: node --test scripts/test-master-sync.mjs
+      - name: Test command queue safety
+        run: node --test scripts/test-command-safety.mjs
