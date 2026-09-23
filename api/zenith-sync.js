@@ -402,6 +402,73 @@ async function requireDevice(req, res, roles) {
   return safeDevice;
 }
 
+async function migrateLegacyBearerSession(req, res) {
+  const legacyToken = bearerToken(req);
+  if (!legacyToken) {
+    return send(res, 400, { ok:false, code:'LEGACY_BEARER_REQUIRED' });
+  }
+
+  const oldHash = sha256(legacyToken);
+  const oldKey = `${PREFIX}:device:${oldHash}`;
+  const raw = await redis(['GET', oldKey]);
+  if (!raw) {
+    return send(res, 401, { ok:false, code:'LEGACY_SESSION_INVALID' });
+  }
+
+  let device = null;
+  try { device = JSON.parse(raw); } catch {}
+  if (!device?.deviceId || !['controller','master'].includes(device?.role)) {
+    await redis(['DEL', oldKey]);
+    return send(res, 401, { ok:false, code:'LEGACY_SESSION_INVALID' });
+  }
+
+  if (!(await verifyRoleDevice(device.role, device.deviceId))) {
+    await redis(['DEL', oldKey]);
+    return send(res, 409, { ok:false, code:'ROLE_DEVICE_CONFLICT' });
+  }
+
+  const remainingSeconds = deviceSessionRemainingSeconds(device);
+  if (remainingSeconds <= 0) {
+    await redis(['DEL', oldKey]);
+    return send(res, 401, { ok:false, code:'DEVICE_SESSION_EXPIRED' });
+  }
+
+  const newToken = crypto.randomBytes(32).toString('base64url');
+  const newHash = sha256(newToken);
+  const newKey = `${PREFIX}:device:${newHash}`;
+  const migratedRecord = {
+    ...device,
+    lastSeenAt: Date.now(),
+  };
+
+  const script = [
+    "local existing = redis.call('GET', KEYS[1])",
+    "if not existing then return 0 end",
+    "redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])",
+    "redis.call('DEL', KEYS[1])",
+    "return 1"
+  ].join('\n');
+
+  const moved = Number(await redis([
+    'EVAL', script, '2',
+    oldKey, newKey,
+    JSON.stringify(migratedRecord),
+    String(remainingSeconds),
+  ]));
+
+  if (moved !== 1) {
+    return send(res, 409, { ok:false, code:'LEGACY_SESSION_MIGRATION_CONFLICT' });
+  }
+
+  setDeviceSessionCookie(res, newToken, remainingSeconds);
+  return send(res, 200, {
+    ok:true,
+    sessionReady:true,
+    migrated:true,
+    device:migratedRecord,
+  });
+}
+
 async function masterDeviceId() {
   const value = await redis(['GET', KEY_MASTER]);
   return value ? String(value) : '';
@@ -1088,6 +1155,10 @@ export default async function handler(req, res) {
   }
 
   try {
+    if (action === 'session-migrate' && req.method === 'POST') {
+      return migrateLegacyBearerSession(req, res);
+    }
+
     if (action === 'pair' && req.method === 'POST') {
       if (PAIRING_DISABLED) return send(res, 403, { ok: false, code: 'PAIRING_DISABLED' });
       if (!(await pairRateAllowed(req))) return send(res, 429, { ok: false, code: 'PAIRING_RATE_LIMIT' });
