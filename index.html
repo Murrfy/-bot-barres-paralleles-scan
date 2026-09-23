@@ -523,14 +523,15 @@ async function masterRuntimeApi(action,method='GET',body){
 }
 async function loadMasterUserStreamModules(){
   if(masterUserStream.modules)return masterUserStream.modules;
-  const [stateModule,inventoryModule,seedModule,dispatchModule,closeModule]=await Promise.all([
+  const [stateModule,inventoryModule,seedModule,dispatchModule,closeModule,mutationStateModule]=await Promise.all([
     import('/lib/user-stream-state.mjs'),
     import('/lib/master-runtime-inventory.mjs'),
     import('/lib/user-stream-seed.mjs'),
     import('/lib/master-command-dispatch.mjs'),
-    import('/lib/protective-close-state.mjs')
+    import('/lib/protective-close-state.mjs'),
+    import('/lib/protective-mutation-state.mjs')
   ]);
-  masterUserStream.modules={stateModule,inventoryModule,seedModule,dispatchModule,closeModule};
+  masterUserStream.modules={stateModule,inventoryModule,seedModule,dispatchModule,closeModule,mutationStateModule};
   if(!masterUserStream.state)masterUserStream.state=stateModule.createUserStreamState();
   return masterUserStream.modules;
 }
@@ -816,15 +817,18 @@ async function ackMasterCommand(raw,executionProof){
   if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
   return q;
 }
-async function callMasterProtectiveExecute(body){
+async function callMasterExecutionEndpoint(endpoint,body){
   const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
-  const r=await fetch('/api/binance-protective-execute',{
+  const r=await fetch(endpoint,{
     method:'POST',cache:'no-store',
     headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
     body:JSON.stringify(body)
   });
   const q=await r.json().catch(()=>({}));
   return {r,q};
+}
+async function callMasterProtectiveExecute(body){
+  return callMasterExecutionEndpoint('/api/binance-protective-execute',body);
 }
 async function waitForFullCloseState({symbol,direction,beforeQuantity,clientOrderId},timeoutMs=2500){
   const {closeModule}=await loadMasterUserStreamModules();
@@ -946,6 +950,116 @@ async function runMasterFullClose(command,raw){
   await failMasterCommand(raw,'PROTECTIVE_CLOSE_ATTEMPTS_EXHAUSTED');
   return false;
 }
+async function waitForProtectiveMutation(command,proof,timeoutMs=4000){
+  const {mutationStateModule}=await loadMasterUserStreamModules();
+  const payload=command?.payload||{};
+  const type=String(command?.type||'').toUpperCase();
+  const deadline=Date.now()+Math.max(500,n(timeoutMs,4000));
+  const evaluate=()=>type==='EXEC_UPDATE_EXIT'
+    ?mutationStateModule.evaluateExitUpdateConfirmation(masterUserStream.state,{
+      symbol:payload.symbol,direction:payload.direction,quantity:payload.quantity,
+      targetPrice:payload.targetPrice,clientOrderId:proof.clientOrderId
+    })
+    :mutationStateModule.evaluateProtectionUpdateConfirmation(masterUserStream.state,{
+      symbol:payload.symbol,direction:payload.direction,triggerPrice:payload.triggerPrice,
+      replacementClientAlgoId:proof.replacementClientAlgoId,
+      previousClientAlgoId:proof.previousClientAlgoId||''
+    });
+  let result=evaluate();
+  while(Date.now()<deadline){
+    result=evaluate();
+    if(result.confirmed)return result;
+    if(result.reason==='POSITION_NOT_FOUND')return result;
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  try{await reconcileMasterUserStream()}catch(_){}
+  return evaluate();
+}
+async function safeAckProtectiveMutation(raw,proof){
+  try{
+    const reconciled=await reconcileMasterUserStream();
+    if(!reconciled)throw new Error('MUTATION_RECONCILIATION_NOT_READY');
+    await ackMasterCommand(raw,proof);
+    return true;
+  }catch(e){
+    await requeueMasterCommand(raw,'MUTATION_ACK_RETRY_'+String(e?.message||'RECONCILE'),1500);
+    return false;
+  }
+}
+async function runMasterProtectiveMutation(command,raw,dispatch){
+  const {r,q}=await callMasterExecutionEndpoint(dispatch.endpoint,dispatch.body);
+  if(!r.ok||q?.ok!==true){
+    const reason=String(q?.code||q?.reason||q?.error||('HTTP_'+r.status));
+    const ambiguous=q?.ambiguous===true||[
+      'ORDER_MODIFY_RESULT_AMBIGUOUS','ORDER_RESULT_AMBIGUOUS',
+      'ALGO_ORDER_RESULT_AMBIGUOUS','ALGO_CANCEL_RESULT_AMBIGUOUS',
+      'PROTECTION_RACE_CLEANUP_AMBIGUOUS'
+    ].includes(reason);
+    if(reason==='PROTECTION_RACE_OLD_TRIGGERED'){
+      try{await reconcileMasterUserStream()}catch(_){}
+      await failMasterCommand(raw,'PROTECTION_RACE_OLD_TRIGGERED');
+      masterExecution.lastError=reason;
+      return false;
+    }
+    if(ambiguous||['EXECUTION_NOT_READY','PROTECTIVE_MUTATION_WRITE_LOCKED'].includes(reason)){
+      try{await reconcileMasterUserStream()}catch(_){}
+      await requeueMasterCommand(raw,'PROTECTIVE_MUTATION_'+reason,1500);
+      return false;
+    }
+    await failMasterCommand(raw,'PROTECTIVE_MUTATION_'+reason);
+    masterExecution.lastError=reason;
+    return false;
+  }
+
+  const type=String(command?.type||'').toUpperCase();
+  const proof=type==='EXEC_UPDATE_EXIT'
+    ?{clientOrderId:String(q?.clientOrderId||q?.plan?.params?.newClientOrderId||'')}
+    :{
+      replacementClientAlgoId:String(q?.replacementClientAlgoId||''),
+      previousClientAlgoId:String(q?.previousClientAlgoId||'')
+    };
+  if(type==='EXEC_UPDATE_EXIT'&&!proof.clientOrderId){
+    await failMasterCommand(raw,'EXIT_UPDATE_PROOF_MISSING');return false;
+  }
+  if(type==='EXEC_UPDATE_PROTECTION'&&!proof.replacementClientAlgoId){
+    await failMasterCommand(raw,'PROTECTION_UPDATE_PROOF_MISSING');return false;
+  }
+
+  const outcome=await waitForProtectiveMutation(command,proof,4000);
+  if(outcome.confirmed)return safeAckProtectiveMutation(raw,proof);
+  if(outcome.reason==='POSITION_NOT_FOUND'){
+    await failMasterCommand(raw,'POSITION_CLOSED_DURING_MUTATION');
+    masterExecution.lastError='POSITION_CLOSED_DURING_MUTATION';
+    return false;
+  }
+  await requeueMasterCommand(raw,'MUTATION_CONFIRMATION_'+String(outcome.reason||'PENDING'),1500);
+  return false;
+}
+async function runMasterCancelEntry(command,raw,dispatch){
+  const {r,q}=await callMasterExecutionEndpoint(dispatch.endpoint,dispatch.body);
+  if(!r.ok||q?.ok!==true){
+    const reason=String(q?.code||q?.reason||q?.error||('HTTP_'+r.status));
+    const ambiguous=q?.ambiguous===true||['CANCEL_RESULT_AMBIGUOUS','CANCEL_TARGET_UNKNOWN'].includes(reason);
+    if(ambiguous||['EXECUTION_NOT_READY','EXECUTION_NOT_ARMED','ENTRY_ORDER_NOT_OPEN'].includes(reason)){
+      try{await reconcileMasterUserStream()}catch(_){}
+      await requeueMasterCommand(raw,'CANCEL_ENTRY_'+reason,1500);
+      return false;
+    }
+    await failMasterCommand(raw,'CANCEL_ENTRY_'+reason);
+    masterExecution.lastError=reason;
+    return false;
+  }
+  try{
+    const reconciled=await reconcileMasterUserStream();
+    if(!reconciled)throw new Error('CANCEL_RECONCILIATION_NOT_READY');
+    await ackMasterCommand(raw);
+    return true;
+  }catch(e){
+    await requeueMasterCommand(raw,'CANCEL_ACK_RETRY_'+String(e?.message||'RECONCILE'),1500);
+    return false;
+  }
+}
+
 async function masterExecutionCycle(){
   if(masterExecution.busy||controllerIdentity.role!=='master')return false;
   const {dispatchModule}=await loadMasterUserStreamModules();
@@ -981,7 +1095,17 @@ async function masterExecutionCycle(){
       return false;
     }
 
-    const ok=await runMasterFullClose(command,raw);
+    let ok=false;
+    if(dispatch.type==='EXEC_CLOSE_POSITION'){
+      ok=await runMasterFullClose(command,raw);
+    }else if(dispatch.type==='EXEC_CANCEL_ENTRY'){
+      ok=await runMasterCancelEntry(command,raw,dispatch);
+    }else if(dispatch.type==='EXEC_UPDATE_EXIT'||dispatch.type==='EXEC_UPDATE_PROTECTION'){
+      ok=await runMasterProtectiveMutation(command,raw,dispatch);
+    }else{
+      await failMasterCommand(raw,'MASTER_COMMAND_NOT_IMPLEMENTED');
+      return false;
+    }
     if(ok){
       masterExecution.lastError='';
       scheduleMasterStreamReconcile(100);
