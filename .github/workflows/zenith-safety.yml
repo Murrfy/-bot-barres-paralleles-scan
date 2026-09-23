@@ -31,6 +31,8 @@ jobs:
         run: node --check api/binance-entry-execute.js
       - name: Check protective execution API syntax
         run: node --check api/binance-protective-execute.js
+      - name: Check protective mutation API syntax
+        run: node --check api/binance-protective-mutate.js
       - name: Check Binance user-stream session API syntax
         run: node --check api/binance-user-stream-session.js
       - name: Check Binance runtime snapshot API syntax
@@ -63,6 +65,10 @@ jobs:
         run: node --test scripts/test-controller-real-command.mjs
       - name: Test idempotent Binance order writer
         run: node --test scripts/test-binance-order-writer.mjs
+      - name: Test idempotent Binance algo writer
+        run: node --test scripts/test-binance-algo-order-writer.mjs
+      - name: Test proof-driven protective mutation state
+        run: node --test scripts/test-protective-mutation-state.mjs
       - name: Test idempotent real entry cancellation
         run: node --test scripts/test-binance-order-cancel.mjs
       - name: Test protective execution arm gate
