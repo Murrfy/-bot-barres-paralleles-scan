@@ -4,10 +4,15 @@ import test from 'node:test';
 import crypto from 'node:crypto';
 const requireHash = value => crypto.createHash('sha256').update(String(value)).digest('hex');
 
-const source = fs.readFileSync('api/zenith-sync.js', 'utf8').replace(
-  /^import \{ deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';\n/m,
-  "const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
-);
+const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
+  .replace(
+    /^import \{ deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';\n/m,
+    "const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
+  )
+  .replace(
+    /^import \{ normalizeProtectiveUpdatePayload \} from '\.\.\/lib\/protective-command\.mjs';\n/m,
+    "const normalizeProtectiveUpdatePayload=()=>{ throw new Error('NOT_USED_BY_MASTER_SYNC_TESTS'); };\n"
+  );
 const { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus } = await import(
   'data:text/javascript;base64,' +
   Buffer.from(source + '\nexport { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus };').toString('base64')
