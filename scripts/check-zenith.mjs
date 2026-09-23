@@ -1099,5 +1099,25 @@ for (const required of [
 ]) {
   if (!controllerStateRateSource.includes(required)) fail(`controller state writes must remain rate-limited: ${required}`);
 }
+const sharedStateSource = fs.readFileSync('api/zenith-sync.js','utf8');
+const jsonStructureSource = fs.readFileSync('lib/json-structure.mjs','utf8');
+for (const required of [
+  'jsonStructureStatus',
+  'plainJsonObject',
+  "'CONTROLLER_STATE_STRUCTURE_INVALID'",
+  "'CONTROLLER_STATE_BLOCK_INVALID'",
+  "'RUNTIME_STATE_STRUCTURE_INVALID'"
+]) {
+  if (!sharedStateSource.includes(required)) fail(`shared JSON state structure hardening missing: ${required}`);
+}
+for (const required of [
+  "'__proto__'",
+  "'prototype'",
+  "'constructor'",
+  "'JSON_DEPTH_EXCEEDED'",
+  "'JSON_NODE_LIMIT_EXCEEDED'"
+]) {
+  if (!jsonStructureSource.includes(required)) fail(`JSON structure validator invariant missing: ${required}`);
+}
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
