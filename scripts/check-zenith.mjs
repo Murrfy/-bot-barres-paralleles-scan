@@ -880,5 +880,30 @@ if (!realEntryExecuteRate.includes('ENTRY_EXECUTION_RATE_LIMIT_PER_MINUTE=6') ||
   fail('real entry execution must be rate-limited before Binance without affecting protective exits');
 }
 
+const authenticatedApiFiles = fs.readdirSync('api')
+  .filter(name => name.endsWith('.js'))
+  .map(name => 'api/' + name);
+for (const file of authenticatedApiFiles) {
+  const source = fs.readFileSync(file, 'utf8');
+  if (!source.includes('deviceTokenCandidates')) continue;
+  const verifiesRoleOwner =
+    source.includes('role-device:controller') ||
+    source.includes('role-device:master') ||
+    source.includes('KEY_MASTER_DEVICE');
+  if (!verifiesRoleOwner) {
+    fail(`${file} accepts Zenith device tokens without revalidating current role ownership`);
+  }
+}
+
+const requireDeviceStart = sync.indexOf('async function requireDevice');
+const requireDeviceEnd = sync.indexOf('async function masterDeviceId', requireDeviceStart);
+const requireDeviceBlock = requireDeviceStart >= 0 && requireDeviceEnd > requireDeviceStart
+  ? sync.slice(requireDeviceStart, requireDeviceEnd)
+  : '';
+if (!requireDeviceBlock.includes("code: 'ROLE_DEVICE_CONFLICT'") ||
+    !requireDeviceBlock.includes('clearDeviceSessionCookie(res)')) {
+  fail('role ownership conflicts must clear the stale secure device cookie');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
