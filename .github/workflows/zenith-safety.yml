@@ -79,6 +79,10 @@ jobs:
         run: node --test scripts/test-protective-command.mjs
       - name: Test automatic real target and max-loss levels
         run: node --test scripts/test-real-protection-levels.mjs
+      - name: Test highest-crossed MASTER auto protection
+        run: node --test scripts/test-master-auto-protection.mjs
+      - name: Test autonomous MASTER auto protection wiring
+        run: node --test scripts/test-master-auto-protection-wiring.mjs
       - name: Test real protection level wiring
         run: node --test scripts/test-real-protection-level-wiring.mjs
       - name: Test exact missing-protection repair gate
