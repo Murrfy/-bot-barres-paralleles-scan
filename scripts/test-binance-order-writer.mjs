@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { placeStandardOrderIdempotent, BinanceRequestError } from '../lib/binance-order-writer.mjs';
+import { placeStandardOrderIdempotent, modifyStandardLimitOrderIdempotent, BinanceRequestError } from '../lib/binance-order-writer.mjs';
 
 function jsonResponse(body,status=200){return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}})}
 const order={symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'LIMIT',timeInForce:'IOC',quantity:'0.02',reduceOnly:'true',priceMatch:'OPPONENT',newClientOrderId:'zth-EXI-0123456789abcdef01234567'};
@@ -71,4 +71,84 @@ test('unresolved ambiguous POST fails closed and never retries POST',async()=>{
     e=>e instanceof BinanceRequestError&&e.message==='ORDER_RESULT_AMBIGUOUS'&&e.ambiguous===true
   );
   assert.deepEqual(methods,['GET','POST','GET']);
+});
+
+
+const exitOrder={symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'LIMIT',timeInForce:'GTC',origQty:'0.02',executedQty:'0',price:'51000',reduceOnly:true,clientOrderId:'zth-EXI-0123456789abcdef01234567',status:'NEW'};
+
+test('reduce-only LIMIT modification is idempotent when target already matches',async()=>{
+  const methods=[];
+  const fetchImpl=async(url,init={})=>{methods.push(init.method);return jsonResponse(exitOrder)};
+  const r=await modifyStandardLimitOrderIdempotent({
+    fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:exitOrder.clientOrderId,
+    side:'SELL',quantity:0.02,price:51000,writesEnabled:true,timestamp:1000
+  });
+  assert.equal(r.disposition,'EXISTING_MATCH');
+  assert.deepEqual(methods,['GET']);
+});
+
+test('reduce-only LIMIT modification sends one PUT and validates returned order',async()=>{
+  const methods=[];
+  const fetchImpl=async(url,init={})=>{
+    methods.push(init.method);
+    if(init.method==='GET')return jsonResponse(exitOrder);
+    if(init.method==='PUT')return jsonResponse({...exitOrder,price:'52000'});
+    throw new Error('unexpected');
+  };
+  const r=await modifyStandardLimitOrderIdempotent({
+    fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:exitOrder.clientOrderId,
+    side:'SELL',quantity:0.02,price:52000,writesEnabled:true,timestamp:1000
+  });
+  assert.equal(r.disposition,'MODIFIED');
+  assert.deepEqual(methods,['GET','PUT']);
+});
+
+test('partially filled exit is never modified in place',async()=>{
+  const methods=[];
+  const fetchImpl=async(url,init={})=>{methods.push(init.method);return jsonResponse({...exitOrder,executedQty:'0.005',status:'PARTIALLY_FILLED'})};
+  await assert.rejects(
+    modifyStandardLimitOrderIdempotent({
+      fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:exitOrder.clientOrderId,
+      side:'SELL',quantity:0.015,price:52000,writesEnabled:true,timestamp:1000
+    }),
+    e=>e instanceof BinanceRequestError&&e.message==='MODIFY_TARGET_PARTIALLY_FILLED'
+  );
+  assert.deepEqual(methods,['GET']);
+});
+
+test('ambiguous PUT is recovered by query and never repeated',async()=>{
+  const methods=[];let gets=0;
+  const fetchImpl=async(url,init={})=>{
+    methods.push(init.method);
+    if(init.method==='GET'){
+      gets++;
+      return jsonResponse(gets===1?exitOrder:{...exitOrder,price:'52000'});
+    }
+    if(init.method==='PUT')throw new TypeError('network reset');
+    throw new Error('unexpected');
+  };
+  const r=await modifyStandardLimitOrderIdempotent({
+    fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:exitOrder.clientOrderId,
+    side:'SELL',quantity:0.02,price:52000,writesEnabled:true,timestamp:1000
+  });
+  assert.equal(r.disposition,'RECOVERED_AFTER_AMBIGUOUS_MODIFY');
+  assert.deepEqual(methods,['GET','PUT','GET']);
+});
+
+test('unresolved ambiguous PUT fails closed after one PUT',async()=>{
+  const methods=[];
+  const fetchImpl=async(url,init={})=>{
+    methods.push(init.method);
+    if(init.method==='GET')return jsonResponse(exitOrder);
+    if(init.method==='PUT')throw new TypeError('timeout');
+    throw new Error('unexpected');
+  };
+  await assert.rejects(
+    modifyStandardLimitOrderIdempotent({
+      fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:exitOrder.clientOrderId,
+      side:'SELL',quantity:0.02,price:52000,writesEnabled:true,timestamp:1000
+    }),
+    e=>e instanceof BinanceRequestError&&e.message==='ORDER_MODIFY_RESULT_AMBIGUOUS'&&e.ambiguous===true
+  );
+  assert.deepEqual(methods,['GET','PUT','GET']);
 });
