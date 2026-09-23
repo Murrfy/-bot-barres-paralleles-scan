@@ -961,6 +961,14 @@ if (!boundedAuthSource.includes('AUTH_SECRET_INPUT_MAX_CHARS = 256') ||
   fail('pairing, admin and controller replacement secret inputs must remain explicitly bounded');
 }
 
+if (!boundedAuthSource.includes('PAIR_GLOBAL_RATE_LIMIT = 20') ||
+    !boundedAuthSource.includes('CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT = 20') ||
+    !boundedAuthSource.includes('dualRateAllowed') ||
+    !boundedAuthSource.includes(':pair-rate:global:') ||
+    !boundedAuthSource.includes(':controller-replacement-rate:global:')) {
+  fail('pairing and controller replacement must keep global anti-bruteforce ceilings in addition to per-IP limits');
+}
+
 const safetyWorkflowRunner = fs.readFileSync('.github/workflows/zenith-safety.yml','utf8');
 if (!safetyWorkflowRunner.includes('runs-on: ubuntu-24.04') ||
     safetyWorkflowRunner.includes('runs-on: ubuntu-latest')) {
