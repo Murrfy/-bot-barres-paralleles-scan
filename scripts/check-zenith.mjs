@@ -1144,7 +1144,13 @@ for (const required of [
   'KEY_USER_STREAM_SESSION',
   'KEY_PENDING',
   'KEY_PROCESSING',
-  "roleAssignmentKey(PREFIX, 'master')"
+  "roleAssignmentKey(PREFIX, 'master')",
+  "tryFinalizePendingPause(registeredMaster, 'PAUSE_PENDING')",
+  "freshCleanReconciliation()",
+  "redis.call('LLEN', KEYS[13]) > 0",
+  "redis.call('LLEN', KEYS[14]) > 0",
+  "redis.call('SET', KEYS[15], ARGV[2])",
+  "masterRoleEpochAdvancedAt: revokedAt"
 ]) {
   if (!masterRevokeSync.includes(required)) fail(`MASTER emergency revoke must remain fail-closed: ${required}`);
 }
