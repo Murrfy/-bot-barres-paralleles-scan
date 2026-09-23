@@ -828,6 +828,11 @@ async function claimNextCommand(deviceId) {
     "  redis.call('LTRIM', KEYS[3], 0, tonumber(ARGV[3]) - 1)",
     "  return '__DEAD__'",
     "end",
+    "local notBefore = tonumber(obj['notBefore'] or 0)",
+    "if notBefore > tonumber(ARGV[1]) then",
+    "  redis.call('LPUSH', KEYS[1], raw)",
+    "  return '__DEFERRED__:' .. tostring(notBefore)",
+    "end",
     "obj['claimedAt'] = tonumber(ARGV[1])",
     "obj['claimedBy'] = ARGV[2]",
     "local claimed = cjson.encode(obj)",
@@ -850,6 +855,27 @@ async function rejectClaimedCommand(raw, reason, extra = {}) {
     rejectedReason: String(reason || 'COMMAND_REJECTED'),
     ...extra,
   });
+}
+
+function deferredCommandPayload(command, reason, deviceId, now = Date.now(), delayMs = 1500) {
+  const clean = { ...(command || {}) };
+  delete clean.claimedAt;
+  delete clean.claimedBy;
+  const expiresAt = Number(clean.expiresAt || 0);
+  const requestedNotBefore = now + Math.max(250, Number(delayMs) || 1500);
+  clean.deferredAt = now;
+  clean.deferredReason = String(reason || 'EXECUTION_TEMPORARILY_UNAVAILABLE');
+  clean.deferredBy = String(deviceId || '');
+  clean.notBefore = expiresAt > 0 ? Math.min(expiresAt, requestedNotBefore) : requestedNotBefore;
+  return clean;
+}
+
+async function deferClaimedCommand(raw, command, reason, deviceId, delayMs = 1500) {
+  const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+  if (removed <= 0) return false;
+  const clean = deferredCommandPayload(command, reason, deviceId, Date.now(), delayMs);
+  await redis(['LPUSH', KEY_PENDING, JSON.stringify(clean)]);
+  return true;
 }
 
 export default async function handler(req, res) {
@@ -1862,6 +1888,16 @@ export default async function handler(req, res) {
       if (raw === '__DEAD__') {
         return send(res, 500, { ok: false, code: 'COMMAND_CORRUPT', recovery });
       }
+      if (String(raw).startsWith('__DEFERRED__:')) {
+        const notBefore = Number(String(raw).slice('__DEFERRED__:'.length)) || Date.now() + 1000;
+        return send(res, 200, {
+          ok: true,
+          command: null,
+          deferred: true,
+          retryAfterMs: Math.max(250, notBefore - Date.now()),
+          recovery,
+        });
+      }
 
       let command = null;
       try { command = JSON.parse(raw); } catch {}
@@ -1931,12 +1967,18 @@ export default async function handler(req, res) {
         }
         const readiness = await realExecutionReadiness(device.deviceId);
         if (!readiness.ok) {
-          await rejectClaimedCommand(raw, 'EXECUTION_NOT_READY_' + readiness.reason);
+          const deferred = await deferClaimedCommand(
+            raw,
+            command,
+            'EXECUTION_NOT_READY_' + readiness.reason,
+            device.deviceId
+          );
           return send(res, 200, {
             ok: true,
             command: null,
-            executionRejected: true,
+            executionDeferred: deferred,
             executionReason: readiness.reason,
+            retryAfterMs: 1500,
             recovery,
           });
         }
@@ -2086,8 +2128,19 @@ export default async function handler(req, res) {
         }
         const readiness = await realExecutionReadiness(device.deviceId);
         if (!readiness.ok) {
-          await rejectClaimedCommand(raw, 'EXECUTION_NOT_READY_' + readiness.reason);
-          return send(res, 200, { ok: true, requeued: false, executionRejected: true, executionReason: readiness.reason });
+          const deferred = await deferClaimedCommand(
+            raw,
+            command,
+            'EXECUTION_NOT_READY_' + readiness.reason,
+            device.deviceId
+          );
+          return send(res, 200, {
+            ok: true,
+            requeued: deferred,
+            executionDeferred: deferred,
+            executionReason: readiness.reason,
+            retryAfterMs: 1500,
+          });
         }
       }
 
