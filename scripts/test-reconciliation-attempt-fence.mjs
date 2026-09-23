@@ -22,7 +22,7 @@ test('reconciliation invalidates any older clean report before contacting Binanc
   assert.ok(handler.includes('const begun = await beginReconciliationAttempt(attemptMarker)'));
   assert.ok(
     handler.indexOf('beginReconciliationAttempt(attemptMarker)') <
-    handler.indexOf('jsonFetch(\`\${BASE}/fapi/v1/time\`)')
+    handler.indexOf("jsonFetch(`${BASE}/fapi/v1/time`)")
   );
 });
 
