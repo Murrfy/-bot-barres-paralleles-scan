@@ -119,7 +119,7 @@ function findAlgo(runtimeState,symbol,clientAlgoId){
     String(o?.clientAlgoId||'')===String(clientAlgoId||'')
   )||null;
 }
-function emergencyProtection(runtimeState,update,entryPrice,excludeClientAlgoId=''){
+export function emergencyProtection(runtimeState,update,entryPrice,excludeClientAlgoId=''){
   const side=sideForDirection(update.direction);
   const quantity=n(update?.quantity,NaN);
   return runtimeOrders(runtimeState).find(o=>{
