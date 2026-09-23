@@ -51,6 +51,8 @@ jobs:
         run: node --test scripts/test-order-intent.mjs
       - name: Test idempotent Binance order writer
         run: node --test scripts/test-binance-order-writer.mjs
+      - name: Test protective close confirmation and escalation
+        run: node --test scripts/test-protective-close-state.mjs
       - name: Test Binance user-stream state machine
         run: node --test scripts/test-user-stream-state.mjs
       - name: Test MASTER stream inventory projection
