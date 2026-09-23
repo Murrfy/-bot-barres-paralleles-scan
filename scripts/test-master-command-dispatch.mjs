@@ -36,8 +36,33 @@ test('EXEC_CLOSE_POSITION is full-close only and does not accept normal target o
   }),/EXIT_MODE_INVALID/);
 });
 
-test('entry and not-yet-implemented protective mutations are never dispatched as writes',()=>{
-  for(const type of ['EXEC_OPEN_POSITION','EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION']){
+test('real LIMIT entry maps to the dedicated fail-closed entry endpoint',()=>{
+  const d=buildMasterCommandDispatch({
+    id:'command-open-1234',
+    type:'EXEC_OPEN_POSITION',
+    payload:{symbol:'btcusdt',side:'BUY',orderType:'LIMIT',limitPrice:50000,margin:100,leverage:10,maxLoss:40}
+  });
+  assert.equal(d.supported,true);
+  assert.equal(d.endpoint,'/api/binance-entry-execute');
+  assert.equal(d.body.symbol,'BTCUSDT');
+  assert.equal(d.body.side,'BUY');
+  assert.equal(d.body.orderType,'LIMIT');
+  assert.equal(d.body.limitPrice,50000);
+});
+
+test('real entry dispatcher rejects market entry and malformed risk fields',()=>{
+  assert.throws(()=>buildMasterCommandDispatch({
+    id:'command-open-1234',type:'EXEC_OPEN_POSITION',
+    payload:{symbol:'BTCUSDT',side:'BUY',orderType:'MARKET',limitPrice:50000,margin:100,leverage:10,maxLoss:40}
+  }),/REAL_ENTRY_LIMIT_ONLY/);
+  assert.throws(()=>buildMasterCommandDispatch({
+    id:'command-open-1234',type:'EXEC_OPEN_POSITION',
+    payload:{symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:50000,margin:0,leverage:10,maxLoss:40}
+  }),/MARGIN_INVALID/);
+});
+
+test('not-yet-implemented protective mutations are never dispatched as writes',()=>{
+  for(const type of ['EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION']){
     const d=buildMasterCommandDispatch({id:'command-12345678',type,payload:{}});
     assert.equal(d.supported,false,type);
   }
