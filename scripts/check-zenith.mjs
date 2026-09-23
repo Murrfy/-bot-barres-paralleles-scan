@@ -105,6 +105,26 @@ if (!binancePreflight.includes('READ_ONLY_PREFLIGHT') || !binancePreflight.inclu
   fail('entry preflight must explicitly remain read-only');
 }
 
+const userStreamState = fs.readFileSync('lib/user-stream-state.mjs', 'utf8');
+for (const required of ['ORDER_TRADE_UPDATE','ACCOUNT_UPDATE','ALGO_UPDATE','listenKeyExpired','RECONCILIATION_REQUIRED_AFTER_CONNECT','STREAM_EVENT_OUT_OF_ORDER']) {
+  if (!userStreamState.includes(required)) fail(`user-stream safety invariant missing: ${required}`);
+}
+if (!userStreamState.includes('needsReconciliation = true') ||
+    !userStreamState.includes('state.failClosed = true')) {
+  fail('Binance user-stream state machine must fail closed on reconnect/discontinuity');
+}
+
+const orderIntent = fs.readFileSync('lib/order-intent.mjs', 'utf8');
+for (const required of ['deterministicClientOrderId','CLIENT_ORDER_ID_MAX_LENGTH = 36',"writeAllowed: false","reduceOnly: 'true'","priceMatch = 'OPPONENT'"]) {
+  if (!orderIntent.includes(required)) fail(`order planning safety invariant missing: ${required}`);
+}
+if (!orderIntent.includes("ENTRY_PREFLIGHT_MAX_AGE_MS = 5000") ||
+    !orderIntent.includes("'ENTRY_PREFLIGHT_STALE'") ||
+    !orderIntent.includes("'POSITION_MODE_NOT_ONE_WAY'") ||
+    !orderIntent.includes("'MARGIN_TYPE_NOT_ISOLATED'")) {
+  fail('entry order planning must require a fresh one-way isolated risk snapshot');
+}
+
 const riskPolicy = fs.readFileSync('lib/risk-policy.mjs', 'utf8');
 if (!riskPolicy.includes('maxActivePositions: 3') ||
     !riskPolicy.includes('maxLeverage: 10') ||
