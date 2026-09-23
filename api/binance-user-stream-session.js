@@ -268,7 +268,6 @@ export default async function handler(req, res) {
       return send(res, 200, {
         ok: true,
         listenKeyChanged: refreshedListenKey !== existing.listenKey,
-        listenKey: refreshedListenKey,
         session: publicSession(record),
         tradingWriteAttempted: false,
       });
