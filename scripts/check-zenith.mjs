@@ -160,6 +160,14 @@ if (!userStreamState.includes('needsReconciliation = true') ||
   fail('Binance user-stream state machine must fail closed on reconnect/discontinuity');
 }
 
+const masterCommandDispatch = fs.readFileSync('lib/master-command-dispatch.mjs','utf8');
+for (const required of ['masterExecutionEligible','EXEC_CLOSE_POSITION','/api/binance-protective-execute','MASTER_COMMAND_NOT_IMPLEMENTED']) {
+  if (!masterCommandDispatch.includes(required)) fail(`MASTER command dispatcher invariant missing: ${required}`);
+}
+if (masterCommandDispatch.includes('EXEC_OPEN_POSITION') && !masterCommandDispatch.includes("supported:false")) {
+  fail('MASTER dispatcher must never route entry execution');
+}
+
 const binanceOrderWriter = fs.readFileSync('lib/binance-order-writer.mjs','utf8');
 for (const required of [
   "queryOrderByClientId",
@@ -249,8 +257,10 @@ for (const file of ['api/binance-read.js','api/binance-reconcile.js','api/binanc
   if (!source.includes('deviceTokenCandidates(req)')) fail(`${file} must accept the secure device session cookie`);
 }
 
-if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'")) {
-  fail('api/zenith-sync.js must keep the explicit real-trading environment lock');
+if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'") ||
+    !sync.includes("process.env.ZENITH_BINANCE_WRITE_ENABLED === '1'") ||
+    !sync.includes("'BINANCE_WRITE_DISABLED'")) {
+  fail('api/zenith-sync.js must keep both explicit real-trading and Binance-write environment locks');
 }
 if (!sync.includes("'SIMULATION_LOCKED'")) {
   fail('api/zenith-sync.js must expose SIMULATION_LOCKED when real trading is not armed');
@@ -366,6 +376,18 @@ if (!index.includes("role==='master'") ||
     !index.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
   fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
 }
+if (!index.includes('masterExecutionCycle') ||
+    !index.includes("masterRuntimeApi('command-next','POST'") ||
+    !index.includes("masterCommandDisposition('command-ack'") ||
+    !index.includes("masterCommandDisposition('command-requeue'") ||
+    !index.includes("fetch(dispatch.endpoint") ||
+    !index.includes("setInterval(masterExecutionCycle,1000)")) {
+  fail('iPad MASTER must poll, strictly dispatch, acknowledge and safely requeue protective execution commands');
+}
+if (!sync.includes('deferReason') || !sync.includes('requestedDelayMs') || !sync.includes('Math.min(30000')) {
+  fail('MASTER command requeue must support bounded retry backoff without extending command expiry');
+}
+
 if (!index.includes("wss://fstream.binance.com/ws/") ||
     index.includes("wss://fstream.binance.com/private/ws/") ||
     !index.includes("import('/lib/user-stream-state.mjs')") ||
