@@ -28,6 +28,27 @@ for (const required of [
   if (!safetyWorkflow.includes(required)) fail(`CI runtime/supply-chain hardening missing: ${required}`);
 }
 
+if (!fs.existsSync('.github/workflows/codeql.yml')) {
+  fail('CodeQL security workflow must exist');
+} else {
+  const codeqlWorkflow = fs.readFileSync('.github/workflows/codeql.yml','utf8');
+  for (const required of [
+    'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+    'github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd',
+    'github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd',
+    'security-events: write',
+    'security-extended',
+    'persist-credentials: false',
+    'allow-unsafe-pr-checkout: false',
+  ]) {
+    if (!codeqlWorkflow.includes(required)) fail(`CodeQL hardening missing: ${required}`);
+  }
+}
+if (!fs.existsSync('.github/dependabot.yml') ||
+    !fs.readFileSync('.github/dependabot.yml','utf8').includes('package-ecosystem: "github-actions"')) {
+  fail('Dependabot must keep pinned GitHub Actions updated');
+}
+
 function fail(message) {
   failed = true;
   console.error('FAIL:', message);
