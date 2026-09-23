@@ -737,6 +737,18 @@ if (!sync.includes("'PAUSE_PENDING'") ||
     !sync.includes("'MASTER_PAUSE_COMPLETED'")) {
   fail('MASTER must support queued pause after active positions close');
 }
+const masterResumeStart = sync.indexOf("if (action === 'master-resume' && req.method === 'POST')");
+const masterResumeEnd = masterResumeStart >= 0
+  ? sync.indexOf("if (action === 'safety' && req.method === 'GET')", masterResumeStart)
+  : -1;
+const masterResumeBlock = masterResumeStart >= 0 && masterResumeEnd > masterResumeStart
+  ? sync.slice(masterResumeStart, masterResumeEnd)
+  : '';
+if (!masterResumeBlock ||
+    !masterResumeBlock.includes("if (currentMode !== 'PAUSED') blockers.push('MASTER_MUST_BE_PAUSED')") ||
+    masterResumeBlock.indexOf("currentMode !== 'PAUSED'") > masterResumeBlock.indexOf("setMasterMode('RUNNING')")) {
+  fail('MASTER resume must only transition from a fully PAUSED state; PAUSE_PENDING uses the explicit cancel path');
+}
 if (!sync.includes('PAUSE_PENDING_ALLOWED_COMMANDS') ||
     !sync.includes("'MASTER_PAUSE_PENDING_UNSAFE_COMMAND'")) {
   fail('queued pause must block new entry commands while allowing explicit close/protection commands');
