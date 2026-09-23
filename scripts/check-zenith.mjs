@@ -209,6 +209,13 @@ if (!index.includes("role==='master'") ||
     !index.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
   fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
 }
+if (!index.includes('applyMasterReadOnlyPolicy') ||
+    !index.includes('IPAD MASTER LECTURE SEULE') ||
+    !index.includes('MASTER_APPLIED_CONFIG_HASH_MISMATCH') ||
+    !index.includes('MASTER_LOCAL_CONFIG_DRIFT_ACTIVE') ||
+    !index.includes("stableStringify(controllerCloudStatePayload())")) {
+  fail('iPad MASTER must be read-only and detect local configuration drift before allowing new entries');
+}
 if (!masterStandby.includes('stableStringify(state.data)')) {
   fail('MASTER standby must verify controller state with the canonical hash');
 }
