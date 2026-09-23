@@ -11,6 +11,8 @@ import {
   validDeviceId,
   deviceSessionRemainingSeconds,
   deviceSessionRecordActive,
+  roleAssignmentKey,
+  deviceRoleAssignmentActive,
   DEVICE_SESSION_MAX_AGE_SECONDS,
 } from '../lib/device-session.mjs';
 
@@ -107,4 +109,23 @@ test('device session records expire absolutely from original creation time', () 
   assert.equal(deviceSessionRemainingSeconds(expired,now),0);
   assert.equal(deviceSessionRecordActive({},now),false);
   assert.equal(DEVICE_SESSION_MAX_AGE_SECONDS,30*24*60*60);
+});
+
+
+test('role assignment epoch permanently rejects sessions created before reassignment', () => {
+  const oldSession={deviceId:'iphone-12345678',role:'controller',createdAt:1_800_000_000_000};
+  const newSession={deviceId:'iphone-12345678',role:'controller',createdAt:1_800_000_100_000};
+  const reassignedAt=1_800_000_050_000;
+
+  assert.equal(roleAssignmentKey('zenith:v1','controller'),'zenith:v1:role-issued-at:controller');
+  assert.equal(roleAssignmentKey('zenith:v1','master'),'zenith:v1:role-issued-at:master');
+  assert.equal(deviceRoleAssignmentActive(oldSession,reassignedAt),false);
+  assert.equal(deviceRoleAssignmentActive(newSession,reassignedAt),true);
+
+  // Backward compatibility: before the first epoch is stored, an existing valid session remains usable.
+  assert.equal(deviceRoleAssignmentActive(oldSession,null),true);
+});
+
+test('invalid role cannot produce a role assignment key', () => {
+  assert.throws(()=>roleAssignmentKey('zenith:v1','guest'),/DEVICE_ROLE_INVALID/);
 });

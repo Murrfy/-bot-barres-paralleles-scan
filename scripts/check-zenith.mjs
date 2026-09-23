@@ -786,7 +786,7 @@ if (sync.includes('claimOrVerifyRoleDevice') ||
     !sync.includes('async function claimRoleDevice') ||
     !sync.includes('async function verifyRoleDevice') ||
     !sync.includes('await claimRoleDevice(role, deviceId)') ||
-    !sync.includes('await verifyRoleDevice(device.role, device.deviceId)')) {
+    !sync.includes('await verifyRoleDevice(device.role, device)')) {
   fail('authenticated devices must never auto-claim a missing controller or MASTER role');
 }
 if (!sync.includes('MASTER_ADMIN_FAILURE_LIMIT = 5') ||
@@ -1018,6 +1018,31 @@ if (!pairingPolicySource.includes('function pairingSecretPolicyBlockers') ||
     !pairingPolicySource.includes("'PAIRING_CODE_REUSES_ADMIN'") ||
     !pairingPolicySource.includes("'PAIRING_SECURITY_POLICY_BLOCKED'")) {
   fail('controller and MASTER pairing secrets must stay strong and distinct from each other and the admin secret');
+}
+
+const roleEpochApiFiles = [
+  'api/zenith-sync.js',
+  'api/binance-entry-execute.js',
+  'api/binance-entry-preflight.js',
+  'api/binance-order-test.js',
+  'api/binance-protective-execute.js',
+  'api/binance-protective-update-execute.js',
+  'api/binance-read.js',
+  'api/binance-reconcile.js',
+  'api/binance-runtime-snapshot.js',
+  'api/binance-user-stream-session.js',
+];
+const roleEpochSession = fs.readFileSync('lib/device-session.mjs','utf8');
+if (!roleEpochSession.includes('roleAssignmentKey') ||
+    !roleEpochSession.includes('deviceRoleAssignmentActive')) {
+  fail('device sessions must support role assignment epoch revocation');
+}
+for (const file of roleEpochApiFiles) {
+  const source = fs.readFileSync(file,'utf8');
+  if (!source.includes('deviceRoleAssignmentActive') ||
+      !source.includes('roleAssignmentKey')) {
+    fail(`${file} must reject sessions created before the current role assignment epoch`);
+  }
 }
 
 if (failed) process.exit(1);
