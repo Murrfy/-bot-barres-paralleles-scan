@@ -118,6 +118,81 @@ function firstForSymbol(value, symbol) {
   return rows.find(x => String(x?.symbol || '').toUpperCase() === symbol) || null;
 }
 
+export async function runLiveEntryPreflight({
+  apiKey,
+  secret,
+  symbol,
+  margin,
+  leverage,
+  maxLoss,
+  requestedPrice = 0,
+} = {}) {
+  if (!apiKey || !secret) throw new Error('BINANCE_CREDENTIALS_REQUIRED');
+  const sym = String(symbol || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{3,30}$/.test(sym) ||
+      !(number(margin) > 0) ||
+      !(number(leverage) > 0) ||
+      !(number(maxLoss) > 0)) {
+    const e = new Error('PREFLIGHT_REQUEST_INVALID');
+    e.code = 'PREFLIGHT_REQUEST_INVALID';
+    throw e;
+  }
+
+  const startedAt = Date.now();
+  const pricePromise = number(requestedPrice) > 0
+    ? Promise.resolve({ price: String(number(requestedPrice)) })
+    : jsonFetch(`${BASE}/fapi/v1/ticker/price?symbol=${encodeURIComponent(sym)}`);
+
+  const [time, exchangeInfo, ticker] = await Promise.all([
+    jsonFetch(`${BASE}/fapi/v1/time`),
+    jsonFetch(`${BASE}/fapi/v1/exchangeInfo`),
+    pricePromise,
+  ]);
+  const serverTime = Number(time?.serverTime);
+  if (!Number.isFinite(serverTime)) throw new Error('BINANCE_TIME_INVALID');
+
+  const [symbolConfigRaw, bracketsRaw, positionMode, account, positions, standardOrders, algoOrders] = await Promise.all([
+    signedGet('/fapi/v1/symbolConfig', apiKey, secret, serverTime, { symbol: sym }),
+    signedGet('/fapi/v1/leverageBracket', apiKey, secret, serverTime, { symbol: sym }),
+    signedGet('/fapi/v1/positionSide/dual', apiKey, secret, serverTime),
+    signedGet('/fapi/v3/account', apiKey, secret, serverTime),
+    signedGet('/fapi/v3/positionRisk', apiKey, secret, serverTime),
+    signedGet('/fapi/v1/openOrders', apiKey, secret, serverTime, { symbol: sym }),
+    signedGet('/fapi/v1/openAlgoOrders', apiKey, secret, serverTime, { symbol: sym, algoType: 'CONDITIONAL' }),
+  ]);
+
+  const symbolInfo = (Array.isArray(exchangeInfo?.symbols) ? exchangeInfo.symbols : [])
+    .find(x => String(x?.symbol || '').toUpperCase() === sym) || null;
+  const symbolConfig = firstForSymbol(symbolConfigRaw, sym);
+  const bracketInfo = firstForSymbol(bracketsRaw, sym);
+  const usdt = (Array.isArray(account?.assets) ? account.assets : [])
+    .find(x => String(x?.asset || '').toUpperCase() === 'USDT') || {};
+  const referencePrice = number(requestedPrice) > 0 ? number(requestedPrice) : number(ticker?.price);
+
+  const evaluation = evaluateEntryRisk({
+    symbol: sym,
+    margin,
+    leverage,
+    maxLoss,
+    referencePrice,
+    symbolInfo,
+    symbolConfig,
+    bracketInfo,
+    dualSidePosition: positionMode?.dualSidePosition === true,
+    positions,
+    standardOrders,
+    algoOrders,
+    availableBalanceUsdt: number(usdt?.availableBalance, number(account?.availableBalance, -1)),
+  });
+
+  return {
+    evaluation,
+    observedAt: Date.now(),
+    serverTime,
+    latencyMs: Date.now() - startedAt,
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return send(res, 405, { ok: false, code: 'METHOD_NOT_ALLOWED' });
@@ -153,70 +228,35 @@ export default async function handler(req, res) {
     return send(res, 503, { ok: false, code: 'MISSING_ENV', error: 'Variables Binance serveur absentes.' });
   }
 
-  const startedAt = Date.now();
-
   try {
-    const [time, exchangeInfo, ticker] = await Promise.all([
-      jsonFetch(`${BASE}/fapi/v1/time`),
-      jsonFetch(`${BASE}/fapi/v1/exchangeInfo`),
-      jsonFetch(`${BASE}/fapi/v1/ticker/price?symbol=${encodeURIComponent(symbol)}`),
-    ]);
-    const serverTime = Number(time?.serverTime);
-    if (!Number.isFinite(serverTime)) throw new Error('Heure Binance indisponible.');
-
-    const [symbolConfigRaw, bracketsRaw, positionMode, account, positions, standardOrders, algoOrders] = await Promise.all([
-      signedGet('/fapi/v1/symbolConfig', apiKey, secret, serverTime, { symbol }),
-      signedGet('/fapi/v1/leverageBracket', apiKey, secret, serverTime, { symbol }),
-      signedGet('/fapi/v1/positionSide/dual', apiKey, secret, serverTime),
-      signedGet('/fapi/v3/account', apiKey, secret, serverTime),
-      signedGet('/fapi/v3/positionRisk', apiKey, secret, serverTime),
-      signedGet('/fapi/v1/openOrders', apiKey, secret, serverTime, { symbol }),
-      signedGet('/fapi/v1/openAlgoOrders', apiKey, secret, serverTime, { symbol, algoType: 'CONDITIONAL' }),
-    ]);
-
-    const symbolInfo = (Array.isArray(exchangeInfo?.symbols) ? exchangeInfo.symbols : [])
-      .find(x => String(x?.symbol || '').toUpperCase() === symbol) || null;
-    const symbolConfig = firstForSymbol(symbolConfigRaw, symbol);
-    const bracketInfo = firstForSymbol(bracketsRaw, symbol);
-    const usdt = (Array.isArray(account?.assets) ? account.assets : [])
-      .find(x => String(x?.asset || '').toUpperCase() === 'USDT') || {};
-    const referencePrice = requestedPrice > 0 ? requestedPrice : number(ticker?.price);
-
-    const evaluation = evaluateEntryRisk({
+    const result = await runLiveEntryPreflight({
+      apiKey,
+      secret,
       symbol,
       margin,
       leverage,
       maxLoss,
-      referencePrice,
-      symbolInfo,
-      symbolConfig,
-      bracketInfo,
-      dualSidePosition: positionMode?.dualSidePosition === true,
-      positions,
-      standardOrders,
-      algoOrders,
-      availableBalanceUsdt: number(usdt?.availableBalance, number(account?.availableBalance, -1)),
+      requestedPrice,
     });
-
     return send(res, 200, {
       ok: true,
       mode: 'READ_ONLY_PREFLIGHT',
       writeAttempted: false,
-      ready: evaluation.ready,
-      reasons: evaluation.reasons,
+      ready: result.evaluation.ready,
+      reasons: result.evaluation.reasons,
       limits: REAL_RISK_LIMITS,
-      normalized: evaluation.normalized,
-      observedAt: Date.now(),
-      latencyMs: Date.now() - startedAt,
+      normalized: result.evaluation.normalized,
+      observedAt: result.observedAt,
+      serverTime: result.serverTime,
+      latencyMs: result.latencyMs,
     });
   } catch (e) {
     return send(res, 502, {
       ok: false,
-      code: 'BINANCE_PREFLIGHT_FAILED',
+      code: e?.code === 'PREFLIGHT_REQUEST_INVALID' ? e.code : 'BINANCE_PREFLIGHT_FAILED',
       error: e?.message || 'Pré-contrôle Binance indisponible.',
       binanceCode: e?.binanceCode,
       status: e?.status,
-      latencyMs: Date.now() - startedAt,
     });
   }
 }

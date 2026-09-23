@@ -27,6 +27,8 @@ jobs:
         run: node --check api/binance-reconcile.js
       - name: Check Binance entry preflight API syntax
         run: node --check api/binance-entry-preflight.js
+      - name: Check fail-closed Binance entry execution API syntax
+        run: node --check api/binance-entry-execute.js
       - name: Check protective execution API syntax
         run: node --check api/binance-protective-execute.js
       - name: Check Binance user-stream session API syntax
@@ -51,6 +53,10 @@ jobs:
         run: node --test scripts/test-device-session.mjs
       - name: Test deterministic order planning
         run: node --test scripts/test-order-intent.mjs
+      - name: Test fail-closed entry protection gate
+        run: node --test scripts/test-entry-protection-gate.mjs
+      - name: Test proof-driven entry confirmation
+        run: node --test scripts/test-entry-open-state.mjs
       - name: Test MASTER protective command dispatcher
         run: node --test scripts/test-master-command-dispatch.mjs
       - name: Test iPhone real-position close command

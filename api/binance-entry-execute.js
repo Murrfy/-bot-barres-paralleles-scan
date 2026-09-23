@@ -1,0 +1,244 @@
+import crypto from 'node:crypto';
+import { deviceTokenCandidates, sameOriginMutation } from '../lib/device-session.mjs';
+import { buildEntryOrderPlan } from '../lib/order-intent.mjs';
+import { placeStandardOrderIdempotent } from '../lib/binance-order-writer.mjs';
+import { findCoveringEntryProtection } from '../lib/entry-protection-gate.mjs';
+import { runLiveEntryPreflight } from './binance-entry-preflight.js';
+import { validateExecutionArmRecord, executionReadiness } from './binance-protective-execute.js';
+
+const PREFIX='zenith:v1';
+const KEY_MASTER=`${PREFIX}:master`;
+const KEY_MASTER_DEVICE=`${PREFIX}:role-device:master`;
+const KEY_STATE=`${PREFIX}:state`;
+const KEY_RECONCILE_LAST=`${PREFIX}:reconcile:last`;
+const KEY_AUDIT=`${PREFIX}:audit`;
+const KEY_REAL_EXECUTION_ARMED=`${PREFIX}:safety:real-execution-armed`;
+const KEY_MASTER_MODE=`${PREFIX}:master-mode`;
+const KEY_EMERGENCY_STOP=`${PREFIX}:safety:emergency-stop`;
+
+const REDIS_URL =
+  process.env.UPSTASH_REDIS_REST_URL ||
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_URL ||
+  process.env.KV_REST_API_URL ||
+  process.env.UPSTASH_REDIS_REST_REDIS_URL;
+const REDIS_TOKEN =
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN ||
+  process.env.KV_REST_API_TOKEN;
+
+const REAL_TRADING_ENABLED=process.env.ZENITH_REAL_TRADING_ENABLED==='1';
+const BINANCE_WRITE_ENABLED=process.env.ZENITH_BINANCE_WRITE_ENABLED==='1';
+const PAIRING_DISABLED=process.env.ZENITH_PAIRING_DISABLED==='1';
+const REAL_ENTRY_WRITE_ENABLED=process.env.ZENITH_REAL_ENTRY_WRITE_ENABLED==='1';
+
+function send(res,status,body){
+  res.setHeader('Cache-Control','no-store, max-age=0');
+  res.setHeader('Content-Type','application/json; charset=utf-8');
+  return res.status(status).json(body);
+}
+function sha256(value){return crypto.createHash('sha256').update(String(value)).digest('hex');}
+function parseJson(raw){try{return raw?JSON.parse(raw):null}catch{return null}}
+
+async function redis(command){
+  if(!REDIS_URL||!REDIS_TOKEN)throw new Error('UPSTASH_NOT_CONFIGURED');
+  const r=await fetch(REDIS_URL,{
+    method:'POST',
+    headers:{Authorization:`Bearer ${REDIS_TOKEN}`,'Content-Type':'application/json'},
+    body:JSON.stringify(command),
+    cache:'no-store',
+  });
+  const text=await r.text();
+  let data={};try{data=text?JSON.parse(text):{}}catch{data={raw:text}}
+  if(!r.ok||data?.error)throw new Error(data?.error||`Redis HTTP ${r.status}`);
+  return data?.result;
+}
+
+async function requireCurrentMaster(req){
+  for(const token of deviceTokenCandidates(req)){
+    const tokenHash=sha256(token);
+    const raw=await redis(['GET',`${PREFIX}:device:${tokenHash}`]);
+    if(!raw)continue;
+    const device=parseJson(raw);
+    if(!device?.deviceId||device.role!=='master')continue;
+    const [registered,lease]=await Promise.all([
+      redis(['GET',KEY_MASTER_DEVICE]),
+      redis(['GET',KEY_MASTER]),
+    ]);
+    if(String(registered||'')!==String(device.deviceId))continue;
+    if(String(lease||'')!==String(device.deviceId)){
+      const e=new Error('MASTER_LEASE_REQUIRED');e.code='MASTER_LEASE_REQUIRED';throw e;
+    }
+    return device;
+  }
+  return null;
+}
+
+async function readExecutionState(){
+  const [runtimeRaw,reportRaw,armRaw,modeRaw,panicRaw]=await Promise.all([
+    redis(['GET',KEY_STATE]),
+    redis(['GET',KEY_RECONCILE_LAST]),
+    redis(['GET',KEY_REAL_EXECUTION_ARMED]),
+    redis(['GET',KEY_MASTER_MODE]),
+    redis(['GET',KEY_EMERGENCY_STOP]),
+  ]);
+  return {
+    runtimeState:parseJson(runtimeRaw),
+    report:parseJson(reportRaw),
+    armRecord:parseJson(armRaw),
+    masterMode:String(modeRaw||'PAUSED').toUpperCase(),
+    emergencyStopActive:panicRaw===null||panicRaw===undefined||panicRaw===''||String(panicRaw)!=='0',
+  };
+}
+
+function entryReadinessReason(state,masterDeviceId){
+  if(state.masterMode!=='RUNNING')return state.masterMode==='PAUSE_PENDING'?'MASTER_PAUSE_PENDING':'MASTER_PAUSED';
+  if(state.emergencyStopActive)return 'EMERGENCY_STOP_ACTIVE';
+  const armReason=validateExecutionArmRecord(state.armRecord,masterDeviceId);
+  if(armReason)return armReason;
+  return executionReadiness(state.runtimeState,state.report,masterDeviceId);
+}
+
+export default async function handler(req,res){
+  if(req.method!=='POST')return send(res,405,{ok:false,code:'METHOD_NOT_ALLOWED'});
+  if(!sameOriginMutation(req))return send(res,403,{ok:false,code:'ORIGIN_FORBIDDEN'});
+
+  let master=null;
+  try{master=await requireCurrentMaster(req)}
+  catch(e){return send(res,e?.code==='MASTER_LEASE_REQUIRED'?409:503,{ok:false,code:e?.code||'AUTH_BACKEND_ERROR',writeAttempted:false})}
+  if(!master)return send(res,401,{ok:false,code:'MASTER_REQUIRED',writeAttempted:false});
+
+  const type=String(req.body?.type||'').toUpperCase();
+  const commandId=String(req.body?.commandId||'');
+  const symbol=String(req.body?.symbol||'').trim().toUpperCase();
+  const side=String(req.body?.side||'').toUpperCase();
+  const orderType=String(req.body?.orderType||'LIMIT').toUpperCase();
+  const margin=Number(req.body?.margin);
+  const leverage=Number(req.body?.leverage);
+  const maxLoss=Number(req.body?.maxLoss);
+  const limitPrice=Number(req.body?.limitPrice);
+
+  if(type!=='EXEC_OPEN_POSITION' ||
+      !/^[A-Za-z0-9._:-]{8,128}$/.test(commandId) ||
+      !/^[A-Z0-9]{3,30}$/.test(symbol) ||
+      !['BUY','SELL'].includes(side) ||
+      orderType!=='LIMIT' ||
+      !(margin>0)||!(leverage>0)||!(maxLoss>0)||!(limitPrice>0)){
+    return send(res,400,{ok:false,code:'ENTRY_EXECUTION_REQUEST_INVALID',writeAttempted:false});
+  }
+
+  const apiKey=process.env.BINANCE_API_KEY;
+  const secret=process.env.BINANCE_API_SECRET;
+  if(!apiKey||!secret)return send(res,503,{ok:false,code:'MISSING_ENV',writeAttempted:false});
+
+  try{
+    const before=await readExecutionState();
+    const beforeReason=entryReadinessReason(before,master.deviceId);
+    if(beforeReason)return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:beforeReason,writeAttempted:false});
+
+    const preflight=await runLiveEntryPreflight({
+      apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:limitPrice,
+    });
+    if(preflight.evaluation.ready!==true){
+      return send(res,409,{
+        ok:false,
+        code:'ENTRY_PREFLIGHT_REJECTED',
+        reasons:preflight.evaluation.reasons,
+        normalized:preflight.evaluation.normalized,
+        observedAt:preflight.observedAt,
+        writeAttempted:false,
+      });
+    }
+
+    const latest=await readExecutionState();
+    const latestReason=entryReadinessReason(latest,master.deviceId);
+    if(latestReason)return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:latestReason,writeAttempted:false});
+
+    let plan;
+    try{
+      plan=buildEntryOrderPlan({
+        command:{id:commandId,symbol,side,orderType,limitPrice,margin,leverage,maxLoss},
+        riskSnapshot:{
+          ready:true,
+          observedAt:preflight.observedAt,
+          normalized:preflight.evaluation.normalized,
+        },
+        now:Date.now(),
+      });
+    }catch(e){
+      return send(res,409,{ok:false,code:e?.message||'ENTRY_PLAN_INVALID',writeAttempted:false});
+    }
+
+    const protection=findCoveringEntryProtection(latest.runtimeState,{
+      symbol,side,quantity:Number(plan.params.quantity),limitPrice,
+    });
+    if(protection.ready!==true){
+      return send(res,423,{
+        ok:false,
+        code:'ENTRY_PROTECTION_NOT_ARMED',
+        reason:protection.reason||'ENTRY_PROTECTION_NOT_ARMED',
+        writeAttempted:false,
+        plan,
+      });
+    }
+
+    const writesEnabled=Boolean(
+      REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED
+    );
+    if(!writesEnabled){
+      return send(res,423,{
+        ok:false,
+        code:'REAL_ENTRY_WRITE_LOCKED',
+        realTradingEnabled:REAL_TRADING_ENABLED,
+        binanceWriteEnabled:BINANCE_WRITE_ENABLED,
+        pairingDisabled:PAIRING_DISABLED,
+        realEntryWriteEnabled:REAL_ENTRY_WRITE_ENABLED,
+        writeAttempted:false,
+        plan,
+        protection:protection.order,
+      });
+    }
+
+    const result=await placeStandardOrderIdempotent({
+      apiKey,
+      secret,
+      orderParams:plan.params,
+      writesEnabled:true,
+      timestamp:preflight.serverTime,
+    });
+
+    await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+      at:Date.now(),
+      kind:'BINANCE_ENTRY_ORDER_DISPATCH',
+      deviceId:master.deviceId,
+      commandId,
+      symbol,
+      side,
+      limitPrice,
+      quantity:Number(plan.params.quantity),
+      clientOrderId:plan.params.newClientOrderId,
+      protectionIdentity:String(protection.order?.clientAlgoId||protection.order?.clientOrderId||protection.order?.algoId||protection.order?.orderId||''),
+      disposition:result.disposition,
+      writeAttempted:result.writeAttempted===true,
+    })]);
+    await redis(['LTRIM',KEY_AUDIT,'0','199']);
+
+    return send(res,200,{
+      ok:true,
+      plan,
+      protection:protection.order,
+      result,
+      confirmationRequired:true,
+    });
+  }catch(e){
+    return send(res,502,{
+      ok:false,
+      code:e?.message==='ORDER_RESULT_AMBIGUOUS'?'ORDER_RESULT_AMBIGUOUS':'BINANCE_ENTRY_EXECUTION_FAILED',
+      error:e?.message||'Binance entry execution failed.',
+      binanceCode:e?.code??null,
+      ambiguous:e?.ambiguous===true,
+      writeAttempted:e?.message==='ORDER_RESULT_AMBIGUOUS',
+    });
+  }
+}
+
+export { entryReadinessReason };
