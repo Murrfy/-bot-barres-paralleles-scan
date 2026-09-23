@@ -1308,8 +1308,19 @@ export default async function handler(req, res) {
         createdAt,
         lastSeenAt: createdAt,
       };
-      await redis(['SET', roleAssignmentKey(PREFIX, role), String(createdAt)]);
-      await redis(['SET', `${PREFIX}:device:${tokenHash}`, JSON.stringify(record), 'EX', String(DEVICE_SESSION_MAX_AGE_SECONDS)]);
+      const pairSessionScript = [
+        "redis.call('SET', KEYS[1], ARGV[1])",
+        "redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])",
+        "return 1"
+      ].join('\n');
+      await redis([
+        'EVAL', pairSessionScript, '2',
+        roleAssignmentKey(PREFIX, role),
+        `${PREFIX}:device:${tokenHash}`,
+        String(createdAt),
+        JSON.stringify(record),
+        String(DEVICE_SESSION_MAX_AGE_SECONDS),
+      ]);
       setDeviceSessionCookie(res, token);
       return send(res, 201, { ok: true, sessionReady: true, device: record });
     }
