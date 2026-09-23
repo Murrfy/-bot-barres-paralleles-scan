@@ -14,14 +14,15 @@ import {
   DEVICE_SESSION_MAX_AGE_SECONDS,
 } from '../lib/device-session.mjs';
 
-test('Bearer migration token has precedence and cookie is fallback', () => {
+test('Bearer parser is migration-only while normal auth candidates are cookie-only', () => {
   const req={headers:{authorization:'Bearer legacy-token',cookie:`${DEVICE_SESSION_COOKIE}=cookie-token`}};
   assert.equal(bearerToken(req),'legacy-token');
   assert.equal(cookieToken(req),'cookie-token');
-  assert.deepEqual(deviceTokenCandidates(req),['legacy-token','cookie-token']);
+  assert.deepEqual(deviceTokenCandidates(req),['cookie-token']);
+  assert.deepEqual(deviceTokenCandidates({headers:{authorization:'Bearer legacy-token'}}),[]);
 });
 
-test('blank Bearer falls back to secure cookie', () => {
+test('blank Bearer still falls back to secure cookie', () => {
   const req={headers:{authorization:'Bearer ',cookie:`${DEVICE_SESSION_COOKIE}=cookie-token`}};
   assert.deepEqual(deviceTokenCandidates(req),['cookie-token']);
 });
