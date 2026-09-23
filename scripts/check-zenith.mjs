@@ -782,6 +782,12 @@ if (!sync.includes('COMMAND_MAX_AGE_MS = 2 * 60 * 1000') ||
     !sync.includes('DEAD_LETTER_MAX = 500')) {
   fail('command queue must have bounded age, depth, payload size and dead-letter retention');
 }
+if (!sync.includes('COMMAND_SUBMIT_RATE_LIMIT = 30') ||
+    !sync.includes('commandSubmitRateAllowed(device.deviceId)') ||
+    !sync.includes("'COMMAND_RATE_LIMIT_UNAVAILABLE'") ||
+    !sync.includes("'COMMAND_RATE_LIMIT'")) {
+  fail('controller command submission must remain rate-limited and fail closed');
+}
 if (!sync.includes('ALLOWED_COMMAND_TYPES') ||
     !sync.includes("'COMMAND_TYPE_NOT_ALLOWED'") ||
     sync.includes("'EXEC_OPEN_POSITION'")) {
