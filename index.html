@@ -58,8 +58,13 @@
   </div>
 
   <section class="panel" id="activePositionsPanel" style="margin-bottom:7px">
-    <div class="panelTitle"><h2>Positions actives</h2><span id="activeLimitNote" class="hint"></span></div>
+    <div class="panelTitle"><h2>Positions actives — simulation</h2><span id="activeLimitNote" class="hint"></span></div>
     <div id="activeWrap" class="activeWrap"></div>
+  </section>
+
+  <section class="panel" id="realPositionsPanel" style="margin-bottom:7px">
+    <div class="panelTitle"><h2>Positions réelles Binance</h2><span id="realPositionsNote" class="hint">lecture seule</span></div>
+    <div id="realPositionsWrap" class="activeWrap"><div class="hint">Chargement Binance…</div></div>
   </section>
 
   <div class="dashboard">
@@ -169,7 +174,8 @@ let settings=clone(DEFAULTS),tokenSettings={},manualTokens={},validated={},reval
 let exchangeMap=new Map(),lastPrices=new Map(),ws=null,wsLive=false,fallbackTimer=null,uiRenderPending=false,wsSubscribed=new Set(),wsReconnectTimer=null,wsRequestId=1;
 const lastAggIds=new Map(),lastAggTimes=new Map(),recoveringSymbols=new Set(),pendingAggTrades=new Map();
 let cursorSaveTimer=null;
-let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
+let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,positions:[],openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
+let controllerRealCommandModule=null,realClosePending=new Set();
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
@@ -179,7 +185,65 @@ let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEv
 let masterExecution={busy:false,timer:null,lastError:'',lastCommandId:''};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
-function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}}
+function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}renderRealPositions()}
+async function loadControllerRealCommandModule(){
+  if(controllerRealCommandModule)return controllerRealCommandModule;
+  controllerRealCommandModule=await import('/lib/controller-real-command.mjs');
+  return controllerRealCommandModule;
+}
+async function queueRealPositionClose(position){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('Fermeture réelle refusée : iPhone contrôleur non vérifié.',true);
+  let command,key;
+  try{
+    const mod=await loadControllerRealCommandModule();
+    command=mod.buildControllerRealCloseCommand(position);
+    key=mod.realPositionKey(position);
+  }catch(e){return setStatus('Fermeture réelle refusée : '+String(e?.message||'position invalide')+'.',true)}
+  if(realClosePending.has(key))return;
+  const symbol=String(position?.symbol||'');
+  if(!confirm(`ARGENT RÉEL — Confirmer la fermeture de ${symbol} ?\n\nZenith enverra une sortie LIMIT IOC reduce-only au plus près du marché. La position restera affichée jusqu’à confirmation Binance.`))return;
+  realClosePending.add(key);renderRealPositions();
+  try{
+    const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
+    const r=await fetch('/api/zenith-sync?action=command',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+      body:JSON.stringify(command)
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.reason||q?.error||('HTTP '+r.status));
+    setStatus(`${symbol} : fermeture réelle mise en file MASTER. Zenith attend la confirmation Binance avant de considérer la position fermée.`);
+    setTimeout(()=>refreshBinanceAccount(),1000);
+  }catch(e){
+    realClosePending.delete(key);
+    renderRealPositions();
+    setStatus(`${symbol} : ordre réel NON envoyé — ${String(e?.message||'erreur')}.`,true);
+  }
+}
+function renderRealPositions(){
+  const wrap=$('realPositionsWrap'),note=$('realPositionsNote');
+  if(!wrap||!note)return;
+  if(!binanceAccount.connected){
+    note.textContent='lecture indisponible';
+    wrap.innerHTML='<div class="hint">Compte Binance réel inaccessible. Aucune action réelle disponible.</div>';
+    return;
+  }
+  const rows=Array.isArray(binanceAccount.positions)?binanceAccount.positions:[];
+  note.textContent=`${rows.length} position(s) · lecture Binance`;
+  if(!rows.length){
+    wrap.innerHTML='<div class="hint">Aucune position réelle ouverte sur Binance.</div>';
+    return;
+  }
+  const controller=controllerIdentity.paired&&controllerIdentity.role==='controller';
+  wrap.innerHTML=rows.map((p,i)=>{
+    const amt=n(p.positionAmt,0),qty=Math.abs(amt),dir=amt>=0?'LONG':'SHORT',pnl=n(p.unrealizedProfit,0),side=String(p.positionSide||'BOTH').toUpperCase();
+    const key=controllerRealCommandModule?controllerRealCommandModule.realPositionKey(p):'';
+    const pending=key&&realClosePending.has(key);
+    const closeAllowed=controller&&side==='BOTH'&&qty>0&&!pending;
+    return `<div class="posCard"><div class="posTop"><span class="posSym">RÉEL · ${escapeHtml(p.symbol)} · ${dir}</span><span class="posPnl ${pnl>=0?'pos':'neg'}">${money(pnl)}</span></div><div class="posGrid"><span>Entrée</span><b>${price(p.entryPrice)}</b><span>Mark</span><b>${price(p.markPrice)}</b><span>Quantité</span><b>${escapeHtml(String(qty))}</b><span>Levier</span><b>x${escapeHtml(String(p.leverage||'—'))}</b><span>Marge</span><b>${escapeHtml(String(p.marginType||'—').toUpperCase())}</b><span>Liquidation</span><b>${price(p.liquidationPrice)}</b></div><button class="btn danger closeNowMini" data-real-close="${i}" ${closeAllowed?'':'disabled'}>${pending?'FERMETURE EN ATTENTE':side!=='BOTH'?'HEDGE NON PRIS EN CHARGE':'FERMER RÉEL · LIMIT IOC'}</button></div>`;
+  }).join('');
+  wrap.querySelectorAll('[data-real-close]').forEach(b=>b.onclick=e=>{e.stopPropagation();const p=rows[Number(b.dataset.realClose)];if(p)queueRealPositionClose(p)});
+}
 function applyMasterReadOnlyPolicy(){
   const readOnly=controllerIdentity.paired&&controllerIdentity.role==='master';
   document.documentElement.classList.toggle('master-readonly',readOnly);
@@ -1105,7 +1169,7 @@ function startControllerIdentityCheck(){
   refreshControllerIdentity();
   controllerIdentityTimer=setInterval(refreshControllerIdentity,300000);
 }
-async function refreshBinanceAccount(){try{const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';const r=await fetch('/api/binance-read',{cache:'no-store',headers:{Accept:'application/json',...(token?{Authorization:'Bearer '+token}:{})}});let q={};try{q=await r.json()}catch(_){q={}}if(!r.ok||q?.ok!==true){binanceAccount={...binanceAccount,connected:false,configured:q?.code!=='MISSING_ENV',error:q?.error||`HTTP ${r.status}`};renderBinanceAccount();return false}const usdt=q?.usdt||{};binanceAccount={connected:true,configured:true,walletBalance:n(usdt.balance,n(usdt.walletBalance,NaN)),availableBalance:n(usdt.availableBalance,NaN),realPositions:Array.isArray(q.positions)?q.positions.length:0,openOrders:n(q.openOrders),latencyMs:n(q.latencyMs),lastOk:Date.now(),error:''};renderBinanceAccount();return true}catch(e){binanceAccount={...binanceAccount,connected:false,error:e?.message||'Connexion impossible'};renderBinanceAccount();return false}}
+async function refreshBinanceAccount(){try{const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';const r=await fetch('/api/binance-read',{cache:'no-store',headers:{Accept:'application/json',...(token?{Authorization:'Bearer '+token}:{})}});let q={};try{q=await r.json()}catch(_){q={}}if(!r.ok||q?.ok!==true){binanceAccount={...binanceAccount,connected:false,configured:q?.code!=='MISSING_ENV',positions:[],realPositions:0,error:q?.error||`HTTP ${r.status}`};renderBinanceAccount();return false}const usdt=q?.usdt||{},positions=Array.isArray(q.positions)?q.positions:[];binanceAccount={connected:true,configured:true,walletBalance:n(usdt.balance,n(usdt.walletBalance,NaN)),availableBalance:n(usdt.availableBalance,NaN),positions:clone(positions),realPositions:positions.length,openOrders:n(q.openOrders),latencyMs:n(q.latencyMs),lastOk:Date.now(),error:''};renderBinanceAccount();return true}catch(e){binanceAccount={...binanceAccount,connected:false,positions:[],realPositions:0,error:e?.message||'Connexion impossible'};renderBinanceAccount();return false}}
 function startBinanceAccountReadOnly(){if(binanceAccountTimer)clearInterval(binanceAccountTimer);refreshBinanceAccount();binanceAccountTimer=setInterval(refreshBinanceAccount,15000)}
 function notional(c){return n(c.binanceEffectiveNotional)>0?n(c.binanceEffectiveNotional):n(c.margin,100)*n(c.leverage,10)}
 function normalizeProtections(stages,target=3000){const src=Array.isArray(stages)?stages:[],count=Math.max(protectionCountForTarget(target),src.length&&target==null?src.length:0);return Array.from({length:count},(_,i)=>{const d=defaultProtection(i),x=src[i]||d;return{enabled:x.enabled!==false,arm:Math.max(0,n(x.arm,d.arm)),floor:Math.max(0,n(x.floor,d.floor))}})}
