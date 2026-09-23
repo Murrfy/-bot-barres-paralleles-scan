@@ -6,7 +6,7 @@ const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 
 test('MAX-LOSS replacement confirms and publishes new stop before canceling old without interim full reconcile',()=>{
   assert.match(html,/async function placeNew\(\{deferReconcile=false\}=\{\}\)/);
-  assert.match(html,/if\(deferReconcile\)\{[\s\S]*await publishMasterStreamState\(\);[\s\S]*return clientId;[\s\S]*\}[\s\S]*const reconciled=await awaitMasterReconciliation\(\)/);
+  assert.match(html,/await publishMasterStreamState\(\);[\s\S]*if\(deferReconcile\)\{[\s\S]*return clientId;[\s\S]*\}[\s\S]*const reconciled=await awaitMasterReconciliation\(\)/);
   assert.match(html,/newClientId=await placeNew\(\{deferReconcile:maxLoss\}\);/);
   assert.match(html,/if\(!newClientId\)return false;[\s\S]*if\(!\(await cancelOld\(newClientId\)\)\)return false;/);
 });
