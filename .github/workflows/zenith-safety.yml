@@ -63,6 +63,8 @@ jobs:
         run: node --test scripts/test-order-intent.mjs
       - name: Test fail-closed entry protection gate
         run: node --test scripts/test-entry-protection-gate.mjs
+      - name: Test central emergency hard-cap ACK validation
+        run: node --test scripts/test-central-emergency-cap.mjs
       - name: Test proof-driven entry confirmation
         run: node --test scripts/test-entry-open-state.mjs
       - name: Test MASTER protective command dispatcher
