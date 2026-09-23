@@ -393,6 +393,14 @@ if (!index.includes('async function awaitMasterReconciliation(timeoutMs=5000)') 
   fail('critical MASTER mutations must serialize reconciliation and must not ACK a full close without reconciled stream readiness');
 }
 
+const masterAutoProtection = fs.readFileSync('lib/master-auto-protection.mjs','utf8');
+if (!masterAutoProtection.includes('STANDARD_REDUCE_ONLY_LIMIT_ALREADY_OPEN') ||
+    !masterAutoProtection.includes('managedExitId(order?.clientOrderId)') ||
+    !protectiveUpdateExecute.includes('samePurpose = !managedExitId(id)') ||
+    !protectiveUpdateExecute.includes("o?.clientAlgoId||o?.clientOrderId||o?.orderId")) {
+  fail('progressive protection must not be recreated over an unknown standard reduce-only LIMIT while normal zth-EXI targets remain allowed');
+}
+
 if (!userStreamSeed.includes('positionLifecycleAt:Number(p.updateTime||snapshot.observedAt||0)') ||
     !userStreamState.includes('positionLifecycleAt=sameCore') ||
     !masterRuntimeInventory.includes('lifecycleAt: Number(p.positionLifecycleAt || p.eventTime || 0)') ||

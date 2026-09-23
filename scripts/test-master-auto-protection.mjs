@@ -89,3 +89,30 @@ test('external or non-exact progressive protection blocks automatic replacement'
   assert.equal(b.action,'BLOCK');
   assert.equal(b.reason,'PROGRESSIVE_ORDER_NOT_EXACT_LIMIT');
 });
+
+
+test('triggered or external standard reduce-only LIMIT blocks automatic progressive recreation',()=>{
+  const pending=[{
+    orderClass:'STANDARD',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'LIMIT',timeInForce:'GTC',reduceOnly:true,
+    clientOrderId:'child-or-manual-limit',price:'139.8'
+  }];
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:long,markPrice:145,protectionStages:stages,currentOrders:pending,priceFilter:filter
+  });
+  assert.equal(r.action,'BLOCK');
+  assert.equal(r.reason,'STANDARD_REDUCE_ONLY_LIMIT_ALREADY_OPEN');
+});
+
+test('normal Zenith exit LIMIT may coexist with automatic progressive protection',()=>{
+  const target=[{
+    orderClass:'STANDARD',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'LIMIT',timeInForce:'GTC',reduceOnly:true,
+    clientOrderId:'zth-EXI-0123456789abcdef01234567',price:'300'
+  }];
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:long,markPrice:145,protectionStages:stages,currentOrders:target,priceFilter:filter
+  });
+  assert.equal(r.action,'REPLACE');
+  assert.equal(r.stage.armProfitUsd,40);
+});

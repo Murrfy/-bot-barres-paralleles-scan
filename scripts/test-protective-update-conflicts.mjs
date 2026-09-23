@@ -91,3 +91,23 @@ test('cancel-old MAX-LOSS may use the exact transition repair target only with a
   assert.match(api,/phase==='CANCEL_OLD'&&update\.protectionKind==='MAX_LOSS'&&String\(req\.body\?\.newClientAlgoId\|\|''\)/);
   assert.match(api,/NEW_MAX_LOSS_PROTECTION_NOT_CONFIRMED/);
 });
+
+
+test('progressive placement blocks a standard reduce-only LIMIT that is not a Zenith exit target',()=>{
+  const pending={
+    orderClass:'STANDARD',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'LIMIT',timeInForce:'GTC',reduceOnly:true,clientOrderId:'child-protection-limit'
+  };
+  const conflicts=conflictingProtectiveOrders(runtime([pending]),update,'PROGRESSIVE',[]);
+  assert.equal(conflicts.length,1);
+  assert.equal(conflicts[0].clientOrderId,'child-protection-limit');
+});
+
+test('progressive placement allows a normal Zenith zth-EXI target LIMIT',()=>{
+  const target={
+    orderClass:'STANDARD',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'LIMIT',timeInForce:'GTC',reduceOnly:true,
+    clientOrderId:'zth-EXI-0123456789abcdef01234567'
+  };
+  assert.equal(conflictingProtectiveOrders(runtime([target]),update,'PROGRESSIVE',[]).length,0);
+});
