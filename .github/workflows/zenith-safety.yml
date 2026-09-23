@@ -33,6 +33,8 @@ jobs:
         run: node --check api/binance-user-stream-session.js
       - name: Check Binance runtime snapshot API syntax
         run: node --check api/binance-runtime-snapshot.js
+      - name: Check Binance protective test-order API syntax
+        run: node --check api/binance-order-test.js
       - name: Check Zenith sync API syntax
         run: node --check api/zenith-sync.js
       - name: Test reconciliation failure scenarios
@@ -61,3 +63,5 @@ jobs:
         run: node --test scripts/test-binance-runtime-snapshot.mjs
       - name: Test MASTER REST-to-stream seed
         run: node --test scripts/test-user-stream-seed.mjs
+      - name: Test Binance protective order validation without matching-engine submission
+        run: node --test scripts/test-binance-order-test.mjs

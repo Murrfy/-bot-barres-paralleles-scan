@@ -117,6 +117,16 @@ for (const required of ['RECONCILIATION_REQUIRED_AFTER_SEED','standardOrders','a
   if (!userStreamSeed.includes(required)) fail(`user-stream seed invariant missing: ${required}`);
 }
 
+const binanceOrderTest = fs.readFileSync('api/binance-order-test.js','utf8');
+for (const required of ["/fapi/v1/order/test","BINANCE_TEST_ORDER_ONLY","matchingEngineSubmitted:false","tradingWriteAttempted:false","TEST_MUST_BE_REDUCE_ONLY","ONLY_ONE_WAY_SUPPORTED"]) {
+  if (!binanceOrderTest.includes(required)) fail(`protective Binance test-order invariant missing: ${required}`);
+}
+if (binanceOrderTest.includes("TEST_ORDER_PATH='/fapi/v1/order'") ||
+    binanceOrderTest.includes('TEST_ORDER_PATH="/fapi/v1/order"') ||
+    binanceOrderTest.includes('/fapi/v1/algoOrder')) {
+  fail('protective order validation endpoint must never target a live standard or conditional order path');
+}
+
 const userStreamSession = fs.readFileSync('api/binance-user-stream-session.js', 'utf8');
 for (const required of [
   "/fapi/v1/listenKey",
