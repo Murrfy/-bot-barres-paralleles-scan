@@ -197,6 +197,9 @@ for (const required of [
 if (protectiveExecute.includes('EXEC_OPEN_POSITION')) {
   fail('protective execution API must never open a new position');
 }
+if (!protectiveExecute.includes("priceMatch:String(req.body?.priceMatch||'OPPONENT')")) {
+  fail('protective execution must pass audited adaptive priceMatch values through the order planner');
+}
 
 const protectiveCloseState = fs.readFileSync('lib/protective-close-state.mjs','utf8');
 for (const required of ["OPPONENT_5","OPPONENT_10","MARKET_LAST_RESORT","safeToRetry","inconsistentFilled","terminalSeen"]) {
@@ -502,6 +505,15 @@ if (!sync.includes("'MASTER_RUNTIME_NOT_REAL'") ||
 }
 if (!sync.includes('pushDeadLetter') || !sync.includes("redis(['LTRIM', KEY_DEAD")) {
   fail('dead-letter queue must be bounded');
+}
+if (!sync.includes('execClosePayloadStatus') ||
+    !sync.includes("'CLOSE_ALL_REQUIRED'") ||
+    !sync.includes("'COMMAND_PAYLOAD_INVALID'") ||
+    !sync.includes("action === 'command-fail'") ||
+    !sync.includes("'EXECUTION_ACK_NOT_CONFIRMED'") ||
+    !sync.includes('runtimeClosePositionQuantity') ||
+    !sync.includes('freshConsistentReconciliation(device.deviceId)')) {
+  fail('EXEC_CLOSE_POSITION must be full-close only and require fresh reconciled zero-position proof before ACK');
 }
 
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');
