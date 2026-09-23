@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive } from '../lib/device-session.mjs';
+import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 
 const BASE='https://fapi.binance.com';
 const TEST_ORDER_PATH='/fapi/v1/order/test';
@@ -111,6 +112,8 @@ function signedBody(params,secret,timestamp){
 export default async function handler(req,res){
   if(req.method!=='POST')return send(res,405,{ok:false,code:'METHOD_NOT_ALLOWED'});
   if(!sameOriginMutation(req))return send(res,403,{ok:false,code:'ORIGIN_FORBIDDEN'});
+  const bodyStatus=requestBodyStatus(req,64*1024);
+  if(!bodyStatus.ok)return send(res,413,{ok:false,code:'REQUEST_BODY_TOO_LARGE',maxBytes:bodyStatus.maxBytes,matchingEngineSubmitted:false,tradingWriteAttempted:false});
   let master=null;
   try{master=await requireMaster(req)}catch(e){return send(res,e?.code==='MASTER_LEASE_REQUIRED'?409:503,{ok:false,code:e?.code||'AUTH_BACKEND_ERROR'})}
   if(!master)return send(res,401,{ok:false,code:'MASTER_REQUIRED'});
