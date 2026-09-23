@@ -64,6 +64,8 @@ jobs:
         run: node --test scripts/test-orphan-protection-cleanup.mjs
       - name: Test shared MASTER administration
         run: node --test scripts/test-master-admin.mjs
+      - name: Test strict PAUSED-only MASTER resume
+        run: node --test scripts/test-master-resume-paused-gate.mjs
       - name: Test ADMIN-protected MASTER activation
         run: node --test scripts/test-master-activation.mjs
       - name: Test MASTER emergency revoke
