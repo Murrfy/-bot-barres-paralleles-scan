@@ -2500,8 +2500,11 @@ export default async function handler(req, res) {
     }
 
     if (action === 'audit' && req.method === 'GET') {
-      const device = await requireDevice(req, res);
+      const device = await requireDevice(req, res, ['master']);
       if (!device) return;
+      if (!(await hasMasterLease(device.deviceId))) {
+        return send(res, 409, { ok: false, code: 'MASTER_LEASE_REQUIRED' });
+      }
 
       const requested = Math.max(1, Math.min(50, Number(req.query?.limit || 20)));
       const rows = await redis(['LRANGE', KEY_AUDIT, '0', String(requested - 1)]);
