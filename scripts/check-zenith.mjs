@@ -167,6 +167,21 @@ if (!userStreamState.includes('needsReconciliation = true') ||
   fail('Binance user-stream state machine must fail closed on reconnect/discontinuity');
 }
 
+const controllerRealCommand = fs.readFileSync('lib/controller-real-command.mjs','utf8');
+for (const required of ['EXEC_CLOSE_POSITION','PROTECTIVE_IOC','HEDGE_MODE_UNSUPPORTED','clientCommandId']) {
+  if (!controllerRealCommand.includes(required)) fail(`iPhone real-close command invariant missing: ${required}`);
+}
+if (controllerRealCommand.includes("'EXEC_OPEN_POSITION'")) {
+  fail('iPhone real-position control must never construct an entry command');
+}
+if (!index.includes('Positions réelles Binance') ||
+    !index.includes('queueRealPositionClose') ||
+    !index.includes("fetch('/api/zenith-sync?action=command'") ||
+    !index.includes('FERMER RÉEL · LIMIT IOC') ||
+    !index.includes('attend la confirmation Binance')) {
+  fail('iPhone controller must show real Binance positions and queue close-only commands without locally faking a fill');
+}
+
 const masterCommandDispatch = fs.readFileSync('lib/master-command-dispatch.mjs','utf8');
 for (const required of ['masterExecutionEligible','EXEC_CLOSE_POSITION','/api/binance-protective-execute','MASTER_COMMAND_NOT_IMPLEMENTED']) {
   if (!masterCommandDispatch.includes(required)) fail(`MASTER command dispatcher invariant missing: ${required}`);
