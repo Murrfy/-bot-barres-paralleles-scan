@@ -1024,6 +1024,18 @@ if (!realEntryExecuteRate.includes('ENTRY_EXECUTION_RATE_LIMIT_PER_MINUTE=6') ||
     !realEntryExecuteRate.includes("res.setHeader('Retry-After'")) {
   fail('real entry execution must be rate-limited before Binance without affecting protective exits');
 }
+if (!realEntryExecuteRate.includes('async function finalEntryDispatchGate') ||
+    !realEntryExecuteRate.includes("if registered ~= ARGV[1] then return -1 end") ||
+    !realEntryExecuteRate.includes("if lease ~= ARGV[1] then return -2 end") ||
+    !realEntryExecuteRate.includes("if mode ~= 'RUNNING' then return -3 end") ||
+    !realEntryExecuteRate.includes("if panic ~= '0' then return -4 end") ||
+    !realEntryExecuteRate.includes("if arm ~= ARGV[3] then return -5 end") ||
+    !realEntryExecuteRate.includes("if roleEpoch ~= ARGV[2] then return -6 end") ||
+    !realEntryExecuteRate.includes("'ENTRY_EXECUTION_COMMIT_BLOCKED'") ||
+    realEntryExecuteRate.indexOf('const dispatchGate=await finalEntryDispatchGate(') >
+      realEntryExecuteRate.indexOf('const result=await placeStandardOrderIdempotent({')) {
+  fail('real entry dispatch must atomically revalidate MASTER, lease, RUNNING, PANIC, arm and role epoch immediately before Binance');
+}
 
 const authenticatedApiFiles = fs.readdirSync('api')
   .filter(name => name.endsWith('.js'))
