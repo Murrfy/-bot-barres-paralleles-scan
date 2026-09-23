@@ -228,7 +228,13 @@ export default async function handler(req,res){
     if(armReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_ARMED',reason:armReason,writeAttempted:false});
     const modeReason=protectiveModeReason(state.masterMode);
     if(modeReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:modeReason,writeAttempted:false});
-    const readyReason=executionReadiness(state.runtimeState,state.report,master.deviceId);
+    const repairTarget=
+      type==='EXEC_UPDATE_PROTECTION' &&
+      phase==='PLACE_NEW' &&
+      update.protectionKind==='MAX_LOSS'
+        ?`${update.symbol}:${update.direction}`
+        :'';
+    const readyReason=executionReadiness(state.runtimeState,state.report,master.deviceId,repairTarget);
     if(readyReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readyReason,writeAttempted:false});
 
     const position=runtimePosition(state.runtimeState,update.symbol,update.direction);
