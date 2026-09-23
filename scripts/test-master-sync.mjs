@@ -17,9 +17,9 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
     /^import \{ REAL_RISK_LIMITS \} from '\.\.\/lib\/risk-policy\.mjs';\n/m,
     "const REAL_RISK_LIMITS=Object.freeze({maxLossUsd:400});\n"
   );
-const { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus } = await import(
+const { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus, commandAllowedDuringDeferredConfig } = await import(
   'data:text/javascript;base64,' +
-  Buffer.from(source + '\nexport { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus };').toString('base64')
+  Buffer.from(source + '\nexport { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus, commandAllowedDuringDeferredConfig };').toString('base64')
 );
 
 const controller = (revision = 3, hash = 'hash-3') => ({
@@ -54,7 +54,7 @@ test('a newer controller revision fails closed until MASTER applies it', () => {
   assert.equal(s.reason, 'MASTER_CONFIG_OUT_OF_SYNC');
 });
 
-test('full configuration apply is deferred while a position is active', () => {
+test('full configuration apply is deferred while a position is active but protection work remains safe on applied config', () => {
   const s = masterConfigSyncStatus(
     controller(4, 'hash-4'),
     applied(3, 'hash-3'),
@@ -64,10 +64,15 @@ test('full configuration apply is deferred while a position is active', () => {
   assert.equal(s.synchronized, false);
   assert.equal(s.applyAllowed, false);
   assert.equal(s.applyDeferred, true);
-  assert.equal(s.reason, 'MASTER_CONFIG_APPLY_DEFERRED');
+  assert.equal(s.protectiveDeferredSafe, true);
+  assert.equal(s.failClosed, true);
+  assert.equal(s.reason, 'MASTER_CONFIG_APPLY_DEFERRED_PROTECTIVE_SAFE');
+  assert.equal(commandAllowedDuringDeferredConfig('EXEC_UPDATE_PROTECTION',s),true);
+  assert.equal(commandAllowedDuringDeferredConfig('EXEC_CLOSE_POSITION',s),true);
+  assert.equal(commandAllowedDuringDeferredConfig('EXEC_OPEN_POSITION',s),false);
 });
 
-test('open orders also defer a full configuration apply', () => {
+test('open orders also defer a full configuration apply without stopping protective work', () => {
   const s = masterConfigSyncStatus(
     controller(4, 'hash-4'),
     applied(3, 'hash-3'),
@@ -76,6 +81,8 @@ test('open orders also defer a full configuration apply', () => {
   );
   assert.equal(s.applyAllowed, false);
   assert.equal(s.applyDeferred, true);
+  assert.equal(s.protectiveDeferredSafe, true);
+  assert.equal(commandAllowedDuringDeferredConfig('EXEC_UPDATE_EXIT',s),true);
 });
 
 test('an acknowledgement from a replaced MASTER is never accepted as synchronized', () => {
@@ -166,4 +173,27 @@ test('real execution runtime rejects another MASTER identity and stale runtime',
   };
   assert.equal(executionRuntimeReadinessStatus(base,'master-2').reason,'MASTER_RUNTIME_WRONG_DEVICE');
   assert.equal(executionRuntimeReadinessStatus({...base,updatedAt:Date.now()-31000},'master-1').reason,'MASTER_RUNTIME_STALE');
+});
+
+
+test('deferred protection safety never applies without a valid previously applied config',()=>{
+  const noApplied=masterConfigSyncStatus(
+    controller(4,'hash-4'),null,
+    runtime([{symbol:'BTCUSDT'}],[]),'master-1'
+  );
+  assert.equal(noApplied.protectiveDeferredSafe,false);
+
+  const wrongMaster=masterConfigSyncStatus(
+    controller(4,'hash-4'),applied(3,'hash-3','old-master'),
+    runtime([{symbol:'BTCUSDT'}],[]),'master-1'
+  );
+  assert.equal(wrongMaster.protectiveDeferredSafe,false);
+});
+
+test('deferred protection safety is disabled when runtime is stale',()=>{
+  const rt=runtime([{symbol:'BTCUSDT'}],[]);
+  rt.updatedAt=Date.now()-31000;
+  const status=masterConfigSyncStatus(controller(4,'hash-4'),applied(3,'hash-3'),rt,'master-1',true);
+  assert.equal(status.protectiveDeferredSafe,false);
+  assert.equal(commandAllowedDuringDeferredConfig('EXEC_UPDATE_PROTECTION',status),false);
 });
