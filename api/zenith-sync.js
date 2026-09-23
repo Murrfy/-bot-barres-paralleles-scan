@@ -2143,7 +2143,13 @@ export default async function handler(req, res) {
         }
         const proof = req.body?.executionProof;
         const newClientId = String(proof?.newClientId || '');
-        if (!/^zth-[A-Za-z0-9._:-]+$/.test(newClientId) || newClientId.length > 36) {
+        const expectedProofPrefix = commandType === 'EXEC_UPDATE_EXIT'
+          ? 'zth-EXI-'
+          : payloadStatus.protectionKind === 'MAX_LOSS'
+            ? 'zth-MAX-'
+            : 'zth-PRO-';
+        if (!/^zth-(?:EXI|PRO|MAX)-[a-f0-9]{24}$/.test(newClientId) ||
+            !newClientId.startsWith(expectedProofPrefix)) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
         }
         const readiness = await freshConsistentReconciliation(device.deviceId);
