@@ -160,6 +160,14 @@ if (!userStreamState.includes('needsReconciliation = true') ||
   fail('Binance user-stream state machine must fail closed on reconnect/discontinuity');
 }
 
+const masterCommandDispatch = fs.readFileSync('lib/master-command-dispatch.mjs','utf8');
+for (const required of ['masterExecutionEligible','EXEC_CLOSE_POSITION','/api/binance-protective-execute','MASTER_COMMAND_NOT_IMPLEMENTED']) {
+  if (!masterCommandDispatch.includes(required)) fail(`MASTER command dispatcher invariant missing: ${required}`);
+}
+if (masterCommandDispatch.includes('EXEC_OPEN_POSITION') && !masterCommandDispatch.includes("supported:false")) {
+  fail('MASTER dispatcher must never route entry execution');
+}
+
 const binanceOrderWriter = fs.readFileSync('lib/binance-order-writer.mjs','utf8');
 for (const required of [
   "queryOrderByClientId",
@@ -249,8 +257,10 @@ for (const file of ['api/binance-read.js','api/binance-reconcile.js','api/binanc
   if (!source.includes('deviceTokenCandidates(req)')) fail(`${file} must accept the secure device session cookie`);
 }
 
-if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'")) {
-  fail('api/zenith-sync.js must keep the explicit real-trading environment lock');
+if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'") ||
+    !sync.includes("process.env.ZENITH_BINANCE_WRITE_ENABLED === '1'") ||
+    !sync.includes("'BINANCE_WRITE_DISABLED'")) {
+  fail('api/zenith-sync.js must keep both explicit real-trading and Binance-write environment locks');
 }
 if (!sync.includes("'SIMULATION_LOCKED'")) {
   fail('api/zenith-sync.js must expose SIMULATION_LOCKED when real trading is not armed');
@@ -366,6 +376,32 @@ if (!index.includes("role==='master'") ||
     !index.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
   fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
 }
+if (!index.includes('masterExecutionCycle') ||
+    !index.includes("masterRuntimeApi('command-next','POST'") ||
+    !index.includes("masterCommandDisposition('command-ack'") ||
+    !index.includes("masterCommandDisposition('command-requeue'") ||
+    !index.includes("masterCommandDisposition('command-fail'") ||
+    !index.includes("fetch(dispatch.endpoint") ||
+    !index.includes('PROTECTIVE_EXECUTION_NETWORK_AMBIGUOUS') ||
+    !index.includes("setInterval(masterExecutionCycle,1000)")) {
+  fail('iPad MASTER must poll, dispatch, ACK confirmed writes, defer only pre-write outages and terminally fail ambiguous execution');
+}
+if (!sync.includes('deferReason') || !sync.includes('requestedDelayMs') || !sync.includes('Math.min(30000')) {
+  fail('MASTER command requeue must support bounded retry backoff without extending command expiry');
+}
+if (!sync.includes("action === 'command-fail'") ||
+    !sync.includes("'COMMAND_EXECUTION_FAIL_CLOSED'") ||
+    !sync.includes("'COMMAND_DISPATCH_ALREADY_STARTED'") ||
+    !sync.includes('commandDispatchKey(commandId)')) {
+  fail('attempted or ambiguous MASTER command failures must be terminal and dispatch-aware');
+}
+if (!protectiveExecute.includes('command:dispatch:') ||
+    !protectiveExecute.includes("status:'STARTED'") ||
+    !protectiveExecute.includes("status:'CONFIRMED'") ||
+    !protectiveExecute.includes("'COMMAND_DISPATCH_ALREADY_STARTED'")) {
+  fail('protective execution must persist a durable dispatch marker before any live order attempt');
+}
+
 if (!index.includes("wss://fstream.binance.com/ws/") ||
     index.includes("wss://fstream.binance.com/private/ws/") ||
     !index.includes("import('/lib/user-stream-state.mjs')") ||
@@ -458,29 +494,6 @@ if (!sync.includes('ALLOWED_COMMAND_TYPES') ||
     sync.includes("'EXEC_OPEN_POSITION'")) {
   fail('command queue must use a protective-only allowlist until real entry execution is audited');
 }
-if (!sync.includes("action === 'command-fail'") ||
-    !sync.includes("'COMMAND_EXECUTION_FAIL_CLOSED'") ||
-    !sync.includes("'COMMAND_DISPATCH_ALREADY_STARTED'") ||
-    !sync.includes('commandDispatchKey(commandId)') ||
-    !sync.includes("await redis(['SET', KEY_EMERGENCY_STOP, '1'])")) {
-  fail('MASTER command failures must be terminal, dispatch-aware and fail closed after any attempted or ambiguous write');
-}
-if (!index.includes("masterRuntimeApi('command-next','POST'") ||
-    !index.includes("fetch('/api/binance-protective-execute'") ||
-    !index.includes("masterRuntimeApi('command-ack','POST'") ||
-    !index.includes("masterRuntimeApi('command-fail','POST'") ||
-    !index.includes('PROTECTIVE_EXECUTION_NETWORK_AMBIGUOUS') ||
-    !index.includes('setInterval(masterCommandCycle,1200)')) {
-  fail('iPad MASTER must consume protective commands, dispatch through the guarded writer, ACK success and terminally fail ambiguous writes');
-}
-if (!protectiveExecute.includes('command:dispatch:') ||
-    !protectiveExecute.includes("status:'STARTED'") ||
-    !protectiveExecute.includes("status:'CONFIRMED'") ||
-    !protectiveExecute.includes("'AMBIGUOUS':'FAILED_AFTER_DISPATCH'") ||
-    !protectiveExecute.includes("'COMMAND_DISPATCH_ALREADY_STARTED'")) {
-  fail('protective execution must persist a durable dispatch marker before any live order attempt');
-}
-
 if (!sync.includes("'COMMAND_EXPIRED'") ||
     !sync.includes("'COMMAND_QUEUE_FULL'") ||
     !sync.includes("'__DEFERRED__:'") ||

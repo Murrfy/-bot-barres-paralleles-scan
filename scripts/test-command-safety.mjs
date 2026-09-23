@@ -72,9 +72,9 @@ test('defer notBefore never extends beyond original command expiry', () => {
   assert.equal(deferred.notBefore,2000);
 });
 
-test('attempted or ambiguous command failures require fail-closed emergency stop', () => {
-  assert.equal(commandFailureNeedsEmergencyStop(false, false), false);
-  assert.equal(commandFailureNeedsEmergencyStop(true, false), true);
-  assert.equal(commandFailureNeedsEmergencyStop(false, true), true);
-  assert.equal(commandFailureNeedsEmergencyStop(true, true), true);
+test('attempted or ambiguous command failure always escalates to fail-closed safety', () => {
+  assert.equal(commandFailureNeedsEmergencyStop(false,false),false);
+  assert.equal(commandFailureNeedsEmergencyStop(true,false),true);
+  assert.equal(commandFailureNeedsEmergencyStop(false,true),true);
+  assert.equal(commandFailureNeedsEmergencyStop(true,true),true);
 });

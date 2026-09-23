@@ -176,7 +176,7 @@ let controllerSyncState={conflict:false,lastOk:0,error:''};
 let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
 let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,realExecutionArmed:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
 let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEvents:[],reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
-let masterCommandLoop={busy:false,timer:null,lastError:'',lastCommandAt:0};
+let masterExecution={busy:false,timer:null,lastError:'',lastCommandId:''};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
 function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}}
@@ -412,107 +412,15 @@ async function masterRuntimeApi(action,method='GET',body){
   const q=await r.json().catch(()=>({}));
   return {r,q};
 }
-function stopMasterCommandLoop(){
-  if(masterCommandLoop.timer){clearInterval(masterCommandLoop.timer);masterCommandLoop.timer=null}
-  masterCommandLoop.busy=false;
-}
-async function masterCommandFail(raw,reason,{writeAttempted=false,ambiguous=false}={}){
-  const {r,q}=await masterRuntimeApi('command-fail','POST',{raw,reason,writeAttempted,ambiguous});
-  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
-  if(q.failClosed===true){
-    masterRuntimeState.realExecutionArmed=false;
-    masterRuntimeState.error='COMMAND_EXECUTION_FAIL_CLOSED';
-    await invalidateMasterStream('COMMAND_EXECUTION_FAIL_CLOSED');
-    stopMasterCommandLoop();
-  }
-  return q;
-}
-async function masterCommandAck(raw){
-  const {r,q}=await masterRuntimeApi('command-ack','POST',{raw});
-  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
-  return q;
-}
-async function masterProtectiveExecute(command,raw){
-  const type=String(command?.type||'').toUpperCase();
-  if(type!=='EXEC_CLOSE_POSITION'){
-    await masterCommandFail(raw,'MASTER_COMMAND_UNSUPPORTED',{writeAttempted:false,ambiguous:false});
-    return false;
-  }
-  const payload=command?.payload&&typeof command.payload==='object'?command.payload:{};
-  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
-  let r=null,q={};
-  try{
-    r=await fetch('/api/binance-protective-execute',{
-      method:'POST',cache:'no-store',
-      headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
-      body:JSON.stringify({
-        type:'EXEC_CLOSE_POSITION',
-        commandId:String(command.id||''),
-        symbol:String(payload.symbol||'').toUpperCase(),
-        direction:String(payload.direction||'').toUpperCase(),
-        quantity:n(payload.quantity),
-        exitMode:String(payload.exitMode||'PROTECTIVE_IOC').toUpperCase(),
-        targetPrice:n(payload.targetPrice),
-        attempt:Math.max(0,Math.floor(n(payload.attempt,0))),
-      })
-    });
-    q=await r.json().catch(()=>({}));
-  }catch(e){
-    await masterCommandFail(raw,'PROTECTIVE_EXECUTION_NETWORK_AMBIGUOUS',{writeAttempted:true,ambiguous:true});
-    throw e;
-  }
-  if(!r.ok||q?.ok!==true){
-    const reason=String(q?.code||q?.reason||q?.error||('HTTP_'+r.status));
-    await masterCommandFail(raw,reason,{
-      writeAttempted:q?.writeAttempted===true,
-      ambiguous:q?.ambiguous===true||q?.code==='ORDER_RESULT_AMBIGUOUS'||q?.code==='COMMAND_DISPATCH_ALREADY_STARTED'
-    });
-    return false;
-  }
-  await invalidateMasterStream('PROTECTIVE_EXECUTION_DISPATCHED');
-  scheduleMasterStreamReconcile(100);
-  await masterCommandAck(raw);
-  masterCommandLoop.lastCommandAt=Date.now();
-  masterCommandLoop.lastError='';
-  return true;
-}
-async function masterCommandCycle(){
-  if(masterCommandLoop.busy||controllerIdentity.role!=='master'||document.hidden)return false;
-  if(!masterRuntimeState.leaseActive||!masterRuntimeState.realExecutionArmed||
-     !masterRuntimeState.synchronized||!masterRuntimeState.heartbeatFresh||
-     !masterRuntimeState.userStreamReady||
-     !['RUNNING','PAUSE_PENDING'].includes(String(masterRuntimeState.mode||''))){
-    return false;
-  }
-  masterCommandLoop.busy=true;
-  try{
-    const {r,q}=await masterRuntimeApi('command-next','POST',{});
-    if(r.status===423&&q?.code==='MASTER_PAUSED')return false;
-    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
-    if(!q.command)return false;
-    const raw=String(q.raw||'');
-    if(!raw)throw new Error('MASTER_COMMAND_RAW_MISSING');
-    return await masterProtectiveExecute(q.command,raw);
-  }catch(e){
-    masterCommandLoop.lastError=String(e?.message||'MASTER_COMMAND_LOOP_ERROR');
-    return false;
-  }finally{
-    masterCommandLoop.busy=false;
-  }
-}
-function startMasterCommandLoop(){
-  if(controllerIdentity.role!=='master'||masterCommandLoop.timer)return;
-  masterCommandCycle();
-  masterCommandLoop.timer=setInterval(masterCommandCycle,1200);
-}
 async function loadMasterUserStreamModules(){
   if(masterUserStream.modules)return masterUserStream.modules;
-  const [stateModule,inventoryModule,seedModule]=await Promise.all([
+  const [stateModule,inventoryModule,seedModule,dispatchModule]=await Promise.all([
     import('/lib/user-stream-state.mjs'),
     import('/lib/master-runtime-inventory.mjs'),
-    import('/lib/user-stream-seed.mjs')
+    import('/lib/user-stream-seed.mjs'),
+    import('/lib/master-command-dispatch.mjs')
   ]);
-  masterUserStream.modules={stateModule,inventoryModule,seedModule};
+  masterUserStream.modules={stateModule,inventoryModule,seedModule,dispatchModule};
   if(!masterUserStream.state)masterUserStream.state=stateModule.createUserStreamState();
   return masterUserStream.modules;
 }
@@ -776,6 +684,117 @@ async function ensureMasterUserStream(){
     masterUserStream.starting=false;
   }
 }
+async function masterCommandDisposition(action,raw,extra={}){
+  return masterRuntimeApi(action,'POST',{raw,...extra});
+}
+async function requeueMasterCommand(raw,reason,delayMs=1500){
+  const {r,q}=await masterCommandDisposition('command-requeue',raw,{
+    deferMs:Math.max(250,Math.min(30000,n(delayMs,1500))),
+    deferReason:String(reason||'MASTER_EXECUTION_RETRY').slice(0,120)
+  });
+  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  return q;
+}
+async function ackMasterCommand(raw){
+  const {r,q}=await masterCommandDisposition('command-ack',raw);
+  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  return true;
+}
+async function failMasterCommand(raw,reason,{writeAttempted=false,ambiguous=false}={}){
+  const {r,q}=await masterCommandDisposition('command-fail',raw,{
+    reason:String(reason||'MASTER_EXECUTION_FAILED').slice(0,120),
+    writeAttempted:writeAttempted===true,
+    ambiguous:ambiguous===true
+  });
+  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  if(q.failClosed===true){
+    masterRuntimeState.realExecutionArmed=false;
+    masterRuntimeState.error='COMMAND_EXECUTION_FAIL_CLOSED';
+    await invalidateMasterStream('COMMAND_EXECUTION_FAIL_CLOSED');
+  }
+  return q;
+}
+async function masterExecutionCycle(){
+  if(masterExecution.busy||controllerIdentity.role!=='master')return false;
+  const {dispatchModule}=await loadMasterUserStreamModules();
+  if(!dispatchModule.masterExecutionEligible({
+    role:controllerIdentity.role,
+    hidden:document.hidden,
+    leaseActive:masterRuntimeState.leaseActive,
+    realExecutionArmed:masterRuntimeState.realExecutionArmed,
+    synchronized:masterRuntimeState.synchronized,
+    heartbeatFresh:masterRuntimeState.heartbeatFresh,
+    userStreamReady:masterRuntimeState.userStreamReady,
+    mode:masterRuntimeState.mode
+  }))return false;
+
+  masterExecution.busy=true;
+  try{
+    const next=await masterRuntimeApi('command-next','POST',{});
+    if(next.r.status===423)return false;
+    if(!next.r.ok||next.q?.ok!==true)throw new Error(next.q?.code||next.q?.error||('HTTP '+next.r.status));
+    if(!next.q.command||!next.q.raw)return false;
+
+    const command=next.q.command,raw=String(next.q.raw);
+    let dispatch;
+    try{dispatch=dispatchModule.buildMasterCommandDispatch(command)}
+    catch(e){
+      await failMasterCommand(raw,'MASTER_DISPATCH_INVALID_'+String(e?.message||'COMMAND'),{writeAttempted:false,ambiguous:false});
+      return false;
+    }
+    if(dispatch.supported!==true){
+      await failMasterCommand(raw,dispatch.reason||'MASTER_COMMAND_NOT_IMPLEMENTED',{writeAttempted:false,ambiguous:false});
+      return false;
+    }
+
+    const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
+    let er=null,eq={};
+    try{
+      er=await fetch(dispatch.endpoint,{
+        method:'POST',cache:'no-store',
+        headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+        body:JSON.stringify(dispatch.body)
+      });
+      eq=await er.json().catch(()=>({}));
+    }catch(e){
+      await failMasterCommand(raw,'PROTECTIVE_EXECUTION_NETWORK_AMBIGUOUS',{writeAttempted:true,ambiguous:true});
+      masterExecution.lastError=String(e?.message||'PROTECTIVE_EXECUTION_NETWORK_AMBIGUOUS');
+      return false;
+    }
+    if(!er.ok||eq?.ok!==true){
+      const reason=String(eq?.code||eq?.reason||eq?.error||('HTTP '+er.status));
+      const ambiguous=eq?.ambiguous===true||eq?.result?.ambiguous===true||
+        eq?.code==='ORDER_RESULT_AMBIGUOUS'||eq?.code==='COMMAND_DISPATCH_ALREADY_STARTED';
+      const writeAttempted=eq?.writeAttempted===true||ambiguous;
+      const transientNoWrite=!writeAttempted&&!ambiguous&&
+        ['EXECUTION_NOT_READY','EXECUTION_NOT_ARMED','BINANCE_WRITE_LOCKED'].includes(String(eq?.code||''));
+      if(transientNoWrite){
+        await requeueMasterCommand(raw,'PROTECTIVE_EXEC_'+reason,1500);
+      }else{
+        await failMasterCommand(raw,'PROTECTIVE_EXEC_'+reason,{writeAttempted,ambiguous});
+      }
+      masterExecution.lastError=reason;
+      return false;
+    }
+
+    await invalidateMasterStream('PROTECTIVE_EXECUTION_DISPATCHED');
+    scheduleMasterStreamReconcile(100);
+    await ackMasterCommand(raw);
+    masterExecution.lastCommandId=String(command.id||'');
+    masterExecution.lastError='';
+    return true;
+  }catch(e){
+    masterExecution.lastError=String(e?.message||'MASTER_EXECUTION_ERROR');
+    return false;
+  }finally{
+    masterExecution.busy=false;
+  }
+}
+function startMasterExecutionLoop(){
+  if(controllerIdentity.role!=='master')return;
+  masterExecutionCycle();
+  if(!masterExecution.timer)masterExecution.timer=setInterval(masterExecutionCycle,1000);
+}
 async function applyMasterControllerState(state){
   if(!state||!state.data||typeof state.data!=='object')throw new Error('CONTROLLER_STATE_INVALID');
   const revision=Math.max(0,n(state.revision,0)),stateHash=String(state.stateHash||'');
@@ -808,7 +827,6 @@ async function masterRuntimeCycle(){
       masterRuntimeState={...masterRuntimeState,leaseActive:false,heartbeatFresh:false,synchronized:false,userStreamReady:false,error:String(hb.q?.code||hb.q?.error||('HTTP '+hb.r.status))};
       renderControllerIdentity();
       if(masterUserStream.ws)closeMasterUserStream('MASTER_LEASE_LOST',false);
-      stopMasterCommandLoop();
       return false;
     }
     masterRuntimeState.mode=String(hb.q.masterMode||'PAUSED');
@@ -816,7 +834,6 @@ async function masterRuntimeCycle(){
     masterRuntimeState.heartbeatFresh=true;
     masterRuntimeState.realExecutionArmed=hb.q.realExecutionArmed===true;
     masterRuntimeState.error='';
-    if(!masterRuntimeState.realExecutionArmed)stopMasterCommandLoop();
 
     await loadMasterUserStreamModules();
     await postMasterRuntimeState();
@@ -865,8 +882,6 @@ async function masterRuntimeCycle(){
     }
 
     renderControllerIdentity();
-    if(masterRuntimeState.realExecutionArmed===true)startMasterCommandLoop();
-    else stopMasterCommandLoop();
     return masterRuntimeState.synchronized;
   }catch(e){
     masterRuntimeState={...masterRuntimeState,heartbeatFresh:false,synchronized:false,error:String(e?.message||'MASTER_RUNTIME_ERROR')};
@@ -880,6 +895,7 @@ function startMasterRuntimeLoop(){
   if(controllerIdentity.role!=='master')return;
   loadMasterUserStreamModules().then(()=>publishMasterStreamState()).catch(()=>{});
   masterRuntimeCycle();
+  startMasterExecutionLoop();
   if(!masterRuntimeTimer)masterRuntimeTimer=setInterval(masterRuntimeCycle,8000);
 }
 
@@ -1142,7 +1158,7 @@ $('manualTokenAddBtn').onclick=addManualToken;$('manualTokenInput').addEventList
 $('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();save()});
 $('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('panicClearBtn').onclick=controllerClearPanic;
 $('resetClosedBtn').onclick=()=>{if(!confirm('Effacer les gains, pertes et trades fermés ?'))return;history=[];save();renderAll()};$('resetSimBtn').onclick=()=>{if(!confirm('Réinitialiser les positions simulées et les achats surveillés ?'))return;openPositions=[];validated={};revalidateBlock={};missedSignals={};manualTokens={};save();syncRealtime();renderAll();setStatus('Simulation réinitialisée.')};
-document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio()},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){masterRuntimeCycle();ensureMasterUserStream();if(masterRuntimeState.realExecutionArmed)startMasterCommandLoop()}}else if(controllerIdentity.role==='master'){stopMasterCommandLoop();invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
+document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio()},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
 load();applyTheme();renderAll();ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startControllerIdentityCheck();
 </script>
 </body>

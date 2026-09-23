@@ -10,8 +10,8 @@ const KEY_STATE=`${PREFIX}:state`;
 const KEY_RECONCILE_LAST=`${PREFIX}:reconcile:last`;
 const KEY_AUDIT=`${PREFIX}:audit`;
 const KEY_REAL_EXECUTION_ARMED=`${PREFIX}:safety:real-execution-armed`;
-const DISPATCH_TTL_SECONDS=60*60*24*30;
 const KEY_MASTER_MODE=`${PREFIX}:master-mode`;
+const DISPATCH_TTL_SECONDS=60*60*24*30;
 const DEPLOYMENT_SHA=String(process.env.VERCEL_GIT_COMMIT_SHA||'');
 
 const REDIS_URL =
