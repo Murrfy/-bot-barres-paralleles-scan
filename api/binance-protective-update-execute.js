@@ -66,7 +66,7 @@ async function redis(command){
   if(!REDIS_URL||!REDIS_TOKEN)throw new Error('UPSTASH_NOT_CONFIGURED');
   const r=await fetch(REDIS_URL,{
     method:'POST',headers:{Authorization:`Bearer ${REDIS_TOKEN}`,'Content-Type':'application/json'},
-    body:JSON.stringify(command),cache:'no-store',
+    body:JSON.stringify(command),signal:AbortSignal.timeout(8000),cache:'no-store',
   });
   const text=await r.text();let data={};try{data=text?JSON.parse(text):{}}catch{data={raw:text}}
   if(!r.ok||data?.error)throw new Error(data?.error||`Redis HTTP ${r.status}`);
