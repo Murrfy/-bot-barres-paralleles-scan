@@ -746,16 +746,20 @@ const masterResumeBlock = masterResumeStart >= 0 && masterResumeEnd > masterResu
   : '';
 if (!masterResumeBlock ||
     !masterResumeBlock.includes("if (currentMode !== 'PAUSED') blockers.push('MASTER_MUST_BE_PAUSED')") ||
-    !masterResumeBlock.includes("trySetMasterRunningFrom('PAUSED')")) {
+    !masterResumeBlock.includes("trySetMasterRunningFrom(") ||
+    !masterResumeBlock.includes("'PAUSED'") ||
+    !masterResumeBlock.includes("String(masterRoleEpochRaw || '0')")) {
   fail('MASTER resume must only transition from a fully PAUSED state; PAUSE_PENDING uses the explicit cancel path');
 }
-if (!sync.includes('async function trySetMasterRunningFrom(expectedMode)') ||
+if (!sync.includes("async function trySetMasterRunningFrom(expectedMode, expectedMasterDeviceId, expectedMasterRoleEpochRaw = '0')") ||
     !sync.includes("if ARGV[2] == '1' and panic ~= '0' then return {-1, mode} end") ||
     !sync.includes("if mode ~= ARGV[1] then return {-2, mode} end") ||
+    !sync.includes("if lease ~= ARGV[3] or registered ~= ARGV[3] then return {-3, mode} end") ||
+    !sync.includes("if roleEpoch ~= ARGV[4] then return {-4, mode} end") ||
     !sync.includes("redis.call('SET', KEYS[2], 'RUNNING')") ||
-    !sync.includes("trySetMasterRunningFrom('PAUSE_PENDING')") ||
-    !sync.includes("trySetMasterRunningFrom('PAUSED')")) {
-  fail('RUNNING transitions must be atomic and fail closed against real-trading PANIC');
+    !sync.includes("'MASTER_LEASE_REQUIRED'") ||
+    !sync.includes("'MASTER_ROLE_CHANGED'")) {
+  fail('RUNNING transitions must be atomic and fail closed against PANIC, MASTER lease loss and MASTER role-epoch changes');
 }
 if (!sync.includes('PAUSE_PENDING_ALLOWED_COMMANDS') ||
     !sync.includes("'MASTER_PAUSE_PENDING_UNSAFE_COMMAND'")) {
