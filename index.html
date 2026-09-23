@@ -895,6 +895,7 @@ function scheduleMasterStreamReconnect(delay=1500){
 }
 async function publishMasterStreamState(){
   masterRuntimeState.userStreamReady=masterStreamProjection().userStream?.ready===true;
+  if(masterRuntimeState.userStreamReady)pruneMasterAutoProtectionHighWater();
   renderControllerIdentity();
   if(controllerIdentity.role==='master')syncRealtime();
   if(controllerIdentity.role==='master'&&masterRuntimeState.leaseActive){
@@ -1547,7 +1548,28 @@ function masterAutoPositionKey(position){
   const direction=amount>=0?'LONG':'SHORT';
   const qty=Math.abs(amount);
   const entry=n(position?.entryPrice,0);
-  return `${symbol}:${direction}:${qty}:${entry}`;
+  const lifecycle=Math.max(0,Math.floor(n(
+    position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,0
+  )));
+  return `${symbol}:${direction}:${qty}:${entry}:${lifecycle}`;
+}
+function pruneMasterAutoProtectionHighWater(){
+  if(controllerIdentity.role!=='master')return;
+  const projection=masterStreamProjection();
+  if(projection.userStream?.ready!==true)return;
+  const active=new Set(
+    (projection.binancePositions||[])
+      .filter(p=>Math.abs(n(p?.positionAmt??p?.quantity,0))>0)
+      .map(masterAutoPositionKey)
+  );
+  let changed=false;
+  for(const key of [...masterAutoProtection.highWater.keys()]){
+    if(!active.has(key)){
+      masterAutoProtection.highWater.delete(key);
+      changed=true;
+    }
+  }
+  if(changed)saveMasterAutoProtectionHighWater();
 }
 function observedRealLinearPnl(position,mark){
   const amount=n(position?.positionAmt??position?.quantity,0);
@@ -1590,7 +1612,7 @@ async function executeMasterAutoProgressive(plan){
   const live=plan.live,level=plan.level;
   const body={
     type:'EXEC_UPDATE_PROTECTION',
-    commandId:`auto-protect-${live.symbol}-${live.direction}-${Math.round(plan.stage.armProfitUsd*10)}-${Math.round(plan.stage.protectedProfitUsd*10)}-${live.updateTime||0}`,
+    commandId:`auto-protect-${live.symbol}-${live.direction}-${Math.round(plan.stage.armProfitUsd*10)}-${Math.round(plan.stage.protectedProfitUsd*10)}-${live.lifecycleAt||live.updateTime||0}`,
     symbol:live.symbol,
     direction:live.direction,
     quantity:live.quantity,
