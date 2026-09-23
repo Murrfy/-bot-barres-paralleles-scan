@@ -52,7 +52,7 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
     show('Vérifié : cet iPhone est reconnu par le serveur comme CONTRÔLEUR. Il n’est pas MASTER.','ok');
     try{
       const sr=await fetch('/api/zenith-sync?action=controller-state',{
-        headers:{Authorization:'Bearer '+token,Accept:'application/json'},
+        headers:{Accept:'application/json'},
         cache:'no-store'
       });
       const sq=await sr.json().catch(()=>({}));
@@ -75,7 +75,7 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
 
     try{
       const rr=await fetch('/api/zenith-sync?action=safety',{
-        headers:{Authorization:'Bearer '+token,Accept:'application/json'},
+        headers:{Accept:'application/json'},
         cache:'no-store'
       });
       const rq=await rr.json().catch(()=>({}));
@@ -105,7 +105,7 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
 
     try{
       const br=await fetch('/api/binance-reconcile',{
-        headers:{Authorization:'Bearer '+token,Accept:'application/json'},
+        headers:{Accept:'application/json'},
         cache:'no-store'
       });
       const bq=await br.json().catch(()=>({}));
