@@ -6,8 +6,8 @@ const requireHash = value => crypto.createHash('sha256').update(String(value)).d
 
 const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
   .replace(
-    /^import \{ deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';\n/m,
-    "const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
+    /^import \{ DEVICE_SESSION_MAX_AGE_SECONDS, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';\n/m,
+    "const DEVICE_SESSION_MAX_AGE_SECONDS=60*60*24*30; const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
   )
   .replace(
     /^import \{ normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget \} from '\.\.\/lib\/protective-command\.mjs';\n/m,
