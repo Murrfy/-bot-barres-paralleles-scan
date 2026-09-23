@@ -1015,5 +1015,39 @@ if (!pairingPolicySource.includes('function pairingSecretPolicyBlockers') ||
   fail('controller and MASTER pairing secrets must stay strong and distinct from each other and the admin secret');
 }
 
+const singleSessionHelper = fs.readFileSync('lib/device-session.mjs','utf8');
+if (!singleSessionHelper.includes('export function roleSessionKey(role)') ||
+    !singleSessionHelper.includes('role-session:')) {
+  fail('device sessions must expose stable role-scoped active-session keys');
+}
+
+const singleSessionSync = fs.readFileSync('api/zenith-sync.js','utf8');
+for (const required of [
+  'roleSessionKey',
+  'activeSessionHash',
+  "roleSessionKey(role)",
+  "roleSessionKey('controller')",
+  'newTokenHash'
+]) {
+  if (!singleSessionSync.includes(required)) fail(`Zenith sync active-session invariant missing: ${required}`);
+}
+
+for (const file of [
+  'api/binance-read.js',
+  'api/binance-reconcile.js',
+  'api/binance-entry-preflight.js',
+  'api/binance-entry-execute.js',
+  'api/binance-protective-execute.js',
+  'api/binance-protective-update-execute.js',
+  'api/binance-runtime-snapshot.js',
+  'api/binance-user-stream-session.js',
+  'api/binance-order-test.js',
+]) {
+  const source = fs.readFileSync(file,'utf8');
+  if (!source.includes('roleSessionKey') || !source.includes('activeSessionHash')) {
+    fail(`${file} must reject superseded role sessions before Binance access`);
+  }
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
