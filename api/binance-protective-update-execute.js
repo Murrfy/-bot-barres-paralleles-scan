@@ -56,6 +56,10 @@ function terminalAlgo(status){
   return ['CANCELED','TRIGGERED','FINISHED','REJECTED','EXPIRED'].includes(String(status||'').toUpperCase());
 }
 function sideForDirection(direction){return String(direction).toUpperCase()==='LONG'?'SELL':'BUY'}
+function managedExitId(value){
+  const id=String(value||'');
+  return /^zth-EXI-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
+}
 
 async function redis(command){
   if(!REDIS_URL||!REDIS_TOKEN)throw new Error('UPSTASH_NOT_CONFIGURED');
@@ -167,11 +171,21 @@ export function conflictingProtectiveOrders(runtimeState, update, kind, allowedI
         bool(order?.reduceOnly);
       id = String(order?.clientOrderId || '');
     } else if (wanted === 'PROGRESSIVE') {
-      samePurpose =
-        orderClass === 'ALGO' &&
-        type === 'STOP' &&
-        bool(order?.reduceOnly);
-      id = String(order?.clientAlgoId || '');
+      if(
+        orderClass === 'STANDARD' &&
+        type === 'LIMIT' &&
+        String(order?.timeInForce || '').toUpperCase() === 'GTC' &&
+        bool(order?.reduceOnly)
+      ){
+        id = String(order?.clientOrderId || '');
+        samePurpose = !managedExitId(id);
+      }else{
+        samePurpose =
+          orderClass === 'ALGO' &&
+          type === 'STOP' &&
+          bool(order?.reduceOnly);
+        id = String(order?.clientAlgoId || '');
+      }
     } else if (wanted === 'MAX_LOSS') {
       samePurpose =
         orderClass === 'ALGO' &&
@@ -489,7 +503,7 @@ export default async function handler(req,res){
             code:update.protectionKind==='MAX_LOSS'
               ?'CONFLICTING_MAX_LOSS_PROTECTION_OPEN'
               :'CONFLICTING_PROGRESSIVE_PROTECTION_OPEN',
-            conflictingIds:conflicts.map(o=>String(o?.clientAlgoId||'')),
+            conflictingIds:conflicts.map(o=>String(o?.clientAlgoId||o?.clientOrderId||o?.orderId||'')),
             writeAttempted:false
           });
         }
