@@ -64,6 +64,8 @@ jobs:
         run: node --test scripts/test-master-admin.mjs
       - name: Test MASTER admin secret policy
         run: node --test scripts/test-admin-secret-policy.mjs
+      - name: Test pairing secret policy
+        run: node --test scripts/test-pairing-secret-policy.mjs
       - name: Test atomic auth rate-limit counters
         run: node --test scripts/test-auth-rate-limit-atomic.mjs
       - name: Test bounded authentication secret inputs
