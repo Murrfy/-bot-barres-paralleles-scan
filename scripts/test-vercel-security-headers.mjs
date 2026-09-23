@@ -33,7 +33,7 @@ test('Zenith enforces core browser security headers', () => {
     assert.ok(csp.includes(invariant), invariant);
   }
 
-  const styleSrc = /(?:^|;\\s*)style-src\\s+([^;]+)/.exec(csp)?.[1] || '';
+  const styleSrc = /(?:^|;\s*)style-src\s+([^;]+)/.exec(csp)?.[1] || '';
   assert.ok(styleSrc, 'style-src');
   assert.equal(styleSrc.includes("'unsafe-inline'"), false, 'style-src unsafe-inline must stay disabled');
 });
