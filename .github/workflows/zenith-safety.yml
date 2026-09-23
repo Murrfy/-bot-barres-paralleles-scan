@@ -60,6 +60,8 @@ jobs:
         run: node --check api/zenith-sync.js
       - name: Test reconciliation failure scenarios
         run: node --test scripts/test-reconcile.mjs
+      - name: Test fail-closed reconciliation attempt fence
+        run: node --test scripts/test-reconciliation-attempt-fence.mjs
       - name: Test orphan protection cleanup safety
         run: node --test scripts/test-orphan-protection-cleanup.mjs
       - name: Test shared MASTER administration

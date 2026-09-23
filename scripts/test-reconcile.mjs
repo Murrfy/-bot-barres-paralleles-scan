@@ -162,12 +162,24 @@ test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance
             }
           }
           if (c[0] === 'EVAL') {
-            if (c[2] === '1') {
+            const script = String(c[1] || '');
+            const firstKey = String(c[3] || '');
+            if (firstKey.includes(':rate:binance-reconcile:')) {
               result = scenario === 'rate-limited' ? 31 : 1;
-            } else {
-              const report = JSON.parse(c[6]);
+            } else if (firstKey === 'zenith:v1:reconcile:last' && c[2] === '1' &&
+                       script.includes('tonumber(value.observedAt or 0)')) {
+              const marker = JSON.parse(c[5]);
+              stored = marker;
+              result = 1;
+            } else if (firstKey === 'zenith:v1:reconcile:last' && c[2] === '2') {
+              const report = JSON.parse(c[7]);
               result = scenario === 'runtime-race' && !report.failClosed ? -1 : 1;
               if (result === 1) stored = report;
+            } else if (firstKey === 'zenith:v1:reconcile:last' && c[2] === '1' &&
+                       script.includes("value.attemptId")) {
+              const report = JSON.parse(c[5]);
+              stored = report;
+              result = 1;
             }
           }
           return new Response(JSON.stringify({ result }));
