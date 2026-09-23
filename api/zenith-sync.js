@@ -96,6 +96,30 @@ function adminSecretPolicyBlockers({
   return blockers;
 }
 
+function pairingSecretPolicyBlockers({
+  role = 'controller',
+  pairingCode = PAIRING_CODE,
+  masterPairingCode = MASTER_PAIRING_CODE,
+  adminCode = MASTER_ADMIN_CODE,
+} = {}) {
+  const normalizedRole = String(role || '').toLowerCase();
+  const controller = String(pairingCode || '');
+  const master = String(masterPairingCode || '');
+  const admin = String(adminCode || '');
+  const current = normalizedRole === 'master' ? master : controller;
+  const prefix = normalizedRole === 'master' ? 'MASTER_PAIRING_CODE' : 'PAIRING_CODE';
+  const blockers = [];
+
+  if (current.length < 12) blockers.push(prefix + '_TOO_WEAK');
+  if (controller && master && timingSafeEqualText(controller, master)) {
+    blockers.push('PAIRING_CODES_REUSED');
+  }
+  if (admin && current && timingSafeEqualText(current, admin)) {
+    blockers.push(prefix + '_REUSES_MASTER_ADMIN_CODE');
+  }
+  return blockers;
+}
+
 function binanceApiPermissionBlockers(permission) {
   if (!permission || typeof permission !== 'object') return ['BINANCE_API_PERMISSIONS_UNAVAILABLE'];
   const blockers = [];
@@ -1220,6 +1244,14 @@ export default async function handler(req, res) {
         return send(res, 503, {
           ok: false,
           code: role === 'master' ? 'MASTER_PAIRING_NOT_CONFIGURED' : 'PAIRING_NOT_CONFIGURED'
+        });
+      }
+      const pairingPolicyBlockers = pairingSecretPolicyBlockers({ role });
+      if (pairingPolicyBlockers.length) {
+        return send(res, 503, {
+          ok: false,
+          code: 'PAIRING_SECRET_POLICY_BLOCKED',
+          blockers: pairingPolicyBlockers,
         });
       }
       if (!timingSafeEqualText(supplied, expectedPairingCode)) {
@@ -2811,6 +2843,6 @@ export default async function handler(req, res) {
   }
 }
 
-export { binanceApiPermissionBlockers, adminSecretPolicyBlockers };
+export { binanceApiPermissionBlockers, adminSecretPolicyBlockers, pairingSecretPolicyBlockers };
 
 export { clientIp };
