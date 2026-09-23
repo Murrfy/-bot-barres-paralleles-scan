@@ -969,5 +969,15 @@ for (const required of [
   if (!syncAdminSecretPolicy.includes(required)) fail(`MASTER admin secret policy invariant missing: ${required}`);
 }
 
+const legacyBearerRotation = fs.readFileSync('api/zenith-sync.js','utf8');
+for (const required of [
+  'migrateLegacyBearerSession',
+  'LEGACY_SESSION_MIGRATION_CONFLICT',
+  "redis.call('DEL', KEYS[1])",
+  "crypto.randomBytes(32).toString('base64url')"
+]) {
+  if (!legacyBearerRotation.includes(required)) fail(`legacy Bearer rotation invariant missing: ${required}`);
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
