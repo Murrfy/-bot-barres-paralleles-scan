@@ -12,6 +12,22 @@ const htmlFiles = [
 
 let failed = false;
 
+const runtimePolicy = JSON.parse(fs.readFileSync('package.json','utf8'));
+if (runtimePolicy?.engines?.node !== '24.x') {
+  fail('package.json must pin Zenith to Node 24.x');
+}
+const safetyWorkflow = fs.readFileSync('.github/workflows/zenith-safety.yml','utf8');
+for (const required of [
+  'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+  'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+  "node-version: '24'",
+  'persist-credentials: false',
+  'allow-unsafe-pr-checkout: false',
+  'package-manager-cache: false',
+]) {
+  if (!safetyWorkflow.includes(required)) fail(`CI runtime/supply-chain hardening missing: ${required}`);
+}
+
 function fail(message) {
   failed = true;
   console.error('FAIL:', message);
