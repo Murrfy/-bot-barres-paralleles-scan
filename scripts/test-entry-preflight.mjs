@@ -15,6 +15,7 @@ function base(overrides = {}) {
       quoteAsset: 'USDT',
       contractType: 'PERPETUAL',
       filters: [
+        { filterType: 'PRICE_FILTER', minPrice: '0.10', maxPrice: '1000000', tickSize: '0.10' },
         { filterType: 'LOT_SIZE', minQty: '0.001', maxQty: '1000', stepSize: '0.001' },
         { filterType: 'MIN_NOTIONAL', notional: '5' },
       ],
@@ -78,4 +79,11 @@ test('existing target-symbol order blocks duplicate entry', () => {
 test('insufficient available balance fails closed', () => {
   const r = evaluateEntryRisk(base({ availableBalanceUsdt: 500 }));
   assert.ok(r.reasons.includes('AVAILABLE_BALANCE_INSUFFICIENT'));
+});
+
+
+test('entry price must align to Binance tick size', () => {
+  const r = evaluateEntryRisk(base({ referencePrice: 50000.05 }));
+  assert.equal(r.ready, false);
+  assert.ok(r.reasons.includes('PRICE_NOT_TICK_ALIGNED'));
 });
