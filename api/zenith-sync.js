@@ -867,6 +867,38 @@ async function setMasterMode(mode) {
   return normalized;
 }
 
+async function trySetMasterRunningFrom(expectedMode) {
+  const expected = normalizeMasterMode(expectedMode);
+  const script = [
+    "local panic = tostring(redis.call('GET', KEYS[1]) or '')",
+    "local mode = tostring(redis.call('GET', KEYS[2]) or 'PAUSED')",
+    "if ARGV[2] == '1' and panic ~= '0' then return {-1, mode} end",
+    "if mode ~= ARGV[1] then return {-2, mode} end",
+    "redis.call('SET', KEYS[2], 'RUNNING')",
+    "return {1, 'RUNNING'}"
+  ].join('\n');
+  const result = await redis([
+    'EVAL', script, '2',
+    KEY_EMERGENCY_STOP,
+    KEY_MASTER_MODE,
+    expected,
+    REAL_TRADING_ENABLED ? '1' : '0',
+  ]);
+  const code = Number(Array.isArray(result) ? result[0] : 0);
+  const mode = normalizeMasterMode(Array.isArray(result) ? result[1] : '');
+  return {
+    ok: code === 1,
+    reason: code === -1
+      ? 'EMERGENCY_STOP_ACTIVE'
+      : code === -2
+        ? 'MASTER_MODE_CHANGED'
+        : code === 1
+          ? ''
+          : 'MASTER_MODE_TRANSITION_FAILED',
+    masterMode: mode,
+  };
+}
+
 function activityCount(data, arrayKeys, numberKeys) {
   let count = 0;
   for (const key of arrayKeys) {
@@ -1950,7 +1982,17 @@ export default async function handler(req, res) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
 
-      const mode = await setMasterMode('RUNNING');
+      const runningTransition = await trySetMasterRunningFrom('PAUSE_PENDING');
+      if (!runningTransition.ok) {
+        return send(res, runningTransition.reason === 'EMERGENCY_STOP_ACTIVE' ? 423 : 409, {
+          ok: false,
+          code: runningTransition.reason === 'EMERGENCY_STOP_ACTIVE'
+            ? 'EMERGENCY_STOP_ACTIVE'
+            : 'MASTER_PAUSE_NOT_PENDING',
+          masterMode: runningTransition.masterMode,
+        });
+      }
+      const mode = runningTransition.masterMode;
       const at = Date.now();
       await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
         at,
@@ -2111,7 +2153,17 @@ export default async function handler(req, res) {
         });
       }
 
-      const mode = await setMasterMode('RUNNING');
+      const runningTransition = await trySetMasterRunningFrom('PAUSED');
+      if (!runningTransition.ok) {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_RESUME_BLOCKED',
+          blockers: [runningTransition.reason],
+          pendingCommands: Number(pending || 0),
+          processingCommands: Number(processing || 0),
+        });
+      }
+      const mode = runningTransition.masterMode;
       const at = Date.now();
       await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
         at,
