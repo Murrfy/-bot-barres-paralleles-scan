@@ -694,6 +694,16 @@ if (!sync.includes('CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60') ||
 if (!sync.includes("'STALE_CONTROLLER_COMMAND'") || !sync.includes("'CONTROLLER_REPLACED'")) {
   fail('api/zenith-sync.js must reject/quarantine commands from a replaced controller');
 }
+if (!sync.includes("'CONTROLLER_REPLACEMENT_DRAIN_REQUIRED'") ||
+    !sync.includes("local pendingCount = redis.call('LLEN', KEYS[5])") ||
+    !sync.includes("local processingCount = redis.call('LLEN', KEYS[6])") ||
+    !sync.includes("if pendingCount > 0 or processingCount > 0 then") ||
+    !sync.includes("local currentController = tostring(redis.call('GET', KEYS[5]) or '')") ||
+    !sync.includes("if currentController ~= ARGV[6] then return {-5, currentController} end") ||
+    !sync.includes("local roleIssuedAt = tonumber(redis.call('GET', KEYS[6]) or '0') or 0") ||
+    !sync.includes("if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return {-6, tostring(roleIssuedAt)} end")) {
+  fail('controller replacement and command enqueue must be atomically fenced against role-change races');
+}
 if (!sync.includes("const KEY_MASTER_MODE") ||
     !sync.includes("action === 'master-pause'") ||
     !sync.includes("action === 'master-resume'")) {
