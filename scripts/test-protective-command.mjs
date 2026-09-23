@@ -16,7 +16,7 @@ test('exit update requires exact full live quantity and favorable target',()=>{
 
 test('progressive and max-loss triggers stay on their correct side of entry',()=>{
   const progressive=normalizeProtectiveUpdatePayload('EXEC_UPDATE_PROTECTION',{
-    symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:50500,protectionKind:'PROGRESSIVE'
+    symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:50500,limitPrice:50500,protectionKind:'PROGRESSIVE'
   });
   validateUpdateAgainstLivePosition(progressive,position);
   assert.throws(()=>validateUpdateAgainstLivePosition({...progressive,triggerPrice:49000},position),/LONG_PROGRESSIVE_TRIGGER_BELOW_ENTRY/);
@@ -33,7 +33,19 @@ test('only Zenith-managed previous ids may be replaced automatically',()=>{
     symbol:'BTCUSDT',direction:'LONG',quantity:0.02,targetPrice:51000,previousClientOrderId:'manual-order-1'
   }),/PREVIOUS_EXIT_ID_INVALID/);
   assert.throws(()=>normalizeProtectiveUpdatePayload('EXEC_UPDATE_PROTECTION',{
-    symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:50500,protectionKind:'PROGRESSIVE',
+    symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:50500,limitPrice:50500,protectionKind:'PROGRESSIVE',
     previousClientAlgoId:'manual-protection'
   }),/PREVIOUS_PROTECTION_ID_INVALID/);
+});
+
+
+test('progressive command requires the explicit LIMIT to equal the protected trigger',()=>{
+  assert.throws(()=>normalizeProtectiveUpdatePayload('EXEC_UPDATE_PROTECTION',{
+    symbol:'BTCUSDT',direction:'LONG',quantity:0.02,
+    triggerPrice:50500,protectionKind:'PROGRESSIVE'
+  }),/PROGRESSIVE_LIMIT_PRICE_REQUIRED/);
+  assert.throws(()=>normalizeProtectiveUpdatePayload('EXEC_UPDATE_PROTECTION',{
+    symbol:'BTCUSDT',direction:'LONG',quantity:0.02,
+    triggerPrice:50500,limitPrice:50499.9,protectionKind:'PROGRESSIVE'
+  }),/PROGRESSIVE_TRIGGER_LIMIT_MUST_MATCH/);
 });
