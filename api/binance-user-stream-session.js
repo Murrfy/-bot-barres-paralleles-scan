@@ -8,6 +8,7 @@ const KEY_MASTER_DEVICE = `${PREFIX}:role-device:master`;
 const KEY_STREAM_SESSION = `${PREFIX}:binance-user-stream`;
 const SESSION_TTL_SECONDS = 70 * 60;
 const KEEPALIVE_AFTER_MS = 45 * 60 * 1000;
+const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || process.env.VERCEL_ENV === 'production';
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -156,6 +157,10 @@ export default async function handler(req, res) {
   }
 
   const action = String(req.query?.action || 'status').toLowerCase();
+
+  if (req.method === 'POST' && ['start', 'keepalive', 'close'].includes(action) && !VERCEL_PRODUCTION_WRITE_ALLOWED) {
+    return send(res, 423, { ok: false, code: 'NON_PRODUCTION_DEPLOYMENT', tradingWriteAttempted: false });
+  }
 
   try {
     if (action === 'status' && req.method === 'GET') {
