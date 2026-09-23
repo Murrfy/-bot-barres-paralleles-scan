@@ -1,0 +1,15 @@
+# Zenith — never commit local/runtime secrets or generated state
+.env
+.env.*
+!.env.example
+
+.vercel/
+node_modules/
+coverage/
+dist/
+build/
+
+*.pem
+*.key
+*.p12
+*.pfx
