@@ -863,14 +863,16 @@ async function waitForStreamOrder({kind,clientId,terminal=false},timeoutMs=3000)
   }
   return order;
 }
-async function safeAckAfterReconcile(raw,executionProof,retryReason='EXECUTION_ACK_RETRY'){
+async function safeAckAfterReconcile(raw,executionProof,failureReason='EXECUTION_ACK_FAILED'){
   try{
     const reconciled=await reconcileMasterUserStream();
     if(reconciled!==true||masterRuntimeState.userStreamReady!==true)throw new Error('RECONCILIATION_NOT_READY');
     await ackMasterCommand(raw,executionProof);
     return true;
   }catch(e){
-    await requeueMasterCommand(raw,retryReason+'_'+String(e?.message||'RECONCILE'),1500);
+    const reason=failureReason+'_'+String(e?.message||'RECONCILE');
+    await failMasterCommand(raw,reason);
+    masterExecution.lastError=reason;
     return false;
   }
 }
