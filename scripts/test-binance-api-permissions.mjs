@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { binanceApiPermissionBlockers } from '../api/zenith-sync.js';
 
 const safe = {
-  ipRestrict: false,
+  ipRestrict: true,
   enableReading: true,
   enableWithdrawals: false,
   enableInternalTransfer: false,
@@ -19,6 +19,13 @@ const safe = {
 
 test('safe Futures-only Binance API permissions are accepted', () => {
   assert.deepEqual(binanceApiPermissionBlockers(safe), []);
+});
+
+
+
+test('unrestricted Binance API key blocks real execution', () => {
+  const blockers = binanceApiPermissionBlockers({...safe, ipRestrict:false});
+  assert.ok(blockers.includes('BINANCE_API_IP_RESTRICTION_REQUIRED'));
 });
 
 test('withdrawal and transfer capabilities block real execution', () => {
