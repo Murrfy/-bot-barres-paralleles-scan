@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 process.env.ZENITH_REAL_TRADING_ENABLED = '0';
+process.env.ZENITH_REAL_ENTRY_ENABLED = '0';
 process.env.ZENITH_PAIRING_DISABLED = '0';
 
 const source = fs.readFileSync('api/zenith-sync.js', 'utf8').replace(
@@ -20,13 +21,14 @@ test('only audited protective command types are accepted', () => {
     'UPDATE_PROTECTION',
     'CLOSE_POSITION',
     'CANCEL_ENTRY',
+    'EXEC_OPEN_POSITION',
     'EXEC_UPDATE_EXIT',
     'EXEC_UPDATE_PROTECTION',
     'EXEC_CLOSE_POSITION',
     'EXEC_CANCEL_ENTRY',
   ]) assert.equal(commandTypeAllowed(type), true, type);
 
-  for (const type of ['OPEN_POSITION', 'EXEC_OPEN_POSITION', 'BUY', 'EXEC_BUY', 'UNKNOWN']) {
+  for (const type of ['OPEN_POSITION', 'BUY', 'EXEC_BUY', 'UNKNOWN']) {
     assert.equal(commandTypeAllowed(type), false, type);
   }
 });
@@ -70,4 +72,13 @@ test('defer notBefore never extends beyond original command expiry', () => {
     id:'command-12345678',type:'EXEC_CLOSE_POSITION',createdAt:1000,expiresAt:2000
   },'MASTER_RUNTIME_STALE','master-1',1900,1500);
   assert.equal(deferred.notBefore,2000);
+});
+
+
+test('real entry has its own explicit release lock', () => {
+  const sourceEntryLocked = source.replace(
+    "if (!REAL_TRADING_ENABLED) return { allowed: false, reason: 'REAL_TRADING_DISABLED' };",
+    "if (!REAL_TRADING_ENABLED && false) return { allowed: false, reason: 'REAL_TRADING_DISABLED' };"
+  );
+  assert.ok(sourceEntryLocked.includes("normalized === 'EXEC_OPEN_POSITION' && !REAL_ENTRY_ENABLED"));
 });
