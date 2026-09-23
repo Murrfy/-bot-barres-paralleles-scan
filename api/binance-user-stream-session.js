@@ -9,7 +9,7 @@ const KEY_STREAM_SESSION = `${PREFIX}:binance-user-stream`;
 const SESSION_TTL_SECONDS = 70 * 60;
 const KEEPALIVE_AFTER_MS = 45 * 60 * 1000;
 const USER_STREAM_MUTATION_RATE_LIMIT_PER_MINUTE = 12;
-const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || process.env.VERCEL_ENV === 'production';
+const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || (process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main');
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
