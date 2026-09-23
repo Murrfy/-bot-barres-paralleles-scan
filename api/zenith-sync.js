@@ -335,12 +335,26 @@ async function roleDeviceId(role) {
   return value ? String(value) : '';
 }
 
+function deviceSessionRemainingSeconds(device, now = Date.now()) {
+  const createdAt = Number(device?.createdAt || 0);
+  if (!Number.isFinite(createdAt) || createdAt <= 0) return 0;
+  const absoluteExpiresAt = createdAt + DEVICE_SESSION_MAX_AGE_SECONDS * 1000;
+  return Math.max(0, Math.ceil((absoluteExpiresAt - now) / 1000));
+}
+
 async function touchDevice(device) {
-  if (!device?.tokenHash) return;
+  if (!device?.tokenHash) return { expired:true, remainingSeconds:0 };
+  const remainingSeconds = deviceSessionRemainingSeconds(device);
+  const key = `${PREFIX}:device:${device.tokenHash}`;
+  if (remainingSeconds <= 0) {
+    await redis(['DEL', key]);
+    return { expired:true, remainingSeconds:0 };
+  }
   const updated = { ...device, lastSeenAt: Date.now() };
   delete updated.tokenHash;
   delete updated.sessionToken;
-  await redis(['SET', `${PREFIX}:device:${device.tokenHash}`, JSON.stringify(updated), 'EX', String(DEVICE_SESSION_MAX_AGE_SECONDS)]);
+  await redis(['SET', key, JSON.stringify(updated), 'EX', String(remainingSeconds)]);
+  return { expired:false, remainingSeconds };
 }
 
 async function requireDevice(req, res, roles) {
@@ -358,8 +372,13 @@ async function requireDevice(req, res, roles) {
     send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
     return null;
   }
-  await touchDevice(device);
-  setDeviceSessionCookie(res, device.sessionToken);
+  const session = await touchDevice(device);
+  if (session.expired) {
+    clearDeviceSessionCookie(res);
+    send(res, 401, { ok:false, code:'DEVICE_SESSION_EXPIRED' });
+    return null;
+  }
+  setDeviceSessionCookie(res, device.sessionToken, session.remainingSeconds);
   const safeDevice = { ...device };
   delete safeDevice.sessionToken;
   return safeDevice;
