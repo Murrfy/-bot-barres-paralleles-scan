@@ -71,6 +71,22 @@ for (const file of htmlFiles) {
   }
 }
 
+const previewMutationSync = fs.readFileSync('api/zenith-sync.js','utf8');
+const previewMutationReconcile = fs.readFileSync('api/binance-reconcile.js','utf8');
+for (const [file,source] of [
+  ['api/zenith-sync.js',previewMutationSync],
+  ['api/binance-reconcile.js',previewMutationReconcile],
+]) {
+  if (!source.includes("process.env.VERCEL_ENV === 'development'") ||
+      !source.includes("'NON_PRODUCTION_CONTROL_MUTATION'")) {
+    fail(`${file} must block Vercel preview/non-main production mutations while preserving development`);
+  }
+}
+if (!previewMutationSync.includes('ZENITH_CONTROL_MUTATION_ALLOWED') ||
+    !previewMutationReconcile.includes('VERCEL_CONTROL_MUTATION_ALLOWED')) {
+  fail('central Zenith mutation gates must remain explicit on sync and reconciliation APIs');
+}
+
 const index = fs.readFileSync('index.html', 'utf8');
 const deviceSession = fs.readFileSync('lib/device-session.mjs', 'utf8');
 for (const required of ["__Host-zenith_device","HttpOnly","Secure","SameSite=Strict","Priority=High","sameOriginMutation","deviceTokenCandidates"]) {
