@@ -55,8 +55,20 @@ test('cookie mutation requires exact same origin', () => {
   assert.equal(sameOriginMutation({...good,headers:{...good.headers,origin:'https://other.vercel.app'}}),false);
 });
 
-test('legacy Bearer migration remains accepted', () => {
-  assert.equal(sameOriginMutation({method:'POST',headers:{authorization:'Bearer legacy-token'}}),true);
+test('Bearer token never bypasses same-origin mutation checks', () => {
+  const base={
+    method:'POST',
+    headers:{
+      authorization:'Bearer legacy-token',
+      host:'zenithfinal3-ahle.vercel.app',
+      'x-forwarded-proto':'https',
+    },
+  };
+  assert.equal(sameOriginMutation(base),false);
+  assert.equal(sameOriginMutation({...base,headers:{...base.headers,origin:'https://evil.example'}}),false);
+  assert.equal(sameOriginMutation({...base,headers:{...base.headers,origin:'https://zenithfinal3-ahle.vercel.app'}}),true);
+  assert.equal(sameOriginMutation({...base,headers:{...base.headers,referer:'https://zenithfinal3-ahle.vercel.app/index.html'}}),true);
+  assert.equal(sameOriginMutation({...base,headers:{...base.headers,'sec-fetch-site':'same-origin'}}),true);
 });
 
 
