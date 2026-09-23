@@ -26,7 +26,7 @@ test('place-first protection replacement publishes and reconciles new protection
   assert.ok(placeCall>=0&&cancelCall>placeCall);
   const placeFn=fn.slice(fn.indexOf('async function placeNew()'),fn.indexOf("let newClientId=''"));
   assert.match(placeFn,/waitForStreamOrder\(\{kind,clientId,terminal:false\}/);
-  assert.match(placeFn,/await publishMasterStreamState\(\);\s*const reconciled=await reconcileMasterUserStream\(\)/);
+  assert.match(placeFn,/await publishMasterStreamState\(\);\s*const reconciled=await awaitMasterReconciliation\(\)/);
 });
 
 test('automatic progressive replacement also reconciles the new order before cancel-old',()=>{
@@ -35,7 +35,7 @@ test('automatic progressive replacement also reconciles the new order before can
   const fn=html.slice(start,end);
   const place=fn.indexOf("phase:'PLACE_NEW'");
   const publish=fn.indexOf('await publishMasterStreamState()');
-  const reconcile=fn.indexOf('await reconcileMasterUserStream()');
+  const reconcile=fn.indexOf('await awaitMasterReconciliation()');
   const cancel=fn.indexOf("phase:'CANCEL_OLD'");
   assert.ok(place>=0&&publish>place&&reconcile>publish&&cancel>reconcile);
 });
