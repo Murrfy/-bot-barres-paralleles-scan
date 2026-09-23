@@ -47,6 +47,8 @@ jobs:
         run: node --test scripts/test-master-admin.mjs
       - name: Test MASTER configuration synchronization
         run: node --test scripts/test-master-sync.mjs
+      - name: Test controller-to-MASTER cloud synchronization
+        run: node --test scripts/test-cloud-controller-master-sync.mjs
       - name: Test command queue safety
         run: node --test scripts/test-command-safety.mjs
       - name: Test real-entry risk preflight
