@@ -30,7 +30,9 @@ const KEY_PENDING = `${PREFIX}:commands:pending`;
 const KEY_PROCESSING = `${PREFIX}:commands:processing`;
 const KEY_DEAD = `${PREFIX}:commands:dead`;
 const KEY_EMERGENCY_STOP = `${PREFIX}:safety:emergency-stop`;
+const KEY_REAL_EXECUTION_ARMED = `${PREFIX}:safety:real-execution-armed`;
 const KEY_MASTER_MODE = `${PREFIX}:master-mode`;
+const DEPLOYMENT_SHA = String(process.env.VERCEL_GIT_COMMIT_SHA || '');
 const KEY_RECONCILE_LAST = `${PREFIX}:reconcile:last`;
 const KEY_MASTER_CONFIG_ACK = `${PREFIX}:master-config:applied`;
 const KEY_MASTER_HEARTBEAT = `${PREFIX}:master-heartbeat`;
@@ -330,6 +332,20 @@ async function emergencyStopActive() {
   return String(value) !== '0';
 }
 
+async function realExecutionArmStatus(expectedMasterDeviceId = '') {
+  const raw = await redis(['GET', KEY_REAL_EXECUTION_ARMED]);
+  const record = parseStoredJson(raw);
+  if (!record || record.version !== 1) return { armed:false, reason:'REAL_EXECUTION_NOT_ARMED', record:null };
+  if (!REAL_TRADING_ENABLED) return { armed:false, reason:'REAL_TRADING_DISABLED', record };
+  if (expectedMasterDeviceId && String(record.masterDeviceId || '') !== String(expectedMasterDeviceId)) {
+    return { armed:false, reason:'REAL_EXECUTION_ARM_MASTER_CHANGED', record };
+  }
+  if (DEPLOYMENT_SHA && String(record.deploymentSha || '') !== DEPLOYMENT_SHA) {
+    return { armed:false, reason:'REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED', record };
+  }
+  return { armed:true, reason:'REAL_EXECUTION_ARMED', record };
+}
+
 function normalizeMasterMode(value) {
   const mode = String(value || '').toUpperCase();
   if (mode === 'RUNNING' || mode === 'PAUSE_PENDING') return mode;
@@ -605,6 +621,8 @@ async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAge
 
 async function realExecutionReadiness(expectedMasterDeviceId = '') {
   if (!expectedMasterDeviceId) return { ok: false, reason: 'MASTER_LEASE_REQUIRED' };
+  const arm = await realExecutionArmStatus(expectedMasterDeviceId);
+  if (!arm.armed) return { ok: false, reason: arm.reason };
   const reconciliation = await freshConsistentReconciliation(expectedMasterDeviceId);
   if (!reconciliation.ok) return reconciliation;
   return { ok: true, reconciliation };
@@ -1109,9 +1127,12 @@ export default async function handler(req, res) {
         'EX', String(MASTER_HEARTBEAT_TTL_SECONDS)
       ]);
 
+      const armStatus = await realExecutionArmStatus(device.deviceId);
       return send(res, 200, {
         ok: true,
         master: true,
+        realExecutionArmed: armStatus.armed,
+        realExecutionArmReason: armStatus.reason,
         acquired: lease.acquired,
         renewed: lease.renewed,
         currentMaster: await masterDeviceId(),
@@ -1202,6 +1223,71 @@ export default async function handler(req, res) {
       return send(res, 200, { ok: true, masterMode: mode });
     }
 
+    if (action === 'real-execution-arm' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller', 'master']);
+      if (!device) return;
+      if (!(await verifyMasterAdminCode(req, res, device))) return;
+      if (!REAL_TRADING_ENABLED) return send(res, 423, { ok:false, code:'REAL_TRADING_DISABLED' });
+      if (!PAIRING_DISABLED) return send(res, 423, { ok:false, code:'PAIRING_MUST_BE_DISABLED' });
+
+      const [currentMaster, registeredMaster, currentMode, halted, pending, processing, runtimeRaw] = await Promise.all([
+        masterDeviceId(),
+        roleDeviceId('master'),
+        masterMode(),
+        emergencyStopActive(),
+        redis(['LLEN', KEY_PENDING]),
+        redis(['LLEN', KEY_PROCESSING]),
+        redis(['GET', KEY_STATE]),
+      ]);
+      const blockers = [];
+      if (!currentMaster || !registeredMaster || String(currentMaster) !== String(registeredMaster)) blockers.push('MASTER_LEASE_REQUIRED');
+      if (device.role === 'master' && String(currentMaster) !== String(device.deviceId)) blockers.push('NOT_MASTER');
+      if (currentMode !== 'PAUSED') blockers.push('MASTER_MUST_BE_PAUSED');
+      if (!halted) blockers.push('EMERGENCY_STOP_MUST_BE_ACTIVE');
+      if (Number(pending || 0) > 0) blockers.push('PENDING_COMMAND');
+      if (Number(processing || 0) > 0) blockers.push('PROCESSING_COMMAND');
+
+      const runtimeState = parseStoredJson(runtimeRaw);
+      const runtime = runtimeSnapshotStatus(runtimeState, currentMaster);
+      if (!runtime.fresh) blockers.push(runtime.reason);
+      const stream = runtimeState?.data?.userStream;
+      if (!stream || stream.connected !== true || stream.ready !== true ||
+          stream.failClosed !== false || stream.needsReconciliation !== false ||
+          (Array.isArray(stream.failReasons) && stream.failReasons.length)) {
+        blockers.push('USER_STREAM_NOT_READY');
+      }
+
+      const configSync = await readMasterConfigSync(currentMaster);
+      if (!configSync.status.synchronized) blockers.push('MASTER_CONFIG_OUT_OF_SYNC');
+      const heartbeatRaw = await redis(['GET', KEY_MASTER_HEARTBEAT]);
+      if (!heartbeatStatus(heartbeatRaw, currentMaster).fresh) blockers.push('MASTER_HEARTBEAT_STALE');
+
+      let reconciliation = null;
+      if (!blockers.length) {
+        reconciliation = await freshCleanReconciliation(10000);
+        if (!reconciliation.ok) blockers.push(reconciliation.reason);
+      }
+      if (blockers.length) {
+        return send(res, 409, { ok:false, code:'REAL_EXECUTION_ARM_BLOCKED', blockers });
+      }
+
+      const record = {
+        version:1,
+        armedAt:Date.now(),
+        masterDeviceId:currentMaster,
+        controllerRevision:configSync.status.controllerRevision,
+        deploymentSha:DEPLOYMENT_SHA,
+        reconciliationObservedAt:Number(reconciliation?.report?.observedAt || 0),
+      };
+      await redis(['SET', KEY_REAL_EXECUTION_ARMED, JSON.stringify(record)]);
+      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+        at:record.armedAt,kind:'REAL_EXECUTION_ARMED',deviceId:device.deviceId,
+        requestedByRole:device.role,masterDeviceId:currentMaster,deploymentSha:DEPLOYMENT_SHA
+      })]);
+      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      return send(res, 200, { ok:true, realExecutionArmed:true, armedAt:record.armedAt });
+    }
+
     if (action === 'master-resume' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller', 'master']);
       if (!device) return;
@@ -1246,6 +1332,8 @@ export default async function handler(req, res) {
       let reconciliation = null;
       if (REAL_TRADING_ENABLED) {
         if (!PAIRING_DISABLED) blockers.push('PAIRING_MUST_BE_DISABLED');
+        const armStatus = await realExecutionArmStatus(currentMaster);
+        if (!armStatus.armed) blockers.push(armStatus.reason);
         if (await emergencyStopActive()) blockers.push('EMERGENCY_STOP_ACTIVE');
         reconciliation = await freshCleanReconciliation();
         if (!reconciliation.ok) blockers.push(reconciliation.reason);
@@ -1307,11 +1395,15 @@ export default async function handler(req, res) {
       const configSync = await readMasterConfigSync(currentMaster || masterDevice || '');
       const heartbeatRaw = await redis(['GET', KEY_MASTER_HEARTBEAT]);
       const heartbeat = heartbeatStatus(heartbeatRaw, currentMaster || masterDevice || '');
+      const armStatus = await realExecutionArmStatus(currentMaster || masterDevice || '');
 
       return send(res, 200, {
         ok: true,
         executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
         realTradingEnabled: REAL_TRADING_ENABLED,
+        realExecutionArmed: armStatus.armed,
+        realExecutionArmReason: armStatus.reason,
+        realExecutionArmedAt: Number(armStatus.record?.armedAt || 0),
         emergencyStopActive: Boolean(emergencyStop),
         masterLeaseActive: Boolean(currentMaster),
         currentMaster,
@@ -1972,6 +2064,10 @@ export default async function handler(req, res) {
       }
       if (device.role === 'master' && String(currentMaster) !== String(device.deviceId)) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
+      }
+      const armStatus = await realExecutionArmStatus(currentMaster);
+      if (!armStatus.armed) {
+        return send(res, 409, { ok:false, code:'REAL_EXECUTION_NOT_ARMED', reason:armStatus.reason });
       }
       if (currentMode !== 'PAUSED') {
         return send(res, 409, {
