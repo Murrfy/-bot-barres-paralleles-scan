@@ -53,6 +53,7 @@ const KEY_RECONCILE_LAST = `${PREFIX}:reconcile:last`;
 const KEY_MASTER_CONFIG_ACK = `${PREFIX}:master-config:applied`;
 const KEY_MASTER_HEARTBEAT = `${PREFIX}:master-heartbeat`;
 const KEY_USER_STREAM_SESSION = `${PREFIX}:binance-user-stream`;
+const KEY_USER_STREAM_MUTATION_LOCK = `${PREFIX}:binance-user-stream:mutation-lock`;
 const MASTER_TTL_SECONDS = 20;
 const MASTER_HEARTBEAT_TTL_SECONDS = 60;
 const MASTER_HEARTBEAT_STALE_MS = 30 * 1000;
@@ -1880,6 +1881,7 @@ export default async function handler(req, res) {
         "if tostring(redis.call('GET', KEYS[3]) or '') ~= 'PAUSED' then return -2 end",
         "if redis.call('LLEN', KEYS[13]) > 0 then return -3 end",
         "if redis.call('LLEN', KEYS[14]) > 0 then return -4 end",
+        "if redis.call('GET', KEYS[16]) then return -5 end",
         "redis.call('SET', KEYS[2], '1')",
         "redis.call('SET', KEYS[3], 'PAUSED')",
         "redis.call('DEL', KEYS[4])",
@@ -1897,7 +1899,7 @@ export default async function handler(req, res) {
       ].join('\n');
 
       const result = Number(await redis([
-        'EVAL', revokeScript, '15',
+        'EVAL', revokeScript, '16',
         KEY_MASTER_DEVICE,
         KEY_EMERGENCY_STOP,
         KEY_MASTER_MODE,
@@ -1913,6 +1915,7 @@ export default async function handler(req, res) {
         KEY_PENDING,
         KEY_PROCESSING,
         roleAssignmentKey(PREFIX, 'master'),
+        KEY_USER_STREAM_MUTATION_LOCK,
         String(registeredMaster),
         String(revokedAt),
       ]));
@@ -1931,7 +1934,9 @@ export default async function handler(req, res) {
           ? 'MASTER_MUST_BE_PAUSED'
           : result === -3
             ? 'PENDING_COMMAND'
-            : 'PROCESSING_COMMAND';
+            : result === -4
+              ? 'PROCESSING_COMMAND'
+              : 'USER_STREAM_MUTATION_IN_FLIGHT';
         return send(res, 409, {
           ok: false,
           code: 'MASTER_REVOKE_DRAIN_REQUIRED',
