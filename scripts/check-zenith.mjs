@@ -389,6 +389,21 @@ if (!index.includes("invalidateMasterStream('PAGE_HIDDEN')") ||
     !index.includes("STREAM_INVENTORY_CHANGED")) {
   fail('MASTER user stream must fail closed on backgrounding, expiry, ordering gaps and inventory changes');
 }
+for (const required of [
+  "masterRuntimeApi('command-next','POST'",
+  "fetch('/api/binance-protective-execute'",
+  "masterRuntimeApi('command-ack','POST'",
+  "masterRuntimeApi('command-fail','POST'",
+  "evaluateProtectiveClose",
+  "PROTECTIVE_CLOSE_ATTEMPTS",
+  "MARKET_CLOSE_NOT_CONFIRMED"
+]) {
+  if (!index.includes(required)) fail(`MASTER protective command worker missing: ${required}`);
+}
+if (!index.includes("masterRuntimeState.realExecutionArmed===true") ||
+    !index.includes("masterRuntimeState.userStreamReady===true")) {
+  fail('MASTER command worker must stay dormant until explicit real arm and reconciled user stream readiness');
+}
 
 if (!index.includes('applyMasterReadOnlyPolicy') ||
     !index.includes('IPAD MASTER LECTURE SEULE') ||
