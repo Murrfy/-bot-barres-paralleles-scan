@@ -27,6 +27,7 @@ const REDIS_TOKEN =
 const REAL_TRADING_ENABLED=process.env.ZENITH_REAL_TRADING_ENABLED==='1';
 const BINANCE_WRITE_ENABLED=process.env.ZENITH_BINANCE_WRITE_ENABLED==='1';
 const PAIRING_DISABLED=process.env.ZENITH_PAIRING_DISABLED==='1';
+const VERCEL_PRODUCTION_WRITE_ALLOWED=!process.env.VERCEL_ENV||process.env.VERCEL_ENV==='production';
 
 function send(res,status,body){
   res.setHeader('Cache-Control','no-store, max-age=0');
@@ -167,7 +168,7 @@ export default async function handler(req,res){
   const readinessReason=executionReadiness(runtimeState,report,master.deviceId,repairTarget);
   if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
 
-  const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED);
+  const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED);
 
   if(type==='EXEC_CANCEL_ENTRY'){
     const symbol=String(req.body?.symbol||'').toUpperCase();
