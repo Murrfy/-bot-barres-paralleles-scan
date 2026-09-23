@@ -1090,5 +1090,14 @@ if (!masterRevokeIndex.includes('masterRevokeBtn') ||
     !masterRevokeIndex.includes('action=master-revoke')) {
   fail('iPhone controller must keep the protected MASTER revoke control');
 }
+const controllerStateRateSource = fs.readFileSync('api/zenith-sync.js','utf8');
+for (const required of [
+  'CONTROLLER_STATE_WRITE_RATE_LIMIT_PER_MINUTE = 120',
+  'controllerStateWriteRateAllowed',
+  "'CONTROLLER_STATE_WRITE_RATE_LIMIT'",
+  "res.setHeader('Retry-After'"
+]) {
+  if (!controllerStateRateSource.includes(required)) fail(`controller state writes must remain rate-limited: ${required}`);
+}
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
