@@ -34,3 +34,22 @@ test('resume cannot act as an implicit PAUSE_PENDING cancellation path',()=>{
   assert.ok(resume.includes("'MASTER_MUST_BE_PAUSED'"));
   assert.equal(resume.includes("'MASTER_PAUSE_NOT_PENDING'"),false);
 });
+
+
+test('RUNNING transitions are atomically fenced against real-trading PANIC',()=>{
+  assert.ok(sync.includes('async function trySetMasterRunningFrom(expectedMode)'));
+  assert.ok(sync.includes("if ARGV[2] == '1' and panic ~= '0' then return {-1, mode} end"));
+  assert.ok(sync.includes("if mode ~= ARGV[1] then return {-2, mode} end"));
+  assert.ok(sync.includes("redis.call('SET', KEYS[2], 'RUNNING')"));
+  assert.ok(sync.includes("KEY_EMERGENCY_STOP"));
+  assert.ok(sync.includes("REAL_TRADING_ENABLED ? '1' : '0'"));
+  assert.ok(cancel.includes("trySetMasterRunningFrom('PAUSE_PENDING')"));
+  assert.ok(resume.includes("trySetMasterRunningFrom('PAUSED')"));
+  assert.equal(cancel.includes("setMasterMode('RUNNING')"),false);
+  assert.equal(resume.includes("setMasterMode('RUNNING')"),false);
+});
+
+test('pause cancellation returns fail-closed while PANIC is active',()=>{
+  assert.ok(cancel.includes("'EMERGENCY_STOP_ACTIVE'"));
+  assert.ok(cancel.includes("runningTransition.reason === 'EMERGENCY_STOP_ACTIVE' ? 423 : 409"));
+});
