@@ -22,6 +22,9 @@ const KEY_STATE = `${PREFIX}:state`;
 const KEY_RECONCILE_LAST = `${PREFIX}:reconcile:last`;
 const KEY_AUDIT = `${PREFIX}:audit`;
 const BINANCE_RECONCILE_RATE_LIMIT_PER_MINUTE = 30;
+const VERCEL_CONTROL_MUTATION_ALLOWED = !process.env.VERCEL_ENV ||
+  process.env.VERCEL_ENV === 'development' ||
+  (process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main');
 
 function send(res, status, body) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -515,6 +518,9 @@ export default async function handler(req, res) {
   const bodyStatus = requestBodyStatus(req, 4096);
   if (!bodyStatus.ok) {
     return send(res, 413, { ok: false, code: 'REQUEST_BODY_TOO_LARGE', maxBytes: bodyStatus.maxBytes });
+  }
+  if (!VERCEL_CONTROL_MUTATION_ALLOWED) {
+    return send(res, 423, { ok: false, code: 'NON_PRODUCTION_CONTROL_MUTATION' });
   }
 
   let device = null;
