@@ -108,10 +108,10 @@ test('duplicate and absent order identities block', () => {
   assert.ok(reconcile(runtime(), [], [{ symbol: 'BTCUSDT' }]).reasons.includes('ORDER_IDENTITIES_INVALID'));
 });
 
-test('HTTP handler rejects replaced devices, malformed Binance data, and failed reads', async () => {
+test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance reads', async () => {
   const original = globalThis.fetch;
   try {
-    for (const scenario of ['replaced', 'missing-owner', 'invalid', 'unavailable', 'clean', 'runtime-race']) {
+    for (const scenario of ['controller', 'replaced', 'missing-owner', 'lease-mismatch', 'invalid', 'unavailable', 'clean', 'runtime-race']) {
       const state = JSON.stringify(runtime([], [], 'SIMULATION'));
       let stored;
       let binanceCalls = 0;
@@ -120,9 +120,18 @@ test('HTTP handler rejects replaced devices, malformed Binance data, and failed 
           const c = JSON.parse(init.body);
           let result = null;
           if (c[0] === 'GET') {
-            if (c[1].includes(':device:')) result = JSON.stringify({ role: 'controller', deviceId: 'current' });
-            else if (c[1].includes('role-device:')) result = scenario === 'replaced' ? 'replacement' : scenario === 'missing-owner' ? null : 'current';
-            else if (c[1] === 'zenith:v1:state') result = state;
+            if (c[1].includes(':device:')) {
+              result = JSON.stringify({
+                role: scenario === 'controller' ? 'controller' : 'master',
+                deviceId: 'current'
+              });
+            } else if (c[1] === 'zenith:v1:role-device:master') {
+              result = scenario === 'replaced' ? 'replacement' : scenario === 'missing-owner' ? null : 'current';
+            } else if (c[1] === 'zenith:v1:master') {
+              result = scenario === 'lease-mismatch' ? 'other-master' : 'current';
+            } else if (c[1] === 'zenith:v1:state') {
+              result = state;
+            }
           }
           if (c[0] === 'EVAL') {
             const report = JSON.parse(c[6]);
@@ -141,10 +150,13 @@ test('HTTP handler rejects replaced devices, malformed Binance data, and failed 
       };
       const res = { setHeader() {}, status(n) { this.code = n; return this; }, json(body) { this.body = body; } };
       await handler({ method: 'GET', headers: { authorization: 'Bearer test-device' } }, res);
-      if (['replaced', 'missing-owner'].includes(scenario)) {
+      if (['controller', 'replaced', 'missing-owner'].includes(scenario)) {
         assert.equal(res.code, 401); assert.equal(binanceCalls, 0);
+      } else if (scenario === 'lease-mismatch') {
+        assert.equal(res.code, 409); assert.equal(res.body.code, 'MASTER_LEASE_REQUIRED'); assert.equal(binanceCalls, 0);
       } else if (scenario === 'clean') {
         assert.equal(res.code, 200); assert.equal(stored.failClosed, false);
+        assert.equal(stored.deviceRole, 'master');
         assert.equal(stored.runtimeHash, crypto.createHash('sha256').update(state).digest('hex'));
       } else {
         assert.equal(res.code, 502); assert.equal(stored.failClosed, true);

@@ -347,8 +347,11 @@ for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batch
     fail(`api/binance-reconcile.js must remain read-only; forbidden endpoint found: ${forbidden}`);
   }
 }
-if (!binanceReconcile.includes("'UNAUTHORIZED_DEVICE'") || !binanceReconcile.includes('requireZenithDevice')) {
-  fail('api/binance-reconcile.js must require a paired Zenith device');
+if (!binanceReconcile.includes("'MASTER_REQUIRED'") ||
+    !binanceReconcile.includes('requireCurrentMaster') ||
+    !binanceReconcile.includes("'MASTER_LEASE_REQUIRED'") ||
+    !binanceReconcile.includes('role-device:master')) {
+  fail('api/binance-reconcile.js must require the registered leased MASTER');
 }
 if (!binanceReconcile.includes("'MISMATCH'") || !binanceReconcile.includes('failClosed')) {
   fail('api/binance-reconcile.js must fail closed on Binance/runtime mismatches');

@@ -71,21 +71,28 @@ async function redis(command) {
   return data?.result;
 }
 
-async function requireZenithDevice(req) {
+async function requireCurrentMaster(req) {
   for (const token of deviceTokenCandidates(req)) {
     const tokenHash = sha256(token);
     const raw = await redis(['GET', `${PREFIX}:device:${tokenHash}`]);
     if (!raw) continue;
-    try {
-      const device = JSON.parse(raw);
-      if (!device?.deviceId || !['controller', 'master'].includes(device?.role)) continue;
-      const roleKey = device.role === 'master'
-        ? `${PREFIX}:role-device:master`
-        : `${PREFIX}:role-device:controller`;
-      const owner = await redis(['GET', roleKey]);
-      if (!owner || String(owner) !== String(device.deviceId)) continue;
-      return device;
-    } catch {}
+
+    let device = null;
+    try { device = JSON.parse(raw); } catch {}
+    if (!device?.deviceId || device.role !== 'master') continue;
+
+    const [registered, lease] = await Promise.all([
+      redis(['GET', `${PREFIX}:role-device:master`]),
+      redis(['GET', `${PREFIX}:master`]),
+    ]);
+
+    if (!registered || String(registered) !== String(device.deviceId)) continue;
+    if (String(lease || '') !== String(device.deviceId)) {
+      const e = new Error('MASTER_LEASE_REQUIRED');
+      e.code = 'MASTER_LEASE_REQUIRED';
+      throw e;
+    }
+    return device;
   }
   return null;
 }
@@ -484,8 +491,15 @@ export default async function handler(req, res) {
 
   let device = null;
   try {
-    device = await requireZenithDevice(req);
+    device = await requireCurrentMaster(req);
   } catch (e) {
+    if (e?.code === 'MASTER_LEASE_REQUIRED') {
+      return send(res, 409, {
+        ok: false,
+        code: 'MASTER_LEASE_REQUIRED',
+        error: 'Le MASTER Zenith ne détient pas le lease actif.',
+      });
+    }
     return send(res, 503, {
       ok: false,
       code: e?.code || 'AUTH_BACKEND_ERROR',
@@ -496,8 +510,8 @@ export default async function handler(req, res) {
   if (!device) {
     return send(res, 401, {
       ok: false,
-      code: 'UNAUTHORIZED_DEVICE',
-      error: 'Appareil Zenith non autorisé.',
+      code: 'MASTER_REQUIRED',
+      error: 'MASTER Zenith autorisé requis.',
     });
   }
 
