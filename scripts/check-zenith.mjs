@@ -257,6 +257,16 @@ if (!userStreamSession.includes('USER_STREAM_MUTATION_RATE_LIMIT_PER_MINUTE = 12
     !userStreamSession.includes("res.setHeader('Retry-After'")) {
   fail('Binance user-stream mutations must be rate-limited before Binance calls');
 }
+if (!userStreamSession.includes('KEY_STREAM_MUTATION_LOCK') ||
+    !userStreamSession.includes('USER_STREAM_MUTATION_LOCK_TTL_SECONDS = 20') ||
+    !userStreamSession.includes('acquireUserStreamMutationLock') ||
+    !userStreamSession.includes('releaseUserStreamMutationLock') ||
+    !userStreamSession.includes("if registered ~= ARGV[1] or lease ~= ARGV[1] then return -1 end") ||
+    !userStreamSession.includes("if roleEpoch ~= ARGV[2] then return -2 end") ||
+    !userStreamSession.includes("'USER_STREAM_MUTATION_BUSY'") ||
+    !userStreamSession.includes("'MASTER_ROLE_CHANGED'")) {
+  fail('Binance user-stream mutations must be serialized and fenced by current MASTER lease and role epoch');
+}
 
 const userStreamStartIndex = userStreamSession.indexOf("if (action === 'start' && req.method === 'POST')");
 const userStreamKeepaliveIndex = userStreamSession.indexOf("if (action === 'keepalive' && req.method === 'POST')");
@@ -1251,6 +1261,9 @@ for (const required of [
   "redis.call('LLEN', KEYS[13]) > 0",
   "redis.call('LLEN', KEYS[14]) > 0",
   "redis.call('SET', KEYS[15], ARGV[2])",
+  "redis.call('GET', KEYS[16])",
+  'KEY_USER_STREAM_MUTATION_LOCK',
+  "'USER_STREAM_MUTATION_IN_FLIGHT'",
   "masterRoleEpochAdvancedAt: revokedAt"
 ]) {
   if (!masterRevokeSync.includes(required)) fail(`MASTER emergency revoke must remain fail-closed: ${required}`);

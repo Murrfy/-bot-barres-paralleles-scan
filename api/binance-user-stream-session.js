@@ -7,9 +7,11 @@ const PREFIX = 'zenith:v1';
 const KEY_MASTER = `${PREFIX}:master`;
 const KEY_MASTER_DEVICE = `${PREFIX}:role-device:master`;
 const KEY_STREAM_SESSION = `${PREFIX}:binance-user-stream`;
+const KEY_STREAM_MUTATION_LOCK = `${PREFIX}:binance-user-stream:mutation-lock`;
 const SESSION_TTL_SECONDS = 70 * 60;
 const KEEPALIVE_AFTER_MS = 45 * 60 * 1000;
 const USER_STREAM_MUTATION_RATE_LIMIT_PER_MINUTE = 12;
+const USER_STREAM_MUTATION_LOCK_TTL_SECONDS = 20;
 const VERCEL_PRODUCTION_WRITE_ALLOWED = process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main';
 
 const REDIS_URL =
@@ -81,9 +83,59 @@ async function requireCurrentMaster(req) {
       e.code = 'MASTER_LEASE_REQUIRED';
       throw e;
     }
-    return device;
+    return { ...device, roleIssuedAt: String(issuedAt || '0') };
   }
   return null;
+}
+
+async function acquireUserStreamMutationLock(master) {
+  const token = crypto.randomUUID();
+  const script = [
+    "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
+    "local lease = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if registered ~= ARGV[1] or lease ~= ARGV[1] then return -1 end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[3]) or '0')",
+    "if roleEpoch ~= ARGV[2] then return -2 end",
+    "local locked = redis.call('SET', KEYS[4], ARGV[3], 'EX', ARGV[4], 'NX')",
+    "if not locked then return 0 end",
+    "return 1"
+  ].join('\n');
+  const result = Number(await redis([
+    'EVAL', script, '4',
+    KEY_MASTER_DEVICE,
+    KEY_MASTER,
+    roleAssignmentKey(PREFIX, 'master'),
+    KEY_STREAM_MUTATION_LOCK,
+    String(master?.deviceId || ''),
+    String(master?.roleIssuedAt || '0'),
+    token,
+    String(USER_STREAM_MUTATION_LOCK_TTL_SECONDS),
+  ]));
+  return {
+    ok: result === 1,
+    token: result === 1 ? token : '',
+    reason: result === -1
+      ? 'MASTER_LEASE_REQUIRED'
+      : result === -2
+        ? 'MASTER_ROLE_CHANGED'
+        : result === 0
+          ? 'USER_STREAM_MUTATION_BUSY'
+          : 'USER_STREAM_MUTATION_FENCE_FAILED',
+  };
+}
+
+async function releaseUserStreamMutationLock(token) {
+  if (!token) return false;
+  const script = [
+    "if tostring(redis.call('GET', KEYS[1]) or '') ~= ARGV[1] then return 0 end",
+    "redis.call('DEL', KEYS[1])",
+    "return 1"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL', script, '1',
+    KEY_STREAM_MUTATION_LOCK,
+    String(token),
+  ])) === 1;
 }
 
 async function binanceListenKey(method) {
@@ -191,6 +243,7 @@ export default async function handler(req, res) {
     return send(res, 423, { ok: false, code: 'NON_PRODUCTION_DEPLOYMENT', tradingWriteAttempted: false });
   }
 
+  let mutationLockToken = '';
   if (mutation) {
     try {
       if (!(await userStreamMutationRateAllowed(master.deviceId))) {
@@ -203,10 +256,21 @@ export default async function handler(req, res) {
           tradingWriteAttempted: false,
         });
       }
+      const lock = await acquireUserStreamMutationLock(master);
+      if (!lock.ok) {
+        const status = lock.reason === 'USER_STREAM_MUTATION_BUSY' ? 409 :
+          lock.reason === 'MASTER_LEASE_REQUIRED' || lock.reason === 'MASTER_ROLE_CHANGED' ? 409 : 503;
+        return send(res, status, {
+          ok: false,
+          code: lock.reason,
+          tradingWriteAttempted: false,
+        });
+      }
+      mutationLockToken = lock.token;
     } catch (e) {
       return send(res, 503, {
         ok: false,
-        code: e?.code || 'RATE_LIMIT_BACKEND_ERROR',
+        code: e?.code || 'USER_STREAM_MUTATION_FENCE_UNAVAILABLE',
         tradingWriteAttempted: false,
       });
     }
@@ -295,5 +359,9 @@ export default async function handler(req, res) {
       binanceCode: e?.binanceCode,
       tradingWriteAttempted: false,
     });
+  } finally {
+    if (mutationLockToken) {
+      try { await releaseUserStreamMutationLock(mutationLockToken); } catch {}
+    }
   }
 }
