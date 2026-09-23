@@ -96,6 +96,30 @@ function adminSecretPolicyBlockers({
   return blockers;
 }
 
+function pairingSecretPolicyBlockers({
+  pairingCode = PAIRING_CODE,
+  masterPairingCode = MASTER_PAIRING_CODE,
+  adminCode = MASTER_ADMIN_CODE,
+} = {}) {
+  const blockers = [];
+  const controller = String(pairingCode || '');
+  const master = String(masterPairingCode || '');
+  const admin = String(adminCode || '');
+
+  if (controller.length < 16) blockers.push('PAIRING_CODE_TOO_WEAK');
+  if (master.length < 16) blockers.push('MASTER_PAIRING_CODE_TOO_WEAK');
+  if (controller && master && timingSafeEqualText(controller, master)) {
+    blockers.push('PAIRING_CODES_MUST_DIFFER');
+  }
+  if (admin && controller && timingSafeEqualText(admin, controller)) {
+    blockers.push('PAIRING_CODE_REUSES_MASTER_ADMIN');
+  }
+  if (admin && master && timingSafeEqualText(admin, master)) {
+    blockers.push('MASTER_PAIRING_CODE_REUSES_MASTER_ADMIN');
+  }
+  return blockers;
+}
+
 function binanceApiPermissionBlockers(permission) {
   if (!permission || typeof permission !== 'object') return ['BINANCE_API_PERMISSIONS_UNAVAILABLE'];
   const blockers = [];
@@ -481,6 +505,8 @@ async function realExecutionArmStatus(expectedMasterDeviceId = '') {
   if (!REAL_TRADING_ENABLED) return { armed:false, reason:'REAL_TRADING_DISABLED', record };
   const adminSecretBlockers = adminSecretPolicyBlockers();
   if (adminSecretBlockers.length) return { armed:false, reason:adminSecretBlockers[0], blockers:adminSecretBlockers, record };
+  const pairingSecretBlockers = pairingSecretPolicyBlockers();
+  if (pairingSecretBlockers.length) return { armed:false, reason:pairingSecretBlockers[0], blockers:pairingSecretBlockers, record };
   if (!BINANCE_WRITE_ENABLED) return { armed:false, reason:'BINANCE_WRITE_DISABLED', record };
   if (!VERCEL_PRODUCTION_WRITE_ALLOWED) return { armed:false, reason:'NON_PRODUCTION_DEPLOYMENT', record };
   if (!DEPLOYMENT_SHA) return { armed:false, reason:'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING', record };
@@ -1528,7 +1554,7 @@ export default async function handler(req, res) {
         redis(['LLEN', KEY_PROCESSING]),
         redis(['GET', KEY_STATE]),
       ]);
-      const blockers = [...adminSecretPolicyBlockers()];
+      const blockers = [...adminSecretPolicyBlockers(), ...pairingSecretPolicyBlockers()];
       if (!currentMaster || !registeredMaster || String(currentMaster) !== String(registeredMaster)) blockers.push('MASTER_LEASE_REQUIRED');
       if (device.role === 'master' && String(currentMaster) !== String(device.deviceId)) blockers.push('NOT_MASTER');
       if (currentMode !== 'PAUSED') blockers.push('MASTER_MUST_BE_PAUSED');
@@ -1581,6 +1607,7 @@ export default async function handler(req, res) {
         binanceApiPermissionsVerifiedAt:Date.now(),
         binanceApiIpRestricted:apiPermissions?.ipRestrict === true,
         adminSecretPolicyVersion:1,
+        pairingSecretPolicyVersion:1,
       };
       await redis(['SET', KEY_REAL_EXECUTION_ARMED, JSON.stringify(record)]);
       await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
@@ -2732,6 +2759,6 @@ export default async function handler(req, res) {
   }
 }
 
-export { binanceApiPermissionBlockers, adminSecretPolicyBlockers };
+export { binanceApiPermissionBlockers, adminSecretPolicyBlockers, pairingSecretPolicyBlockers };
 
 export { clientIp };
