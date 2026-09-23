@@ -27,7 +27,7 @@ const REDIS_TOKEN =
 const REAL_TRADING_ENABLED=process.env.ZENITH_REAL_TRADING_ENABLED==='1';
 const BINANCE_WRITE_ENABLED=process.env.ZENITH_BINANCE_WRITE_ENABLED==='1';
 const PAIRING_DISABLED=process.env.ZENITH_PAIRING_DISABLED==='1';
-const VERCEL_PRODUCTION_WRITE_ALLOWED=!process.env.VERCEL_ENV||process.env.VERCEL_ENV==='production';
+const VERCEL_PRODUCTION_WRITE_ALLOWED=!process.env.VERCEL_ENV||(process.env.VERCEL_ENV==='production'&&process.env.VERCEL_GIT_COMMIT_REF==='main');
 
 function send(res,status,body){
   res.setHeader('Cache-Control','no-store, max-age=0');
