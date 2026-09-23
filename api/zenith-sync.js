@@ -1491,6 +1491,11 @@ export default async function handler(req, res) {
         "if currentController ~= oldController then",
         "  return {-1, currentController, oldController}",
         "end",
+        "local pendingCount = redis.call('LLEN', KEYS[5])",
+        "local processingCount = redis.call('LLEN', KEYS[6])",
+        "if pendingCount > 0 or processingCount > 0 then",
+        "  return {-3, currentController, oldController, tostring(pendingCount), tostring(processingCount)}",
+        "end",
         "redis.call('SET', KEYS[2], ARGV[1])",
         "redis.call('SET', KEYS[3], ARGV[2], 'EX', ARGV[3])",
         "redis.call('SET', KEYS[4], ARGV[4])",
@@ -1499,11 +1504,13 @@ export default async function handler(req, res) {
       ].join('\n');
 
       const result = await redis([
-        'EVAL', script, '4',
+        'EVAL', script, '6',
         replacementKey(recoveryCode),
         KEY_CONTROLLER_DEVICE,
         `${PREFIX}:device:${tokenHash}`,
         roleAssignmentKey(PREFIX, 'controller'),
+        KEY_PENDING,
+        KEY_PROCESSING,
         newDeviceId,
         JSON.stringify(deviceRecord),
         String(DEVICE_SESSION_MAX_AGE_SECONDS),
@@ -1516,6 +1523,14 @@ export default async function handler(req, res) {
       }
       if (code === -1) {
         return send(res, 409, { ok: false, code: 'CONTROLLER_REPLACEMENT_CONFLICT' });
+      }
+      if (code === -3) {
+        return send(res, 409, {
+          ok: false,
+          code: 'CONTROLLER_REPLACEMENT_DRAIN_REQUIRED',
+          pendingCommands: Number(Array.isArray(result) ? result[3] : 0) || 0,
+          processingCommands: Number(Array.isArray(result) ? result[4] : 0) || 0,
+        });
       }
       if (code !== 1) {
         return send(res, 500, { ok: false, code: 'CONTROLLER_REPLACEMENT_FAILED' });
@@ -2580,6 +2595,11 @@ export default async function handler(req, res) {
         "local mode = tostring(redis.call('GET', KEYS[3]) or 'PAUSED')",
         "if mode == 'PAUSED' then return {-2, mode} end",
         "if mode == 'PAUSE_PENDING' and ARGV[4] ~= '1' then return {-3, mode} end",
+        "local currentController = tostring(redis.call('GET', KEYS[5]) or '')",
+        "if currentController ~= ARGV[6] then return {-5, currentController} end",
+        "local roleIssuedAt = tonumber(redis.call('GET', KEYS[6]) or '0') or 0",
+        "local sessionCreatedAt = tonumber(ARGV[7]) or 0",
+        "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return {-6, tostring(roleIssuedAt)} end",
         "local existing = redis.call('GET', KEYS[1])",
         "if existing then return {0, existing} end",
         "local total = redis.call('LLEN', KEYS[2]) + redis.call('LLEN', KEYS[4])",
@@ -2590,10 +2610,12 @@ export default async function handler(req, res) {
       ].join('\n');
 
       const result = await redis([
-        'EVAL', script, '4',
+        'EVAL', script, '6',
         dedupeKey, KEY_PENDING, KEY_MASTER_MODE, KEY_PROCESSING,
+        KEY_CONTROLLER_DEVICE, roleAssignmentKey(PREFIX, 'controller'),
         command.id, raw, String(COMMAND_DEDUPE_TTL_SECONDS),
-        allowedWhilePending ? '1' : '0', String(COMMAND_QUEUE_MAX)
+        allowedWhilePending ? '1' : '0', String(COMMAND_QUEUE_MAX),
+        String(device.deviceId), String(Number(device.createdAt || 0))
       ]);
 
       const resultCode = Number(Array.isArray(result) ? result[0] : -99);
@@ -2609,6 +2631,13 @@ export default async function handler(req, res) {
           code: 'COMMAND_QUEUE_FULL',
           queueDepth: Number(Array.isArray(result) ? result[1] : COMMAND_QUEUE_MAX),
           queueMax: COMMAND_QUEUE_MAX,
+        });
+      }
+      if (resultCode === -5 || resultCode === -6) {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: resultCode === -5 ? 'CONTROLLER_ROLE_CHANGED' : 'CONTROLLER_SESSION_REVOKED',
         });
       }
 
