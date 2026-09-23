@@ -1045,5 +1045,24 @@ for (const file of roleEpochApiFiles) {
   }
 }
 
+const realEntryPermissionRevalidation = fs.readFileSync('api/binance-entry-execute.js','utf8');
+for (const required of [
+  '/sapi/v1/account/apiRestrictions',
+  'fetchBinanceApiPermissions',
+  'binanceApiPermissionBlockers',
+  "'BINANCE_API_PERMISSION_REVALIDATION_FAILED'",
+  "'BINANCE_API_PERMISSION_REVALIDATION_BLOCKED'",
+  'BINANCE_API_IP_RESTRICTION_REQUIRED',
+  'BINANCE_API_WITHDRAWALS_MUST_BE_DISABLED'
+]) {
+  if (!realEntryPermissionRevalidation.includes(required)) {
+    fail(`real entry execution must revalidate safe Binance API permissions before opening: ${required}`);
+  }
+}
+if (realEntryPermissionRevalidation.indexOf('fetchBinanceApiPermissions(apiKey,secret)') >
+    realEntryPermissionRevalidation.indexOf('runLiveEntryPreflight({')) {
+  fail('Binance API permission revalidation must happen before real-entry Futures preflight');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
