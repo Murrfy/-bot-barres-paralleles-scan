@@ -20,6 +20,10 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
   .replace(
     /^import \{ requestBodyStatus \} from '\.\.\/lib\/request-body-limit\.mjs';\n/m,
     "const requestBodyStatus=()=>({ok:true,bytes:0,maxBytes:1024*1024});\n"
+  )
+  .replace(
+    /^import \{ jsonStructureStatus, plainJsonObject \} from '\.\.\/lib\/json-structure\.mjs';\n/m,
+    "const jsonStructureStatus=()=>({ok:true,reason:'JSON_STRUCTURE_OK'}); const plainJsonObject=value=>Boolean(value&&typeof value==='object'&&!Array.isArray(value));\n"
   );
 const { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus } = await import(
   'data:text/javascript;base64,' +
