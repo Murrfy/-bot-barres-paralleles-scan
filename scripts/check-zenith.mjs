@@ -452,7 +452,7 @@ if (!index.includes("role==='master'") ||
 if (!index.includes('masterExecutionCycle') ||
     !index.includes("masterRuntimeApi('command-next','POST'") ||
     !index.includes("masterCommandDisposition('command-ack'") ||
-    !index.includes("fetch('/api/binance-entry-execute'") ||
+    !index.includes("callMasterExecutionEndpoint('/api/binance-entry-execute'") ||
     !index.includes('runMasterOpenEntry') ||
     !index.includes('runMasterCancelEntry') ||
     !index.includes("import('/lib/entry-execution-state.mjs')") ||
