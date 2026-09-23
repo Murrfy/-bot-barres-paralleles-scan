@@ -252,7 +252,6 @@ async function refreshMasterControls(){
     return false;
   }
   const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
-  if(!token)return false;
   try{
     const r=await fetch('/api/zenith-sync?action=safety',{
       cache:'no-store',
@@ -358,12 +357,6 @@ async function controllerMasterAction(action){
 }
 async function refreshControllerIdentity(){
   const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
-  if(!token){
-    controllerIdentity={paired:false,role:'',lastOk:0,error:''};
-    renderControllerIdentity();
-    renderMasterControls();
-    return false;
-  }
   try{
     const r=await fetch('/api/zenith-sync?action=whoami',{
       cache:'no-store',
@@ -376,6 +369,7 @@ async function refreshControllerIdentity(){
       renderControllerIdentity();
       return false;
     }
+    localStorage.removeItem(ZENITH_DEVICE_TOKEN_KEY);
     localStorage.setItem(ZENITH_DEVICE_ROLE_KEY,role);
     controllerIdentity={paired:true,role,lastOk:Date.now(),error:''};
     renderControllerIdentity();
@@ -544,7 +538,6 @@ function controllerCloudStatePayload(){
 async function syncControllerCloudStateNow(){
   if(!controllerIdentity.paired||controllerIdentity.role!=='controller')return false;
   const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
-  if(!token)return false;
 
   const payload=controllerCloudStatePayload();
 

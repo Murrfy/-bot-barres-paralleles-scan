@@ -38,7 +38,6 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
 (async()=>{
   const token=localStorage.getItem(TOKEN_KEY)||'';
   const localRole=localStorage.getItem(ROLE_KEY)||'';
-  if(!token){show('Aucun jeton de jumelage trouvé dans ce navigateur.','err');return}
   try{
     const r=await fetch('/api/zenith-sync?action=whoami',{
       headers:{Authorization:'Bearer '+token,Accept:'application/json'},
@@ -47,6 +46,7 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true||!q?.device) throw new Error(q?.code||q?.error||('HTTP '+r.status));
     if(q.device.role!=='controller') throw new Error('ROLE_INATTENDU_'+String(q.device.role||''));
+    localStorage.removeItem(TOKEN_KEY);
     localStorage.setItem(ROLE_KEY,'controller');
     if(q.device.deviceName) localStorage.setItem(NAME_KEY,q.device.deviceName);
     show('Vérifié : cet iPhone est reconnu par le serveur comme CONTRÔLEUR. Il n’est pas MASTER.','ok');

@@ -31,7 +31,7 @@ button:disabled{opacity:.5}
     <input id="code" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Code MASTER séparé">
     <button id="pairBtn">Associer cet iPad comme MASTER</button>
     <div id="status" class="status">MASTER non jumelé.</div>
-    <div class="small">Le code MASTER n’est pas conservé. Après validation, seul un jeton d’appareil propre à cet iPad est stocké localement.</div>
+    <div class="small">Le code MASTER n’est pas conservé. Après validation, la session de cet iPad est protégée par un cookie HttpOnly sécurisé.</div>
   </div>
 </div>
 <script>
@@ -68,8 +68,8 @@ async function pair(){
       })
     });
     const q=await r.json().catch(()=>({}));
-    if(!r.ok||q?.ok!==true||!q?.token) throw new Error(q?.code||q?.error||('HTTP '+r.status));
-    localStorage.setItem(DEVICE_TOKEN_KEY,q.token);
+    if(!r.ok||q?.ok!==true||q?.sessionReady!==true) throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    localStorage.removeItem(DEVICE_TOKEN_KEY);
     localStorage.setItem(DEVICE_ROLE_KEY,'master');
     localStorage.setItem(DEVICE_NAME_KEY,'iPad MASTER Zenith');
     $('code').value='';

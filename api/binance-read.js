@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { deviceTokenCandidates } from '../lib/device-session.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -15,11 +16,6 @@ const REDIS_TOKEN =
   process.env.KV_REST_API_TOKEN;
 
 const PREFIX = 'zenith:v1';
-
-function bearer(req) {
-  const h = String(req.headers.authorization || '');
-  return h.startsWith('Bearer ') ? h.slice(7).trim() : '';
-}
 
 function sha256(v) {
   return crypto.createHash('sha256').update(String(v)).digest('hex');
@@ -55,26 +51,22 @@ async function redis(command) {
 }
 
 async function requireZenithDevice(req) {
-  const token = bearer(req);
-  if (!token) return null;
-
-  const raw = await redis(['GET', `${PREFIX}:device:${sha256(token)}`]);
-  if (!raw) return null;
-
-  try {
-    const device = JSON.parse(raw);
-    if (!device?.deviceId || !['controller', 'master'].includes(device?.role)) return null;
-
-    const roleKey = device.role === 'master'
-      ? `${PREFIX}:role-device:master`
-      : `${PREFIX}:role-device:controller`;
-    const owner = await redis(['GET', roleKey]);
-    if (owner && String(owner) !== String(device.deviceId)) return null;
-
-    return device;
-  } catch {
-    return null;
+  for (const token of deviceTokenCandidates(req)) {
+    const tokenHash = sha256(token);
+    const raw = await redis(['GET', `${PREFIX}:device:${tokenHash}`]);
+    if (!raw) continue;
+    try {
+      const device = JSON.parse(raw);
+      if (!device?.deviceId || !['controller', 'master'].includes(device?.role)) continue;
+      const roleKey = device.role === 'master'
+        ? `${PREFIX}:role-device:master`
+        : `${PREFIX}:role-device:controller`;
+      const owner = await redis(['GET', roleKey]);
+      if (!owner || String(owner) !== String(device.deviceId)) continue;
+      return device;
+    } catch {}
   }
+  return null;
 }
 
 function send(res, status, body) {

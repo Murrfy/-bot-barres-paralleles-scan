@@ -35,6 +35,21 @@ for (const file of htmlFiles) {
 }
 
 const index = fs.readFileSync('index.html', 'utf8');
+const deviceSession = fs.readFileSync('lib/device-session.mjs', 'utf8');
+for (const required of ["__Host-zenith_device","HttpOnly","Secure","SameSite=Strict","Priority=High","sameOriginMutation","deviceTokenCandidates"]) {
+  if (!deviceSession.includes(required)) fail(`device session hardening missing: ${required}`);
+}
+for (const file of ['pair-controller.html','pair-master.html','replace-controller.html']) {
+  const html=fs.readFileSync(file,'utf8');
+  if (html.includes('localStorage.setItem(DEVICE_TOKEN_KEY')) fail(`${file} must not store device credentials in localStorage`);
+  if (!html.includes('localStorage.removeItem(DEVICE_TOKEN_KEY)')) fail(`${file} must purge legacy localStorage device credentials`);
+  if (!html.includes('sessionReady')) fail(`${file} must complete pairing/recovery through the secure server session`);
+}
+for (const file of ['index.html','master-admin.html','master-standby.html','controller-status.html']) {
+  const html=fs.readFileSync(file,'utf8');
+  if (!html.includes('localStorage.removeItem(')) fail(`${file} must purge migrated legacy credentials after authenticated session bootstrap`);
+}
+
 if (!index.includes('simulation uniquement')) {
   fail('index.html must keep the visible simulation-only marker until real trading is deliberately released');
 }
@@ -118,6 +133,15 @@ if (!binanceReconcile.includes('/fapi/v1/openAlgoOrders')) {
 }
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
+if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
+    !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req)')) {
+  fail('zenith-sync must use secure device sessions and same-origin mutation protection');
+}
+for (const file of ['api/binance-read.js','api/binance-reconcile.js','api/binance-entry-preflight.js']) {
+  const source=fs.readFileSync(file,'utf8');
+  if (!source.includes('deviceTokenCandidates(req)')) fail(`${file} must accept the secure device session cookie`);
+}
+
 if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'")) {
   fail('api/zenith-sync.js must keep the explicit real-trading environment lock');
 }
