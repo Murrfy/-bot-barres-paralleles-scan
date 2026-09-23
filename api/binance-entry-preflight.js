@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, deviceSessionRecordActive } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, deviceSessionRecordActive, roleSessionKey } from '../lib/device-session.mjs';
 import { evaluateEntryRisk, REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
 const BASE = 'https://fapi.binance.com';
@@ -65,6 +65,8 @@ async function requireCurrentMaster(req) {
     let device = null;
     try { device = JSON.parse(raw); } catch {}
     if (!deviceSessionRecordActive(device) || !device?.deviceId || device.role !== 'master') continue;
+    const activeSessionHash = await redis(['GET', roleSessionKey('master')]);
+    if (activeSessionHash && String(activeSessionHash) !== tokenHash) continue;
 
     const [registered, lease] = await Promise.all([
       redis(['GET', `${PREFIX}:role-device:master`]),
