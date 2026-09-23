@@ -34,7 +34,7 @@ function harness({ role = 'master', registered = 'master-1', lease = 'master-1',
       const command = JSON.parse(init.body);
       let result = null;
       if (command[0] === 'GET' && String(command[1]).includes(':device:')) {
-        result = JSON.stringify({ role, deviceId: role === 'master' ? 'master-1' : 'controller-1' });
+        result = JSON.stringify({ role, deviceId: role === 'master' ? 'master-1' : 'controller-1', createdAt: Date.now() });
       } else if (command[0] === 'GET' && command[1] === 'zenith:v1:role-device:master') {
         result = registered;
       } else if (command[0] === 'GET' && command[1] === 'zenith:v1:master') {
