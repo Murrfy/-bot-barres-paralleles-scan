@@ -712,6 +712,10 @@ if (!masterAdmin.includes('panicBtn') || !masterAdmin.includes('clearPanicBtn') 
 if (!index.includes('escapeHtml') || !index.includes('escapeHtml(h.reason)') || !index.includes('escapeHtml(p.symbol)')) {
   fail('dynamic trading UI strings must be HTML-escaped');
 }
+if (!index.includes('data-refresh="${escapeHtml(p.symbol)}"') ||
+    !index.includes('data-close="${escapeHtml(p.symbol)}"')) {
+  fail('dynamic position symbols must be escaped inside HTML data attributes');
+}
 
 const vercelConfig = JSON.parse(fs.readFileSync('vercel.json', 'utf8'));
 const securityHeaders = JSON.stringify(vercelConfig.headers || []);
