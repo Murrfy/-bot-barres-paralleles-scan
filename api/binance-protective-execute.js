@@ -209,7 +209,7 @@ export default async function handler(req,res){
       return send(res,502,{
         ok:false,
         code:['CANCEL_RESULT_AMBIGUOUS','CANCEL_TARGET_UNKNOWN'].includes(e?.message)?e.message:'BINANCE_ENTRY_CANCEL_FAILED',
-        error:e?.message||'Binance entry cancellation failed.',
+        error:'Annulation d’entrée Binance indisponible.',
         binanceCode:e?.code??null,
         ambiguous:e?.ambiguous===true,
         writeAttempted:true,
@@ -295,7 +295,7 @@ export default async function handler(req,res){
     return send(res,502,{
       ok:false,
       code:e?.message==='ORDER_RESULT_AMBIGUOUS'?'ORDER_RESULT_AMBIGUOUS':'BINANCE_PROTECTIVE_EXECUTION_FAILED',
-      error:e?.message||'Binance protective execution failed.',
+      error:'Exécution de protection Binance indisponible.',
       binanceCode:e?.code??null,
       ambiguous:e?.ambiguous===true,
       writeAttempted:true,
