@@ -17,3 +17,25 @@ test('mutating cancel/update workers require stream confirmation before ACK',()=
   assert.match(html,/waitForStreamOrder\(\{kind,clientId,terminal:false\}/);
   assert.match(html,/reconcileMasterUserStream\(\)/);
 });
+
+
+test('place-first protection replacement publishes and reconciles new protection before retiring old',()=>{
+  const fn=html.slice(html.indexOf('async function runMasterProtectiveUpdate'),html.indexOf('async function waitForFullCloseState'));
+  const placeCall=fn.indexOf("newClientId=await placeNew()");
+  const cancelCall=fn.indexOf("await cancelOld(newClientId)");
+  assert.ok(placeCall>=0&&cancelCall>placeCall);
+  const placeFn=fn.slice(fn.indexOf('async function placeNew()'),fn.indexOf("let newClientId=''"));
+  assert.match(placeFn,/waitForStreamOrder\(\{kind,clientId,terminal:false\}/);
+  assert.match(placeFn,/await publishMasterStreamState\(\);\s*const reconciled=await reconcileMasterUserStream\(\)/);
+});
+
+test('automatic progressive replacement also reconciles the new order before cancel-old',()=>{
+  const start=html.indexOf('async function executeMasterAutoProgressive');
+  const end=html.indexOf('async function runMasterAutoProtection',start);
+  const fn=html.slice(start,end);
+  const place=fn.indexOf("phase:'PLACE_NEW'");
+  const publish=fn.indexOf('await publishMasterStreamState()');
+  const reconcile=fn.indexOf('await reconcileMasterUserStream()');
+  const cancel=fn.indexOf("phase:'CANCEL_OLD'");
+  assert.ok(place>=0&&publish>place&&reconcile>publish&&cancel>reconcile);
+});
