@@ -1589,12 +1589,15 @@ function updateMasterAutoHighWater(position,mark){
   }
   return next;
 }
-function masterHasSingleMaxLoss(position,orders){
+function masterHasSingleMaxLoss(position,orders,hardMaxLossUsd=400){
   const amount=n(position?.positionAmt??position?.quantity,0);
   const direction=amount>=0?'LONG':'SHORT';
+  const quantity=Math.abs(amount);
   const symbol=String(position?.symbol||'').toUpperCase();
   const side=direction==='LONG'?'SELL':'BUY';
   const entry=n(position?.entryPrice,0);
+  const cap=n(hardMaxLossUsd,0);
+  if(!(quantity>0)||!(entry>0)||!(cap>0))return false;
   const rows=(Array.isArray(orders)?orders:[]).filter(o=>{
     if(String(o?.orderClass||'').toUpperCase()!=='ALGO')return false;
     if(String(o?.symbol||'').toUpperCase()!==symbol)return false;
@@ -1603,8 +1606,13 @@ function masterHasSingleMaxLoss(position,orders){
     if(String(o?.type||'').toUpperCase()!=='STOP_MARKET')return false;
     if(!(o?.closePosition===true||o?.closePosition==='true'))return false;
     const trigger=n(o?.triggerPrice??o?.stopPrice,0);
-    if(!(trigger>0&&entry>0))return false;
-    return direction==='LONG'?trigger<entry:trigger>entry;
+    if(!(trigger>0))return false;
+    const lossSide=direction==='LONG'?trigger<entry:trigger>entry;
+    if(!lossSide)return false;
+    const impliedLossUsd=direction==='LONG'
+      ?(entry-trigger)*quantity
+      :(trigger-entry)*quantity;
+    return impliedLossUsd<=cap+1e-8;
   });
   return rows.length===1;
 }
