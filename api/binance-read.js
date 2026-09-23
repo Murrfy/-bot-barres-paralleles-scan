@@ -175,6 +175,22 @@ export default async function handler(req, res) {
         updateTime: p.updateTime,
       }));
 
+    const standardOrderDetails = (Array.isArray(openOrders) ? openOrders : []).map(o => ({
+      symbol: String(o?.symbol || '').toUpperCase(),
+      orderId: String(o?.orderId ?? ''),
+      clientOrderId: String(o?.clientOrderId ?? ''),
+      side: String(o?.side || '').toUpperCase(),
+      positionSide: String(o?.positionSide || 'BOTH').toUpperCase(),
+      type: String(o?.type || '').toUpperCase(),
+      status: String(o?.status || '').toUpperCase(),
+      origQty: String(o?.origQty ?? ''),
+      executedQty: String(o?.executedQty ?? ''),
+      price: String(o?.price ?? ''),
+      reduceOnly: o?.reduceOnly === true || o?.reduceOnly === 'true',
+      timeInForce: String(o?.timeInForce || ''),
+      updateTime: Number(o?.updateTime ?? o?.time ?? 0),
+    }));
+
     return send(res, 200, {
       ok: true,
       mode: 'READ_ONLY',
@@ -197,6 +213,7 @@ export default async function handler(req, res) {
       positions: livePositions,
       openOrders: (Array.isArray(openOrders) ? openOrders.length : 0) + (Array.isArray(openAlgoOrders) ? openAlgoOrders.length : 0),
       standardOpenOrders: Array.isArray(openOrders) ? openOrders.length : 0,
+      standardOrderDetails,
       algoOpenOrders: Array.isArray(openAlgoOrders) ? openAlgoOrders.length : 0,
     });
   } catch (e) {
