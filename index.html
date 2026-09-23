@@ -426,13 +426,80 @@ function renderRealPositions(){
   }
   const controller=controllerIdentity.paired&&controllerIdentity.role==='controller';
   wrap.innerHTML=rows.map((p,i)=>{
-    const amt=n(p.positionAmt,0),qty=Math.abs(amt),dir=amt>=0?'LONG':'SHORT',pnl=n(p.unrealizedProfit,0),side=String(p.positionSide||'BOTH').toUpperCase();
+    const amt=n(p.positionAmt,0),qty=Math.abs(amt),dir=amt>=0?'LONG':'SHORT';
+    const pnl=n(p.unrealizedProfit,0),side=String(p.positionSide||'BOTH').toUpperCase();
     const key=controllerRealCommandModule?controllerRealCommandModule.realPositionKey(p):'';
-    const pending=key&&realClosePending.has(key);
-    const closeAllowed=controller&&side==='BOTH'&&qty>0&&!pending;
-    return `<div class="posCard"><div class="posTop"><span class="posSym">RÉEL · ${escapeHtml(p.symbol)} · ${dir}</span><span class="posPnl ${pnl>=0?'pos':'neg'}">${money(pnl)}</span></div><div class="posGrid"><span>Entrée</span><b>${price(p.entryPrice)}</b><span>Mark</span><b>${price(p.markPrice)}</b><span>Quantité</span><b>${escapeHtml(String(qty))}</b><span>Levier</span><b>x${escapeHtml(String(p.leverage||'—'))}</b><span>Marge</span><b>${escapeHtml(String(p.marginType||'—').toUpperCase())}</b><span>Liquidation</span><b>${price(p.liquidationPrice)}</b></div><button class="btn danger closeNowMini" data-real-close="${i}" ${closeAllowed?'':'disabled'}>${pending?'FERMETURE EN ATTENTE':side!=='BOTH'?'HEDGE NON PRIS EN CHARGE':'FERMER RÉEL · LIMIT IOC'}</button></div>`;
+    const closePending=key&&realClosePending.has(key);
+    const inv=realProtectionInventory(p);
+    const emergencyReady=inv.maxLoss.length===1;
+    const exitPending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'EXIT'));
+    const progressivePending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'PROGRESSIVE'));
+    const maxLossPending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'MAX_LOSS'));
+    const baseAllowed=controller&&side==='BOTH'&&qty>0&&!closePending;
+    const closeAllowed=baseAllowed;
+    const exitAllowed=baseAllowed&&emergencyReady&&!inv.exitConflict&&!exitPending;
+    const progressiveAllowed=baseAllowed&&emergencyReady&&!inv.progressiveConflict&&!progressivePending;
+    const maxLossAllowed=baseAllowed&&!inv.maxLossConflict&&!maxLossPending;
+
+    const targetText=inv.exitConflict?'CONFLIT / EXTERNE'
+      :inv.managedExit?price(inv.managedExit.price):'AUCUN';
+    const progressiveText=inv.progressiveConflict?'CONFLIT / EXTERNE'
+      :inv.managedProgressive?price(inv.managedProgressive.triggerPrice):'AUCUNE';
+    const maxLossSingle=inv.maxLoss.length===1?inv.maxLoss[0]:null;
+    const maxLossText=inv.maxLossConflict?'CONFLIT / EXTERNE'
+      :maxLossSingle
+        ?price(maxLossSingle.triggerPrice)+(zenithManagedRealId(maxLossSingle.clientAlgoId)?'':' · EXTERNE')
+        :'ABSENTE';
+
+    const protectionWarning=!emergencyReady
+      ?'<div class="warning" style="margin-top:7px">MODIFICATIONS OBJECTIF / PROTECTION GAIN BLOQUÉES : une seule protection MAX‑LOSS réelle confirmée est requise.</div>'
+      :'';
+
+    return `<div class="posCard">
+      <div class="posTop">
+        <span class="posSym">RÉEL · ${escapeHtml(p.symbol)} · ${dir}</span>
+        <span class="posPnl ${pnl>=0?'pos':'neg'}">${money(pnl)}</span>
+      </div>
+      <div class="posGrid">
+        <span>Entrée</span><b>${price(p.entryPrice)}</b>
+        <span>Mark</span><b>${price(p.markPrice)}</b>
+        <span>Quantité</span><b>${escapeHtml(String(qty))}</b>
+        <span>Levier</span><b>x${escapeHtml(String(p.leverage||'—'))}</b>
+        <span>Objectif réel</span><b>${escapeHtml(targetText)}</b>
+        <span>Protection gain</span><b>${escapeHtml(progressiveText)}</b>
+        <span>Perte MAX</span><b>${escapeHtml(maxLossText)}</b>
+        <span>Liquidation</span><b>${price(p.liquidationPrice)}</b>
+      </div>
+      ${protectionWarning}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+        <button class="btn" data-real-exit="${i}" ${exitAllowed?'':'disabled'}>
+          ${exitPending?'OBJECTIF EN ATTENTE':inv.exitConflict?'OBJECTIF BLOQUÉ':'MODIFIER OBJECTIF'}
+        </button>
+        <button class="btn" data-real-progressive="${i}" ${progressiveAllowed?'':'disabled'}>
+          ${progressivePending?'PROTECTION EN ATTENTE':inv.progressiveConflict?'PROTECTION BLOQUÉE':'PROTECTION GAIN'}
+        </button>
+        <button class="btn danger" data-real-maxloss="${i}" ${maxLossAllowed?'':'disabled'}>
+          ${maxLossPending?'PERTE MAX EN ATTENTE':inv.maxLossConflict?'PERTE MAX BLOQUÉE':'RÉGLER PERTE MAX'}
+        </button>
+        <button class="btn danger" data-real-close="${i}" ${closeAllowed?'':'disabled'}>
+          ${closePending?'FERMETURE EN ATTENTE':side!=='BOTH'?'HEDGE NON PRIS EN CHARGE':'FERMER RÉEL · LIMIT IOC'}
+        </button>
+      </div>
+    </div>`;
   }).join('');
-  wrap.querySelectorAll('[data-real-close]').forEach(b=>b.onclick=e=>{e.stopPropagation();const p=rows[Number(b.dataset.realClose)];if(p)queueRealPositionClose(p)});
+
+  wrap.querySelectorAll('[data-real-exit]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realExit)];if(p)queueRealProtectiveUpdate(p,'EXIT');
+  });
+  wrap.querySelectorAll('[data-real-progressive]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realProgressive)];if(p)queueRealProtectiveUpdate(p,'PROGRESSIVE');
+  });
+  wrap.querySelectorAll('[data-real-maxloss]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realMaxloss)];if(p)queueRealProtectiveUpdate(p,'MAX_LOSS');
+  });
+  wrap.querySelectorAll('[data-real-close]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realClose)];if(p)queueRealPositionClose(p);
+  });
 }
 function applyMasterReadOnlyPolicy(){
   const readOnly=controllerIdentity.paired&&controllerIdentity.role==='master';
