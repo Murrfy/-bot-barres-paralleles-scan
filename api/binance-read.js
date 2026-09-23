@@ -65,8 +65,12 @@ async function requireZenithDevice(req) {
       const roleKey = device.role === 'master'
         ? `${PREFIX}:role-device:master`
         : `${PREFIX}:role-device:controller`;
-      const owner = await redis(['GET', roleKey]);
+      const [owner, activeSessionHash] = await Promise.all([
+        redis(['GET', roleKey]),
+        redis(['GET', roleSessionKey(device.role)]),
+      ]);
       if (!owner || String(owner) !== String(device.deviceId)) continue;
+      if (activeSessionHash && String(activeSessionHash) !== tokenHash) continue;
       return device;
     } catch {}
   }
