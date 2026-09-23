@@ -404,8 +404,9 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
   if(normalizedKind==='MAX_LOSS'&&inv.maxLossConflict){
     return setStatus(`${position.symbol} : perte max non modifiée — plusieurs protections ou protection externe détectée.`,true);
   }
-  if((normalizedKind==='EXIT'||normalizedKind==='PROGRESSIVE')&&!inv.maxLoss.length){
-    return setStatus(`${position.symbol} : modification refusée — aucune protection MAX-LOSS réelle confirmée.`,true);
+  if((normalizedKind==='EXIT'||normalizedKind==='PROGRESSIVE')&&
+     (!inv.managedMaxLoss||inv.maxLossConflict)){
+    return setStatus(`${position.symbol} : modification refusée — aucune protection MAX-LOSS Zenith unique et confirmée.`,true);
   }
 
   let current=normalizedKind==='EXIT'
@@ -514,7 +515,7 @@ function renderRealPositions(){
     const key=controllerRealCommandModule?controllerRealCommandModule.realPositionKey(p):'';
     const closePending=key&&realClosePending.has(key);
     const inv=realProtectionInventory(p);
-    const emergencyReady=inv.maxLoss.length===1;
+    const emergencyReady=Boolean(inv.managedMaxLoss)&&inv.maxLossConflict!==true;
     const exitPending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'EXIT'));
     const progressivePending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'PROGRESSIVE'));
     const maxLossPending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'MAX_LOSS'));
@@ -535,7 +536,7 @@ function renderRealPositions(){
         :'ABSENTE';
 
     const protectionWarning=!emergencyReady
-      ?'<div class="warning" style="margin-top:7px">MODIFICATIONS OBJECTIF / PROTECTION GAIN BLOQUÉES : une seule protection MAX‑LOSS réelle confirmée est requise.</div>'
+      ?'<div class="warning" style="margin-top:7px">MODIFICATIONS OBJECTIF / PROTECTION GAIN BLOQUÉES : une seule protection MAX‑LOSS Zenith confirmée est requise.</div>'
       :'';
 
     return `<div class="posCard">
@@ -1619,6 +1620,7 @@ function masterHasSingleMaxLoss(position,orders){
     if(String(o?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
     if(String(o?.type||'').toUpperCase()!=='STOP_MARKET')return false;
     if(!(o?.closePosition===true||o?.closePosition==='true'))return false;
+    if(!zenithManagedRealId(o?.clientAlgoId))return false;
     const trigger=n(o?.triggerPrice??o?.stopPrice,0);
     if(!(trigger>0&&entry>0))return false;
     return direction==='LONG'?trigger<entry:trigger>entry;
