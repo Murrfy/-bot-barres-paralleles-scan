@@ -27,7 +27,10 @@ test('PAUSE_PENDING cancellation remains a separate explicit ADMIN action',()=>{
   assert.ok(cancel.includes("currentMode !== 'PAUSE_PENDING'"));
   assert.ok(cancel.includes("'MASTER_PAUSE_NOT_PENDING'"));
   assert.ok(cancel.includes('verifyMasterAdminCode(req, res, device)'));
-  assert.ok(cancel.includes("trySetMasterRunningFrom('PAUSE_PENDING')"));
+  assert.ok(cancel.includes("trySetMasterRunningFrom("));
+  assert.ok(cancel.includes("'PAUSE_PENDING'"));
+  assert.ok(cancel.includes('currentMaster'));
+  assert.ok(cancel.includes("String(masterRoleEpochRaw || '0')"));
 });
 
 test('resume cannot act as an implicit PAUSE_PENDING cancellation path',()=>{
@@ -37,14 +40,17 @@ test('resume cannot act as an implicit PAUSE_PENDING cancellation path',()=>{
 
 
 test('RUNNING transitions are atomically fenced against real-trading PANIC',()=>{
-  assert.ok(sync.includes('async function trySetMasterRunningFrom(expectedMode)'));
+  assert.ok(sync.includes("async function trySetMasterRunningFrom(expectedMode, expectedMasterDeviceId, expectedMasterRoleEpochRaw = '0')"));
   assert.ok(sync.includes("if ARGV[2] == '1' and panic ~= '0' then return {-1, mode} end"));
   assert.ok(sync.includes("if mode ~= ARGV[1] then return {-2, mode} end"));
   assert.ok(sync.includes("redis.call('SET', KEYS[2], 'RUNNING')"));
   assert.ok(sync.includes("KEY_EMERGENCY_STOP"));
   assert.ok(sync.includes("REAL_TRADING_ENABLED ? '1' : '0'"));
   assert.ok(cancel.includes("trySetMasterRunningFrom('PAUSE_PENDING')"));
-  assert.ok(resume.includes("trySetMasterRunningFrom('PAUSED')"));
+  assert.ok(resume.includes("trySetMasterRunningFrom("));
+  assert.ok(resume.includes("'PAUSED'"));
+  assert.ok(resume.includes('currentMaster'));
+  assert.ok(resume.includes("String(masterRoleEpochRaw || '0')"));
   assert.equal(cancel.includes("setMasterMode('RUNNING')"),false);
   assert.equal(resume.includes("setMasterMode('RUNNING')"),false);
 });
@@ -52,4 +58,25 @@ test('RUNNING transitions are atomically fenced against real-trading PANIC',()=>
 test('pause cancellation returns fail-closed while PANIC is active',()=>{
   assert.ok(cancel.includes("'EMERGENCY_STOP_ACTIVE'"));
   assert.ok(cancel.includes("runningTransition.reason === 'EMERGENCY_STOP_ACTIVE' ? 423 : 409"));
+});
+
+
+test('RUNNING transition atomically revalidates MASTER lease, registration and role epoch',()=>{
+  assert.ok(sync.includes("local lease = tostring(redis.call('GET', KEYS[3]) or '')"));
+  assert.ok(sync.includes("local registered = tostring(redis.call('GET', KEYS[4]) or '')"));
+  assert.ok(sync.includes("if lease ~= ARGV[3] or registered ~= ARGV[3] then return {-3, mode} end"));
+  assert.ok(sync.includes("local roleEpoch = tostring(redis.call('GET', KEYS[5]) or '0')"));
+  assert.ok(sync.includes("if roleEpoch ~= ARGV[4] then return {-4, mode} end"));
+  assert.ok(sync.includes('KEY_MASTER'));
+  assert.ok(sync.includes('KEY_MASTER_DEVICE'));
+  assert.ok(sync.includes("roleAssignmentKey(PREFIX, 'master')"));
+  assert.ok(sync.includes("'MASTER_LEASE_REQUIRED'"));
+  assert.ok(sync.includes("'MASTER_ROLE_CHANGED'"));
+});
+
+test('resume and PAUSE_PENDING cancel capture MASTER role epoch before their final RUNNING transition',()=>{
+  assert.ok(cancel.includes("redis(['GET', roleAssignmentKey(PREFIX, 'master')])"));
+  assert.ok(resume.includes("redis(['GET', roleAssignmentKey(PREFIX, 'master')])"));
+  assert.ok(cancel.includes("String(masterRoleEpochRaw || '0')"));
+  assert.ok(resume.includes("String(masterRoleEpochRaw || '0')"));
 });
