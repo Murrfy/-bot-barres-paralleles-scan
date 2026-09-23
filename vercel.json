@@ -2,6 +2,33 @@
   "functions": {
     "api/binance-read.js": {
       "maxDuration": 10
+    },
+    "api/binance-reconcile.js": {
+      "maxDuration": 30
+    },
+    "api/binance-entry-preflight.js": {
+      "maxDuration": 30
+    },
+    "api/binance-entry-execute.js": {
+      "maxDuration": 30
+    },
+    "api/binance-protective-execute.js": {
+      "maxDuration": 30
+    },
+    "api/binance-protective-update-execute.js": {
+      "maxDuration": 30
+    },
+    "api/binance-user-stream-session.js": {
+      "maxDuration": 30
+    },
+    "api/binance-runtime-snapshot.js": {
+      "maxDuration": 30
+    },
+    "api/binance-order-test.js": {
+      "maxDuration": 30
+    },
+    "api/zenith-sync.js": {
+      "maxDuration": 30
     }
   },
   "headers": [
