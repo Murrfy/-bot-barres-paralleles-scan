@@ -523,14 +523,15 @@ async function masterRuntimeApi(action,method='GET',body){
 }
 async function loadMasterUserStreamModules(){
   if(masterUserStream.modules)return masterUserStream.modules;
-  const [stateModule,inventoryModule,seedModule,dispatchModule,closeModule]=await Promise.all([
+  const [stateModule,inventoryModule,seedModule,dispatchModule,closeModule,entryStateModule]=await Promise.all([
     import('/lib/user-stream-state.mjs'),
     import('/lib/master-runtime-inventory.mjs'),
     import('/lib/user-stream-seed.mjs'),
     import('/lib/master-command-dispatch.mjs'),
-    import('/lib/protective-close-state.mjs')
+    import('/lib/protective-close-state.mjs'),
+    import('/lib/entry-execution-state.mjs')
   ]);
-  masterUserStream.modules={stateModule,inventoryModule,seedModule,dispatchModule,closeModule};
+  masterUserStream.modules={stateModule,inventoryModule,seedModule,dispatchModule,closeModule,entryStateModule};
   if(!masterUserStream.state)masterUserStream.state=stateModule.createUserStreamState();
   return masterUserStream.modules;
 }
@@ -816,15 +817,21 @@ async function ackMasterCommand(raw,executionProof){
   if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
   return q;
 }
-async function callMasterProtectiveExecute(body){
+async function callMasterExecutionEndpoint(endpoint,body){
   const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
-  const r=await fetch('/api/binance-protective-execute',{
+  const r=await fetch(endpoint,{
     method:'POST',cache:'no-store',
     headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
     body:JSON.stringify(body)
   });
   const q=await r.json().catch(()=>({}));
   return {r,q};
+}
+async function callMasterProtectiveExecute(body){
+  return callMasterExecutionEndpoint('/api/binance-protective-execute',body);
+}
+async function callMasterEntryExecute(body){
+  return callMasterExecutionEndpoint('/api/binance-entry-execute',body);
 }
 async function waitForFullCloseState({symbol,direction,beforeQuantity,clientOrderId},timeoutMs=2500){
   const {closeModule}=await loadMasterUserStreamModules();
@@ -946,6 +953,106 @@ async function runMasterFullClose(command,raw){
   await failMasterCommand(raw,'PROTECTIVE_CLOSE_ATTEMPTS_EXHAUSTED');
   return false;
 }
+async function waitForEntryAcceptance({symbol,side,clientOrderId,plannedQuantity},timeoutMs=4000){
+  const {entryStateModule}=await loadMasterUserStreamModules();
+  const deadline=Date.now()+Math.max(500,n(timeoutMs,4000));
+  let result=entryStateModule.evaluateEntryAcceptance({
+    state:masterUserStream.state,symbol,side,clientOrderId,plannedQuantity
+  });
+  while(Date.now()<deadline){
+    result=entryStateModule.evaluateEntryAcceptance({
+      state:masterUserStream.state,symbol,side,clientOrderId,plannedQuantity
+    });
+    if(result.accepted||result.reasons.includes('ENTRY_ORDER_TERMINAL_UNFILLED'))return result;
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  try{await reconcileMasterUserStream()}catch(_){}
+  return entryStateModule.evaluateEntryAcceptance({
+    state:masterUserStream.state,symbol,side,clientOrderId,plannedQuantity
+  });
+}
+async function safeAckEntry(raw,clientOrderId){
+  try{
+    const reconciled=await reconcileMasterUserStream();
+    if(!reconciled)throw new Error('ENTRY_RECONCILIATION_NOT_READY');
+    await ackMasterCommand(raw,{clientOrderId});
+    return true;
+  }catch(e){
+    await requeueMasterCommand(raw,'EXEC_OPEN_ACK_RETRY_'+String(e?.message||'RECONCILE'),1500);
+    return false;
+  }
+}
+async function runMasterOpenEntry(command,raw,dispatch){
+  const payload=command?.payload||{};
+  const {r,q}=await callMasterEntryExecute(dispatch.body);
+  if(!r.ok||q?.ok!==true){
+    const reason=String(q?.code||q?.reason||q?.error||('HTTP_'+r.status));
+    const ambiguous=q?.ambiguous===true||reason==='ORDER_RESULT_AMBIGUOUS';
+    if(ambiguous){
+      await requeueMasterCommand(raw,'ENTRY_AMBIGUOUS_'+reason,2000);
+      masterExecution.lastError=reason;
+      return false;
+    }
+    if(['EXECUTION_NOT_READY','EXECUTION_NOT_ARMED','MASTER_CONFIG_OUT_OF_SYNC','ENTRY_MASTER_NOT_RUNNING','EMERGENCY_STOP_ACTIVE'].includes(reason)){
+      await requeueMasterCommand(raw,'ENTRY_EXEC_'+reason,1500);
+      return false;
+    }
+    await failMasterCommand(raw,'ENTRY_EXEC_'+reason);
+    masterExecution.lastError=reason;
+    return false;
+  }
+
+  const clientOrderId=String(q?.plan?.params?.newClientOrderId||'');
+  const plannedQuantity=n(q?.plan?.params?.quantity,0);
+  if(!clientOrderId||!(plannedQuantity>0)){
+    await failMasterCommand(raw,'ENTRY_EXECUTION_PROOF_MISSING');
+    return false;
+  }
+
+  const outcome=await waitForEntryAcceptance({
+    symbol:String(payload.symbol||'').toUpperCase(),
+    side:String(payload.side||'').toUpperCase(),
+    clientOrderId,
+    plannedQuantity
+  },4000);
+
+  if(outcome.accepted){
+    return safeAckEntry(raw,clientOrderId);
+  }
+  if(outcome.reasons.includes('ENTRY_ORDER_TERMINAL_UNFILLED')){
+    await failMasterCommand(raw,'ENTRY_TERMINAL_UNFILLED');
+    masterExecution.lastError='ENTRY_TERMINAL_UNFILLED';
+    return false;
+  }
+
+  await requeueMasterCommand(raw,'ENTRY_CONFIRMATION_PENDING',1500);
+  return false;
+}
+async function runMasterCancelEntry(command,raw,dispatch){
+  const {r,q}=await callMasterExecutionEndpoint(dispatch.endpoint,dispatch.body);
+  if(!r.ok||q?.ok!==true){
+    const reason=String(q?.code||q?.reason||q?.error||('HTTP_'+r.status));
+    const ambiguous=q?.ambiguous===true||reason==='CANCEL_RESULT_AMBIGUOUS';
+    if(ambiguous||['EXECUTION_NOT_READY','EXECUTION_NOT_ARMED','ENTRY_ORDER_NOT_OPEN'].includes(reason)){
+      try{await reconcileMasterUserStream()}catch(_){}
+      await requeueMasterCommand(raw,'CANCEL_ENTRY_'+reason,1500);
+      return false;
+    }
+    await failMasterCommand(raw,'CANCEL_ENTRY_'+reason);
+    masterExecution.lastError=reason;
+    return false;
+  }
+  try{
+    const reconciled=await reconcileMasterUserStream();
+    if(!reconciled)throw new Error('CANCEL_RECONCILIATION_NOT_READY');
+    await ackMasterCommand(raw);
+    return true;
+  }catch(e){
+    await requeueMasterCommand(raw,'CANCEL_ACK_RETRY_'+String(e?.message||'RECONCILE'),1500);
+    return false;
+  }
+}
+
 async function masterExecutionCycle(){
   if(masterExecution.busy||controllerIdentity.role!=='master')return false;
   const {dispatchModule}=await loadMasterUserStreamModules();
@@ -981,7 +1088,17 @@ async function masterExecutionCycle(){
       return false;
     }
 
-    const ok=await runMasterFullClose(command,raw);
+    let ok=false;
+    if(dispatch.type==='EXEC_CLOSE_POSITION'){
+      ok=await runMasterFullClose(command,raw);
+    }else if(dispatch.type==='EXEC_CANCEL_ENTRY'){
+      ok=await runMasterCancelEntry(command,raw,dispatch);
+    }else if(dispatch.type==='EXEC_OPEN_POSITION'){
+      ok=await runMasterOpenEntry(command,raw,dispatch);
+    }else{
+      await failMasterCommand(raw,'MASTER_COMMAND_NOT_IMPLEMENTED');
+      return false;
+    }
     if(ok){
       masterExecution.lastError='';
       scheduleMasterStreamReconcile(100);
