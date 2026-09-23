@@ -313,7 +313,8 @@ export default async function handler(req,res){
     }else{
       plan=buildProtectiveAlgoPlan({
         commandId:String(req.body?.commandId||''),symbol:update.symbol,direction:update.direction,
-        quantity:update.quantity,triggerPrice:update.triggerPrice,protectionKind:update.protectionKind,attempt:0
+        quantity:update.quantity,triggerPrice:update.triggerPrice,limitPrice:update.limitPrice,
+        protectionKind:update.protectionKind,attempt:0
       });
       if(phase==='CANCEL_OLD'){
         if(!update.previousClientAlgoId)return send(res,400,{ok:false,code:'PREVIOUS_PROTECTION_ID_REQUIRED',writeAttempted:false});
@@ -332,7 +333,11 @@ export default async function handler(req,res){
           type:update.protectionKind==='MAX_LOSS'?'STOP_MARKET':'STOP',
         };
         if(update.protectionKind==='MAX_LOSS')expected.closePosition='true';
-        else{expected.reduceOnly='true';expected.quantity=String(update.quantity);expected.priceMatch='OPPONENT'}
+        else{
+          expected.reduceOnly='true';
+          expected.quantity=String(update.quantity);
+          expected.price=String(update.limitPrice);
+        }
         result=await cancelAlgoOrderIdempotent({
           apiKey,secret,symbol:update.symbol,clientAlgoId:update.previousClientAlgoId,
           expected,writesEnabled:true,timestamp:Date.now()
