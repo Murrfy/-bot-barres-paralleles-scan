@@ -753,7 +753,7 @@ function renderMasterControls(){
 }
 async function refreshMasterControls(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
-    masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
+    masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterConfigApplyDeferred:false,masterConfigProtectiveDeferredSafe:false,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
     renderMasterControls();
     return false;
   }
