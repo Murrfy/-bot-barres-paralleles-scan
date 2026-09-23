@@ -20,7 +20,7 @@ function response() {
 function request() {
   return {
     method: 'GET',
-    headers: { authorization: 'Bearer test-device' },
+    headers: { cookie: '__Host-zenith_device=test-device' },
     query: { symbol: '', margin: '', leverage: '', maxLoss: '' },
   };
 }
