@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DEVICE_SESSION_MAX_AGE_SECONDS, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId } from '../lib/device-session.mjs';
+import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId } from '../lib/device-session.mjs';
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
@@ -423,6 +423,75 @@ async function requireDevice(req, res, roles, { allowBearer = false } = {}) {
   const safeDevice = { ...device };
   delete safeDevice.sessionToken;
   return safeDevice;
+}
+
+async function migrateLegacyBearerSession(req, res) {
+  const legacyToken = bearerToken(req);
+  if (!legacyToken) return null;
+
+  const oldHash = sha256(legacyToken);
+  const oldKey = `${PREFIX}:device:${oldHash}`;
+  const raw = await redis(['GET', oldKey]);
+  if (!raw) {
+    clearDeviceSessionCookie(res);
+    send(res, 401, { ok:false, code:'LEGACY_SESSION_INVALID' });
+    return null;
+  }
+
+  let device = null;
+  try { device = JSON.parse(raw); } catch {}
+  if (!device?.deviceId || !['controller','master'].includes(device?.role)) {
+    await redis(['DEL', oldKey]);
+    clearDeviceSessionCookie(res);
+    send(res, 401, { ok:false, code:'LEGACY_SESSION_INVALID' });
+    return null;
+  }
+
+  if (!(await verifyRoleDevice(device.role, device.deviceId))) {
+    await redis(['DEL', oldKey]);
+    clearDeviceSessionCookie(res);
+    send(res, 409, { ok:false, code:'ROLE_DEVICE_CONFLICT' });
+    return null;
+  }
+
+  const remainingSeconds = deviceSessionRemainingSeconds(device);
+  if (remainingSeconds <= 0) {
+    await redis(['DEL', oldKey]);
+    clearDeviceSessionCookie(res);
+    send(res, 401, { ok:false, code:'DEVICE_SESSION_EXPIRED' });
+    return null;
+  }
+
+  const newToken = crypto.randomBytes(32).toString('base64url');
+  const newHash = sha256(newToken);
+  const newKey = `${PREFIX}:device:${newHash}`;
+  const migratedRecord = { ...device, lastSeenAt: Date.now() };
+
+  const script = [
+    "local existing = redis.call('GET', KEYS[1])",
+    "if not existing then return 0 end",
+    "if existing ~= ARGV[1] then return -1 end",
+    "redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])",
+    "redis.call('DEL', KEYS[1])",
+    "return 1"
+  ].join('\n');
+
+  const moved = Number(await redis([
+    'EVAL', script, '2',
+    oldKey, newKey,
+    raw,
+    JSON.stringify(migratedRecord),
+    String(remainingSeconds),
+  ]));
+
+  if (moved !== 1) {
+    clearDeviceSessionCookie(res);
+    send(res, 409, { ok:false, code:'LEGACY_SESSION_MIGRATION_CONFLICT' });
+    return null;
+  }
+
+  setDeviceSessionCookie(res, newToken, remainingSeconds);
+  return migratedRecord;
 }
 
 async function masterDeviceId() {
@@ -1320,9 +1389,12 @@ export default async function handler(req, res) {
     }
 
     if (action === 'whoami' && req.method === 'GET') {
-      // One-time legacy migration: an old Bearer token is accepted only here.
-      // requireDevice re-issues the secure HttpOnly cookie; the UI then removes localStorage.
-      const device = await requireDevice(req, res, undefined, { allowBearer: true });
+      // Legacy Bearer is accepted only here and is atomically rotated into a new HttpOnly cookie.
+      // Normal cookie sessions continue through requireDevice unchanged.
+      const legacy = bearerToken(req);
+      const device = legacy
+        ? await migrateLegacyBearerSession(req, res)
+        : await requireDevice(req, res);
       if (!device) return;
       return send(res, 200, {
         ok: true,
