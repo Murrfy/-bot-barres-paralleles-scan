@@ -64,6 +64,8 @@ jobs:
         run: node --test scripts/test-current-price-reference.mjs
       - name: Test command queue safety
         run: node --test scripts/test-command-safety.mjs
+      - name: Test controller command anti-abuse rate limit
+        run: node --test scripts/test-command-rate-limit.mjs
       - name: Test real-entry risk preflight
         run: node --test scripts/test-entry-preflight.mjs
       - name: Test MASTER-only entry preflight HTTP access
