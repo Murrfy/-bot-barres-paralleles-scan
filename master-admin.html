@@ -79,13 +79,13 @@ async function verifyMaster(){
   checking=true;verifiedState=null;renderActions();
   const token=localStorage.getItem(TOKEN_KEY)||'';
   try{
-    if(!token)throw new Error('Appareil non jumelé');
     const r=await fetch('/api/zenith-sync?action=whoami',{
       headers:{Authorization:'Bearer '+token,Accept:'application/json'},cache:'no-store'
     });
     const q=await r.json().catch(()=>({}));
     const role=String(q?.device?.role||'');
     if(!r.ok||q?.ok!==true||!['controller','master'].includes(role))throw new Error(q?.code||'Appareil non autorisé');
+    localStorage.removeItem(TOKEN_KEY);
     adminRole=role;
     $('backLink').href=role==='master'?'/master-standby.html':'/';
     setBox('identity',role==='master'?'iPad MASTER vérifié.':'iPhone contrôleur vérifié.','ok');

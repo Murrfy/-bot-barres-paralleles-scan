@@ -106,12 +106,12 @@ async function replaceController(){
     });
 
     const q=await r.json().catch(()=>({}));
-    if(!r.ok||q?.ok!==true||!q?.token||!q?.device){
+    if(!r.ok||q?.ok!==true||q?.sessionReady!==true||!q?.device){
       throw new Error(q?.code||q?.error||('HTTP '+r.status));
     }
 
     localStorage.setItem(DEVICE_ID_KEY,newDeviceId);
-    localStorage.setItem(DEVICE_TOKEN_KEY,q.token);
+    localStorage.removeItem(DEVICE_TOKEN_KEY);
     localStorage.setItem(DEVICE_ROLE_KEY,'controller');
     localStorage.setItem(DEVICE_NAME_KEY,'iPhone contrôleur Zenith');
     localStorage.removeItem(REPLACEMENT_DEVICE_ID_KEY);
