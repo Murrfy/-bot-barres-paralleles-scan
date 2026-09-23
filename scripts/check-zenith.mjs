@@ -287,6 +287,7 @@ for (const required of [
 ]) {
   if (!realProtectionLevels.includes(required)) fail(`real protection level invariant missing: ${required}`);
 }
+const protectiveCommand = fs.readFileSync('lib/protective-command.mjs','utf8');
 const protectiveUpdateIntent = fs.readFileSync('lib/protective-update-intent.mjs','utf8');
 if (!protectiveUpdateIntent.includes("params.type='STOP'") ||
     !protectiveUpdateIntent.includes("params.timeInForce='GTC'") ||
