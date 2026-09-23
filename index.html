@@ -1310,7 +1310,7 @@ async function runMasterProtectiveUpdate(command,raw,dispatch){
     return true;
   }
 
-  async function placeNew(){
+  async function placeNew({deferReconcile=false}={}){
     const {r,q}=await callMasterProtectiveUpdateExecute({...body,phase:'PLACE_NEW'});
     if(!r.ok||q?.ok!==true){
       await handleMasterMutationFailure(raw,r,q,'PROTECTIVE_PLACE_NEW');
@@ -1328,17 +1328,19 @@ async function runMasterProtectiveUpdate(command,raw,dispatch){
       masterExecution.lastError='PROTECTIVE_NEW_ORDER_NOT_STREAM_CONFIRMED';
       return '';
     }
-    const reconciled=await reconcileMasterUserStream();
-    if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
-      await failMasterCommand(raw,'POST_PLACE_RECONCILIATION_FAILED');
-      return '';
+    if(!deferReconcile){
+      const reconciled=await reconcileMasterUserStream();
+      if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
+        await failMasterCommand(raw,'POST_PLACE_RECONCILIATION_FAILED');
+        return '';
+      }
     }
     return clientId;
   }
 
   let newClientId='';
   if(maxLoss||progressive){
-    newClientId=await placeNew();
+    newClientId=await placeNew({deferReconcile:Boolean(previousId)});
     if(!newClientId)return false;
     if(!(await cancelOld(newClientId)))return false;
   }else{
@@ -1673,7 +1675,7 @@ async function executeMasterAutoProgressive(plan){
     masterAutoProtection.lastError='AUTO_NEW_PROTECTION_IDENTITY_MISMATCH';
     return false;
   }
-  if(await reconcileMasterUserStream()!==true){
+  if(!plan.previousClientAlgoId&&await reconcileMasterUserStream()!==true){
     masterAutoProtection.lastError='AUTO_POST_PLACE_RECONCILIATION_FAILED';
     return false;
   }
