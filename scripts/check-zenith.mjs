@@ -242,6 +242,24 @@ if (!userStreamSession.includes('USER_STREAM_MUTATION_RATE_LIMIT_PER_MINUTE = 12
   fail('Binance user-stream mutations must be rate-limited before Binance calls');
 }
 
+const userStreamStartIndex = userStreamSession.indexOf("if (action === 'start' && req.method === 'POST')");
+const userStreamKeepaliveIndex = userStreamSession.indexOf("if (action === 'keepalive' && req.method === 'POST')");
+const userStreamCloseIndex = userStreamSession.indexOf("if (action === 'close' && req.method === 'POST')");
+if (userStreamStartIndex < 0 || userStreamKeepaliveIndex < 0 || userStreamCloseIndex < 0) {
+  fail('user-stream lifecycle blocks must remain explicit');
+} else {
+  const startBlock = userStreamSession.slice(userStreamStartIndex, userStreamKeepaliveIndex);
+  const keepaliveBlock = userStreamSession.slice(userStreamKeepaliveIndex, userStreamCloseIndex);
+  const startSuccess = /return send\(res, 200, \{([\s\S]*?)\}\);/.exec(startBlock)?.[1] || '';
+  const keepaliveSuccess = /const record = await saveSession\([\s\S]*?return send\(res, 200, \{([\s\S]*?)\}\);/.exec(keepaliveBlock)?.[1] || '';
+  if (!/\blistenKey\b/.test(startSuccess)) {
+    fail('user-stream start must expose listenKey only to the leased MASTER that opens the WebSocket');
+  }
+  if (/^\s*listenKey\s*[:,]/m.test(keepaliveSuccess)) {
+    fail('user-stream keepalive must not expose the listenKey value');
+  }
+}
+
 const masterRuntimeInventory = fs.readFileSync('lib/master-runtime-inventory.mjs', 'utf8');
 for (const required of ['binancePositions','binanceOrders','openPositions','openOrders','userStream','TERMINAL_ALGO']) {
   if (!masterRuntimeInventory.includes(required)) fail(`MASTER runtime inventory projection missing: ${required}`);
@@ -1001,6 +1019,16 @@ if (!safetyWorkflowRunner.includes('runs-on: ubuntu-24.04') ||
   fail('Zenith safety CI runner must stay pinned to Ubuntu 24.04');
 }
 
+const credentialSeparationSource = fs.readFileSync('api/zenith-sync.js','utf8');
+for (const required of [
+  'binanceCredentialSeparationBlockers',
+  'BINANCE_TRADING_KEY_MUST_DIFFER_FROM_READ_KEY'
+]) {
+  if (!credentialSeparationSource.includes(required)) {
+    fail(`Binance credential separation invariant missing: ${required}`);
+  }
+}
+
 const syncAdminSecretPolicy = fs.readFileSync('api/zenith-sync.js','utf8');
 for (const required of [
   'MASTER_ADMIN_CODE_TOO_WEAK',
@@ -1162,6 +1190,27 @@ const permissionBlock = permissionStart >= 0 && permissionEnd > permissionStart
 if (!permissionBlock.includes('BINANCE_TRADING_API_KEY') ||
     !permissionBlock.includes('BINANCE_TRADING_API_SECRET')) {
   fail('real execution permission gate must validate the dedicated Binance trading key');
+}
+
+const realEntryPermissionRevalidation = fs.readFileSync('api/binance-entry-execute.js','utf8');
+for (const required of [
+  '/sapi/v1/account/apiRestrictions',
+  'BINANCE_TRADING_API_KEY',
+  'BINANCE_TRADING_API_SECRET',
+  'fetchBinanceTradingApiPermissions',
+  'binanceApiPermissionBlockers',
+  "'BINANCE_API_PERMISSION_REVALIDATION_FAILED'",
+  "'BINANCE_API_PERMISSION_REVALIDATION_BLOCKED'",
+  'BINANCE_API_IP_RESTRICTION_REQUIRED',
+  'BINANCE_API_WITHDRAWALS_MUST_BE_DISABLED'
+]) {
+  if (!realEntryPermissionRevalidation.includes(required)) {
+    fail(`real entry must revalidate safe Binance trading-key permissions before opening: ${required}`);
+  }
+}
+if (realEntryPermissionRevalidation.indexOf('fetchBinanceTradingApiPermissions(apiKey,secret)') >
+    realEntryPermissionRevalidation.indexOf('runLiveEntryPreflight({')) {
+  fail('Binance trading-key permission revalidation must happen before real-entry Futures preflight');
 }
 
 if (failed) process.exit(1);

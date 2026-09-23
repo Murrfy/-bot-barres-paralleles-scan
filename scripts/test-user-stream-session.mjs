@@ -111,6 +111,7 @@ test('keepalive uses the server-held session and never needs a listenKey request
     assert.equal(res.code,200);
     assert.deepEqual(h.binanceCalls,['PUT']);
     assert.equal(res.body.tradingWriteAttempted,false);
+    assert.equal('listenKey' in res.body,false);
     assert.ok(h.session.keepaliveDueAt>h.session.keepaliveAt);
   }finally{h.restore();}
 });

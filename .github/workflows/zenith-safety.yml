@@ -90,6 +90,8 @@ jobs:
         run: node --test scripts/test-entry-preflight.mjs
       - name: Test real entry execution rate limit
         run: node --test scripts/test-entry-execution-rate-limit.mjs
+      - name: Test Binance trading-key permission revalidation before real entry
+        run: node --test scripts/test-entry-permission-revalidation.mjs
       - name: Test MASTER-only entry preflight HTTP access
         run: node --test scripts/test-entry-preflight-auth.mjs
       - name: Test secure device session
