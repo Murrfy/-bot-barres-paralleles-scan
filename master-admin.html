@@ -102,10 +102,9 @@ async function verifyMaster(){
 }
 
 async function refreshMasterMode(){
-  const token=localStorage.getItem(TOKEN_KEY)||'';
   try{
     const r=await fetch('/api/zenith-sync?action=safety',{
-      headers:{Authorization:'Bearer '+token,Accept:'application/json'},cache:'no-store'
+      headers:{Accept:'application/json'},cache:'no-store'
     });
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true||!['RUNNING','PAUSE_PENDING','PAUSED'].includes(q.masterMode))throw new Error(q?.code||'État MASTER invalide');
@@ -123,7 +122,6 @@ async function refreshMasterMode(){
 
 async function armRealExecution(){
   if(busy||checking||!adminRole||!verifiedState)return;
-  const token=localStorage.getItem(TOKEN_KEY)||'';
   const adminCode=$('adminCode').value;
   if(!adminCode){setBox('status','Entre le code ADMIN MASTER.','err');return;}
   busy=true;renderActions();$('adminCode').value='';
@@ -131,7 +129,7 @@ async function armRealExecution(){
   try{
     const r=await fetch('/api/zenith-sync?action=real-execution-arm',{
       method:'POST',cache:'no-store',
-      headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify({adminCode})
     });
     const q=await r.json().catch(()=>({}));
@@ -150,13 +148,12 @@ async function armRealExecution(){
 
 async function panicStop(){
   if(busy||checking||!adminRole||!verifiedState)return;
-  const token=localStorage.getItem(TOKEN_KEY)||'';
   busy=true;renderActions();
   setBox('status','Activation du PANIC STOP…','warn');
   try{
     const r=await fetch('/api/zenith-sync?action=emergency-stop',{
       method:'POST',cache:'no-store',
-      headers:{Accept:'application/json',Authorization:'Bearer '+token}
+      headers:{Accept:'application/json'}
     });
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
@@ -171,7 +168,6 @@ async function panicStop(){
 
 async function clearPanic(){
   if(busy||checking||!adminRole||!verifiedState)return;
-  const token=localStorage.getItem(TOKEN_KEY)||'';
   const adminCode=$('adminCode').value;
   if(!adminCode){setBox('status','Entre le code ADMIN MASTER.','err');return;}
   busy=true;renderActions();$('adminCode').value='';
@@ -179,7 +175,7 @@ async function clearPanic(){
   try{
     const r=await fetch('/api/zenith-sync?action=emergency-stop-clear',{
       method:'POST',cache:'no-store',
-      headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify({adminCode})
     });
     const q=await r.json().catch(()=>({}));
@@ -197,7 +193,6 @@ async function clearPanic(){
 async function setMasterMode(action){
   if(busy||checking||!adminRole||!verifiedState)return;
   if(!['master-pause','master-pause-cancel','master-resume'].includes(action))return;
-  const token=localStorage.getItem(TOKEN_KEY)||'';
   const adminCode=$('adminCode').value;
   if(!adminCode){
     setBox('status','Entre le code ADMIN MASTER.','err');
@@ -216,7 +211,7 @@ async function setMasterMode(action){
       headers:{
         'Content-Type':'application/json',
         Accept:'application/json',
-        Authorization:'Bearer '+token
+        
       },
       body:JSON.stringify({adminCode})
     });
@@ -245,7 +240,6 @@ async function setMasterMode(action){
 
 async function authorizeReplacement(){
   if(busy||checking||adminRole!=='master'||!verifiedState||verifiedState.masterLeaseActive!==true)return;
-  const token=localStorage.getItem(TOKEN_KEY)||'';
   const adminCode=$('adminCode').value;
   if(!adminCode){
     setBox('status','Entre le code ADMIN MASTER.','err');
@@ -263,7 +257,7 @@ async function authorizeReplacement(){
       headers:{
         'Content-Type':'application/json',
         Accept:'application/json',
-        Authorization:'Bearer '+token
+        
       },
       body:JSON.stringify({adminCode})
     });
