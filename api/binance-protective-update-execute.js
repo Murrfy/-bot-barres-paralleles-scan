@@ -5,6 +5,7 @@ import { buildProtectiveAlgoPlan } from '../lib/protective-update-intent.mjs';
 import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition, protectiveRepairTarget, orphanZenithCleanupOrders } from '../lib/protective-command.mjs';
 import { validateMaxLossTrigger } from '../lib/real-protection-levels.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
+import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import {
   placeStandardOrderIdempotent,
   cancelReduceOnlyOrderIdempotent,
@@ -246,6 +247,8 @@ async function symbolInfo(symbol){
 export default async function handler(req,res){
   if(req.method!=='POST')return send(res,405,{ok:false,code:'METHOD_NOT_ALLOWED'});
   if(!sameOriginMutation(req))return send(res,403,{ok:false,code:'ORIGIN_FORBIDDEN'});
+  const bodyStatus=requestBodyStatus(req,64*1024);
+  if(!bodyStatus.ok)return send(res,413,{ok:false,code:'REQUEST_BODY_TOO_LARGE',maxBytes:bodyStatus.maxBytes,writeAttempted:false});
 
   let master=null;
   try{master=await requireCurrentMaster(req)}
