@@ -390,6 +390,11 @@ const PROTECTIVE_EXEC_COMMANDS = new Set([
   'EXEC_CANCEL_ENTRY',
 ]);
 
+function commandAllowedDuringDeferredConfig(type, status) {
+  return status?.protectiveDeferredSafe === true &&
+    PROTECTIVE_EXEC_COMMANDS.has(String(type || '').toUpperCase());
+}
+
 function commandTypeAllowed(type) {
   return ALLOWED_COMMAND_TYPES.has(String(type || '').toUpperCase());
 }
@@ -586,15 +591,28 @@ function masterConfigSyncStatus(controllerState, appliedState, runtimeState, exp
     activity.openOrders > 0 ||
     runtimeFailClosed
   );
+  const appliedConfigPresent =
+    appliedRevision > 0 &&
+    Boolean(appliedStateHash) &&
+    masterIdentityMatches;
+  const protectiveDeferredSafe = Boolean(
+    needsApply &&
+    applyDeferred &&
+    !runtimeFailClosed &&
+    appliedConfigPresent &&
+    (activity.activePositions > 0 || activity.openOrders > 0)
+  );
   const reason = !controllerPresent
     ? 'NO_CONTROLLER_STATE'
     : runtimeFailClosed
       ? runtimeReason
       : configMatched
         ? 'SYNCED'
-        : applyDeferred
-          ? 'MASTER_CONFIG_APPLY_DEFERRED'
-          : 'MASTER_CONFIG_OUT_OF_SYNC';
+        : protectiveDeferredSafe
+          ? 'MASTER_CONFIG_APPLY_DEFERRED_PROTECTIVE_SAFE'
+          : applyDeferred
+            ? 'MASTER_CONFIG_APPLY_DEFERRED'
+            : 'MASTER_CONFIG_OUT_OF_SYNC';
 
   return {
     controllerPresent,
@@ -609,6 +627,7 @@ function masterConfigSyncStatus(controllerState, appliedState, runtimeState, exp
     needsApply,
     applyAllowed: needsApply && !applyDeferred,
     applyDeferred,
+    protectiveDeferredSafe,
     failClosed: !synchronized,
     reason,
     runtimePresent,
@@ -1249,6 +1268,7 @@ export default async function handler(req, res) {
         controllerRevision: configSync.status.controllerRevision,
         appliedRevision: configSync.status.appliedRevision,
         synchronized: configSync.status.synchronized,
+        protectiveDeferredSafe: configSync.status.protectiveDeferredSafe,
         syncReason: configSync.status.reason,
       };
       await redis([
@@ -1553,6 +1573,7 @@ export default async function handler(req, res) {
         masterSyncFailClosed: configSync.status.failClosed,
         masterConfigApplyAllowed: configSync.status.applyAllowed,
         masterConfigApplyDeferred: configSync.status.applyDeferred,
+        masterConfigProtectiveDeferredSafe: configSync.status.protectiveDeferredSafe,
         masterHeartbeatAt: heartbeat.at,
         masterHeartbeatAgeMs: heartbeat.ageMs,
         masterHeartbeatFresh: heartbeat.fresh,
@@ -1836,7 +1857,8 @@ export default async function handler(req, res) {
       }
       const activeMaster = await masterDeviceId();
       const configSync = await readMasterConfigSync(activeMaster);
-      if (!configSync.status.synchronized && !allowedWhilePending) {
+      const deferredConfigAllowed = commandAllowedDuringDeferredConfig(type, configSync.status);
+      if (!configSync.status.synchronized && !allowedWhilePending && !deferredConfigAllowed) {
         return send(res, 423, {
           ok: false,
           code: 'MASTER_CONFIG_OUT_OF_SYNC',
@@ -2024,7 +2046,10 @@ export default async function handler(req, res) {
       }
 
       const configSync = await readMasterConfigSync(device.deviceId);
-      if (!configSync.status.synchronized && !commandAllowedDuringPausePending(command.type)) {
+      const deferredConfigAllowed = commandAllowedDuringDeferredConfig(command.type, configSync.status);
+      if (!configSync.status.synchronized &&
+          !commandAllowedDuringPausePending(command.type) &&
+          !deferredConfigAllowed) {
         await rejectClaimedCommand(raw, 'MASTER_CONFIG_OUT_OF_SYNC', {
           controllerRevision: configSync.status.controllerRevision,
           appliedRevision: configSync.status.appliedRevision,
