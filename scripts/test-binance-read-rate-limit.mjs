@@ -31,7 +31,7 @@ function harness({ rateCount = 1, redisFailure = false } = {}) {
       const command = JSON.parse(init.body);
       let result = null;
       if (command[0] === 'GET' && String(command[1]).includes(':device:')) {
-        result = JSON.stringify({ role: 'controller', deviceId: 'controller-1' });
+        result = JSON.stringify({ role: 'controller', deviceId: 'controller-1', createdAt: Date.now() });
       } else if (command[0] === 'GET' && command[1] === 'zenith:v1:role-device:controller') {
         result = 'controller-1';
       } else if (command[0] === 'EVAL') {
