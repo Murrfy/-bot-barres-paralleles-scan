@@ -63,6 +63,10 @@ jobs:
         run: node --test scripts/test-master-command-dispatch.mjs
       - name: Test iPhone real-position close command
         run: node --test scripts/test-controller-real-command.mjs
+      - name: Test iPhone real exit and protection commands
+        run: node --test scripts/test-controller-protective-command.mjs
+      - name: Test read-only Binance algo order details
+        run: node --test scripts/test-binance-read-algo-details.mjs
       - name: Test idempotent Binance order writer
         run: node --test scripts/test-binance-order-writer.mjs
       - name: Test idempotent Binance algo writer
@@ -71,6 +75,8 @@ jobs:
         run: node --test scripts/test-protective-update-intent.mjs
       - name: Test protective update payload safety
         run: node --test scripts/test-protective-command.mjs
+      - name: Test protective update conflict guards
+        run: node --test scripts/test-protective-update-conflicts.mjs
       - name: Test MASTER command worker routing
         run: node --test scripts/test-master-worker-routing.mjs
       - name: Test idempotent real entry cancellation
