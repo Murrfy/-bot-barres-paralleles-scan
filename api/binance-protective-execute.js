@@ -73,7 +73,7 @@ async function requireCurrentMaster(req){
     if(String(lease||'')!==String(device.deviceId)){
       const e=new Error('MASTER_LEASE_REQUIRED');e.code='MASTER_LEASE_REQUIRED';throw e;
     }
-    return device;
+    return { ...device, roleIssuedAt: String(issuedAt || '') };
   }
   return null;
 }
@@ -129,6 +129,47 @@ function executionReadiness(runtimeState,report,masterDeviceId,repairTarget=''){
   if(target&&protectionOnlyMismatchTarget(report)===target)return '';
 
   return 'BINANCE_RECONCILIATION_MISMATCH';
+}
+
+async function finalProtectiveDispatchGate(masterDeviceId,masterRoleEpoch,expectedArmRaw){
+  const script=[
+    "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
+    "if registered ~= ARGV[1] then return -1 end",
+    "local lease = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if lease ~= ARGV[1] then return -2 end",
+    "local mode = tostring(redis.call('GET', KEYS[3]) or 'PAUSED')",
+    "if mode ~= 'RUNNING' and mode ~= 'PAUSE_PENDING' then return -3 end",
+    "local arm = tostring(redis.call('GET', KEYS[4]) or '')",
+    "if arm ~= ARGV[3] then return -4 end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[5]) or '')",
+    "if roleEpoch ~= ARGV[2] then return -5 end",
+    "return 1"
+  ].join('\n');
+  const result=Number(await redis([
+    'EVAL',script,'5',
+    KEY_MASTER_DEVICE,
+    KEY_MASTER,
+    KEY_MASTER_MODE,
+    KEY_REAL_EXECUTION_ARMED,
+    roleAssignmentKey(PREFIX,'master'),
+    String(masterDeviceId||''),
+    String(masterRoleEpoch||''),
+    String(expectedArmRaw||''),
+  ]));
+  return {
+    ok:result===1,
+    reason:result===-1
+      ?'MASTER_ROLE_CHANGED_DURING_PROTECTIVE_WRITE'
+      :result===-2
+        ?'MASTER_LEASE_CHANGED_DURING_PROTECTIVE_WRITE'
+        :result===-3
+          ?'MASTER_PROTECTIVE_MODE_CHANGED'
+          :result===-4
+            ?'REAL_EXECUTION_ARM_CHANGED_DURING_PROTECTIVE_WRITE'
+            :result===-5
+              ?'MASTER_ROLE_EPOCH_CHANGED_DURING_PROTECTIVE_WRITE'
+              :'PROTECTIVE_DISPATCH_GATE_FAILED',
+  };
 }
 
 export default async function handler(req,res){
@@ -217,6 +258,17 @@ export default async function handler(req,res){
       });
     }
     try{
+      const dispatchGate=await finalProtectiveDispatchGate(
+        master.deviceId,
+        master.roleIssuedAt,
+        String(armRaw||'')
+      );
+      if(!dispatchGate.ok){
+        return send(res,423,{
+          ok:false,code:'PROTECTIVE_DISPATCH_BLOCKED',
+          reason:dispatchGate.reason,writeAttempted:false,
+        });
+      }
       const result=await cancelEntryOrderIdempotent({
         apiKey,secret,symbol,clientOrderId,writesEnabled:true,timestamp:Date.now(),
       });
@@ -300,6 +352,17 @@ export default async function handler(req,res){
   }
 
   try{
+    const dispatchGate=await finalProtectiveDispatchGate(
+      master.deviceId,
+      master.roleIssuedAt,
+      String(armRaw||'')
+    );
+    if(!dispatchGate.ok){
+      return send(res,423,{
+        ok:false,code:'PROTECTIVE_DISPATCH_BLOCKED',
+        reason:dispatchGate.reason,writeAttempted:false,plan,
+      });
+    }
     const result=await placeStandardOrderIdempotent({
       apiKey,
       secret,
