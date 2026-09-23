@@ -107,7 +107,7 @@ if (!binancePreflight.includes('READ_ONLY_PREFLIGHT') || !binancePreflight.inclu
 
 const userStreamSession = fs.readFileSync('api/binance-user-stream-session.js', 'utf8');
 for (const required of [
-  "'/fapi/v1/listenKey'",
+  "/fapi/v1/listenKey",
   "binanceListenKey('POST')",
   "binanceListenKey('PUT')",
   "binanceListenKey('DELETE')",
