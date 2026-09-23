@@ -18,7 +18,7 @@ function response(){
 function request(){
   return {
     method:'POST',
-    headers:{authorization:'Bearer master-token'},
+    headers:{authorization:'Bearer master-token',host:'zenith.test','x-forwarded-proto':'https',origin:'https://zenith.test'},
     body:{
       type:'EXEC_OPEN_POSITION',
       commandId:'cmd-rate-test-001',
