@@ -442,6 +442,14 @@ if (!binanceReconcile.includes("'MASTER_REQUIRED'") ||
     !binanceReconcile.includes('role-device:master')) {
   fail('api/binance-reconcile.js must require the registered leased MASTER');
 }
+if (!binanceReconcile.includes("req.method !== 'POST'") ||
+    !binanceReconcile.includes('sameOriginMutation(req)') ||
+    !binanceReconcile.includes('requestBodyStatus(req, 4096)') ||
+    !binanceReconcile.includes("'ORIGIN_FORBIDDEN'") ||
+    !binanceReconcile.includes("'REQUEST_BODY_TOO_LARGE'") ||
+    !index.includes("fetch('/api/binance-reconcile',{method:'POST'")) {
+  fail('Binance reconciliation must use same-origin bounded POST because it persists reconciliation state');
+}
 if (!binanceReconcile.includes("'MISMATCH'") || !binanceReconcile.includes('failClosed')) {
   fail('api/binance-reconcile.js must fail closed on Binance/runtime mismatches');
 }
