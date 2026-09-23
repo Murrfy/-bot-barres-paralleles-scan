@@ -8,6 +8,7 @@ const KEY_MASTER_DEVICE = `${PREFIX}:role-device:master`;
 const KEY_STREAM_SESSION = `${PREFIX}:binance-user-stream`;
 const SESSION_TTL_SECONDS = 70 * 60;
 const KEEPALIVE_AFTER_MS = 45 * 60 * 1000;
+const USER_STREAM_MUTATION_RATE_LIMIT_PER_MINUTE = 12;
 const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || process.env.VERCEL_ENV === 'production';
 
 const REDIS_URL =
@@ -125,6 +126,22 @@ async function saveSession(record) {
   return record;
 }
 
+async function userStreamMutationRateAllowed(masterDeviceId) {
+  const bucket = Math.floor(Date.now() / 60000);
+  const key = `${PREFIX}:rate:user-stream:${sha256(masterDeviceId)}:${bucket}`;
+  const script = [
+    "local count = redis.call('INCR', KEYS[1])",
+    "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
+    "return count"
+  ].join('\n');
+  const count = Number(await redis(['EVAL', script, '1', key, '120'])) || 0;
+  return count <= USER_STREAM_MUTATION_RATE_LIMIT_PER_MINUTE;
+}
+
+function retryAfterSeconds() {
+  return Math.max(1, 60 - (Math.floor(Date.now() / 1000) % 60));
+}
+
 function publicSession(record) {
   if (!record) return null;
   return {
@@ -157,9 +174,31 @@ export default async function handler(req, res) {
   }
 
   const action = String(req.query?.action || 'status').toLowerCase();
+  const mutation = req.method === 'POST' && ['start', 'keepalive', 'close'].includes(action);
 
-  if (req.method === 'POST' && ['start', 'keepalive', 'close'].includes(action) && !VERCEL_PRODUCTION_WRITE_ALLOWED) {
+  if (mutation && !VERCEL_PRODUCTION_WRITE_ALLOWED) {
     return send(res, 423, { ok: false, code: 'NON_PRODUCTION_DEPLOYMENT', tradingWriteAttempted: false });
+  }
+
+  if (mutation) {
+    try {
+      if (!(await userStreamMutationRateAllowed(master.deviceId))) {
+        const retryAfter = retryAfterSeconds();
+        res.setHeader('Retry-After', String(retryAfter));
+        return send(res, 429, {
+          ok: false,
+          code: 'USER_STREAM_RATE_LIMIT',
+          retryAfterSeconds: retryAfter,
+          tradingWriteAttempted: false,
+        });
+      }
+    } catch (e) {
+      return send(res, 503, {
+        ok: false,
+        code: e?.code || 'RATE_LIMIT_BACKEND_ERROR',
+        tradingWriteAttempted: false,
+      });
+    }
   }
 
   try {
