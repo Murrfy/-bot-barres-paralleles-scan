@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { buildProtectiveAlgoPlan } from '../lib/protective-update-intent.mjs';
-import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition } from '../lib/protective-command.mjs';
+import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import {
   placeStandardOrderIdempotent,
   cancelReduceOnlyOrderIdempotent,
@@ -228,7 +228,10 @@ export default async function handler(req,res){
     if(armReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_ARMED',reason:armReason,writeAttempted:false});
     const modeReason=protectiveModeReason(state.masterMode);
     if(modeReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:modeReason,writeAttempted:false});
-    const readyReason=executionReadiness(state.runtimeState,state.report,master.deviceId);
+    const repairTarget=phase==='PLACE_NEW'
+      ?protectiveRepairTarget(type,update)
+      :'';
+    const readyReason=executionReadiness(state.runtimeState,state.report,master.deviceId,repairTarget);
     if(readyReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readyReason,writeAttempted:false});
 
     const position=runtimePosition(state.runtimeState,update.symbol,update.direction);

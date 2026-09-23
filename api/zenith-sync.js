@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation } from '../lib/device-session.mjs';
-import { normalizeProtectiveUpdatePayload } from '../lib/protective-command.mjs';
+import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -666,7 +666,7 @@ function executionRuntimeReadinessStatus(runtimeState, expectedMasterDeviceId = 
   return { ready: true, reason: 'EXECUTION_RUNTIME_READY', runtime };
 }
 
-async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAgeMs = 10000) {
+async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAgeMs = 10000, repairTarget = '') {
   const [reportRaw, runtimeRaw] = await Promise.all([
     redis(['GET', KEY_RECONCILE_LAST]),
     redis(['GET', KEY_STATE]),
@@ -681,19 +681,16 @@ async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAge
   if (!runtimeReady.ready) return { ok: false, reason: runtimeReady.reason };
 
   const ageMs = Date.now() - Number(report.observedAt || 0);
-  if (report.failClosed !== false ||
-      report.version !== 2 ||
-      report.status !== 'CLEAN_REAL' ||
-      !Array.isArray(report.reasons) ||
-      report.reasons.length ||
-      !report.actual ||
-      !Number.isInteger(report.actual.positions) ||
-      report.actual.positions < 0 ||
-      !Number.isInteger(report.actual.orders) ||
-      report.actual.orders < 0 ||
-      !(report.runtimeDataHash || report.runtimeHash)) {
-    return { ok: false, reason: 'BINANCE_RECONCILIATION_MISMATCH' };
-  }
+  const baseValid =
+    report.version === 2 &&
+    Array.isArray(report.reasons) &&
+    report.actual &&
+    Number.isInteger(report.actual.positions) &&
+    report.actual.positions >= 0 &&
+    Number.isInteger(report.actual.orders) &&
+    report.actual.orders >= 0 &&
+    Boolean(report.runtimeDataHash || report.runtimeHash);
+  if (!baseValid) return { ok: false, reason: 'BINANCE_RECONCILIATION_INVALID' };
   if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMs) {
     return { ok: false, reason: 'BINANCE_RECONCILIATION_STALE' };
   }
@@ -701,14 +698,25 @@ async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAge
     return { ok: false, reason: 'BINANCE_RECONCILIATION_RUNTIME_CHANGED' };
   }
 
-  return { ok: true, report, runtimeState, runtimeReady };
+  const clean =
+    report.failClosed === false &&
+    report.status === 'CLEAN_REAL' &&
+    report.reasons.length === 0;
+  if (clean) return { ok: true, report, runtimeState, runtimeReady, protectiveRepair: false };
+
+  const target = String(repairTarget || '').toUpperCase();
+  if (target && protectionOnlyMismatchTarget(report) === target) {
+    return { ok: true, report, runtimeState, runtimeReady, protectiveRepair: true, repairTarget: target };
+  }
+
+  return { ok: false, reason: 'BINANCE_RECONCILIATION_MISMATCH' };
 }
 
-async function realExecutionReadiness(expectedMasterDeviceId = '') {
+async function realExecutionReadiness(expectedMasterDeviceId = '', repairTarget = '') {
   if (!expectedMasterDeviceId) return { ok: false, reason: 'MASTER_LEASE_REQUIRED' };
   const arm = await realExecutionArmStatus(expectedMasterDeviceId);
   if (!arm.armed) return { ok: false, reason: arm.reason };
-  const reconciliation = await freshConsistentReconciliation(expectedMasterDeviceId);
+  const reconciliation = await freshConsistentReconciliation(expectedMasterDeviceId, 10000, repairTarget);
   if (!reconciliation.ok) return reconciliation;
   return { ok: true, reconciliation };
 }
@@ -1841,7 +1849,8 @@ export default async function handler(req, res) {
             pairingDisabled: PAIRING_DISABLED,
           });
         }
-        const readiness = await realExecutionReadiness(activeMaster);
+        const repairTarget = protectiveRepairTarget(type, req.body?.payload);
+        const readiness = await realExecutionReadiness(activeMaster, repairTarget);
         if (!readiness.ok) {
           return send(res, 423, {
             ok: false,
@@ -2037,7 +2046,8 @@ export default async function handler(req, res) {
             recovery,
           });
         }
-        const readiness = await realExecutionReadiness(device.deviceId);
+        const repairTarget = protectiveRepairTarget(command.type, command.payload);
+        const readiness = await realExecutionReadiness(device.deviceId, repairTarget);
         if (!readiness.ok) {
           const deferred = await deferClaimedCommand(
             raw,

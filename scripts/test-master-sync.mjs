@@ -10,8 +10,8 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
     "const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
   )
   .replace(
-    /^import \{ normalizeProtectiveUpdatePayload \} from '\.\.\/lib\/protective-command\.mjs';\n/m,
-    "const normalizeProtectiveUpdatePayload=()=>{ throw new Error('NOT_USED_BY_MASTER_SYNC_TESTS'); };\n"
+    /^import \{ normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget \} from '\.\.\/lib\/protective-command\.mjs';\n/m,
+    "const normalizeProtectiveUpdatePayload=()=>{ throw new Error('NOT_USED_BY_MASTER_SYNC_TESTS'); }; const protectionOnlyMismatchTarget=()=>''; const protectiveRepairTarget=()=>'';\n"
   );
 const { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus } = await import(
   'data:text/javascript;base64,' +

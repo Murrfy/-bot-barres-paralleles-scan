@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
+import { protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 
 const PREFIX='zenith:v1';
 const KEY_MASTER=`${PREFIX}:master`;
@@ -100,7 +101,7 @@ function protectiveModeReason(mode){
   if(normalized==='RUNNING'||normalized==='PAUSE_PENDING')return '';
   return 'MASTER_PAUSED';
 }
-function executionReadiness(runtimeState,report,masterDeviceId){
+function executionReadiness(runtimeState,report,masterDeviceId,repairTarget=''){
   const age=Date.now()-Number(runtimeState?.updatedAt||0);
   if(!runtimeState?.data||String(runtimeState?.masterDeviceId||'')!==String(masterDeviceId))return 'MASTER_RUNTIME_WRONG_DEVICE';
   if(!Number.isFinite(age)||age<0||age>30000)return 'MASTER_RUNTIME_STALE';
@@ -108,12 +109,20 @@ function executionReadiness(runtimeState,report,masterDeviceId){
   if(String(data.executionMode||data.mode||'').toUpperCase()!=='REAL')return 'MASTER_RUNTIME_NOT_REAL';
   const stream=data.userStream;
   if(!stream||stream.connected!==true||stream.ready!==true||stream.failClosed!==false||stream.needsReconciliation!==false)return 'USER_STREAM_NOT_READY';
+
   const reportAge=Date.now()-Number(report?.observedAt||0);
-  if(!report||report.version!==2||report.status!=='CLEAN_REAL'||report.failClosed!==false||!Array.isArray(report.reasons)||report.reasons.length)return 'BINANCE_RECONCILIATION_MISMATCH';
+  if(!report||report.version!==2||!Array.isArray(report.reasons))return 'BINANCE_RECONCILIATION_MISMATCH';
   if(!Number.isFinite(reportAge)||reportAge<0||reportAge>10000)return 'BINANCE_RECONCILIATION_STALE';
   const currentDataHash=sha256(stableStringify(data));
   if(String(report.runtimeDataHash||'')!==currentDataHash)return 'BINANCE_RECONCILIATION_RUNTIME_CHANGED';
-  return '';
+
+  const clean=report.status==='CLEAN_REAL'&&report.failClosed===false&&report.reasons.length===0;
+  if(clean)return '';
+
+  const target=String(repairTarget||'').toUpperCase();
+  if(target&&protectionOnlyMismatchTarget(report)===target)return '';
+
+  return 'BINANCE_RECONCILIATION_MISMATCH';
 }
 
 export default async function handler(req,res){
@@ -145,13 +154,18 @@ export default async function handler(req,res){
   const modeReason=protectiveModeReason(masterModeRaw);
   if(modeReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:modeReason,writeAttempted:false});
 
-  const readinessReason=executionReadiness(runtimeState,report,master.deviceId);
-  if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
-
   const type=String(req.body?.type||'').toUpperCase();
   if(!['EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY'].includes(type)){
     return send(res,400,{ok:false,code:'PROTECTIVE_COMMAND_UNSUPPORTED',writeAttempted:false});
   }
+
+  const repairTarget=protectiveRepairTarget(type,{
+    symbol:req.body?.symbol,
+    direction:req.body?.direction,
+    closeAll:req.body?.closeAll,
+  });
+  const readinessReason=executionReadiness(runtimeState,report,master.deviceId,repairTarget);
+  if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
 
   const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED);
 

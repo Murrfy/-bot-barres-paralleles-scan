@@ -75,6 +75,10 @@ jobs:
         run: node --test scripts/test-protective-update-intent.mjs
       - name: Test protective update payload safety
         run: node --test scripts/test-protective-command.mjs
+      - name: Test exact missing-protection repair gate
+        run: node --test scripts/test-protective-repair-gate.mjs
+      - name: Test protective repair wiring
+        run: node --test scripts/test-protective-repair-wiring.mjs
       - name: Test protective update conflict guards
         run: node --test scripts/test-protective-update-conflicts.mjs
       - name: Test MASTER command worker routing

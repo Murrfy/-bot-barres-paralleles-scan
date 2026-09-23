@@ -838,19 +838,27 @@ async function reconcileMasterUserStream(secondPass=false){
     const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
     const r=await fetch('/api/binance-reconcile',{cache:'no-store',headers:{Accept:'application/json',Authorization:'Bearer '+token}});
     const q=await r.json().catch(()=>({}));
-    if(!r.ok||q?.ok!==true||!q?.report||q.report.failClosed!==false){
-      const reason=String(q?.code||q?.report?.reasons?.[0]||q?.error||('HTTP '+r.status));
+    if(!r.ok||q?.ok!==true||!q?.report){
+      const reason=String(q?.code||q?.error||('HTTP '+r.status));
       await invalidateMasterStream('BINANCE_RECONCILIATION_'+reason);
       masterUserStream.lastError=reason;
       return false;
     }
-    const {stateModule}=await loadMasterUserStreamModules();
+    const {stateModule,dispatchModule}=await loadMasterUserStreamModules();
+    const repairTarget=dispatchModule.protectionOnlyMismatchTarget(q.report);
+    const reconciliationAcceptable=q.report.failClosed===false||Boolean(repairTarget);
+    if(!reconciliationAcceptable){
+      const reason=String(q?.report?.reasons?.[0]||'BINANCE_RECONCILIATION_MISMATCH');
+      await invalidateMasterStream('BINANCE_RECONCILIATION_'+reason);
+      masterUserStream.lastError=reason;
+      return false;
+    }
     if(masterUserStream.state?.needsReconciliation===true){
       masterUserStream.state=stateModule.markUserStreamReconciled(masterUserStream.state,{
         observedAt:Number(q.report.observedAt||Date.now()),
         runtimeHash:String(q.report.runtimeDataHash||q.report.runtimeHash||'')
       });
-      masterUserStream.lastError='';
+      masterUserStream.lastError=repairTarget?'MISSING_BINANCE_PROTECTION_REPAIR_REQUIRED':'';
       await publishMasterStreamState();
       if(!secondPass){
         masterUserStream.reconcileBusy=false;
