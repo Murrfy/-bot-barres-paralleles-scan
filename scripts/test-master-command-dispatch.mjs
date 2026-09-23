@@ -50,11 +50,12 @@ test('real opening remains unimplemented while protective updates are dispatched
 
   const protection=buildMasterCommandDispatch({
     id:'command-protect-12',type:'EXEC_UPDATE_PROTECTION',
-    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:50500,protectionKind:'PROGRESSIVE'}
+    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:50500,limitPrice:50500,protectionKind:'PROGRESSIVE'}
   });
   assert.equal(protection.supported,true);
   assert.equal(protection.body.protectionKind,'PROGRESSIVE');
   assert.equal(protection.body.triggerPrice,50500);
+  assert.equal(protection.body.limitPrice,50500);
 });
 
 

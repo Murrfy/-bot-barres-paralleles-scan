@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildRealProtectionLevels,
+  buildProgressiveProtectionLevel,
+  highestReachedProtectionStage,
   pnlAtLinearPrice,
   priceForLinearPnl,
   validateMaxLossTrigger,
@@ -66,4 +68,51 @@ test('server max-loss validator handles SHORT correctly',()=>{
   const exact=validateMaxLossTrigger({position,triggerPrice:3200});
   assert.equal(exact.impliedLossUsd,400);
   assert.throws(()=>validateMaxLossTrigger({position,triggerPrice:3200.1}),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
+});
+
+
+test('ATTEINT is a hard minimum: 39.99 does not arm 40, but 40 and above do',()=>{
+  const stages=[
+    {enabled:true,arm:40,floor:39.8},
+    {enabled:true,arm:50,floor:49.8},
+  ];
+  assert.equal(highestReachedProtectionStage(stages,39.99),null);
+  assert.equal(highestReachedProtectionStage(stages,40).protectedProfitUsd,39.8);
+  assert.equal(highestReachedProtectionStage(stages,41).protectedProfitUsd,39.8);
+  assert.equal(highestReachedProtectionStage(stages,45).protectedProfitUsd,39.8);
+});
+
+test('a large profit jump skips intermediate protections and selects the highest crossed stage',()=>{
+  const stages=Array.from({length:30},(_,i)=>({
+    enabled:true,
+    arm:105+i*100,
+    floor:100+i*100,
+  }));
+  const selected=highestReachedProtectionStage(stages,3000);
+  assert.equal(selected.armProfitUsd,2905);
+  assert.equal(selected.protectedProfitUsd,2900);
+});
+
+test('progressive protection uses one Binance trigger/LIMIT price that preserves at least the protected gain',()=>{
+  const level=buildProgressiveProtectionLevel({
+    position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'3',entryPrice:'100'},
+    armProfitUsd:40,
+    protectedProfitUsd:39.8,
+    priceFilter:filter,
+  });
+  assert.equal(level.armProfitUsd,40);
+  assert.equal(level.protectedProfitUsd,39.8);
+  assert.equal(level.triggerPrice,level.limitPrice);
+  assert.ok(level.actualProtectedProfitUsd>=39.8);
+});
+
+test('SHORT progressive protection also preserves at least the requested floor',()=>{
+  const level=buildProgressiveProtectionLevel({
+    position:{symbol:'ETHUSDT',positionSide:'BOTH',positionAmt:'-3',entryPrice:'100'},
+    armProfitUsd:40,
+    protectedProfitUsd:39.8,
+    priceFilter:filter,
+  });
+  assert.equal(level.triggerPrice,level.limitPrice);
+  assert.ok(level.actualProtectedProfitUsd>=39.8);
 });

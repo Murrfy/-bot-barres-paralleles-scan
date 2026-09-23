@@ -354,11 +354,39 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
   const missingProtections = actualPositions.filter(position => !actualOrders.some(order =>
     order.symbol === position.symbol && order.positionSide === position.positionSide &&
     order.side === (position.direction === 'LONG' ? 'SELL' : 'BUY') &&
-    ['STOP', 'STOP_MARKET', 'TRAILING_STOP_MARKET'].includes(order.type) &&
+    ['STOP', 'STOP_MARKET', 'TRAILING_STOP_MARKET'].includes(String(order.type || '').toUpperCase()) &&
     (order.reduceOnly === true || order.closePosition === true) &&
     (order.closePosition === true || number(order.origQty) - number(order.executedQty) >= position.quantity)
   )).map(positionKey);
   if (missingProtections.length) reasons.push('MISSING_BINANCE_PROTECTION');
+
+  const maxLossProtectionCounts = new Map();
+  for (const position of actualPositions) {
+    const key = positionKey(position);
+    const entryPrice = number(position.entryPrice, NaN);
+    const expectedSide = position.direction === 'LONG' ? 'SELL' : 'BUY';
+    const valid = actualOrders.filter(order => {
+      if (String(order?.orderClass || '').toUpperCase() !== 'ALGO') return false;
+      if (String(order?.symbol || '').toUpperCase() !== position.symbol) return false;
+      if (String(order?.positionSide || '').toUpperCase() !== String(position.positionSide || '').toUpperCase()) return false;
+      if (String(order?.side || '').toUpperCase() !== expectedSide) return false;
+      if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') return false;
+      if (order?.closePosition !== true) return false;
+      const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
+      if (!(entryPrice > 0) || !(trigger > 0)) return false;
+      return position.direction === 'LONG' ? trigger < entryPrice : trigger > entryPrice;
+    });
+    maxLossProtectionCounts.set(key, valid.length);
+  }
+  const missingMaxLossProtections = actualPositions
+    .filter(position => (maxLossProtectionCounts.get(positionKey(position)) || 0) === 0)
+    .map(positionKey);
+  const ambiguousMaxLossProtections = actualPositions
+    .filter(position => (maxLossProtectionCounts.get(positionKey(position)) || 0) > 1)
+    .map(positionKey);
+  if (missingMaxLossProtections.length) reasons.push('MISSING_BINANCE_MAX_LOSS_PROTECTION');
+  if (ambiguousMaxLossProtections.length) reasons.push('AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION');
+
   const failClosed = reasons.length > 0;
 
   return {
@@ -383,6 +411,8 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
       missingOrders,
       orderMismatches,
       missingProtections,
+      missingMaxLossProtections,
+      ambiguousMaxLossProtections,
     },
   };
 }

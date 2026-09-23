@@ -281,6 +281,19 @@ for (const required of [
 ]) {
   if (!realProtectionLevels.includes(required)) fail(`real protection level invariant missing: ${required}`);
 }
+const protectiveUpdateIntent = fs.readFileSync('lib/protective-update-intent.mjs','utf8');
+if (!protectiveUpdateIntent.includes("params.type='STOP'") ||
+    !protectiveUpdateIntent.includes("params.timeInForce='GTC'") ||
+    !protectiveUpdateIntent.includes("params.price=String(limit)") ||
+    protectiveUpdateIntent.includes("params.priceMatch='OPPONENT'")) {
+  fail('progressive gain protection must be STOP + explicit LIMIT GTC at the protected price, never OPPONENT');
+}
+if (!realProtectionLevels.includes('highestReachedProtectionStage') ||
+    !realProtectionLevels.includes('observed + 1e-8 < armProfitUsd') ||
+    !realProtectionLevels.includes('buildProgressiveProtectionLevel')) {
+  fail('real progressive protection must arm only at/above ATTEINT and select the highest crossed stage');
+}
+
 const protectiveUpdateExecute = fs.readFileSync('api/binance-protective-update-execute.js','utf8');
 if (!protectiveUpdateExecute.includes('validateMaxLossTrigger({') ||
     !protectiveUpdateExecute.includes('hardMaxLossUsd:REAL_RISK_LIMITS.maxLossUsd') ||

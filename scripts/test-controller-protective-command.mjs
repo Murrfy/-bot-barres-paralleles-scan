@@ -35,6 +35,7 @@ test('iPhone builds progressive and max-loss protection updates',()=>{
   const progressive=buildControllerUpdateProtectionCommand(longPosition,50500,'PROGRESSIVE','zth-PRO-abcdef');
   assert.equal(progressive.payload.protectionKind,'PROGRESSIVE');
   assert.equal(progressive.payload.triggerPrice,50500);
+  assert.equal(progressive.payload.limitPrice,50500);
   assert.equal(progressive.payload.previousClientAlgoId,'zth-PRO-abcdef');
 
   const maxLoss=buildControllerUpdateProtectionCommand(longPosition,48000,'MAX_LOSS','zth-MAX-abcdef');

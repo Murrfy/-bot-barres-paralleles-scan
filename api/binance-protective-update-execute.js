@@ -313,7 +313,8 @@ export default async function handler(req,res){
     }else{
       plan=buildProtectiveAlgoPlan({
         commandId:String(req.body?.commandId||''),symbol:update.symbol,direction:update.direction,
-        quantity:update.quantity,triggerPrice:update.triggerPrice,protectionKind:update.protectionKind,attempt:0
+        quantity:update.quantity,triggerPrice:update.triggerPrice,limitPrice:update.limitPrice,
+        protectionKind:update.protectionKind,attempt:0
       });
       if(phase==='CANCEL_OLD'){
         if(!update.previousClientAlgoId)return send(res,400,{ok:false,code:'PREVIOUS_PROTECTION_ID_REQUIRED',writeAttempted:false});
@@ -331,8 +332,22 @@ export default async function handler(req,res){
           clientAlgoId:update.previousClientAlgoId,
           type:update.protectionKind==='MAX_LOSS'?'STOP_MARKET':'STOP',
         };
-        if(update.protectionKind==='MAX_LOSS')expected.closePosition='true';
-        else{expected.reduceOnly='true';expected.quantity=String(update.quantity);expected.priceMatch='OPPONENT'}
+        if(update.protectionKind==='MAX_LOSS'){
+          expected.closePosition='true';
+        }else{
+          const oldPrice=n(old?.price);
+          const oldTrigger=n(old?.triggerPrice??old?.stopPrice);
+          if(!(oldPrice>0)||!(oldTrigger>0)||
+             Math.abs(oldPrice-oldTrigger)>Math.max(1e-9,Math.abs(oldTrigger)*1e-10)||
+             String(old?.timeInForce||'').toUpperCase()!=='GTC'||
+             (old?.priceMatch&&String(old.priceMatch).toUpperCase()!=='NONE')){
+            return send(res,409,{ok:false,code:'PREVIOUS_PROGRESSIVE_NOT_EXACT_LIMIT',writeAttempted:false});
+          }
+          expected.reduceOnly='true';
+          expected.quantity=String(update.quantity);
+          expected.price=String(oldPrice);
+          expected.triggerPrice=String(oldTrigger);
+        }
         result=await cancelAlgoOrderIdempotent({
           apiKey,secret,symbol:update.symbol,clientAlgoId:update.previousClientAlgoId,
           expected,writesEnabled:true,timestamp:Date.now()
