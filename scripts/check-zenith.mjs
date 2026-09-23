@@ -198,6 +198,11 @@ if (protectiveExecute.includes('EXEC_OPEN_POSITION')) {
   fail('protective execution API must never open a new position');
 }
 
+const protectiveCloseState = fs.readFileSync('lib/protective-close-state.mjs','utf8');
+for (const required of ["OPPONENT_5","OPPONENT_10","MARKET_LAST_RESORT","safeToRetry","inconsistentFilled","terminalSeen"]) {
+  if (!protectiveCloseState.includes(required)) fail(`protective close state invariant missing: ${required}`);
+}
+
 const orderIntent = fs.readFileSync('lib/order-intent.mjs', 'utf8');
 for (const required of ['deterministicClientOrderId','CLIENT_ORDER_ID_MAX_LENGTH = 36',"writeAllowed: false","reduceOnly: 'true'","priceMatch = 'OPPONENT'"]) {
   if (!orderIntent.includes(required)) fail(`order planning safety invariant missing: ${required}`);
