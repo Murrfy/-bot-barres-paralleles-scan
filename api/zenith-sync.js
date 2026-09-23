@@ -23,8 +23,10 @@ const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
 const VERCEL_PRODUCTION_WRITE_ALLOWED = process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main';
 const BINANCE_API_BASE = 'https://api.binance.com';
+const BINANCE_FUTURES_BASE = 'https://fapi.binance.com';
 const BINANCE_API_RESTRICTIONS_PATH = '/sapi/v1/account/apiRestrictions';
 const BINANCE_API_TIME_PATH = '/api/v3/time';
+const BINANCE_FUTURES_TIME_PATH = '/fapi/v1/time';
 const BINANCE_PERMISSION_RECV_WINDOW = 5000;
 
 const PREFIX = 'zenith:v1';
@@ -197,6 +199,58 @@ async function fetchBinanceApiPermissions() {
     method: 'GET',
     headers: { 'X-MBX-APIKEY': apiKey },
   });
+}
+
+async function signedFuturesGet(path, apiKey, secret, serverTime, extra = {}) {
+  const query = new URLSearchParams({
+    timestamp: String(serverTime),
+    recvWindow: String(BINANCE_PERMISSION_RECV_WINDOW),
+  });
+  for (const [key, value] of Object.entries(extra || {})) {
+    if (value !== undefined && value !== null && value !== '') query.set(key, String(value));
+  }
+  const signature = crypto.createHmac('sha256', secret).update(query.toString()).digest('hex');
+  query.set('signature', signature);
+  return binanceJson(`${BINANCE_FUTURES_BASE}${path}?${query.toString()}`, {
+    method: 'GET',
+    headers: { 'X-MBX-APIKEY': apiKey },
+  });
+}
+
+async function fetchLiveBinanceActivity() {
+  const apiKey = process.env.BINANCE_API_KEY || '';
+  const secret = process.env.BINANCE_API_SECRET || '';
+  if (!apiKey || !secret) {
+    const error = new Error('BINANCE_API_CREDENTIALS_MISSING');
+    error.code = 'BINANCE_API_CREDENTIALS_MISSING';
+    throw error;
+  }
+
+  const time = await binanceJson(`${BINANCE_FUTURES_BASE}${BINANCE_FUTURES_TIME_PATH}`);
+  const serverTime = Number(time?.serverTime);
+  if (!Number.isFinite(serverTime)) {
+    const error = new Error('BINANCE_TIME_INVALID');
+    error.code = 'BINANCE_ACTIVITY_CHECK_FAILED';
+    throw error;
+  }
+
+  const [positions, openOrders, openAlgoOrders] = await Promise.all([
+    signedFuturesGet('/fapi/v3/positionRisk', apiKey, secret, serverTime),
+    signedFuturesGet('/fapi/v1/openOrders', apiKey, secret, serverTime),
+    signedFuturesGet('/fapi/v1/openAlgoOrders', apiKey, secret, serverTime, { algoType: 'CONDITIONAL' }),
+  ]);
+
+  const activePositions = (Array.isArray(positions) ? positions : [])
+    .filter(position => Math.abs(Number(position?.positionAmt || 0)) > 0).length;
+  const standardOpenOrders = Array.isArray(openOrders) ? openOrders.length : 0;
+  const algoOpenOrders = Array.isArray(openAlgoOrders) ? openAlgoOrders.length : 0;
+
+  return {
+    activePositions,
+    standardOpenOrders,
+    algoOpenOrders,
+    openOrders: standardOpenOrders + algoOpenOrders,
+  };
 }
 
 function stableStringify(value) {
@@ -1605,8 +1659,9 @@ export default async function handler(req, res) {
         masterDeviceId(),
       ]);
 
-      // Compromise response is fail-closed immediately.
+      // Compromise response is fail-closed immediately, before any remote check.
       await redis(['SET', KEY_EMERGENCY_STOP, '1']);
+      await setMasterMode('PAUSE_PENDING');
 
       if (!registeredMaster) {
         await setMasterMode('PAUSED');
@@ -1622,44 +1677,42 @@ export default async function handler(req, res) {
       }
 
       if (currentMaster && String(currentMaster) !== String(registeredMaster)) {
-        await setMasterMode('PAUSE_PENDING');
         return send(res, 409, {
           ok: false,
           code: 'MASTER_LEASE_CONFLICT',
           emergencyStopActive: true,
+          masterMode: 'PAUSE_PENDING',
           currentMaster,
           registeredMaster,
         });
       }
 
-      let transition = {
-        transitioned: false,
-        masterMode: 'PAUSED',
-        blockers: [],
-        activity: { activePositions: 0, openOrders: 0 },
-        pendingCommands: 0,
-        processingCommands: 0,
-      };
-
-      if (currentMaster) {
-        await setMasterMode('PAUSE_PENDING');
-        transition = await tryFinalizePendingPause(currentMaster, 'PAUSE_PENDING');
-        if (transition.masterMode !== 'PAUSED') {
-          return send(res, 409, {
-            ok: false,
-            code: 'MASTER_REVOKE_DRAIN_REQUIRED',
-            emergencyStopActive: true,
-            masterMode: transition.masterMode,
-            blockers: transition.blockers || [],
-            activity: transition.activity || { activePositions: 0, openOrders: 0 },
-            pendingCommands: Number(transition.pendingCommands || 0),
-            processingCommands: Number(transition.processingCommands || 0),
-          });
-        }
-      } else {
-        // No active lease means the old MASTER cannot reacquire without controller authorization.
-        await setMasterMode('PAUSED');
+      let liveActivity = null;
+      try {
+        liveActivity = await fetchLiveBinanceActivity();
+      } catch (e) {
+        return send(res, 503, {
+          ok: false,
+          code: e?.code || 'BINANCE_ACTIVITY_CHECK_FAILED',
+          emergencyStopActive: true,
+          masterMode: 'PAUSE_PENDING',
+        });
       }
+
+      if (liveActivity.activePositions > 0 || liveActivity.openOrders > 0) {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_REVOKE_DRAIN_REQUIRED',
+          emergencyStopActive: true,
+          masterMode: 'PAUSE_PENDING',
+          activity: liveActivity,
+        });
+      }
+
+      const [pendingCommands, processingCommands] = await Promise.all([
+        redis(['LLEN', KEY_PENDING]),
+        redis(['LLEN', KEY_PROCESSING]),
+      ]);
 
       const revokedAt = Date.now();
       const revokeScript = [
@@ -1677,13 +1730,15 @@ export default async function handler(req, res) {
         "redis.call('DEL', KEYS[10])",
         "redis.call('DEL', KEYS[11])",
         "redis.call('DEL', KEYS[12])",
-        "redis.call('SET', KEYS[13], ARGV[2])",
+        "redis.call('DEL', KEYS[13])",
+        "redis.call('DEL', KEYS[14])",
+        "redis.call('SET', KEYS[15], ARGV[2])",
         "redis.call('DEL', KEYS[1])",
         "return 1"
       ].join('\n');
 
       const result = Number(await redis([
-        'EVAL', revokeScript, '13',
+        'EVAL', revokeScript, '15',
         KEY_MASTER_DEVICE,
         KEY_EMERGENCY_STOP,
         KEY_MASTER_MODE,
@@ -1696,6 +1751,8 @@ export default async function handler(req, res) {
         KEY_USER_STREAM_SESSION,
         masterActivationKey(registeredMaster),
         `${PREFIX}:master-admin-fail:${sha256(registeredMaster)}`,
+        KEY_PENDING,
+        KEY_PROCESSING,
         roleAssignmentKey(PREFIX, 'master'),
         String(registeredMaster),
         String(revokedAt),
@@ -1715,6 +1772,9 @@ export default async function handler(req, res) {
         requestedByDeviceId: device.deviceId,
         previousMasterDeviceId: registeredMaster,
         previousLeaseActive: Boolean(currentMaster),
+        liveActivity,
+        droppedPendingCommands: Number(pendingCommands || 0),
+        droppedProcessingCommands: Number(processingCommands || 0),
       })]);
       await redis(['LTRIM', KEY_AUDIT, '0', '199']);
 
@@ -1725,6 +1785,9 @@ export default async function handler(req, res) {
         previousMasterDeviceId: registeredMaster,
         emergencyStopActive: true,
         masterMode: 'PAUSED',
+        liveActivity,
+        droppedPendingCommands: Number(pendingCommands || 0),
+        droppedProcessingCommands: Number(processingCommands || 0),
         requiresPairingReopen: PAIRING_DISABLED,
       });
     }
