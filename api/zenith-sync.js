@@ -59,6 +59,7 @@ const RUNTIME_STATE_STALE_MS = 30 * 1000;
 const COMMAND_MAX_AGE_MS = 2 * 60 * 1000;
 const COMMAND_QUEUE_MAX = 100;
 const COMMAND_PAYLOAD_MAX_BYTES = 16 * 1024;
+const COMMAND_RAW_MAX_BYTES = 64 * 1024;
 const DEAD_LETTER_MAX = 500;
 
 function send(res, status, body) {
@@ -565,6 +566,16 @@ function commandExpired(command, now = Date.now()) {
   const expiresAt = Number(command?.expiresAt || 0);
   if (!Number.isFinite(createdAt) || !Number.isFinite(expiresAt) || createdAt <= 0 || expiresAt <= createdAt) return true;
   return now > expiresAt || now - createdAt > COMMAND_MAX_AGE_MS;
+}
+
+function commandRawStatus(raw) {
+  const value = String(raw || '');
+  if (!value) return { ok:false, reason:'RAW_REQUIRED', bytes:0 };
+  const bytes = Buffer.byteLength(value, 'utf8');
+  if (bytes > COMMAND_RAW_MAX_BYTES) {
+    return { ok:false, reason:'COMMAND_RAW_TOO_LARGE', bytes, maxBytes:COMMAND_RAW_MAX_BYTES };
+  }
+  return { ok:true, value, bytes, maxBytes:COMMAND_RAW_MAX_BYTES };
 }
 
 function executionGate(type, halted) {
@@ -2183,8 +2194,15 @@ export default async function handler(req, res) {
       if (!(await hasMasterLease(device.deviceId))) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
-      const raw = String(req.body?.raw || '');
-      if (!raw) return send(res, 400, { ok: false, code: 'RAW_REQUIRED' });
+      const rawStatus = commandRawStatus(req.body?.raw);
+      if (!rawStatus.ok) {
+        return send(res, rawStatus.reason === 'COMMAND_RAW_TOO_LARGE' ? 413 : 400, {
+          ok:false,
+          code:rawStatus.reason,
+          ...(rawStatus.maxBytes ? { maxBytes:rawStatus.maxBytes } : {}),
+        });
+      }
+      const raw = rawStatus.value;
       let command = null;
       try { command = JSON.parse(raw); } catch {}
       const commandId = String(command?.id || '');
@@ -2367,10 +2385,17 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res, ['master']);
       if (!device) return;
       if (!(await hasMasterLease(device.deviceId))) return send(res, 409, { ok:false, code:'NOT_MASTER' });
-      const raw = String(req.body?.raw || '');
+      const rawStatus = commandRawStatus(req.body?.raw);
       const reason = String(req.body?.reason || 'EXECUTION_FAILED').toUpperCase();
-      if (!raw) return send(res, 400, { ok:false, code:'RAW_REQUIRED' });
+      if (!rawStatus.ok) {
+        return send(res, rawStatus.reason === 'COMMAND_RAW_TOO_LARGE' ? 413 : 400, {
+          ok:false,
+          code:rawStatus.reason,
+          ...(rawStatus.maxBytes ? { maxBytes:rawStatus.maxBytes } : {}),
+        });
+      }
       if (!/^[A-Z0-9_:-]{3,96}$/.test(reason)) return send(res, 400, { ok:false, code:'FAIL_REASON_INVALID' });
+      const raw = rawStatus.value;
       let command = null;
       try { command = JSON.parse(raw); } catch {}
       const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
@@ -2396,8 +2421,15 @@ export default async function handler(req, res) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
 
-      const raw = String(req.body?.raw || '');
-      if (!raw) return send(res, 400, { ok: false, code: 'RAW_REQUIRED' });
+      const rawStatus = commandRawStatus(req.body?.raw);
+      if (!rawStatus.ok) {
+        return send(res, rawStatus.reason === 'COMMAND_RAW_TOO_LARGE' ? 413 : 400, {
+          ok:false,
+          code:rawStatus.reason,
+          ...(rawStatus.maxBytes ? { maxBytes:rawStatus.maxBytes } : {}),
+        });
+      }
+      const raw = rawStatus.value;
 
       let command = null;
       try { command = JSON.parse(raw); } catch {}

@@ -18,9 +18,9 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
     /^import \{ REAL_RISK_LIMITS \} from '\.\.\/lib\/risk-policy\.mjs';\n/m,
     "const REAL_RISK_LIMITS=Object.freeze({maxLossUsd:400});\n"
   );
-const { commandTypeAllowed, commandExpired, executionGate, deferredCommandPayload } = await import(
+const { commandTypeAllowed, commandExpired, executionGate, deferredCommandPayload, commandRawStatus } = await import(
   'data:text/javascript;base64,' +
-  Buffer.from(source + '\nexport { commandTypeAllowed, commandExpired, executionGate, deferredCommandPayload };').toString('base64')
+  Buffer.from(source + '\nexport { commandTypeAllowed, commandExpired, executionGate, deferredCommandPayload, commandRawStatus };').toString('base64')
 );
 
 test('only audited protective command types are accepted', () => {
@@ -79,4 +79,20 @@ test('defer notBefore never extends beyond original command expiry', () => {
     id:'command-12345678',type:'EXEC_CLOSE_POSITION',createdAt:1000,expiresAt:2000
   },'MASTER_RUNTIME_STALE','master-1',1900,1500);
   assert.equal(deferred.notBefore,2000);
+});
+
+
+test('MASTER command raw payloads are bounded before Redis use', () => {
+  assert.deepEqual(commandRawStatus(''), { ok:false, reason:'RAW_REQUIRED', bytes:0 });
+
+  const normal = commandRawStatus('{"id":"command-12345678"}');
+  assert.equal(normal.ok, true);
+  assert.ok(normal.bytes > 0);
+  assert.equal(normal.maxBytes, 64 * 1024);
+
+  const tooLarge = commandRawStatus('x'.repeat(64 * 1024 + 1));
+  assert.equal(tooLarge.ok, false);
+  assert.equal(tooLarge.reason, 'COMMAND_RAW_TOO_LARGE');
+  assert.equal(tooLarge.maxBytes, 64 * 1024);
+  assert.ok(tooLarge.bytes > tooLarge.maxBytes);
 });
