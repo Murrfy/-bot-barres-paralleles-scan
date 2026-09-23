@@ -55,6 +55,7 @@ test('iPhone controller exposes explicit confirmed MASTER revoke control',()=>{
   assert.ok(index.includes('async function controllerRevokeMaster()'));
   assert.ok(index.includes("action=master-revoke"));
   assert.ok(index.includes("confirm('Révoquer le MASTER ?"));
-  assert.ok(index.includes("prompt('Code ADMIN MASTER pour révoquer le MASTER :')"));
+  assert.ok(index.includes("await requestAdminCode('Code ADMIN MASTER pour révoquer le MASTER :')"));
+  assert.ok(index.includes('id="adminCodeInput" type="password"'));
   assert.ok(index.includes("$('masterRevokeBtn').onclick=controllerRevokeMaster"));
 });

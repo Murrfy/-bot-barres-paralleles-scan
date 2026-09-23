@@ -47,18 +47,21 @@ if (styleSrc.includes("'unsafe-inline'")) {
 
 const declared = [...styleSrc.matchAll(/'sha256-[A-Za-z0-9+/=]+'/g)].map(m => m[0]).sort();
 
-for (const token of unique) {
-  if (!declared.includes(token)) {
-    console.error('Missing CSP style hash: ' + token);
-    process.exit(1);
-  }
-}
+const missing = unique.filter(token => !declared.includes(token));
+const stale = declared.filter(token => !unique.includes(token));
 
-if (JSON.stringify(declared) !== JSON.stringify(unique)) {
-  console.error('CSP contains stale or unexpected style hashes.');
-  console.error('Expected:');
+if (missing.length || stale.length) {
+  if (missing.length) {
+    console.error('Missing CSP style hashes:');
+    for (const token of missing) console.error(token);
+  }
+  if (stale.length) {
+    console.error('Stale CSP style hashes:');
+    for (const token of stale) console.error(token);
+  }
+  console.error('Expected exact style hashes:');
   for (const token of unique) console.error(token);
-  console.error('Declared:');
+  console.error('Currently declared style hashes:');
   for (const token of declared) console.error(token);
   process.exit(1);
 }

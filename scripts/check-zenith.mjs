@@ -646,6 +646,13 @@ if (!sync.includes("'MASTER_ACTIVATION_REQUIRED'") ||
     !index.includes('controllerAuthorizeMaster')) {
   fail('MASTER lease activation must require explicit iPhone controller ADMIN authorization');
 }
+if (!index.includes('id="adminCodeInput" type="password"') ||
+    !index.includes('autocomplete="off"') ||
+    !index.includes('function requestAdminCode(message)') ||
+    !index.includes("input.value=''") ||
+    index.includes("prompt('Code ADMIN MASTER")) {
+  fail('iPhone MASTER ADMIN authentication must use a cleared password modal, never browser prompt()');
+}
 if (!sync.includes("ZENITH_MASTER_ADMIN_CODE") ||
     !sync.includes("action === 'controller-replacement-authorize'") ||
     !sync.includes("action === 'controller-replacement-redeem'")) {

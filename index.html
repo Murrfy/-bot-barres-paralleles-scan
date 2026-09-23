@@ -37,6 +37,13 @@
 @media(max-width:1000px){.dashboard{grid-template-columns:minmax(180px,.75fr) minmax(500px,2.1fr);}.rightPanel{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:7px}.rightPanel>.block{min-width:0}}
 @media(max-width:760px){.dashboard{display:flex;flex-direction:column}.panel{width:100%}.rightPanel{display:block}.tablebox{max-height:52vh}.kpis{grid-template-columns:repeat(4,minmax(0,1fr)) minmax(130px,1.6fr)}.kpi b{font-size:11px}.kpi span{font-size:7px}}
 @media(orientation:landscape){.app{padding:4px;overflow-x:auto}.top{margin-bottom:3px}.brand{font-size:15px}.btn{min-height:27px;padding:4px 7px;font-size:9px}.status{margin:2px 0}.kpi{min-height:34px;padding:3px}.dashboard{display:grid;grid-template-columns:190px minmax(440px,1fr) 310px;gap:4px;min-width:950px;align-items:start}.rightPanel{grid-column:auto;display:block}.rightPanel>.block{min-width:0}.panel{padding:5px}.selectionTable th,.selectionTable td{height:23px;padding:2px 4px;font-size:8px}.tablebox{max-height:calc(100vh - 112px)}#tokenSettingsBlock{scroll-margin-inline:8px}}
+.adminCodeModal{position:fixed;inset:0;z-index:10000;display:grid;place-items:center;padding:18px;background:rgba(2,6,23,.82);backdrop-filter:blur(4px)}
+.adminCodeModal[hidden]{display:none}
+.adminCodeCard{width:min(420px,100%);background:#0f172a;border:1px solid #334155;border-radius:14px;padding:16px;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.adminCodeCard h3{margin:0 0 7px;font-size:16px}
+.adminCodeCard p{margin:0 0 10px;color:#cbd5e1;font-size:12px;line-height:1.4}
+.adminCodeCard input{width:100%;box-sizing:border-box;margin:0 0 12px;min-height:40px;padding:9px 11px;border-radius:9px;border:1px solid #475569;background:#020617;color:#f8fafc;font-size:16px}
+.adminCodeActions{display:flex;justify-content:flex-end;gap:8px}
 </style>
 </head>
 <body>
@@ -58,6 +65,17 @@
     <button id="panicClearBtn" class="btn" hidden>Réarmer sécurité</button>
     <button id="resetClosedBtn" class="btn">Réinitialiser gains / fermés</button>
     <button id="resetSimBtn" class="btn danger">Réinitialiser simulation</button>
+  </div>
+  <div id="adminCodeModal" class="adminCodeModal" hidden>
+    <div class="adminCodeCard" role="dialog" aria-modal="true" aria-labelledby="adminCodeTitle">
+      <h3 id="adminCodeTitle">Code ADMIN MASTER</h3>
+      <p id="adminCodeMessage">Authentification requise.</p>
+      <input id="adminCodeInput" type="password" maxlength="256" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" aria-label="Code ADMIN MASTER">
+      <div class="adminCodeActions">
+        <button id="adminCodeCancel" class="btn" type="button">Annuler</button>
+        <button id="adminCodeConfirm" class="btn good" type="button">Valider</button>
+      </div>
+    </div>
   </div>
   <div id="status" class="status">Prêt.</div>
   <div class="kpis">
@@ -778,13 +796,40 @@ async function refreshMasterControls(){
     return false;
   }
 }
+let adminCodeRequestResolver=null;
+function closeAdminCodeModal(value){
+  const modal=$('adminCodeModal'),input=$('adminCodeInput');
+  if(input)input.value='';
+  if(modal)modal.hidden=true;
+  const resolve=adminCodeRequestResolver;
+  adminCodeRequestResolver=null;
+  if(resolve)resolve(value);
+}
+function requestAdminCode(message){
+  if(adminCodeRequestResolver)return Promise.resolve(null);
+  const modal=$('adminCodeModal'),input=$('adminCodeInput'),msg=$('adminCodeMessage');
+  if(!modal||!input||!msg)return Promise.resolve(null);
+  msg.textContent=String(message||'Code ADMIN MASTER requis.');
+  input.value='';
+  modal.hidden=false;
+  return new Promise(resolve=>{
+    adminCodeRequestResolver=resolve;
+    requestAnimationFrame(()=>input.focus());
+  });
+}
+function submitAdminCodeModal(){
+  const input=$('adminCodeInput');
+  if(!input)return closeAdminCodeModal(null);
+  const value=String(input.value||'');
+  if(!value){input.focus();return}
+  closeAdminCodeModal(value);
+}
 async function controllerAuthorizeMaster(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
   if(masterControlState.masterRegistered!==true)return setStatus('Aucun MASTER enregistré à autoriser.',true);
   if(masterControlState.masterLeaseActive===true)return setStatus('MASTER déjà actif.');
-  const adminCode=prompt('Code ADMIN MASTER pour autoriser l’iPad MASTER :');
+  const adminCode=await requestAdminCode('Code ADMIN MASTER pour autoriser l’iPad MASTER :');
   if(adminCode===null)return;
-  if(!adminCode)return setStatus('Code ADMIN MASTER requis.',true);
   const btn=$('masterAuthorizeBtn');if(btn)btn.disabled=true;
   try{
     const r=await fetch('/api/zenith-sync?action=master-authorize',{
@@ -820,9 +865,8 @@ async function controllerPanicStop(){
 }
 async function controllerClearPanic(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
-  const adminCode=prompt('Code ADMIN MASTER pour réarmer la sécurité réelle :');
+  const adminCode=await requestAdminCode('Code ADMIN MASTER pour réarmer la sécurité réelle :');
   if(adminCode===null)return;
-  if(!adminCode)return setStatus('Code ADMIN MASTER requis.',true);
   try{
     const r=await fetch('/api/zenith-sync?action=emergency-stop-clear',{
       method:'POST',cache:'no-store',
@@ -841,9 +885,8 @@ async function controllerClearPanic(){
 async function controllerRevokeMaster(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
   if(!confirm('Révoquer le MASTER ? Cette action active PANIC, désarme le trading réel et invalide l’iPad MASTER. Si une position ou un ordre est encore actif, Zenith refusera la révocation jusqu’au drainage sécurisé.'))return;
-  const adminCode=prompt('Code ADMIN MASTER pour révoquer le MASTER :');
+  const adminCode=await requestAdminCode('Code ADMIN MASTER pour révoquer le MASTER :');
   if(adminCode===null)return;
-  if(!adminCode)return setStatus('Code ADMIN MASTER requis.',true);
   const revokeBtn=$('masterRevokeBtn');if(revokeBtn)revokeBtn.disabled=true;
   try{
     const r=await fetch('/api/zenith-sync?action=master-revoke',{
@@ -873,9 +916,8 @@ async function controllerMasterAction(action){
     :action==='master-pause-cancel'
       ?'annuler la pause en attente'
       :'reprendre le MASTER';
-  const adminCode=prompt('Code ADMIN MASTER pour '+label+' :');
+  const adminCode=await requestAdminCode('Code ADMIN MASTER pour '+label+' :');
   if(adminCode===null)return;
-  if(!adminCode)return setStatus('Code ADMIN MASTER requis.',true);
   const pauseBtn=$('masterPauseBtn'),cancelBtn=$('masterCancelPauseBtn'),resumeBtn=$('masterResumeBtn');
   if(pauseBtn)pauseBtn.disabled=true;if(cancelBtn)cancelBtn.disabled=true;if(resumeBtn)resumeBtn.disabled=true;
   try{
@@ -2373,6 +2415,7 @@ $('manualTokenAddBtn').onclick=addManualToken;$('manualTokenInput').addEventList
 // Aucun changement de Position max / Jour-Nuit / Son / Vibration n’est appliqué automatiquement.
 ['fMargin','fLev'].forEach(id=>$(id).addEventListener('input',()=>{if(!selectedSymbol)return;const m=Math.max(1,n($('fMargin').value,settings.margin)),l=clamp(n($('fLev').value,settings.leverage),1,125),d=futuresDraft(selectedSymbol,m,l,'LIMIT');$('fSummary').textContent=`Marge : ISOLÉE · Notionnel demandé : $${(m*l).toFixed(2)}${d.qty>0?` · effectif ≈ $${d.effectiveNotional.toFixed(2)}`:''}`;$('fLimits').textContent=limitsText(selectedSymbol,m,l);updateTokenPreview()}));['tExactBuyPrice','tExactSalePrice'].forEach(id=>$(id).addEventListener('input',updateTokenPreview));$('tTarget').addEventListener('input',()=>{if($('tTarget').dataset.exactAuto!=='1'){$('tTarget').dataset.manualTarget=$('tTarget').value;syncProtectionsToTarget(Math.max(0,n($('tTarget').value,settings.targetProfit)))}updateTokenPreview()});['tExactBuy','tExactSale'].forEach(id=>$(id).addEventListener('change',updateTokenPreview));
 $('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();save()});
+$('adminCodeCancel').onclick=()=>closeAdminCodeModal(null);$('adminCodeConfirm').onclick=submitAdminCodeModal;$('adminCodeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submitAdminCodeModal()}else if(e.key==='Escape'){e.preventDefault();closeAdminCodeModal(null)}});$('adminCodeModal').addEventListener('pointerdown',e=>{if(e.target===e.currentTarget)closeAdminCodeModal(null)});
 $('masterAuthorizeBtn').onclick=controllerAuthorizeMaster;$('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('masterRevokeBtn').onclick=controllerRevokeMaster;$('panicClearBtn').onclick=controllerClearPanic;
 $('resetClosedBtn').onclick=()=>{if(!confirm('Effacer les gains, pertes et trades fermés ?'))return;history=[];save();renderAll()};$('resetSimBtn').onclick=()=>{if(!confirm('Réinitialiser les positions simulées et les achats surveillés ?'))return;openPositions=[];validated={};revalidateBlock={};missedSignals={};manualTokens={};save();syncRealtime();renderAll();setStatus('Simulation réinitialisée.')};
 document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio();if(controllerIdentity.role==='master')syncMasterWakeLock(true)},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){syncMasterWakeLock(true);masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
