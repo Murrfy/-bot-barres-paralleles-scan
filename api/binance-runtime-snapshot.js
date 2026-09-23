@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, deviceSessionRecordActive } from '../lib/device-session.mjs';
+import { cookieDeviceTokenCandidates, deviceSessionRecordActive } from '../lib/device-session.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -43,7 +43,7 @@ async function redis(command){
 }
 
 async function requireCurrentMaster(req){
-  for(const token of deviceTokenCandidates(req)){
+  for(const token of cookieDeviceTokenCandidates(req)){
     const tokenHash=sha256(token);
     const raw=await redis(['GET',`${PREFIX}:device:${tokenHash}`]);
     if(!raw)continue;
