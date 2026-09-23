@@ -89,6 +89,8 @@ jobs:
         run: node --test scripts/test-real-protection-levels.mjs
       - name: Test highest-crossed MASTER auto protection
         run: node --test scripts/test-master-auto-protection.mjs
+      - name: Test CONTRACT_PRICE alignment for ATTEINT and protections
+        run: node --test scripts/test-contract-price-alignment.mjs
       - name: Test autonomous MASTER auto protection wiring
         run: node --test scripts/test-master-auto-protection-wiring.mjs
       - name: Test real protection level wiring

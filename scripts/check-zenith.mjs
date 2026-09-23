@@ -301,6 +301,14 @@ if (!realProtectionLevels.includes('highestReachedProtectionStage') ||
   fail('real progressive protection must arm only at/above ATTEINT and select the highest crossed stage');
 }
 
+if (!protectiveUpdateIntent.includes("workingType:'CONTRACT_PRICE'") ||
+    !index.includes("@aggTrade") ||
+    !index.includes("onMark(s,n(q.p))") ||
+    !index.includes("/fapi/v1/ticker/price") ||
+    index.includes("@markPrice")) {
+  fail('ATTEINT monitoring and Binance protection triggers must stay aligned on CONTRACT_PRICE');
+}
+
 const protectiveUpdateExecute = fs.readFileSync('api/binance-protective-update-execute.js','utf8');
 if (!protectiveUpdateExecute.includes('validateMaxLossTrigger({') ||
     !protectiveUpdateExecute.includes('hardMaxLossUsd:REAL_RISK_LIMITS.maxLossUsd') ||
