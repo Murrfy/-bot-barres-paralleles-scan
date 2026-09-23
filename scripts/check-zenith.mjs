@@ -1131,5 +1131,31 @@ for (const required of [
 ]) {
   if (!jsonStructureSource.includes(required)) fail(`JSON structure validator invariant missing: ${required}`);
 }
+const dedicatedTradingCredentialFiles = [
+  'api/binance-entry-execute.js',
+  'api/binance-protective-execute.js',
+  'api/binance-protective-update-execute.js',
+  'api/binance-order-test.js',
+];
+for (const file of dedicatedTradingCredentialFiles) {
+  const source = fs.readFileSync(file, 'utf8');
+  if (!source.includes('BINANCE_TRADING_API_KEY') ||
+      !source.includes('BINANCE_TRADING_API_SECRET') ||
+      source.includes('process.env.BINANCE_API_KEY') ||
+      source.includes('process.env.BINANCE_API_SECRET')) {
+    fail(`${file} must use dedicated Binance trading credentials only`);
+  }
+}
+const syncTradingCredentials = fs.readFileSync('api/zenith-sync.js','utf8');
+const permissionStart = syncTradingCredentials.indexOf('async function fetchBinanceApiPermissions');
+const permissionEnd = permissionStart >= 0 ? syncTradingCredentials.indexOf('\n}', permissionStart) + 2 : -1;
+const permissionBlock = permissionStart >= 0 && permissionEnd > permissionStart
+  ? syncTradingCredentials.slice(permissionStart, permissionEnd)
+  : '';
+if (!permissionBlock.includes('BINANCE_TRADING_API_KEY') ||
+    !permissionBlock.includes('BINANCE_TRADING_API_SECRET')) {
+  fail('real execution permission gate must validate the dedicated Binance trading key');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
