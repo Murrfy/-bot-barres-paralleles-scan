@@ -77,6 +77,30 @@ if (!binanceRead.includes('/fapi/v1/openAlgoOrders')) {
   fail('api/binance-read.js must count Binance algo TP/SL orders');
 }
 
+const binancePreflight = fs.readFileSync('api/binance-entry-preflight.js', 'utf8');
+for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
+  if (binancePreflight.includes(forbidden)) {
+    fail(`api/binance-entry-preflight.js must remain read-only; forbidden endpoint found: ${forbidden}`);
+  }
+}
+for (const required of ['/fapi/v1/symbolConfig','/fapi/v1/leverageBracket','/fapi/v1/positionSide/dual','/fapi/v1/openOrders','/fapi/v1/openAlgoOrders']) {
+  if (!binancePreflight.includes(required)) fail(`api/binance-entry-preflight.js missing required read-only check: ${required}`);
+}
+if (!binancePreflight.includes('READ_ONLY_PREFLIGHT') || !binancePreflight.includes('writeAttempted: false')) {
+  fail('entry preflight must explicitly remain read-only');
+}
+
+const riskPolicy = fs.readFileSync('lib/risk-policy.mjs', 'utf8');
+if (!riskPolicy.includes('maxActivePositions: 3') ||
+    !riskPolicy.includes('maxLeverage: 10') ||
+    !riskPolicy.includes('maxMarginUsdt: 1000') ||
+    !riskPolicy.includes('maxNotionalUsdt: 10000') ||
+    !riskPolicy.includes('maxLossUsd: 400') ||
+    !riskPolicy.includes('POSITION_MODE_HEDGE_UNSUPPORTED') ||
+    !riskPolicy.includes('MARGIN_TYPE_NOT_ISOLATED')) {
+  fail('real-entry risk policy must enforce server-side position, leverage, margin, notional, loss, position-mode and isolated-margin gates');
+}
+
 const binanceReconcile = fs.readFileSync('api/binance-reconcile.js', 'utf8');
 for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
   if (binanceReconcile.includes(forbidden)) {
@@ -235,6 +259,24 @@ if (!sync.includes('MASTER_ADMIN_FAILURE_LIMIT = 5') ||
 }
 if (!sync.includes("'PAIRING_MUST_BE_DISABLED'") || !sync.includes('pairingDisabled: PAIRING_DISABLED')) {
   fail('real execution must remain locked while device pairing is open');
+}
+if (!sync.includes("action === 'emergency-stop-clear'") ||
+    !sync.includes("'MASTER_MUST_BE_PAUSED'") ||
+    !sync.includes("'EMERGENCY_STOP_CLEARED'") ||
+    !sync.includes("blockers.push('EMERGENCY_STOP_ACTIVE')")) {
+  fail('PANIC reset must require ADMIN, paused MASTER, clean re-arm checks and block real resume while still active');
+}
+if (!sync.includes("await setMasterMode('PAUSE_PENDING')") ||
+    !sync.includes("kind: 'EMERGENCY_STOP_SET'")) {
+  fail('PANIC STOP must immediately block new entries while preserving the PAUSE_PENDING protective drain path');
+}
+if (!index.includes('panicStopBtn') || !index.includes('panicClearBtn') ||
+    !index.includes('controllerPanicStop') || !index.includes('controllerClearPanic')) {
+  fail('iPhone controller must expose PANIC STOP and protected re-arm controls');
+}
+if (!masterAdmin.includes('panicBtn') || !masterAdmin.includes('clearPanicBtn') ||
+    !masterAdmin.includes('panicStop') || !masterAdmin.includes('clearPanic')) {
+  fail('MASTER admin must expose PANIC STOP and protected re-arm controls');
 }
 if (!index.includes('escapeHtml') || !index.includes('escapeHtml(h.reason)') || !index.includes('escapeHtml(p.symbol)')) {
   fail('dynamic trading UI strings must be HTML-escaped');

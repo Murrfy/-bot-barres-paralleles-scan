@@ -25,6 +25,8 @@ jobs:
         run: node --check api/binance-read.js
       - name: Check Binance reconciliation API syntax
         run: node --check api/binance-reconcile.js
+      - name: Check Binance entry preflight API syntax
+        run: node --check api/binance-entry-preflight.js
       - name: Check Zenith sync API syntax
         run: node --check api/zenith-sync.js
       - name: Test reconciliation failure scenarios
@@ -35,3 +37,5 @@ jobs:
         run: node --test scripts/test-master-sync.mjs
       - name: Test command queue safety
         run: node --test scripts/test-command-safety.mjs
+      - name: Test real-entry risk preflight
+        run: node --test scripts/test-entry-preflight.mjs
