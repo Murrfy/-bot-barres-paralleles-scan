@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DEVICE_SESSION_MAX_AGE_SECONDS, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId } from '../lib/device-session.mjs';
+import { DEVICE_SESSION_MAX_AGE_SECONDS, cookieDeviceTokenCandidates, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId } from '../lib/device-session.mjs';
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
@@ -309,8 +309,9 @@ async function quarantineCommandsForDevice(deviceId) {
   return { pending, processing };
 }
 
-async function authDevice(req) {
-  for (const token of deviceTokenCandidates(req)) {
+async function authDevice(req, allowLegacyBearer = false) {
+  const candidates = allowLegacyBearer ? deviceTokenCandidates(req) : cookieDeviceTokenCandidates(req);
+  for (const token of candidates) {
     const hash = sha256(token);
     const raw = await redis(['GET', `${PREFIX}:device:${hash}`]);
     if (!raw) continue;
@@ -374,8 +375,8 @@ async function touchDevice(device) {
   return { expired:false, remainingSeconds };
 }
 
-async function requireDevice(req, res, roles) {
-  const device = await authDevice(req);
+async function requireDevice(req, res, roles, allowLegacyBearer = false) {
+  const device = await authDevice(req, allowLegacyBearer);
   if (!device) {
     clearDeviceSessionCookie(res);
     send(res, 401, { ok: false, code: 'UNAUTHORIZED_DEVICE' });
@@ -1282,7 +1283,7 @@ export default async function handler(req, res) {
     }
 
     if (action === 'whoami' && req.method === 'GET') {
-      const device = await requireDevice(req, res);
+      const device = await requireDevice(req, res, undefined, true);
       if (!device) return;
       return send(res, 200, {
         ok: true,
