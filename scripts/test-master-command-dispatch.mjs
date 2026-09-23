@@ -36,11 +36,44 @@ test('EXEC_CLOSE_POSITION is full-close only and does not accept normal target o
   }),/EXIT_MODE_INVALID/);
 });
 
-test('entry and not-yet-implemented protective mutations are never dispatched as writes',()=>{
-  for(const type of ['EXEC_OPEN_POSITION','EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION']){
-    const d=buildMasterCommandDispatch({id:'command-12345678',type,payload:{}});
-    assert.equal(d.supported,false,type);
-  }
+test('real entry remains unreachable while protective mutations are routed',()=>{
+  const d=buildMasterCommandDispatch({id:'command-12345678',type:'EXEC_OPEN_POSITION',payload:{}});
+  assert.equal(d.supported,false);
+});
+
+test('exact exit update routes to protective mutation endpoint',()=>{
+  const d=buildMasterCommandDispatch({
+    id:'command-exit-1234',type:'EXEC_UPDATE_EXIT',
+    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0.02,targetPrice:52000,clientOrderId:'exit-123'}
+  });
+  assert.equal(d.supported,true);
+  assert.equal(d.endpoint,'/api/binance-protective-mutate');
+  assert.equal(d.body.type,'EXEC_UPDATE_EXIT');
+  assert.equal(d.body.targetPrice,52000);
+  assert.equal(d.body.clientOrderId,'exit-123');
+});
+
+test('protection update routes to protective mutation endpoint',()=>{
+  const d=buildMasterCommandDispatch({
+    id:'command-prot-1234',type:'EXEC_UPDATE_PROTECTION',
+    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:49500,previousClientAlgoId:'prot-old'}
+  });
+  assert.equal(d.supported,true);
+  assert.equal(d.endpoint,'/api/binance-protective-mutate');
+  assert.equal(d.body.type,'EXEC_UPDATE_PROTECTION');
+  assert.equal(d.body.triggerPrice,49500);
+  assert.equal(d.body.previousClientAlgoId,'prot-old');
+});
+
+test('protective mutation dispatcher rejects invalid prices and quantities',()=>{
+  assert.throws(()=>buildMasterCommandDispatch({
+    id:'command-exit-1234',type:'EXEC_UPDATE_EXIT',
+    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0,targetPrice:52000}
+  }),/QUANTITY_INVALID/);
+  assert.throws(()=>buildMasterCommandDispatch({
+    id:'command-prot-1234',type:'EXEC_UPDATE_PROTECTION',
+    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:0}
+  }),/TRIGGER_PRICE_INVALID/);
 });
 
 
