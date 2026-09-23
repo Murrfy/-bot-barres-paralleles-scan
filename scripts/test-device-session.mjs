@@ -12,6 +12,7 @@ import {
   deviceSessionRemainingSeconds,
   deviceSessionRecordActive,
   DEVICE_SESSION_MAX_AGE_SECONDS,
+  roleSessionKey,
 } from '../lib/device-session.mjs';
 
 test('secure cookie is the default credential and Bearer is opt-in migration only', () => {
@@ -107,4 +108,11 @@ test('device session records expire absolutely from original creation time', () 
   assert.equal(deviceSessionRemainingSeconds(expired,now),0);
   assert.equal(deviceSessionRecordActive({},now),false);
   assert.equal(DEVICE_SESSION_MAX_AGE_SECONDS,30*24*60*60);
+});
+
+
+test('role session keys are stable and role-scoped', () => {
+  assert.equal(roleSessionKey('controller'),'zenith:v1:role-session:controller');
+  assert.equal(roleSessionKey('master'),'zenith:v1:role-session:master');
+  assert.equal(roleSessionKey('unknown'),'');
 });
