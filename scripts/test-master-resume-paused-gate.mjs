@@ -19,7 +19,7 @@ test('MASTER resume requires the server mode to already be PAUSED',()=>{
   assert.ok(resume.includes("if (currentMode !== 'PAUSED') blockers.push('MASTER_MUST_BE_PAUSED')"));
   assert.ok(
     resume.indexOf("currentMode !== 'PAUSED'") <
-    resume.indexOf("setMasterMode('RUNNING')")
+    resume.indexOf("trySetMasterRunningFrom('PAUSED')")
   );
 });
 
@@ -27,7 +27,7 @@ test('PAUSE_PENDING cancellation remains a separate explicit ADMIN action',()=>{
   assert.ok(cancel.includes("currentMode !== 'PAUSE_PENDING'"));
   assert.ok(cancel.includes("'MASTER_PAUSE_NOT_PENDING'"));
   assert.ok(cancel.includes('verifyMasterAdminCode(req, res, device)'));
-  assert.ok(cancel.includes("setMasterMode('RUNNING')"));
+  assert.ok(cancel.includes("trySetMasterRunningFrom('PAUSE_PENDING')"));
 });
 
 test('resume cannot act as an implicit PAUSE_PENDING cancellation path',()=>{
