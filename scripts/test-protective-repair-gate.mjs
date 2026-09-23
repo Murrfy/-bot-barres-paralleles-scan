@@ -114,3 +114,34 @@ test('repair classifier accepts emergency-only missing protection for one exact 
     symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:48000,protectionKind:'MAX_LOSS'
   }),true);
 });
+
+
+test('exact duplicate MAX-LOSS transition is repairable only for one position target',()=>{
+  const report={
+    version:2,status:'MISMATCH',failClosed:true,
+    reasons:['AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION'],
+    differences:{
+      missingProtections:[],
+      missingMaxLossProtections:[],
+      ambiguousMaxLossProtections:['BTCUSDT:LONG']
+    }
+  };
+  assert.equal(protectionOnlyMismatchTarget(report),'BTCUSDT:LONG');
+  assert.equal(exactProtectiveRepairAllowed(report,'EXEC_UPDATE_PROTECTION',{
+    symbol:'BTCUSDT',direction:'LONG',quantity:1,triggerPrice:49000,protectionKind:'MAX_LOSS'
+  }),true);
+  assert.equal(exactProtectiveRepairAllowed(report,'EXEC_UPDATE_PROTECTION',{
+    symbol:'ETHUSDT',direction:'LONG',quantity:1,triggerPrice:1900,protectionKind:'MAX_LOSS'
+  }),false);
+});
+
+test('multiple ambiguous MAX-LOSS targets remain fail-closed',()=>{
+  const report={
+    version:2,status:'MISMATCH',failClosed:true,
+    reasons:['AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION'],
+    differences:{
+      ambiguousMaxLossProtections:['BTCUSDT:LONG','ETHUSDT:SHORT']
+    }
+  };
+  assert.equal(protectionOnlyMismatchTarget(report),'');
+});
