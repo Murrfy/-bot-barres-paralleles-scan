@@ -1046,6 +1046,28 @@ if (!realEntryExecuteRate.includes('async function finalEntryDispatchGate') ||
   fail('real entry dispatch must atomically revalidate MASTER, lease, RUNNING, PANIC, arm and role epoch immediately before Binance');
 }
 
+const protectiveExecuteFence = fs.readFileSync('api/binance-protective-execute.js','utf8');
+const protectiveUpdateFence = fs.readFileSync('api/binance-protective-update-execute.js','utf8');
+for (const [name, source] of [
+  ['protective execute', protectiveExecuteFence],
+  ['protective update', protectiveUpdateFence],
+]) {
+  if (!source.includes('async function finalProtectiveDispatchGate') ||
+      !source.includes("if registered ~= ARGV[1] then return -1 end") ||
+      !source.includes("if lease ~= ARGV[1] then return -2 end") ||
+      !source.includes("if mode ~= 'RUNNING' and mode ~= 'PAUSE_PENDING' then return -3 end") ||
+      !source.includes("if arm ~= ARGV[3] then return -4 end") ||
+      !source.includes("if roleEpoch ~= ARGV[2] then return -5 end") ||
+      !source.includes("'PROTECTIVE_DISPATCH_BLOCKED'") ||
+      !source.includes("return { ...device, roleIssuedAt: String(issuedAt || '') }")) {
+    fail(`${name} must revalidate MASTER ownership, lease, protective mode, arm and role epoch immediately before Binance writes`);
+  }
+}
+if (!protectiveUpdateFence.includes('async function finalOrphanCleanupGate') ||
+    !protectiveUpdateFence.includes("'ORPHAN_CLEANUP_DISPATCH_BLOCKED'")) {
+  fail('orphan protection cleanup must revalidate current MASTER ownership before Binance cancellation');
+}
+
 const authenticatedApiFiles = fs.readdirSync('api')
   .filter(name => name.endsWith('.js'))
   .map(name => 'api/' + name);
