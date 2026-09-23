@@ -57,3 +57,10 @@ test('auto-protection high-water is scoped to the exact Binance position lifecyc
   assert.match(html,/projection\.userStream\?\.ready!==true/);
   assert.match(html,/live\.lifecycleAt\|\|live\.updateTime/);
 });
+
+
+test('MASTER auto protection requires a unique Zenith-managed MAX-LOSS',()=>{
+  assert.match(html,/if\(!zenithManagedRealId\(o\?\.clientAlgoId\)\)return false/);
+  assert.match(html,/const emergencyReady=Boolean\(inv\.managedMaxLoss\)&&inv\.maxLossConflict!==true/);
+  assert.match(html,/aucune protection MAX-LOSS Zenith unique et confirmée/);
+});
