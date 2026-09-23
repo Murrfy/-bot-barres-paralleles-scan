@@ -41,7 +41,7 @@ function harness({rateCount=7,failRateBackend=false}={}){
       const c=JSON.parse(init.body);
       let result=null;
       if(c[0]==='GET'&&String(c[1]).includes(':device:')){
-        result=JSON.stringify({role:'master',deviceId:'master-1'});
+        result=JSON.stringify({role:'master',deviceId:'master-1',createdAt:Date.now()});
       }else if(c[0]==='GET'&&c[1]==='zenith:v1:role-device:master'){
         result='master-1';
       }else if(c[0]==='GET'&&c[1]==='zenith:v1:master'){
