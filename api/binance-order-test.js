@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive } from '../lib/device-session.mjs';
+import { cookieToken, sameOriginMutation, deviceSessionRecordActive } from '../lib/device-session.mjs';
 
 const BASE='https://fapi.binance.com';
 const TEST_ORDER_PATH='/fapi/v1/order/test';
@@ -34,7 +34,7 @@ async function redis(command){
   return data?.result;
 }
 async function requireMaster(req){
-  for(const token of deviceTokenCandidates(req)){
+  for (const token of [cookieToken(req)].filter(Boolean)){
     const raw=await redis(['GET',`${PREFIX}:device:${sha256(token)}`]);
     if(!raw)continue;
     let device=null;try{device=JSON.parse(raw)}catch{}
