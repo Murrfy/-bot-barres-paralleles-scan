@@ -863,13 +863,28 @@ if (!sync.includes('KEY_REAL_EXECUTION_ARMED') ||
     !sync.includes("'REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED'")) {
   fail('real execution must require an explicit admin arm bound to the current MASTER and deployment');
 }
-if (!sync.includes("BINANCE_API_RESTRICTIONS_PATH = '/sapi/v1/account/apiRestrictions'") ||
-    !sync.includes('fetchBinanceApiPermissions') ||
-    !sync.includes('binanceApiPermissionBlockers') ||
-    !sync.includes("'BINANCE_API_IP_RESTRICTION_REQUIRED'") ||
-    !sync.includes("'BINANCE_API_WITHDRAWALS_MUST_BE_DISABLED'") ||
-    !sync.includes("'BINANCE_API_FUTURES_REQUIRED'")) {
-  fail('real execution arm must verify IP-restricted safe Binance API permissions before arming');
+const binancePermissionGate = fs.readFileSync('lib/binance-api-permissions.mjs','utf8');
+if (!binancePermissionGate.includes("BINANCE_API_RESTRICTIONS_PATH = '/sapi/v1/account/apiRestrictions'") ||
+    !binancePermissionGate.includes('fetchBinanceApiPermissions') ||
+    !binancePermissionGate.includes('binanceApiPermissionBlockers') ||
+    !binancePermissionGate.includes("'BINANCE_API_IP_RESTRICTION_REQUIRED'") ||
+    !binancePermissionGate.includes("'BINANCE_API_WITHDRAWALS_MUST_BE_DISABLED'") ||
+    !binancePermissionGate.includes("'BINANCE_API_FUTURES_REQUIRED'")) {
+  fail('shared Binance permission gate must require IP-restricted Futures-only API permissions');
+}
+if (!sync.includes('fetchBinanceApiPermissions') ||
+    !sync.includes('binanceApiPermissionBlockers')) {
+  fail('real execution arm must use the shared Binance permission gate before arming');
+}
+const realEntryPermissionGate = fs.readFileSync('api/binance-entry-execute.js','utf8');
+const permissionCheckAt = realEntryPermissionGate.indexOf('permissions=await fetchBinanceApiPermissions');
+const entryPreflightAt = realEntryPermissionGate.indexOf('const preflight=await runLiveEntryPreflight');
+if (permissionCheckAt < 0 ||
+    entryPreflightAt < 0 ||
+    permissionCheckAt > entryPreflightAt ||
+    !realEntryPermissionGate.includes("'ENTRY_BINANCE_API_PERMISSIONS_UNSAFE'") ||
+    !realEntryPermissionGate.includes('binanceApiPermissionBlockers(permissions)')) {
+  fail('real entry execution must recheck safe Binance API permissions before live entry preflight');
 }
 if (!index.includes("masterRuntimeState.realExecutionArmed===true?'REAL':'SIMULATION'") ||
     !index.includes("hb.q.realExecutionArmed===true")) {
