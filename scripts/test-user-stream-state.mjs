@@ -102,3 +102,40 @@ test('fresh websocket connection resets stale connection-local failures before r
   s=markUserStreamReconciled(s,{observedAt:2200,runtimeHash:'new-connection-hash'});
   assert.equal(userStreamReady(s),true);
 });
+
+
+test('position lifecycle survives non-core updates but changes after flat-and-reopen',()=>{
+  let s=readyState();
+  let r=applyUserDataEvent(s,{e:'ACCOUNT_UPDATE',E:2300,T:2299,a:{m:'ORDER',P:[
+    {s:'BTCUSDT',pa:'0.02',ep:'50000',bep:'50001',up:'2',mt:'isolated',iw:'100',ps:'BOTH'}
+  ]}});
+  assert.equal(r.state.positions['BTCUSDT:BOTH'].positionLifecycleAt,2299);
+
+  r=applyUserDataEvent(r.state,{e:'ACCOUNT_UPDATE',E:2400,T:2399,a:{m:'FUNDING_FEE',P:[
+    {s:'BTCUSDT',pa:'0.02',ep:'50000',bep:'50001',up:'3',mt:'isolated',iw:'99',ps:'BOTH'}
+  ]}});
+  assert.equal(r.state.positions['BTCUSDT:BOTH'].positionLifecycleAt,2299);
+
+  r=applyUserDataEvent(r.state,{e:'ACCOUNT_UPDATE',E:2500,T:2499,a:{m:'ORDER',P:[
+    {s:'BTCUSDT',pa:'0',ep:'0',bep:'0',up:'0',mt:'isolated',iw:'0',ps:'BOTH'}
+  ]}});
+  assert.equal(r.state.positions['BTCUSDT:BOTH'],undefined);
+
+  r=applyUserDataEvent(r.state,{e:'ACCOUNT_UPDATE',E:2600,T:2599,a:{m:'ORDER',P:[
+    {s:'BTCUSDT',pa:'0.02',ep:'50000',bep:'50001',up:'1',mt:'isolated',iw:'100',ps:'BOTH'}
+  ]}});
+  assert.equal(r.state.positions['BTCUSDT:BOTH'].positionLifecycleAt,2599);
+  assert.notEqual(r.state.positions['BTCUSDT:BOTH'].positionLifecycleAt,2299);
+});
+
+test('changing quantity or entry starts a new position lifecycle',()=>{
+  let s=readyState();
+  let r=applyUserDataEvent(s,{e:'ACCOUNT_UPDATE',E:2700,T:2699,a:{m:'ORDER',P:[
+    {s:'ETHUSDT',pa:'1',ep:'2000',bep:'2001',up:'0',mt:'isolated',iw:'100',ps:'BOTH'}
+  ]}});
+  assert.equal(r.state.positions['ETHUSDT:BOTH'].positionLifecycleAt,2699);
+  r=applyUserDataEvent(r.state,{e:'ACCOUNT_UPDATE',E:2800,T:2799,a:{m:'ORDER',P:[
+    {s:'ETHUSDT',pa:'2',ep:'2005',bep:'2006',up:'0',mt:'isolated',iw:'200',ps:'BOTH'}
+  ]}});
+  assert.equal(r.state.positions['ETHUSDT:BOTH'].positionLifecycleAt,2799);
+});
