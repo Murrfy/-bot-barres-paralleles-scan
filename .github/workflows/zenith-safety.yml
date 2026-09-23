@@ -142,6 +142,8 @@ jobs:
         run: node --test scripts/test-binance-read-rate-limit.mjs
       - name: Test idempotent Binance order writer
         run: node --test scripts/test-binance-order-writer.mjs
+      - name: Test shared Binance write backoff
+        run: node --test scripts/test-binance-write-backoff.mjs
       - name: Test idempotent Binance algo writer
         run: node --test scripts/test-binance-algo-writer.mjs
       - name: Test protective update order planning
