@@ -926,5 +926,11 @@ if (!syncTrustedIp.includes("headers['x-vercel-forwarded-for']") ||
   fail('Zenith auth rate limits must prefer Vercel trusted forwarded IP while retaining cloud fallback');
 }
 
+const safetyWorkflowRunner = fs.readFileSync('.github/workflows/zenith-safety.yml','utf8');
+if (!safetyWorkflowRunner.includes('runs-on: ubuntu-24.04') ||
+    safetyWorkflowRunner.includes('runs-on: ubuntu-latest')) {
+  fail('Zenith safety CI runner must stay pinned to Ubuntu 24.04');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
