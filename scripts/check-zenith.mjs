@@ -942,5 +942,15 @@ if (!safetyWorkflowRunner.includes('runs-on: ubuntu-24.04') ||
   fail('Zenith safety CI runner must stay pinned to Ubuntu 24.04');
 }
 
+const syncAdminSecretPolicy = fs.readFileSync('api/zenith-sync.js','utf8');
+for (const required of [
+  'MASTER_ADMIN_CODE_TOO_WEAK',
+  'MASTER_ADMIN_CODE_REUSED',
+  'adminSecretPolicyBlockers',
+  'adminSecretPolicyVersion:1'
+]) {
+  if (!syncAdminSecretPolicy.includes(required)) fail(`MASTER admin secret policy invariant missing: ${required}`);
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
