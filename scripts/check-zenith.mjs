@@ -1045,5 +1045,13 @@ for (const file of roleEpochApiFiles) {
   }
 }
 
+const atomicPairSession = fs.readFileSync('api/zenith-sync.js','utf8');
+if (!atomicPairSession.includes('const pairSessionScript = [') ||
+    !atomicPairSession.includes("'EVAL', pairSessionScript, '2'") ||
+    !atomicPairSession.includes("redis.call('SET', KEYS[1], ARGV[1])") ||
+    !atomicPairSession.includes("redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])")) {
+  fail('pairing must atomically advance the role epoch and create the new device session');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
