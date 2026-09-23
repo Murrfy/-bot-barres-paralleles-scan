@@ -18,6 +18,7 @@ function risk(overrides={}) {
       marginType:'ISOLATED',
       leverage:10,
       quantity:0.02,
+      referencePrice:50000,
       ...overrides,
     },
   };
@@ -44,6 +45,13 @@ test('LIMIT entry plan is derived only from a fresh matching risk snapshot',()=>
   assert.equal(p.params.price,'50000');
   assert.equal(p.params.quantity,'0.02');
   assert.equal(p.params.reduceOnly,'false');
+});
+
+test('LIMIT entry price must exactly match the fresh preflight price',()=>{
+  assert.throws(()=>buildEntryOrderPlan({
+    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:50000.1},
+    riskSnapshot:risk(),now
+  }),/ENTRY_PREFLIGHT_PRICE_MISMATCH/);
 });
 
 test('stale risk snapshot blocks entry planning',()=>{
