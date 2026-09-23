@@ -207,3 +207,12 @@ test('MAX-LOSS exactly at the hard $400 cap remains valid', () => {
   assert.equal(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'),false);
   assert.equal(result.differences.unsafeMaxLossProtections.length,0);
 });
+
+
+test('external close-all STOP_MARKET never satisfies Zenith mandatory MAX-LOSS', () => {
+  const external = { ...emergency, algoId:181, clientAlgoId:'manual-max-loss' };
+  const actual = normalizeActualAlgoOrder(external);
+  const result = reconcile(runtime([position], [external]), [normalized], [actual]);
+  assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
+  assert.deepEqual(result.differences.missingMaxLossProtections, ['BTCUSDT:LONG']);
+});

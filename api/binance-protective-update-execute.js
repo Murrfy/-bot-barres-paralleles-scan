@@ -129,7 +129,9 @@ export function emergencyProtection(runtimeState,update,entryPrice,excludeClient
     if(String(o?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
     if(String(o?.type||'').toUpperCase()!=='STOP_MARKET')return false;
     if(!bool(o?.closePosition))return false;
-    if(String(o?.clientAlgoId||'')===String(excludeClientAlgoId||''))return false;
+    const clientAlgoId=String(o?.clientAlgoId||'');
+    if(!/^zth-[A-Za-z0-9._:-]+$/.test(clientAlgoId)||clientAlgoId.length>36)return false;
+    if(clientAlgoId===String(excludeClientAlgoId||''))return false;
     const trigger=n(o?.triggerPrice??o?.stopPrice);
     if(!(trigger>0)||!(entryPrice>0)||!(quantity>0))return false;
     const lossSide=update.direction==='LONG'?trigger<entryPrice:trigger>entryPrice;
