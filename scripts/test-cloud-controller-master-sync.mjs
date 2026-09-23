@@ -28,5 +28,5 @@ test('controller state writes are rate-limited before revision mutation',()=>{
   assert.ok(block.includes('controllerStateWriteRateAllowed(device.deviceId)'));
   assert.ok(block.includes("res.setHeader('Retry-After'"));
   assert.ok(block.indexOf('controllerStateWriteRateAllowed(device.deviceId)') < block.indexOf('const expectedRevision'));
-  assert.ok(block.indexOf("'CONTROLLER_STATE_WRITE_RATE_LIMIT'") < block.indexOf("redis(['EVAL', script"));
+  assert.ok(block.indexOf("'CONTROLLER_STATE_WRITE_RATE_LIMIT'") < block.indexOf('const updatedAt = Date.now()'));
 });
