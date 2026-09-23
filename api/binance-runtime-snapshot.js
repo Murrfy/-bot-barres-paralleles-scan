@@ -4,6 +4,7 @@ import { deviceTokenCandidates } from '../lib/device-session.mjs';
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
 const PREFIX = 'zenith:v1';
+const BINANCE_RUNTIME_SNAPSHOT_RATE_LIMIT_PER_MINUTE = 12;
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -59,6 +60,21 @@ async function requireCurrentMaster(req){
     return device;
   }
   return null;
+}
+
+async function runtimeSnapshotRateAllowed(deviceId){
+  const bucket=Math.floor(Date.now()/60000);
+  const key=`${PREFIX}:rate:binance-runtime-snapshot:${sha256(deviceId)}:${bucket}`;
+  const script=[
+    "local count = redis.call('INCR', KEYS[1])",
+    "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
+    "return count"
+  ].join('\n');
+  const count=Number(await redis(['EVAL',script,'1',key,'120']))||0;
+  return count<=BINANCE_RUNTIME_SNAPSHOT_RATE_LIMIT_PER_MINUTE;
+}
+function retryAfterSeconds(){
+  return Math.max(1,60-(Math.floor(Date.now()/1000)%60));
 }
 
 async function jsonFetch(url,init={}){
@@ -164,6 +180,16 @@ export default async function handler(req,res){
     return send(res,503,{ok:false,code:e?.code||'AUTH_BACKEND_ERROR'});
   }
   if(!master)return send(res,401,{ok:false,code:'MASTER_REQUIRED'});
+
+  try{
+    if(!(await runtimeSnapshotRateAllowed(master.deviceId))){
+      const retryAfter=retryAfterSeconds();
+      res.setHeader('Retry-After',String(retryAfter));
+      return send(res,429,{ok:false,code:'BINANCE_RUNTIME_SNAPSHOT_RATE_LIMIT',retryAfterSeconds:retryAfter});
+    }
+  }catch(e){
+    return send(res,503,{ok:false,code:e?.code||'RATE_LIMIT_BACKEND_ERROR',error:'Protection anti-abus indisponible.'});
+  }
 
   const apiKey=process.env.BINANCE_API_KEY;
   const secret=process.env.BINANCE_API_SECRET;
