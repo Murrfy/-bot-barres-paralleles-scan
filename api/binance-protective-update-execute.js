@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
-import { buildProtectiveAlgoPlan, protectiveAlgoIdentity } from '../lib/protective-update-intent.mjs';
+import { buildProtectiveAlgoPlan } from '../lib/protective-update-intent.mjs';
 import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition } from '../lib/protective-command.mjs';
 import {
   placeStandardOrderIdempotent,
@@ -131,6 +131,47 @@ function emergencyProtection(runtimeState,update,entryPrice,excludeClientAlgoId=
     return update.direction==='LONG'?trigger<entryPrice:trigger>entryPrice;
   })||null;
 }
+
+export function conflictingProtectiveOrders(runtimeState, update, kind, allowedIds = []) {
+  const allowed = new Set((Array.isArray(allowedIds) ? allowedIds : []).filter(Boolean).map(String));
+  const side = sideForDirection(update.direction);
+  const sym = String(update.symbol || '').toUpperCase();
+  const wanted = String(kind || '').toUpperCase();
+
+  return runtimeOrders(runtimeState).filter(order => {
+    if (String(order?.symbol || '').toUpperCase() !== sym) return false;
+    if (String(order?.side || '').toUpperCase() !== side) return false;
+    if (String(order?.positionSide || 'BOTH').toUpperCase() !== 'BOTH') return false;
+
+    const orderClass = String(order?.orderClass || 'STANDARD').toUpperCase();
+    const type = String(order?.type || '').toUpperCase();
+    let samePurpose = false;
+    let id = '';
+
+    if (wanted === 'EXIT') {
+      samePurpose =
+        orderClass === 'STANDARD' &&
+        type === 'LIMIT' &&
+        String(order?.timeInForce || '').toUpperCase() === 'GTC' &&
+        bool(order?.reduceOnly);
+      id = String(order?.clientOrderId || '');
+    } else if (wanted === 'PROGRESSIVE') {
+      samePurpose =
+        orderClass === 'ALGO' &&
+        type === 'STOP' &&
+        bool(order?.reduceOnly);
+      id = String(order?.clientAlgoId || '');
+    } else if (wanted === 'MAX_LOSS') {
+      samePurpose =
+        orderClass === 'ALGO' &&
+        type === 'STOP_MARKET' &&
+        bool(order?.closePosition);
+      id = String(order?.clientAlgoId || '');
+    }
+
+    return samePurpose && !allowed.has(id);
+  });
+}
 function decimals(step){
   const t=String(step||'');if(!t.includes('.'))return 0;
   return Math.min(12,t.split('.')[1].replace(/0+$/,'').length);
@@ -233,6 +274,16 @@ export default async function handler(req,res){
           commandId:String(req.body?.commandId||''),symbol:update.symbol,direction:update.direction,
           quantity:update.quantity,exitMode:'NORMAL_LIMIT',targetPrice:update.targetPrice,attempt:0
         });
+        const conflicts=conflictingProtectiveOrders(
+          state.runtimeState,update,'EXIT',[plan.params.newClientOrderId]
+        );
+        if(conflicts.length){
+          return send(res,409,{
+            ok:false,code:'CONFLICTING_EXIT_ORDER_OPEN',
+            conflictingIds:conflicts.map(o=>String(o?.clientOrderId||'')),
+            writeAttempted:false
+          });
+        }
         result=await placeStandardOrderIdempotent({
           apiKey,secret,orderParams:plan.params,writesEnabled:true,timestamp:Date.now()
         });
@@ -265,6 +316,23 @@ export default async function handler(req,res){
           expected,writesEnabled:true,timestamp:Date.now()
         });
       }else{
+        const allowedIds=[plan.params.clientAlgoId];
+        if(update.protectionKind==='MAX_LOSS'&&update.previousClientAlgoId){
+          allowedIds.push(update.previousClientAlgoId);
+        }
+        const conflicts=conflictingProtectiveOrders(
+          state.runtimeState,update,update.protectionKind,allowedIds
+        );
+        if(conflicts.length){
+          return send(res,409,{
+            ok:false,
+            code:update.protectionKind==='MAX_LOSS'
+              ?'CONFLICTING_MAX_LOSS_PROTECTION_OPEN'
+              :'CONFLICTING_PROGRESSIVE_PROTECTION_OPEN',
+            conflictingIds:conflicts.map(o=>String(o?.clientAlgoId||'')),
+            writeAttempted:false
+          });
+        }
         result=await placeAlgoOrderIdempotent({
           apiKey,secret,algoParams:plan.params,writesEnabled:true,timestamp:Date.now()
         });

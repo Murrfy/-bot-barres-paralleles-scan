@@ -177,8 +177,8 @@ let settings=clone(DEFAULTS),tokenSettings={},manualTokens={},validated={},reval
 let exchangeMap=new Map(),lastPrices=new Map(),ws=null,wsLive=false,fallbackTimer=null,uiRenderPending=false,wsSubscribed=new Set(),wsReconnectTimer=null,wsRequestId=1;
 const lastAggIds=new Map(),lastAggTimes=new Map(),recoveringSymbols=new Set(),pendingAggTrades=new Map();
 let cursorSaveTimer=null;
-let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,positions:[],standardOrders:[],openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
-let controllerRealCommandModule=null,realClosePending=new Set(),realCancelPending=new Set();
+let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,positions:[],standardOrders:[],algoOrders:[],openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
+let controllerRealCommandModule=null,realClosePending=new Set(),realCancelPending=new Set(),realProtectiveUpdatePending=new Map();
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
@@ -251,6 +251,151 @@ async function queueRealEntryCancel(order){
     setStatus(`${symbol} : annulation réelle NON envoyée — ${String(e?.message||'erreur')}.`,true);
   }
 }
+function zenithManagedRealId(value){
+  const id=String(value||'');
+  return /^zth-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
+}
+function realNumberMatches(a,b){
+  const aa=n(a,NaN),bb=n(b,NaN);
+  return Number.isFinite(aa)&&Number.isFinite(bb)&&Math.abs(aa-bb)<=Math.max(1e-9,Math.abs(bb)*1e-10);
+}
+function realProtectionInventory(position){
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const amount=n(position?.positionAmt,0);
+  const direction=amount>=0?'LONG':'SHORT';
+  const side=direction==='LONG'?'SELL':'BUY';
+  const standard=Array.isArray(binanceAccount.standardOrders)?binanceAccount.standardOrders:[];
+  const algo=Array.isArray(binanceAccount.algoOrders)?binanceAccount.algoOrders:[];
+  const exits=standard.filter(o=>
+    String(o?.symbol||'').toUpperCase()===symbol&&
+    String(o?.side||'').toUpperCase()===side&&
+    String(o?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
+    String(o?.type||'').toUpperCase()==='LIMIT'&&
+    String(o?.timeInForce||'').toUpperCase()==='GTC'&&
+    o?.reduceOnly===true
+  );
+  const progressive=algo.filter(o=>
+    String(o?.symbol||'').toUpperCase()===symbol&&
+    String(o?.side||'').toUpperCase()===side&&
+    String(o?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
+    String(o?.type||'').toUpperCase()==='STOP'&&
+    o?.reduceOnly===true
+  );
+  const maxLoss=algo.filter(o=>
+    String(o?.symbol||'').toUpperCase()===symbol&&
+    String(o?.side||'').toUpperCase()===side&&
+    String(o?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
+    String(o?.type||'').toUpperCase()==='STOP_MARKET'&&
+    o?.closePosition===true
+  );
+  const singleManaged=(rows,idField)=>rows.length===1&&zenithManagedRealId(rows[0]?.[idField])?rows[0]:null;
+  return {
+    exits,progressive,maxLoss,
+    managedExit:singleManaged(exits,'clientOrderId'),
+    managedProgressive:singleManaged(progressive,'clientAlgoId'),
+    managedMaxLoss:singleManaged(maxLoss,'clientAlgoId'),
+    exitConflict:exits.length>1||(exits.length===1&&!zenithManagedRealId(exits[0]?.clientOrderId)),
+    progressiveConflict:progressive.length>1||(progressive.length===1&&!zenithManagedRealId(progressive[0]?.clientAlgoId)),
+    maxLossConflict:maxLoss.length>1||(maxLoss.length===1&&!zenithManagedRealId(maxLoss[0]?.clientAlgoId)),
+  };
+}
+function realUpdatePendingKey(position,kind){
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const amount=n(position?.positionAmt,0);
+  return `${symbol}:${amount>=0?'LONG':'SHORT'}:${String(kind||'').toUpperCase()}`;
+}
+function reconcileRealProtectiveUpdatePending(){
+  if(!(realProtectiveUpdatePending instanceof Map)||!realProtectiveUpdatePending.size)return;
+  const positions=Array.isArray(binanceAccount.positions)?binanceAccount.positions:[];
+  for(const [key,pending] of [...realProtectiveUpdatePending.entries()]){
+    const position=positions.find(p=>String(p?.symbol||'').toUpperCase()===String(pending?.symbol||'').toUpperCase());
+    if(!position){realProtectiveUpdatePending.delete(key);continue}
+    const inv=realProtectionInventory(position),wanted=n(pending?.price,NaN);
+    let current=NaN;
+    if(pending?.kind==='EXIT')current=n(inv.managedExit?.price,NaN);
+    else if(pending?.kind==='PROGRESSIVE')current=n(inv.managedProgressive?.triggerPrice,NaN);
+    else if(pending?.kind==='MAX_LOSS')current=n(inv.managedMaxLoss?.triggerPrice,NaN);
+    if(Number.isFinite(wanted)&&realNumberMatches(current,wanted)){
+      realProtectiveUpdatePending.delete(key);
+    }else if(Date.now()-n(pending?.at,Date.now())>120000){
+      realProtectiveUpdatePending.delete(key);
+    }
+  }
+}
+async function queueRealProtectiveUpdate(position,kind){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
+    return setStatus('Modification réelle refusée : iPhone contrôleur non vérifié.',true);
+  }
+  const inv=realProtectionInventory(position);
+  const normalizedKind=String(kind||'').toUpperCase();
+  if(normalizedKind==='EXIT'&&inv.exitConflict){
+    return setStatus(`${position.symbol} : objectif réel non modifié — ordre concurrent non identifié avec certitude.`,true);
+  }
+  if(normalizedKind==='PROGRESSIVE'&&inv.progressiveConflict){
+    return setStatus(`${position.symbol} : protection gain non modifiée — protection concurrente non identifiée avec certitude.`,true);
+  }
+  if(normalizedKind==='MAX_LOSS'&&inv.maxLossConflict){
+    return setStatus(`${position.symbol} : perte max non modifiée — plusieurs protections ou protection externe détectée.`,true);
+  }
+  if((normalizedKind==='EXIT'||normalizedKind==='PROGRESSIVE')&&!inv.maxLoss.length){
+    return setStatus(`${position.symbol} : modification refusée — aucune protection MAX-LOSS réelle confirmée.`,true);
+  }
+
+  const current=normalizedKind==='EXIT'
+    ?n(inv.managedExit?.price,0)
+    :normalizedKind==='PROGRESSIVE'
+      ?n(inv.managedProgressive?.triggerPrice,0)
+      :n(inv.managedMaxLoss?.triggerPrice,0);
+  const label=normalizedKind==='EXIT'?'objectif de sortie'
+    :normalizedKind==='PROGRESSIVE'?'seuil de protection gain':'seuil de perte maximale';
+  const raw=prompt(`ARGENT RÉEL — ${position.symbol}\nNouveau ${label} (prix Binance) :`,current>0?String(current):'');
+  if(raw===null)return;
+  const wanted=parsePrice(raw,0);
+  if(!(wanted>0))return setStatus(`${position.symbol} : prix réel invalide.`,true);
+
+  let command,key;
+  try{
+    const mod=await loadControllerRealCommandModule();
+    if(normalizedKind==='EXIT'){
+      command=mod.buildControllerUpdateExitCommand(position,wanted,inv.managedExit?.clientOrderId||'');
+    }else{
+      const previous=normalizedKind==='PROGRESSIVE'
+        ?inv.managedProgressive?.clientAlgoId||''
+        :inv.managedMaxLoss?.clientAlgoId||'';
+      command=mod.buildControllerUpdateProtectionCommand(position,wanted,normalizedKind,previous);
+    }
+    key=realUpdatePendingKey(position,normalizedKind);
+  }catch(e){
+    return setStatus(`${position.symbol} : modification réelle refusée — ${String(e?.message||'paramètres invalides')}.`,true);
+  }
+  if(realProtectiveUpdatePending.has(key))return;
+
+  const warning=normalizedKind==='EXIT'
+    ?'Zenith remplacera uniquement un objectif Zenith identifié. La protection MAX-LOSS restera obligatoire.'
+    :normalizedKind==='PROGRESSIVE'
+      ?'Zenith remplacera la protection gain en conservant la protection MAX-LOSS de secours.'
+      :'Zenith confirmera la nouvelle protection MAX-LOSS avant de retirer l’ancienne.';
+  if(!confirm(`ARGENT RÉEL — Confirmer ${position.symbol} ?\n\n${label} : ${price(wanted)}\n${warning}`))return;
+
+  realProtectiveUpdatePending.set(key,{symbol:String(position.symbol||''),kind:normalizedKind,price:wanted,at:Date.now()});
+  renderRealPositions();
+  try{
+    const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
+    const r=await fetch('/api/zenith-sync?action=command',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+      body:JSON.stringify(command)
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.reason||q?.error||('HTTP '+r.status));
+    setStatus(`${position.symbol} : ${label} réel mis en file MASTER. Zenith attend les confirmations Binance avant ACK.`);
+    setTimeout(()=>refreshBinanceAccount(),1000);
+  }catch(e){
+    realProtectiveUpdatePending.delete(key);
+    renderRealPositions();
+    setStatus(`${position.symbol} : modification réelle NON envoyée — ${String(e?.message||'erreur')}.`,true);
+  }
+}
 function renderRealEntryOrders(){
   const wrap=$('realEntryOrdersWrap');if(!wrap)return;
   if(!binanceAccount.connected){wrap.innerHTML='<div class="hint">Lecture Binance indisponible.</div>';return}
@@ -281,13 +426,80 @@ function renderRealPositions(){
   }
   const controller=controllerIdentity.paired&&controllerIdentity.role==='controller';
   wrap.innerHTML=rows.map((p,i)=>{
-    const amt=n(p.positionAmt,0),qty=Math.abs(amt),dir=amt>=0?'LONG':'SHORT',pnl=n(p.unrealizedProfit,0),side=String(p.positionSide||'BOTH').toUpperCase();
+    const amt=n(p.positionAmt,0),qty=Math.abs(amt),dir=amt>=0?'LONG':'SHORT';
+    const pnl=n(p.unrealizedProfit,0),side=String(p.positionSide||'BOTH').toUpperCase();
     const key=controllerRealCommandModule?controllerRealCommandModule.realPositionKey(p):'';
-    const pending=key&&realClosePending.has(key);
-    const closeAllowed=controller&&side==='BOTH'&&qty>0&&!pending;
-    return `<div class="posCard"><div class="posTop"><span class="posSym">RÉEL · ${escapeHtml(p.symbol)} · ${dir}</span><span class="posPnl ${pnl>=0?'pos':'neg'}">${money(pnl)}</span></div><div class="posGrid"><span>Entrée</span><b>${price(p.entryPrice)}</b><span>Mark</span><b>${price(p.markPrice)}</b><span>Quantité</span><b>${escapeHtml(String(qty))}</b><span>Levier</span><b>x${escapeHtml(String(p.leverage||'—'))}</b><span>Marge</span><b>${escapeHtml(String(p.marginType||'—').toUpperCase())}</b><span>Liquidation</span><b>${price(p.liquidationPrice)}</b></div><button class="btn danger closeNowMini" data-real-close="${i}" ${closeAllowed?'':'disabled'}>${pending?'FERMETURE EN ATTENTE':side!=='BOTH'?'HEDGE NON PRIS EN CHARGE':'FERMER RÉEL · LIMIT IOC'}</button></div>`;
+    const closePending=key&&realClosePending.has(key);
+    const inv=realProtectionInventory(p);
+    const emergencyReady=inv.maxLoss.length===1;
+    const exitPending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'EXIT'));
+    const progressivePending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'PROGRESSIVE'));
+    const maxLossPending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'MAX_LOSS'));
+    const baseAllowed=controller&&side==='BOTH'&&qty>0&&!closePending;
+    const closeAllowed=baseAllowed;
+    const exitAllowed=baseAllowed&&emergencyReady&&!inv.exitConflict&&!exitPending;
+    const progressiveAllowed=baseAllowed&&emergencyReady&&!inv.progressiveConflict&&!progressivePending;
+    const maxLossAllowed=baseAllowed&&!inv.maxLossConflict&&!maxLossPending;
+
+    const targetText=inv.exitConflict?'CONFLIT / EXTERNE'
+      :inv.managedExit?price(inv.managedExit.price):'AUCUN';
+    const progressiveText=inv.progressiveConflict?'CONFLIT / EXTERNE'
+      :inv.managedProgressive?price(inv.managedProgressive.triggerPrice):'AUCUNE';
+    const maxLossSingle=inv.maxLoss.length===1?inv.maxLoss[0]:null;
+    const maxLossText=inv.maxLossConflict?'CONFLIT / EXTERNE'
+      :maxLossSingle
+        ?price(maxLossSingle.triggerPrice)+(zenithManagedRealId(maxLossSingle.clientAlgoId)?'':' · EXTERNE')
+        :'ABSENTE';
+
+    const protectionWarning=!emergencyReady
+      ?'<div class="warning" style="margin-top:7px">MODIFICATIONS OBJECTIF / PROTECTION GAIN BLOQUÉES : une seule protection MAX‑LOSS réelle confirmée est requise.</div>'
+      :'';
+
+    return `<div class="posCard">
+      <div class="posTop">
+        <span class="posSym">RÉEL · ${escapeHtml(p.symbol)} · ${dir}</span>
+        <span class="posPnl ${pnl>=0?'pos':'neg'}">${money(pnl)}</span>
+      </div>
+      <div class="posGrid">
+        <span>Entrée</span><b>${price(p.entryPrice)}</b>
+        <span>Mark</span><b>${price(p.markPrice)}</b>
+        <span>Quantité</span><b>${escapeHtml(String(qty))}</b>
+        <span>Levier</span><b>x${escapeHtml(String(p.leverage||'—'))}</b>
+        <span>Objectif réel</span><b>${escapeHtml(targetText)}</b>
+        <span>Protection gain</span><b>${escapeHtml(progressiveText)}</b>
+        <span>Perte MAX</span><b>${escapeHtml(maxLossText)}</b>
+        <span>Liquidation</span><b>${price(p.liquidationPrice)}</b>
+      </div>
+      ${protectionWarning}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+        <button class="btn" data-real-exit="${i}" ${exitAllowed?'':'disabled'}>
+          ${exitPending?'OBJECTIF EN ATTENTE':inv.exitConflict?'OBJECTIF BLOQUÉ':'MODIFIER OBJECTIF'}
+        </button>
+        <button class="btn" data-real-progressive="${i}" ${progressiveAllowed?'':'disabled'}>
+          ${progressivePending?'PROTECTION EN ATTENTE':inv.progressiveConflict?'PROTECTION BLOQUÉE':'PROTECTION GAIN'}
+        </button>
+        <button class="btn danger" data-real-maxloss="${i}" ${maxLossAllowed?'':'disabled'}>
+          ${maxLossPending?'PERTE MAX EN ATTENTE':inv.maxLossConflict?'PERTE MAX BLOQUÉE':'RÉGLER PERTE MAX'}
+        </button>
+        <button class="btn danger" data-real-close="${i}" ${closeAllowed?'':'disabled'}>
+          ${closePending?'FERMETURE EN ATTENTE':side!=='BOTH'?'HEDGE NON PRIS EN CHARGE':'FERMER RÉEL · LIMIT IOC'}
+        </button>
+      </div>
+    </div>`;
   }).join('');
-  wrap.querySelectorAll('[data-real-close]').forEach(b=>b.onclick=e=>{e.stopPropagation();const p=rows[Number(b.dataset.realClose)];if(p)queueRealPositionClose(p)});
+
+  wrap.querySelectorAll('[data-real-exit]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realExit)];if(p)queueRealProtectiveUpdate(p,'EXIT');
+  });
+  wrap.querySelectorAll('[data-real-progressive]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realProgressive)];if(p)queueRealProtectiveUpdate(p,'PROGRESSIVE');
+  });
+  wrap.querySelectorAll('[data-real-maxloss]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realMaxloss)];if(p)queueRealProtectiveUpdate(p,'MAX_LOSS');
+  });
+  wrap.querySelectorAll('[data-real-close]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realClose)];if(p)queueRealPositionClose(p);
+  });
 }
 function applyMasterReadOnlyPolicy(){
   const readOnly=controllerIdentity.paired&&controllerIdentity.role==='master';
@@ -1386,7 +1598,54 @@ function startControllerIdentityCheck(){
   refreshControllerIdentity();
   controllerIdentityTimer=setInterval(refreshControllerIdentity,300000);
 }
-async function refreshBinanceAccount(){try{const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';const r=await fetch('/api/binance-read',{cache:'no-store',headers:{Accept:'application/json',...(token?{Authorization:'Bearer '+token}:{})}});let q={};try{q=await r.json()}catch(_){q={}}if(!r.ok||q?.ok!==true){binanceAccount={...binanceAccount,connected:false,configured:q?.code!=='MISSING_ENV',positions:[],standardOrders:[],realPositions:0,error:q?.error||`HTTP ${r.status}`};renderBinanceAccount();return false}const usdt=q?.usdt||{},positions=Array.isArray(q.positions)?q.positions:[],standardOrders=Array.isArray(q.standardOrderDetails)?q.standardOrderDetails:[];binanceAccount={connected:true,configured:true,walletBalance:n(usdt.balance,n(usdt.walletBalance,NaN)),availableBalance:n(usdt.availableBalance,NaN),positions:clone(positions),standardOrders:clone(standardOrders),realPositions:positions.length,openOrders:n(q.openOrders),latencyMs:n(q.latencyMs),lastOk:Date.now(),error:''};renderBinanceAccount();return true}catch(e){binanceAccount={...binanceAccount,connected:false,positions:[],standardOrders:[],realPositions:0,error:e?.message||'Connexion impossible'};renderBinanceAccount();return false}}
+async function refreshBinanceAccount(){
+  try{
+    const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
+    const r=await fetch('/api/binance-read',{
+      cache:'no-store',
+      headers:{Accept:'application/json',...(token?{Authorization:'Bearer '+token}:{})}
+    });
+    let q={};try{q=await r.json()}catch(_){q={}}
+    if(!r.ok||q?.ok!==true){
+      binanceAccount={
+        ...binanceAccount,connected:false,configured:q?.code!=='MISSING_ENV',
+        positions:[],standardOrders:[],algoOrders:[],realPositions:0,
+        error:q?.error||`HTTP ${r.status}`
+      };
+      reconcileRealProtectiveUpdatePending();
+      renderBinanceAccount();
+      return false;
+    }
+    const usdt=q?.usdt||{};
+    const positions=Array.isArray(q.positions)?q.positions:[];
+    const standardOrders=Array.isArray(q.standardOrderDetails)?q.standardOrderDetails:[];
+    const algoOrders=Array.isArray(q.algoOrderDetails)?q.algoOrderDetails:[];
+    binanceAccount={
+      connected:true,configured:true,
+      walletBalance:n(usdt.balance,n(usdt.walletBalance,NaN)),
+      availableBalance:n(usdt.availableBalance,NaN),
+      positions:clone(positions),
+      standardOrders:clone(standardOrders),
+      algoOrders:clone(algoOrders),
+      realPositions:positions.length,
+      openOrders:n(q.openOrders),
+      latencyMs:n(q.latencyMs),
+      lastOk:Date.now(),
+      error:''
+    };
+    reconcileRealProtectiveUpdatePending();
+    renderBinanceAccount();
+    return true;
+  }catch(e){
+    binanceAccount={
+      ...binanceAccount,connected:false,positions:[],standardOrders:[],algoOrders:[],
+      realPositions:0,error:e?.message||'Connexion impossible'
+    };
+    reconcileRealProtectiveUpdatePending();
+    renderBinanceAccount();
+    return false;
+  }
+}
 function startBinanceAccountReadOnly(){if(binanceAccountTimer)clearInterval(binanceAccountTimer);refreshBinanceAccount();binanceAccountTimer=setInterval(refreshBinanceAccount,15000)}
 function notional(c){return n(c.binanceEffectiveNotional)>0?n(c.binanceEffectiveNotional):n(c.margin,100)*n(c.leverage,10)}
 function normalizeProtections(stages,target=3000){const src=Array.isArray(stages)?stages:[],count=Math.max(protectionCountForTarget(target),src.length&&target==null?src.length:0);return Array.from({length:count},(_,i)=>{const d=defaultProtection(i),x=src[i]||d;return{enabled:x.enabled!==false,arm:Math.max(0,n(x.arm,d.arm)),floor:Math.max(0,n(x.floor,d.floor))}})}
