@@ -896,22 +896,34 @@ async function setMasterMode(mode) {
   return normalized;
 }
 
-async function trySetMasterRunningFrom(expectedMode) {
+async function trySetMasterRunningFrom(expectedMode, expectedMasterDeviceId, expectedMasterRoleEpochRaw = '0') {
   const expected = normalizeMasterMode(expectedMode);
+  const expectedMaster = String(expectedMasterDeviceId || '');
+  const expectedRoleEpoch = String(expectedMasterRoleEpochRaw || '0');
   const script = [
     "local panic = tostring(redis.call('GET', KEYS[1]) or '')",
     "local mode = tostring(redis.call('GET', KEYS[2]) or 'PAUSED')",
     "if ARGV[2] == '1' and panic ~= '0' then return {-1, mode} end",
     "if mode ~= ARGV[1] then return {-2, mode} end",
+    "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+    "local registered = tostring(redis.call('GET', KEYS[4]) or '')",
+    "if lease ~= ARGV[3] or registered ~= ARGV[3] then return {-3, mode} end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[5]) or '0')",
+    "if roleEpoch ~= ARGV[4] then return {-4, mode} end",
     "redis.call('SET', KEYS[2], 'RUNNING')",
     "return {1, 'RUNNING'}"
   ].join('\n');
   const result = await redis([
-    'EVAL', script, '2',
+    'EVAL', script, '5',
     KEY_EMERGENCY_STOP,
     KEY_MASTER_MODE,
+    KEY_MASTER,
+    KEY_MASTER_DEVICE,
+    roleAssignmentKey(PREFIX, 'master'),
     expected,
     REAL_TRADING_ENABLED ? '1' : '0',
+    expectedMaster,
+    expectedRoleEpoch,
   ]);
   const code = Number(Array.isArray(result) ? result[0] : 0);
   const mode = normalizeMasterMode(Array.isArray(result) ? result[1] : '');
@@ -921,9 +933,13 @@ async function trySetMasterRunningFrom(expectedMode) {
       ? 'EMERGENCY_STOP_ACTIVE'
       : code === -2
         ? 'MASTER_MODE_CHANGED'
-        : code === 1
-          ? ''
-          : 'MASTER_MODE_TRANSITION_FAILED',
+        : code === -3
+          ? 'MASTER_LEASE_REQUIRED'
+          : code === -4
+            ? 'MASTER_ROLE_CHANGED'
+            : code === 1
+              ? ''
+              : 'MASTER_MODE_TRANSITION_FAILED',
     masterMode: mode,
   };
 }
@@ -1991,10 +2007,11 @@ export default async function handler(req, res) {
 
       if (!(await verifyMasterAdminCode(req, res, device))) return;
 
-      const [currentMaster, registeredMaster, currentMode] = await Promise.all([
+      const [currentMaster, registeredMaster, currentMode, masterRoleEpochRaw] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('master'),
         masterMode(),
+        redis(['GET', roleAssignmentKey(PREFIX, 'master')]),
       ]);
       if (currentMode !== 'PAUSE_PENDING') {
         return send(res, 409, { ok: false, code: 'MASTER_PAUSE_NOT_PENDING', masterMode: currentMode });
@@ -2011,13 +2028,22 @@ export default async function handler(req, res) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
 
-      const runningTransition = await trySetMasterRunningFrom('PAUSE_PENDING');
+      const runningTransition = await trySetMasterRunningFrom(
+        'PAUSE_PENDING',
+        currentMaster,
+        String(masterRoleEpochRaw || '0')
+      );
       if (!runningTransition.ok) {
-        return send(res, runningTransition.reason === 'EMERGENCY_STOP_ACTIVE' ? 423 : 409, {
+        const code = runningTransition.reason === 'EMERGENCY_STOP_ACTIVE'
+          ? 'EMERGENCY_STOP_ACTIVE'
+          : runningTransition.reason === 'MASTER_LEASE_REQUIRED'
+            ? 'MASTER_LEASE_REQUIRED'
+            : runningTransition.reason === 'MASTER_ROLE_CHANGED'
+              ? 'MASTER_ROLE_CHANGED'
+              : 'MASTER_PAUSE_NOT_PENDING';
+        return send(res, code === 'EMERGENCY_STOP_ACTIVE' ? 423 : 409, {
           ok: false,
-          code: runningTransition.reason === 'EMERGENCY_STOP_ACTIVE'
-            ? 'EMERGENCY_STOP_ACTIVE'
-            : 'MASTER_PAUSE_NOT_PENDING',
+          code,
           masterMode: runningTransition.masterMode,
         });
       }
@@ -2172,10 +2198,11 @@ export default async function handler(req, res) {
       if (!device) return;
 
       if (!(await verifyMasterAdminCode(req, res, device))) return;
-      const [currentMaster, registeredMaster, currentMode] = await Promise.all([
+      const [currentMaster, registeredMaster, currentMode, masterRoleEpochRaw] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('master'),
         masterMode(),
+        redis(['GET', roleAssignmentKey(PREFIX, 'master')]),
       ]);
       if (!currentMaster) {
         return send(res, 409, { ok: false, code: 'MASTER_LEASE_REQUIRED' });
@@ -2230,7 +2257,11 @@ export default async function handler(req, res) {
         });
       }
 
-      const runningTransition = await trySetMasterRunningFrom('PAUSED');
+      const runningTransition = await trySetMasterRunningFrom(
+        'PAUSED',
+        currentMaster,
+        String(masterRoleEpochRaw || '0')
+      );
       if (!runningTransition.ok) {
         return send(res, 409, {
           ok: false,
