@@ -16,7 +16,10 @@ function risk(overrides={}) {
       symbol:'BTCUSDT',
       positionMode:'ONE_WAY',
       marginType:'ISOLATED',
+      margin:100,
       leverage:10,
+      maxLoss:40,
+      referencePrice:50000,
       quantity:0.02,
       ...overrides,
     },
@@ -35,7 +38,7 @@ test('client order ids are deterministic, leg-specific and Binance-length safe',
 
 test('LIMIT entry plan is derived only from a fresh matching risk snapshot',()=>{
   const p=buildEntryOrderPlan({
-    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:50000},
+    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:50000,margin:100,leverage:10,maxLoss:40},
     riskSnapshot:risk(),now
   });
   assert.equal(p.writeAllowed,false);
@@ -48,18 +51,18 @@ test('LIMIT entry plan is derived only from a fresh matching risk snapshot',()=>
 
 test('stale risk snapshot blocks entry planning',()=>{
   assert.throws(()=>buildEntryOrderPlan({
-    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'MARKET'},
+    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:50000,margin:100,leverage:10,maxLoss:40},
     riskSnapshot:{...risk(),observedAt:now-6000},now
   }),/ENTRY_PREFLIGHT_STALE/);
 });
 
 test('Hedge Mode and non-isolated snapshots block entry planning',()=>{
   assert.throws(()=>buildEntryOrderPlan({
-    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'MARKET'},
+    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:50000,margin:100,leverage:10,maxLoss:40},
     riskSnapshot:risk({positionMode:'HEDGE'}),now
   }),/POSITION_MODE_NOT_ONE_WAY/);
   assert.throws(()=>buildEntryOrderPlan({
-    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'MARKET'},
+    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:50000,margin:100,leverage:10,maxLoss:40},
     riskSnapshot:risk({marginType:'CROSSED'}),now
   }),/MARGIN_TYPE_NOT_ISOLATED/);
 });
@@ -98,4 +101,20 @@ test('protective IOC accepts audited OPPONENT escalation values only',()=>{
     assert.equal('price' in p.params,false);
   }
   assert.throws(()=>buildExitOrderPlan({commandId:'cmd-12345678',symbol:'BTCUSDT',direction:'LONG',quantity:0.02,exitMode:'PROTECTIVE_IOC',priceMatch:'QUEUE'}),/PRICE_MATCH_INVALID/);
+});
+
+
+test('real entry planning rejects MARKET and any preflight/request drift',()=>{
+  assert.throws(()=>buildEntryOrderPlan({
+    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'MARKET',margin:100,leverage:10,maxLoss:40},
+    riskSnapshot:risk(),now
+  }),/ENTRY_ORDER_TYPE_LIMIT_REQUIRED/);
+  assert.throws(()=>buildEntryOrderPlan({
+    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:49999,margin:100,leverage:10,maxLoss:40},
+    riskSnapshot:risk(),now
+  }),/ENTRY_PREFLIGHT_PRICE_MISMATCH/);
+  assert.throws(()=>buildEntryOrderPlan({
+    command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:50000,margin:101,leverage:10,maxLoss:40},
+    riskSnapshot:risk(),now
+  }),/ENTRY_PREFLIGHT_MARGIN_MISMATCH/);
 });
