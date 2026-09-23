@@ -74,9 +74,8 @@ function send(res, status, body) {
 }
 
 function timingSafeEqualText(a, b) {
-  const aa = Buffer.from(String(a || ''));
-  const bb = Buffer.from(String(b || ''));
-  if (aa.length !== bb.length) return false;
+  const aa = crypto.createHash('sha256').update(String(a || ''), 'utf8').digest();
+  const bb = crypto.createHash('sha256').update(String(b || ''), 'utf8').digest();
   return crypto.timingSafeEqual(aa, bb);
 }
 
