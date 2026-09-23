@@ -13,7 +13,11 @@ function page(role, mode = 'RUNNING') {
   const state = { role, mode, offline: false, lease: true };
   const context = vm.createContext({
     document: { hidden: false, getElementById: id => elements[id], addEventListener() {} },
-    localStorage: { getItem: () => 'paired-test-token', setItem: () => assert.fail('ADMIN code must not be persisted') },
+    localStorage: {
+      getItem: () => 'paired-test-token',
+      setItem: () => assert.fail('ADMIN code must not be persisted'),
+      removeItem() {},
+    },
     setInterval() {},
     fetch: async (url, init) => {
       if (state.offline) throw new Error('offline');
