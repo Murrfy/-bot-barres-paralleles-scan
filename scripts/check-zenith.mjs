@@ -433,6 +433,30 @@ if (!protectiveUpdateIntent.includes("workingType:'CONTRACT_PRICE'") ||
 }
 
 const protectiveUpdateExecute = fs.readFileSync('api/binance-protective-update-execute.js','utf8');
+for (const [label, source, expectedCalls] of [
+  ['protective execute', protectiveExecute, 2],
+  ['protective update', protectiveUpdateExecute, 6],
+]) {
+  for (const required of [
+    "return {...device,roleIssuedAt:String(issuedAt||'0')}",
+    'async function finalProtectiveMasterGate(master)',
+    "if lease ~= ARGV[1] or registered ~= ARGV[1] then return -1 end",
+    "if roleEpoch ~= ARGV[2] then return -2 end",
+    "if mode == 'PAUSED' then return -3 end",
+    "'PROTECTIVE_FINAL_GATE_UNAVAILABLE'",
+  ]) {
+    if (!source.includes(required)) fail(`${label} final MASTER gate invariant missing: ${required}`);
+  }
+  const gateStart = source.indexOf('async function finalProtectiveMasterGate(master)');
+  const gateEnd = source.indexOf('async function requireFinalProtectiveMaster', gateStart);
+  const gateBlock = gateStart >= 0 && gateEnd > gateStart ? source.slice(gateStart, gateEnd) : '';
+  if (!gateBlock || /EMERGENCY_STOP|panic/i.test(gateBlock)) {
+    fail(`${label} final MASTER gate must preserve protective writes during PANIC/PAUSE_PENDING`);
+  }
+  if ((source.match(/await requireFinalProtectiveMaster\(res,master\)/g) || []).length !== expectedCalls) {
+    fail(`${label} every protective Binance mutation must pass the final MASTER gate`);
+  }
+}
 if (!protectiveUpdateExecute.includes('validateMaxLossTrigger({') ||
     !protectiveUpdateExecute.includes('hardMaxLossUsd:REAL_RISK_LIMITS.maxLossUsd') ||
     !protectiveUpdateExecute.includes('MAX_LOSS_TRIGGER_INVALID')) {

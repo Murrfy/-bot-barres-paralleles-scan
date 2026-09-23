@@ -73,9 +73,52 @@ async function requireCurrentMaster(req){
     if(String(lease||'')!==String(device.deviceId)){
       const e=new Error('MASTER_LEASE_REQUIRED');e.code='MASTER_LEASE_REQUIRED';throw e;
     }
-    return device;
+    return {...device,roleIssuedAt:String(issuedAt||'0')};
   }
   return null;
+}
+
+async function finalProtectiveMasterGate(master){
+  const expectedMaster=String(master?.deviceId||'');
+  const expectedRoleEpoch=String(master?.roleIssuedAt||'0');
+  const script=[
+    "local lease = tostring(redis.call('GET', KEYS[1]) or '')",
+    "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if lease ~= ARGV[1] or registered ~= ARGV[1] then return -1 end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[3]) or '0')",
+    "if roleEpoch ~= ARGV[2] then return -2 end",
+    "local mode = tostring(redis.call('GET', KEYS[4]) or 'PAUSED')",
+    "if mode == 'PAUSED' then return -3 end",
+    "return 1"
+  ].join('\n');
+  const result=Number(await redis([
+    'EVAL',script,'4',
+    KEY_MASTER,
+    KEY_MASTER_DEVICE,
+    roleAssignmentKey(PREFIX,'master'),
+    KEY_MASTER_MODE,
+    expectedMaster,
+    expectedRoleEpoch,
+  ]));
+  return {
+    ok:result===1,
+    reason:result===-1
+      ?'MASTER_LEASE_REQUIRED'
+      :result===-2
+        ?'MASTER_ROLE_CHANGED'
+        :result===-3
+          ?'MASTER_PAUSED'
+          :'PROTECTIVE_FINAL_GATE_FAILED'
+  };
+}
+
+async function requireFinalProtectiveMaster(res,master){
+  let gate=null;
+  try{gate=await finalProtectiveMasterGate(master)}
+  catch{return send(res,503,{ok:false,code:'PROTECTIVE_FINAL_GATE_UNAVAILABLE',writeAttempted:false}),false}
+  if(gate.ok)return true;
+  send(res,gate.reason==='MASTER_PAUSED'?423:409,{ok:false,code:gate.reason,writeAttempted:false});
+  return false;
 }
 function direction(position){
   const explicit=String(position?.direction||'').toUpperCase();
@@ -216,6 +259,7 @@ export default async function handler(req,res){
         writeAttempted:false,
       });
     }
+    if(!(await requireFinalProtectiveMaster(res,master)))return;
     try{
       const result=await cancelEntryOrderIdempotent({
         apiKey,secret,symbol,clientOrderId,writesEnabled:true,timestamp:Date.now(),
@@ -299,6 +343,7 @@ export default async function handler(req,res){
     });
   }
 
+  if(!(await requireFinalProtectiveMaster(res,master)))return;
   try{
     const result=await placeStandardOrderIdempotent({
       apiKey,
