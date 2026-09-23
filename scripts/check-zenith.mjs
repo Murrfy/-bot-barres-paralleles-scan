@@ -569,7 +569,9 @@ for (const file of [
   'api/binance-order-test.js',
 ]) {
   const source=fs.readFileSync(file,'utf8');
-  if (!source.includes('deviceTokenCandidates(req)')) fail(`${file} must accept the secure device session cookie`);
+  if (!source.includes('cookieToken(req)') || source.includes('deviceTokenCandidates(req)')) {
+    fail(`${file} must require cookie-only Zenith device authentication`);
+  }
   if (!source.includes('deviceSessionRecordActive(device)')) fail(`${file} must reject absolutely expired Zenith device sessions`);
 }
 
