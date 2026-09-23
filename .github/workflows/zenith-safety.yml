@@ -26,6 +26,8 @@ jobs:
           package-manager-cache: false
       - name: Check secret hygiene
         run: node scripts/check-secret-hygiene.mjs
+      - name: Check dangerous runtime primitives
+        run: node scripts/check-dangerous-runtime-primitives.mjs
       - name: Check full Git history for secrets
         run: node scripts/check-secret-history.mjs
       - name: Check zero third-party dependency surface
