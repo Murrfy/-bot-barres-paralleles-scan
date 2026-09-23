@@ -1565,6 +1565,7 @@ export default async function handler(req, res) {
     if (action === 'master-authorize' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller']);
       if (!device) return;
+      if (!(await verifyMasterAdminCode(req, res, device))) return;
 
       const masterDevice = await roleDeviceId('master');
       if (!masterDevice) {
