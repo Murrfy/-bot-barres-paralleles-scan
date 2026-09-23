@@ -977,6 +977,18 @@ for (const required of [
   if (!syncAdminSecretPolicy.includes(required)) fail(`MASTER admin secret policy invariant missing: ${required}`);
 }
 
+for (const required of [
+  'pairingSecretPolicyBlockers',
+  'PAIRING_CODE_TOO_WEAK',
+  'MASTER_PAIRING_CODE_TOO_WEAK',
+  'PAIRING_CODES_REUSED',
+  'PAIRING_CODE_REUSES_MASTER_ADMIN_CODE',
+  'MASTER_PAIRING_CODE_REUSES_MASTER_ADMIN_CODE',
+  "'PAIRING_SECRET_POLICY_BLOCKED'"
+]) {
+  if (!syncAdminSecretPolicy.includes(required)) fail(`pairing secret policy invariant missing: ${required}`);
+}
+
 const boundedRequestBody = fs.readFileSync('lib/request-body-limit.mjs','utf8');
 for (const required of ['requestBodyStatus','content-length','serializedBodyBytes']) {
   if (!boundedRequestBody.includes(required)) fail(`request body guard missing invariant: ${required}`);
