@@ -86,6 +86,8 @@ jobs:
         run: node --test scripts/test-public-health-minimal.mjs
       - name: Test Vercel browser security headers
         run: node --test scripts/test-vercel-security-headers.mjs
+      - name: Test Vercel function duration caps
+        run: node --test scripts/test-vercel-function-duration-caps.mjs
       - name: Test exact CSP inline script hashes
         run: node scripts/test-csp-inline-script-hashes.mjs
       - name: Test Vercel production-only Binance write gate
