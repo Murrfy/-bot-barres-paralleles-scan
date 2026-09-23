@@ -185,7 +185,12 @@ for (const required of [
   "'HEDGE_MODE_UNSUPPORTED'",
   "report.status!=='CLEAN_REAL'",
   "runtimeDataHash",
-  "placeStandardOrderIdempotent"
+  "placeStandardOrderIdempotent",
+  "KEY_REAL_EXECUTION_ARMED",
+  "REAL_EXECUTION_DEPLOYMENT_SHA_MISSING",
+  "REAL_EXECUTION_ARM_MASTER_CHANGED",
+  "REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED",
+  "protectiveModeReason"
 ]) {
   if (!protectiveExecute.includes(required)) fail(`protective execution gate missing: ${required}`);
 }
@@ -467,6 +472,7 @@ if (!sync.includes('KEY_REAL_EXECUTION_ARMED') ||
     !sync.includes("action === 'real-execution-arm'") ||
     !sync.includes("'REAL_EXECUTION_ARM_BLOCKED'") ||
     !sync.includes('DEPLOYMENT_SHA') ||
+    !sync.includes("'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING'") ||
     !sync.includes("'REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED'")) {
   fail('real execution must require an explicit admin arm bound to the current MASTER and deployment');
 }
