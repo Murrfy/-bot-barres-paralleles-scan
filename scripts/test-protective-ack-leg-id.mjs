@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { buildExitLimitPlan } from '../lib/order-intent.mjs';
+import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { buildProtectiveAlgoPlan } from '../lib/protective-update-intent.mjs';
 
 const sync=await readFile(new URL('../api/zenith-sync.js',import.meta.url),'utf8');
@@ -15,7 +15,7 @@ test('protective ACK requires exact Zenith leg prefix',()=>{
 });
 
 test('planner IDs match the ACK prefixes exactly',()=>{
-  const exit=buildExitLimitPlan({
+  const exit=buildExitOrderPlan({
     commandId:'command-12345678',symbol:'BTCUSDT',direction:'LONG',
     quantity:1,targetPrice:110,exitMode:'NORMAL_LIMIT'
   });
