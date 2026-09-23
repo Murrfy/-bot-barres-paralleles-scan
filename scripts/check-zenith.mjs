@@ -189,7 +189,7 @@ if (!index.includes('Positions réelles Binance') ||
 }
 
 const masterCommandDispatch = fs.readFileSync('lib/master-command-dispatch.mjs','utf8');
-for (const required of ['masterExecutionEligible','EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY','/api/binance-protective-execute','MASTER_COMMAND_NOT_IMPLEMENTED','CLOSE_ALL_REQUIRED','closeAll:true']) {
+for (const required of ['masterExecutionEligible','EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION','EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY','/api/binance-protective-execute','/api/binance-protective-mutate','MASTER_COMMAND_NOT_IMPLEMENTED','CLOSE_ALL_REQUIRED','closeAll:true']) {
   if (!masterCommandDispatch.includes(required)) fail(`MASTER command dispatcher invariant missing: ${required}`);
 }
 if (masterCommandDispatch.includes('EXEC_OPEN_POSITION') && !masterCommandDispatch.includes("supported:false")) {
@@ -206,12 +206,58 @@ for (const required of [
   "cancelEntryOrderIdempotent",
   "CANCEL_TARGET_UNKNOWN",
   "CANCEL_RESULT_AMBIGUOUS",
-  "method: 'DELETE'"
+  "method: 'DELETE'",
+  "modifyStandardLimitOrderIdempotent",
+  "method: 'PUT'",
+  "ORDER_MODIFY_RESULT_AMBIGUOUS",
+  "MODIFY_TARGET_PARTIALLY_FILLED"
 ]) {
   if (!binanceOrderWriter.includes(required)) fail(`Binance idempotent writer invariant missing: ${required}`);
 }
 if ((binanceOrderWriter.match(/method: 'POST'/g)||[]).length !== 1) {
   fail('Binance order writer must have exactly one standard-order POST path');
+}
+
+const binanceAlgoWriter = fs.readFileSync('lib/binance-algo-order-writer.mjs','utf8');
+for (const required of [
+  "/fapi/v1/algoOrder",
+  "placeAlgoOrderIdempotent",
+  "cancelAlgoOrderIdempotent",
+  "RECOVERED_AFTER_AMBIGUOUS_POST",
+  "ALGO_ORDER_RESULT_AMBIGUOUS",
+  "ALGO_CANCEL_RESULT_AMBIGUOUS"
+]) {
+  if (!binanceAlgoWriter.includes(required)) fail(`Binance algo writer invariant missing: ${required}`);
+}
+
+const protectiveMutationState = fs.readFileSync('lib/protective-mutation-state.mjs','utf8');
+for (const required of [
+  "buildProtectionReplacementPlan",
+  "STOP_MARKET",
+  "closePosition:'true'",
+  "evaluateExitUpdateConfirmation",
+  "evaluateProtectionUpdateConfirmation",
+  "PREVIOUS_PROTECTION_STILL_ACTIVE"
+]) {
+  if (!protectiveMutationState.includes(required)) fail(`protective mutation state invariant missing: ${required}`);
+}
+
+const protectiveMutate = fs.readFileSync('api/binance-protective-mutate.js','utf8');
+for (const required of [
+  "ZENITH_PROTECTIVE_MUTATION_ENABLED",
+  "'EXEC_UPDATE_EXIT'",
+  "'EXEC_UPDATE_PROTECTION'",
+  "modifyStandardLimitOrderIdempotent",
+  "placeAlgoOrderIdempotent",
+  "cancelAlgoOrderIdempotent",
+  "PROTECTIVE_MUTATION_WRITE_LOCKED",
+  "PROTECTION_RACE_OLD_TRIGGERED",
+  "confirmationRequired:true"
+]) {
+  if (!protectiveMutate.includes(required)) fail(`protective mutation execution invariant missing: ${required}`);
+}
+if (!protectiveMutate.includes("closePosition:'true'") && !protectiveMutationState.includes("closePosition:'true'")) {
+  fail('protective replacement must remain closePosition STOP_MARKET');
 }
 
 const protectiveExecute = fs.readFileSync('api/binance-protective-execute.js','utf8');
@@ -303,8 +349,10 @@ for (const file of ['api/binance-read.js','api/binance-reconcile.js','api/binanc
 
 if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'") ||
     !sync.includes("process.env.ZENITH_BINANCE_WRITE_ENABLED === '1'") ||
-    !sync.includes("'BINANCE_WRITE_DISABLED'")) {
-  fail('api/zenith-sync.js must keep both explicit real-trading and Binance-write environment locks');
+    !sync.includes("process.env.ZENITH_PROTECTIVE_MUTATION_ENABLED === '1'") ||
+    !sync.includes("'BINANCE_WRITE_DISABLED'") ||
+    !sync.includes("'PROTECTIVE_MUTATION_DISABLED'")) {
+  fail('api/zenith-sync.js must keep global, Binance-write and protective-mutation locks');
 }
 if (!sync.includes("'SIMULATION_LOCKED'")) {
   fail('api/zenith-sync.js must expose SIMULATION_LOCKED when real trading is not armed');
@@ -423,6 +471,10 @@ if (!index.includes("role==='master'") ||
 if (!index.includes('masterExecutionCycle') ||
     !index.includes("masterRuntimeApi('command-next','POST'") ||
     !index.includes("masterCommandDisposition('command-ack'") ||
+    !index.includes("import('/lib/protective-mutation-state.mjs')") ||
+    !index.includes("callMasterExecutionEndpoint('/api/binance-protective-execute'") ||
+    !index.includes('runMasterProtectiveMutation') ||
+    !index.includes('runMasterCancelEntry') ||
     !index.includes("masterCommandDisposition('command-requeue'") ||
     !index.includes("masterCommandDisposition('command-fail'") ||
     !index.includes("fetch('/api/binance-protective-execute'") ||
