@@ -486,6 +486,15 @@ if (!sync.includes('CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60') ||
 if (!sync.includes("'STALE_CONTROLLER_COMMAND'") || !sync.includes("'CONTROLLER_REPLACED'")) {
   fail('api/zenith-sync.js must reject/quarantine commands from a replaced controller');
 }
+
+if (!sync.includes('protectiveDeferredSafe') ||
+    !sync.includes('commandAllowedDuringDeferredConfig') ||
+    !index.includes('configDeferredSafe') ||
+    !index.includes('localAppliedConfigMatches') ||
+    !index.includes('IPAD MASTER · CONFIG EN ATTENTE · PROTECTIONS ACTIVES') ||
+    !index.includes('masterRuntimeState.synchronized===true&&masterRuntimeState.configDeferredSafe!==true')) {
+  fail('pending controller config must preserve only protective continuity on the last applied MASTER config and block new entries');
+}
 if (!sync.includes("const KEY_MASTER_MODE") ||
     !sync.includes("action === 'master-pause'") ||
     !sync.includes("action === 'master-resume'")) {
