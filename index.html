@@ -1040,7 +1040,7 @@ async function reconcileMasterUserStream(secondPass=false){
   if(!ws||ws.readyState!==WebSocket.OPEN)return false;
   masterUserStream.reconcileBusy=true;
   try{
-    const r=await fetch('/api/binance-reconcile',{cache:'no-store',headers:{Accept:'application/json'}});
+    const r=await fetch('/api/binance-reconcile',{method:'POST',cache:'no-store',headers:{Accept:'application/json'}});
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true||!q?.report){
       const reason=String(q?.code||q?.error||('HTTP '+r.status));

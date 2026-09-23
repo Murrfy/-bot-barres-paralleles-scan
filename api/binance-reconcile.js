@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, sameOriginMutation } from '../lib/device-session.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
+import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -505,8 +506,15 @@ async function persistReport(report, runtimeRaw = null) {
 }
 
 export default async function handler(req, res) {
-  if (req.method !== 'GET') {
+  if (req.method !== 'POST') {
     return send(res, 405, { ok: false, code: 'METHOD_NOT_ALLOWED' });
+  }
+  if (!sameOriginMutation(req)) {
+    return send(res, 403, { ok: false, code: 'ORIGIN_FORBIDDEN' });
+  }
+  const bodyStatus = requestBodyStatus(req, 4096);
+  if (!bodyStatus.ok) {
+    return send(res, 413, { ok: false, code: 'REQUEST_BODY_TOO_LARGE', maxBytes: bodyStatus.maxBytes });
   }
 
   let device = null;

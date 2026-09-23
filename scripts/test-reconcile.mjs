@@ -10,11 +10,15 @@ process.env.BINANCE_API_SECRET = 'test-only';
 const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
   .replace(
     /^import \{[^\n]*deviceTokenCandidates[^\n]*\} from '\.\.\/lib\/device-session\.mjs';\n/m,
-    "const deviceTokenCandidates = req => { const h=String(req?.headers?.authorization||''); const t=h.startsWith('Bearer ')?h.slice(7).trim():''; return t?[t]:[]; }; const deviceSessionRecordActive = () => true; const roleAssignmentKey = (prefix,role) => prefix + ':role-issued-at:' + role; const deviceRoleAssignmentActive = (device,issuedAt) => !issuedAt || Number(device?.createdAt||0) >= Number(issuedAt);\n"
+    "const deviceTokenCandidates = req => { const h=String(req?.headers?.authorization||''); const t=h.startsWith('Bearer ')?h.slice(7).trim():''; return t?[t]:[]; }; const deviceSessionRecordActive = () => true; const roleAssignmentKey = (prefix,role) => prefix + ':role-issued-at:' + role; const deviceRoleAssignmentActive = (device,issuedAt) => !issuedAt || Number(device?.createdAt||0) >= Number(issuedAt); const sameOriginMutation = req => String(req?.headers?.origin||'') === 'https://zenith.test';\n"
   )
   .replace(
     /^import \{ REAL_RISK_LIMITS \} from '\.\.\/lib\/risk-policy\.mjs';\n/m,
     "const REAL_RISK_LIMITS = Object.freeze({ maxLossUsd: 400 });\n"
+  )
+  .replace(
+    /^import \{ requestBodyStatus \} from '\.\.\/lib\/request-body-limit\.mjs';\n/m,
+    "const requestBodyStatus = (req,maxBytes) => { const bytes=Number(req?.headers?.['content-length']||0); return bytes>maxBytes?{ok:false,maxBytes}:{ok:true,maxBytes}; };\n"
   );
 const { default: handler, reconcile, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder } = await import(
   'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder };').toString('base64')
@@ -108,6 +112,27 @@ test('duplicate and absent order identities block', () => {
   assert.ok(reconcile(runtime(), [], [{ symbol: 'BTCUSDT' }]).reasons.includes('ORDER_IDENTITIES_INVALID'));
 });
 
+test('HTTP reconciliation requires bounded same-origin POST', async () => {
+  const makeRes=()=>({setHeader(){},status(n){this.code=n;return this},json(body){this.body=body}});
+  {
+    const res=makeRes();
+    await handler({method:'GET',headers:{origin:'https://zenith.test'}},res);
+    assert.equal(res.code,405);
+  }
+  {
+    const res=makeRes();
+    await handler({method:'POST',headers:{origin:'https://evil.test'}},res);
+    assert.equal(res.code,403);
+    assert.equal(res.body.code,'ORIGIN_FORBIDDEN');
+  }
+  {
+    const res=makeRes();
+    await handler({method:'POST',headers:{origin:'https://zenith.test','content-length':'5000'}},res);
+    assert.equal(res.code,413);
+    assert.equal(res.body.code,'REQUEST_BODY_TOO_LARGE');
+  }
+});
+
 test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance reads', async () => {
   const original = globalThis.fetch;
   try {
@@ -156,7 +181,7 @@ test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance
         return new Response(JSON.stringify(scenario === 'invalid' ? { unexpected: true } : []));
       };
       const res = { setHeader() {}, status(n) { this.code = n; return this; }, json(body) { this.body = body; } };
-      await handler({ method: 'GET', headers: { authorization: 'Bearer test-device' } }, res);
+      await handler({ method: 'POST', headers: { authorization: 'Bearer test-device', origin: 'https://zenith.test' } }, res);
       if (['controller', 'replaced', 'missing-owner'].includes(scenario)) {
         assert.equal(res.code, 401); assert.equal(binanceCalls, 0);
       } else if (scenario === 'lease-mismatch') {
