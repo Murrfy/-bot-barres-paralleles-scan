@@ -351,9 +351,6 @@ if (!index.includes('orphanZenithCleanupOrders(q.report)') ||
   fail('MASTER must auto-clean confirmed Zenith orphans and UI must distinguish private account access from public Binance market data');
 }
 
-const userStreamSeed=fs.readFileSync('lib/user-stream-seed.mjs','utf8');
-const userStreamState=fs.readFileSync('lib/user-stream-state.mjs','utf8');
-const masterRuntimeInventory=fs.readFileSync('lib/master-runtime-inventory.mjs','utf8');
 if (!userStreamSeed.includes('positionLifecycleAt:Number(p.updateTime||snapshot.observedAt||0)') ||
     !userStreamState.includes('positionLifecycleAt=sameCore') ||
     !masterRuntimeInventory.includes('lifecycleAt: Number(p.positionLifecycleAt || p.eventTime || 0)') ||
