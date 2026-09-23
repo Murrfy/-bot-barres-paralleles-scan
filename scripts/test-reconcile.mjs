@@ -147,3 +147,38 @@ test('HTTP handler rejects replaced devices, malformed Binance data, and failed 
     }
   } finally { globalThis.fetch = original; }
 });
+
+
+test('Zenith-managed reduce-only order without a live position is an orphan mismatch', () => {
+  const stale = normalizeActualOrder({
+    symbol:'BTCUSDT',positionSide:'BOTH',side:'SELL',type:'LIMIT',
+    orderId:99,clientOrderId:'zth-EXI-0123456789abcdef01234567',
+    origQty:'1',executedQty:'0',reduceOnly:true,closePosition:false,
+    price:'51000',timeInForce:'GTC'
+  });
+  const result = reconcile(runtime([], [stale]), [], [stale]);
+  assert.ok(result.reasons.includes('ORPHAN_ZENITH_PROTECTIVE_ORDER'));
+  assert.equal(result.differences.orphanZenithProtectiveOrders.length,1);
+});
+
+test('Zenith-managed algo protection without a live position is an orphan mismatch', () => {
+  const stale = normalizeActualAlgoOrder({
+    symbol:'BTCUSDT',positionSide:'BOTH',side:'SELL',orderType:'STOP',
+    algoId:100,clientAlgoId:'zth-PRO-0123456789abcdef01234567',
+    quantity:'1',reduceOnly:true,closePosition:false,
+    price:'50500',triggerPrice:'50500',timeInForce:'GTC',algoStatus:'NEW'
+  });
+  const result = reconcile(runtime([], [stale]), [], [stale]);
+  assert.ok(result.reasons.includes('ORPHAN_ZENITH_PROTECTIVE_ORDER'));
+});
+
+test('external reduce-only order is not classified as a Zenith orphan', () => {
+  const external = normalizeActualOrder({
+    symbol:'BTCUSDT',positionSide:'BOTH',side:'SELL',type:'LIMIT',
+    orderId:101,clientOrderId:'manual-exit',
+    origQty:'1',executedQty:'0',reduceOnly:true,closePosition:false,
+    price:'51000',timeInForce:'GTC'
+  });
+  const result = reconcile(runtime([], [external]), [], [external]);
+  assert.equal(result.reasons.includes('ORPHAN_ZENITH_PROTECTIVE_ORDER'),false);
+});
