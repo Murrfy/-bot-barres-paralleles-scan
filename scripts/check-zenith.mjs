@@ -142,6 +142,12 @@ if (!binancePreflight.includes("'MASTER_REQUIRED'") ||
 if (!binancePreflight.includes('READ_ONLY_PREFLIGHT') || !binancePreflight.includes('writeAttempted: false')) {
   fail('entry preflight must explicitly remain read-only');
 }
+if (!binancePreflight.includes('ENTRY_PREFLIGHT_HTTP_RATE_LIMIT_PER_MINUTE = 6') ||
+    !binancePreflight.includes('entryPreflightHttpRateAllowed') ||
+    !binancePreflight.includes("'ENTRY_PREFLIGHT_HTTP_RATE_LIMIT'") ||
+    !binancePreflight.includes("res.setHeader('Retry-After'")) {
+  fail('entry preflight HTTP endpoint must rate-limit leased MASTER requests before contacting Binance');
+}
 
 const runtimeSnapshotApi = fs.readFileSync('api/binance-runtime-snapshot.js','utf8');
 for (const required of ['/fapi/v3/positionRisk','/fapi/v1/openOrders','/fapi/v1/openAlgoOrders',"MASTER_LEASE_REQUIRED","writeAttempted:false"]) {
