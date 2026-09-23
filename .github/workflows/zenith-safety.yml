@@ -30,6 +30,8 @@ jobs:
         run: node scripts/check-zenith.mjs
       - name: Test API error sanitization
         run: node --test scripts/test-api-error-sanitization.mjs
+      - name: Test audit secret hygiene
+        run: node --test scripts/test-audit-secret-hygiene.mjs
       - name: Check Binance read API syntax
         run: node --check api/binance-read.js
       - name: Check Binance reconciliation API syntax
