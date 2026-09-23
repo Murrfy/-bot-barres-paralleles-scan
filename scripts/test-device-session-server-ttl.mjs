@@ -7,7 +7,7 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8');
 test('device sessions have an absolute 30-day lifetime instead of sliding forever', () => {
   assert.match(
     source,
-    /import \{[^\n]*DEVICE_SESSION_MAX_AGE_SECONDS[^\n]*deviceTokenCandidates[^\n]*setDeviceSessionCookie[^\n]*clearDeviceSessionCookie[^\n]*sameOriginMutation[^\n]*\} from '\.\.\/lib\/device-session\.mjs';/
+    /import \{[^\n]*DEVICE_SESSION_MAX_AGE_SECONDS[^\n]*bearerToken[^\n]*cookieToken[^\n]*setDeviceSessionCookie[^\n]*clearDeviceSessionCookie[^\n]*sameOriginMutation[^\n]*\} from '\.\.\/lib\/device-session\.mjs';/
   );
 
   assert.match(
