@@ -54,21 +54,28 @@ async function redis(command) {
   return data?.result;
 }
 
-async function requireZenithDevice(req) {
+async function requireCurrentMaster(req) {
   for (const token of deviceTokenCandidates(req)) {
     const tokenHash = sha256(token);
     const raw = await redis(['GET', `${PREFIX}:device:${tokenHash}`]);
     if (!raw) continue;
-    try {
-      const device = JSON.parse(raw);
-      if (!device?.deviceId || !['controller', 'master'].includes(device?.role)) continue;
-      const roleKey = device.role === 'master'
-        ? `${PREFIX}:role-device:master`
-        : `${PREFIX}:role-device:controller`;
-      const owner = await redis(['GET', roleKey]);
-      if (!owner || String(owner) !== String(device.deviceId)) continue;
-      return device;
-    } catch {}
+
+    let device = null;
+    try { device = JSON.parse(raw); } catch {}
+    if (!device?.deviceId || device.role !== 'master') continue;
+
+    const [registered, lease] = await Promise.all([
+      redis(['GET', `${PREFIX}:role-device:master`]),
+      redis(['GET', `${PREFIX}:master`]),
+    ]);
+
+    if (!registered || String(registered) !== String(device.deviceId)) continue;
+    if (String(lease || '') !== String(device.deviceId)) {
+      const e = new Error('MASTER_LEASE_REQUIRED');
+      e.code = 'MASTER_LEASE_REQUIRED';
+      throw e;
+    }
+    return device;
   }
   return null;
 }
@@ -198,18 +205,21 @@ export default async function handler(req, res) {
     return send(res, 405, { ok: false, code: 'METHOD_NOT_ALLOWED' });
   }
 
-  let device = null;
+  let master = null;
   try {
-    device = await requireZenithDevice(req);
+    master = await requireCurrentMaster(req);
   } catch (e) {
+    if (e?.code === 'MASTER_LEASE_REQUIRED') {
+      return send(res, 409, { ok: false, code: 'MASTER_LEASE_REQUIRED' });
+    }
     return send(res, 503, {
       ok: false,
       code: e?.code || 'AUTH_BACKEND_ERROR',
       error: e?.message || 'Authentification Zenith indisponible.',
     });
   }
-  if (!device) {
-    return send(res, 401, { ok: false, code: 'UNAUTHORIZED_DEVICE' });
+  if (!master) {
+    return send(res, 401, { ok: false, code: 'MASTER_REQUIRED' });
   }
 
   const symbol = String(req.query?.symbol || '').trim().toUpperCase();
