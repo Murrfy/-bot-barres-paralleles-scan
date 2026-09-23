@@ -86,6 +86,8 @@ jobs:
         run: node --test scripts/test-entry-preflight-auth.mjs
       - name: Test secure device session
         run: node --test scripts/test-device-session.mjs
+      - name: Test one-shot legacy Bearer migration
+        run: node --test scripts/test-bearer-one-shot-migration.mjs
       - name: Test bounded request bodies
         run: node --test scripts/test-request-body-limit.mjs
       - name: Test trusted Vercel client IP
