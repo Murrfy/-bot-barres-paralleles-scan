@@ -396,6 +396,7 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
       if (String(order?.side || '').toUpperCase() !== expectedSide) continue;
       if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') continue;
       if (order?.closePosition !== true) continue;
+      if (!zenithManagedOrderId(order)) continue;
       const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
       if (!(entryPrice > 0) || !(trigger > 0) || !(quantity > 0)) continue;
       const lossSide = position.direction === 'LONG' ? trigger < entryPrice : trigger > entryPrice;
