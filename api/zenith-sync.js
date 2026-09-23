@@ -59,6 +59,7 @@ const PAIR_GLOBAL_RATE_LIMIT = 30;
 const CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60;
 const CONTROLLER_REPLACEMENT_RATE_LIMIT = 5;
 const CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT = 30;
+const CONTROLLER_STATE_WRITE_RATE_LIMIT_PER_MINUTE = 120;
 const MASTER_ADMIN_FAILURE_LIMIT = 5;
 const MASTER_ADMIN_LOCK_SECONDS = 15 * 60;
 const AUTH_SECRET_INPUT_MAX_CHARS = 256;
@@ -348,6 +349,17 @@ async function controllerReplacementRateAllowed(req) {
   const counts = await incrementWithGlobalExpiry(localKey, globalKey, 120);
   return counts.localCount <= CONTROLLER_REPLACEMENT_RATE_LIMIT &&
     counts.globalCount <= CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT;
+}
+
+async function controllerStateWriteRateAllowed(deviceId) {
+  const bucket = Math.floor(Date.now() / 60000);
+  const key = `${PREFIX}:rate:controller-state-write:${sha256(deviceId)}:${bucket}`;
+  const count = await incrementWithExpiry(key, 120);
+  return count <= CONTROLLER_STATE_WRITE_RATE_LIMIT_PER_MINUTE;
+}
+
+function controllerStateRetryAfterSeconds() {
+  return Math.max(1, 60 - (Math.floor(Date.now() / 1000) % 60));
 }
 
 function masterAdminFailureKey(device) {
@@ -2215,6 +2227,23 @@ export default async function handler(req, res) {
     if (action === 'controller-state' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller']);
       if (!device) return;
+
+      try {
+        if (!(await controllerStateWriteRateAllowed(device.deviceId))) {
+          const retryAfter = controllerStateRetryAfterSeconds();
+          res.setHeader('Retry-After', String(retryAfter));
+          return send(res, 429, {
+            ok: false,
+            code: 'CONTROLLER_STATE_WRITE_RATE_LIMIT',
+            retryAfterSeconds: retryAfter,
+          });
+        }
+      } catch (e) {
+        return send(res, 503, {
+          ok: false,
+          code: e?.code || 'RATE_LIMIT_BACKEND_ERROR',
+        });
+      }
 
       const expectedRevision = Number(req.body?.expectedRevision);
       if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
