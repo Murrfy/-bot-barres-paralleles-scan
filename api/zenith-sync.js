@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId } from '../lib/device-session.mjs';
+import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId, roleSessionKey } from '../lib/device-session.mjs';
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
@@ -394,6 +394,8 @@ async function authDevice(req, allowBearer = false) {
     try {
       const device = JSON.parse(raw);
       if (!device?.deviceId || !['controller', 'master'].includes(device?.role)) continue;
+      const activeSessionHash = await redis(['GET', roleSessionKey(device.role)]);
+      if (activeSessionHash && String(activeSessionHash) !== hash) continue;
       return {
         ...device,
         tokenHash: hash,
@@ -480,18 +482,21 @@ async function rotateLegacyBearerSession(device) {
     "local old = redis.call('GET', KEYS[1])",
     "if not old then return 0 end",
     "redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])",
+    "redis.call('SET', KEYS[4], ARGV[4], 'EX', ARGV[3])",
     "redis.call('DEL', KEYS[1])",
     "return 1"
   ].join('\n');
 
   const result = Number(await redis([
-    'EVAL', script, '3',
+    'EVAL', script, '4',
     `${PREFIX}:device:${device.tokenHash}`,
     `${PREFIX}:device:${newTokenHash}`,
     roleDeviceKey(device.role),
+    roleSessionKey(device.role),
     String(device.deviceId),
     JSON.stringify(updated),
     String(remainingSeconds),
+    newTokenHash,
   ]));
 
   if (result === -1) return { ok:false, reason:'ROLE_DEVICE_CONFLICT' };
@@ -1301,7 +1306,19 @@ export default async function handler(req, res) {
         createdAt: Date.now(),
         lastSeenAt: Date.now(),
       };
-      await redis(['SET', `${PREFIX}:device:${tokenHash}`, JSON.stringify(record), 'EX', String(DEVICE_SESSION_MAX_AGE_SECONDS)]);
+      const sessionScript = [
+        "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])",
+        "redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[2])",
+        "return 1"
+      ].join('\n');
+      await redis([
+        'EVAL', sessionScript, '2',
+        `${PREFIX}:device:${tokenHash}`,
+        roleSessionKey(role),
+        JSON.stringify(record),
+        String(DEVICE_SESSION_MAX_AGE_SECONDS),
+        tokenHash,
+      ]);
       setDeviceSessionCookie(res, token);
       return send(res, 201, { ok: true, sessionReady: true, device: record });
     }
@@ -1396,18 +1413,21 @@ export default async function handler(req, res) {
         "end",
         "redis.call('SET', KEYS[2], ARGV[1])",
         "redis.call('SET', KEYS[3], ARGV[2], 'EX', ARGV[3])",
+        "redis.call('SET', KEYS[4], ARGV[4], 'EX', ARGV[3])",
         "redis.call('DEL', KEYS[1])",
         "return {1, oldController, ARGV[1]}"
       ].join('\n');
 
       const result = await redis([
-        'EVAL', script, '3',
+        'EVAL', script, '4',
         replacementKey(recoveryCode),
         KEY_CONTROLLER_DEVICE,
         `${PREFIX}:device:${tokenHash}`,
+        roleSessionKey('controller'),
         newDeviceId,
         JSON.stringify(deviceRecord),
         String(DEVICE_SESSION_MAX_AGE_SECONDS),
+        tokenHash,
       ]);
 
       const code = Number(Array.isArray(result) ? result[0] : 0);
