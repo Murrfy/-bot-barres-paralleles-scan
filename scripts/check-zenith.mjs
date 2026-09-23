@@ -390,10 +390,10 @@ if (!index.includes("invalidateMasterStream('PAGE_HIDDEN')") ||
   fail('MASTER user stream must fail closed on backgrounding, expiry, ordering gaps and inventory changes');
 }
 for (const required of [
-  "masterRuntimeApi('command-next','POST'",
+  "masterCommandApi('command-next'",
   "fetch('/api/binance-protective-execute'",
-  "masterRuntimeApi('command-ack','POST'",
-  "masterRuntimeApi('command-fail','POST'",
+  "masterCommandApi('command-ack'",
+  "masterCommandApi('command-fail'",
   "evaluateProtectiveClose",
   "PROTECTIVE_CLOSE_ATTEMPTS",
   "MARKET_CLOSE_NOT_CONFIRMED"
@@ -512,6 +512,7 @@ if (!sync.includes('execClosePayloadStatus') ||
     !sync.includes("'COMMAND_PAYLOAD_INVALID'") ||
     !sync.includes("action === 'command-fail'") ||
     !sync.includes("'EXECUTION_ACK_NOT_CONFIRMED'") ||
+    !sync.includes('alreadySatisfied') ||
     !sync.includes('runtimeClosePositionQuantity') ||
     !sync.includes('freshConsistentReconciliation(device.deviceId)')) {
   fail('EXEC_CLOSE_POSITION must have strict payload validation, fail endpoint and server-verified reconciliation proof before ACK');

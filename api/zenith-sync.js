@@ -1994,9 +1994,10 @@ export default async function handler(req, res) {
         const proof = req.body?.executionProof;
         const beforeQuantity = Number(proof?.beforeQuantity);
         const clientOrderId = String(proof?.clientOrderId || '');
+        const alreadySatisfied = proof?.alreadySatisfied === true;
         if (!proof || !Number.isFinite(beforeQuantity) || beforeQuantity <= 0 ||
             payloadStatus.quantity > beforeQuantity + 1e-12 ||
-            !/^[.A-Z:/a-z0-9_-]{1,36}$/.test(clientOrderId)) {
+            (!alreadySatisfied && !/^[.A-Z:/a-z0-9_-]{1,36}$/.test(clientOrderId))) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
         }
 
@@ -2030,6 +2031,7 @@ export default async function handler(req, res) {
           currentQuantity,
           targetRemaining,
           clientOrderId,
+          alreadySatisfied,
           reconciliationObservedAt:Number(readiness.report?.observedAt || 0),
         })]);
         await redis(['LTRIM', KEY_AUDIT, '0', '199']);

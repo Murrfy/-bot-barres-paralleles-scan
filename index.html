@@ -687,7 +687,6 @@ async function ensureMasterUserStream(){
 async function masterCommandApi(action,body={}){
   return masterRuntimeApi(action,'POST',body);
 }
-// Static safety anchors: masterRuntimeApi('command-next','POST'), masterRuntimeApi('command-ack','POST'), masterRuntimeApi('command-fail','POST').
 
 async function masterProtectiveExecute(body){
   const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
