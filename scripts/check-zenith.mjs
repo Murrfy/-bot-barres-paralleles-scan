@@ -105,12 +105,24 @@ if (!binancePreflight.includes('READ_ONLY_PREFLIGHT') || !binancePreflight.inclu
   fail('entry preflight must explicitly remain read-only');
 }
 
-const binanceOrderTest = fs.readFileSync('api/binance-order-test.js', 'utf8');
+const runtimeSnapshotApi = fs.readFileSync('api/binance-runtime-snapshot.js','utf8');
+for (const required of ['/fapi/v3/positionRisk','/fapi/v1/openOrders','/fapi/v1/openAlgoOrders',"MASTER_LEASE_REQUIRED","writeAttempted:false"]) {
+  if (!runtimeSnapshotApi.includes(required)) fail(`runtime snapshot invariant missing: ${required}`);
+}
+for (const forbidden of ['/fapi/v1/order','/fapi/v1/algoOrder','/fapi/v1/batchOrders']) {
+  if (runtimeSnapshotApi.includes(forbidden)) fail(`runtime snapshot must stay read-only: ${forbidden}`);
+}
+const userStreamSeed = fs.readFileSync('lib/user-stream-seed.mjs','utf8');
+for (const required of ['RECONCILIATION_REQUIRED_AFTER_SEED','standardOrders','algoOrders','positions']) {
+  if (!userStreamSeed.includes(required)) fail(`user-stream seed invariant missing: ${required}`);
+}
+
+const binanceOrderTest = fs.readFileSync('api/binance-order-test.js','utf8');
 for (const required of ["/fapi/v1/order/test","BINANCE_TEST_ORDER_ONLY","matchingEngineSubmitted:false","tradingWriteAttempted:false","TEST_MUST_BE_REDUCE_ONLY","ONLY_ONE_WAY_SUPPORTED"]) {
   if (!binanceOrderTest.includes(required)) fail(`protective Binance test-order invariant missing: ${required}`);
 }
 if (binanceOrderTest.includes("TEST_ORDER_PATH='/fapi/v1/order'") ||
-    binanceOrderTest.includes("TEST_ORDER_PATH=\"/fapi/v1/order\"") ||
+    binanceOrderTest.includes('TEST_ORDER_PATH="/fapi/v1/order"') ||
     binanceOrderTest.includes('/fapi/v1/algoOrder')) {
   fail('protective order validation endpoint must never target a live standard or conditional order path');
 }
@@ -316,16 +328,21 @@ if (!index.includes("role==='master'") ||
     !index.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
   fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
 }
-if (!index.includes("wss://fstream.binance.com/private/ws/") ||
+if (!index.includes("wss://fstream.binance.com/ws/") ||
+    index.includes("wss://fstream.binance.com/private/ws/") ||
     !index.includes("import('/lib/user-stream-state.mjs')") ||
     !index.includes("import('/lib/master-runtime-inventory.mjs')") ||
+    !index.includes("import('/lib/user-stream-seed.mjs')") ||
+    !index.includes("fetch('/api/binance-runtime-snapshot'") ||
+    !index.includes('STREAM_SEED_BUFFER_OVERFLOW') ||
     !index.includes("masterUserStreamApi('start','POST')") ||
     !index.includes("masterUserStreamApi('keepalive','POST')") ||
     !index.includes("reconcileMasterUserStream") ||
     !index.includes("45*60*1000") ||
     !index.includes("23*60*60*1000") ||
     !index.includes('reconcileDebounceTimer') ||
-    !index.includes('reconcileInterval')) {
+    !index.includes('reconcileInterval') ||
+    !index.includes("masterUserStream.reconcileInterval=setInterval(()=>reconcileMasterUserStream(),15000)")) {
   fail('iPad MASTER must maintain the official Binance private user stream with independent keepalive, reconnect and REST reconciliation timers');
 }
 if (!index.includes("invalidateMasterStream('PAGE_HIDDEN')") ||
