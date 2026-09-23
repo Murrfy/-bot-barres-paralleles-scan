@@ -175,7 +175,7 @@ let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdenti
 let controllerSyncState={conflict:false,lastOk:0,error:''};
 let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
 let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
-let masterUserStream={state:null,ws:null,starting:false,reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
+let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEvents:[],reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
 function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}}
@@ -413,11 +413,12 @@ async function masterRuntimeApi(action,method='GET',body){
 }
 async function loadMasterUserStreamModules(){
   if(masterUserStream.modules)return masterUserStream.modules;
-  const [stateModule,inventoryModule]=await Promise.all([
+  const [stateModule,inventoryModule,seedModule]=await Promise.all([
     import('/lib/user-stream-state.mjs'),
-    import('/lib/master-runtime-inventory.mjs')
+    import('/lib/master-runtime-inventory.mjs'),
+    import('/lib/user-stream-seed.mjs')
   ]);
-  masterUserStream.modules={stateModule,inventoryModule};
+  masterUserStream.modules={stateModule,inventoryModule,seedModule};
   if(!masterUserStream.state)masterUserStream.state=stateModule.createUserStreamState();
   return masterUserStream.modules;
 }
@@ -457,6 +458,15 @@ async function masterUserStreamApi(action,method='GET'){
   const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   const r=await fetch('/api/binance-user-stream-session?action='+action,{
     method,cache:'no-store',
+    headers:{Accept:'application/json',Authorization:'Bearer '+token}
+  });
+  const q=await r.json().catch(()=>({}));
+  return {r,q};
+}
+async function masterRuntimeSeedApi(){
+  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
+  const r=await fetch('/api/binance-runtime-snapshot',{
+    cache:'no-store',
     headers:{Accept:'application/json',Authorization:'Bearer '+token}
   });
   const q=await r.json().catch(()=>({}));
@@ -543,6 +553,8 @@ function scheduleMasterStreamReconcile(delay=250){
 async function closeMasterUserStream(reason='STREAM_DISCONNECTED',reconnect=true){
   const ws=masterUserStream.ws;
   masterUserStream.ws=null;
+  masterUserStream.seeding=false;
+  masterUserStream.bufferedEvents=[];
   clearMasterStreamTimers();
   try{
     const {stateModule}=await loadMasterUserStreamModules();
@@ -552,6 +564,35 @@ async function closeMasterUserStream(reason='STREAM_DISCONNECTED',reconnect=true
   await publishMasterStreamState();
   if(ws&&ws.readyState<2){try{ws.close(1000,'zenith-reconnect')}catch(_){}}
   if(reconnect)scheduleMasterStreamReconnect();
+}
+async function processMasterStreamPayload(payload,stateModule){
+  const result=stateModule.applyUserDataEvent(masterUserStream.state,payload);
+  masterUserStream.state=result.state;
+  if(result.reason==='LISTEN_KEY_EXPIRED'||result.reason==='STREAM_EVENT_OUT_OF_ORDER'||
+     result.reason==='ORDER_EVENT_IDENTITY_INVALID'||result.reason==='ALGO_EVENT_IDENTITY_INVALID'){
+    throw new Error(result.reason);
+  }
+  if(result.applied===true&&['ORDER','ACCOUNT','ALGO'].includes(String(result.kind||''))){
+    await invalidateMasterStream('STREAM_INVENTORY_CHANGED');
+    scheduleMasterStreamReconcile(200);
+  }
+  return result;
+}
+async function seedMasterUserStream(connectionId,connectedAt){
+  const {r,q}=await masterRuntimeSeedApi();
+  if(!r.ok||q?.ok!==true||!q?.snapshot)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  const {stateModule,seedModule}=await loadMasterUserStreamModules();
+  const snapshot=q.snapshot;
+  masterUserStream.state=seedModule.seedUserStreamStateFromRuntimeSnapshot(snapshot,{connectionId,connectedAt});
+  const cutoff=n(snapshot.serverTime,0);
+  const buffered=masterUserStream.bufferedEvents.splice(0).sort((a,b)=>n(a?.E,n(a?.T,0))-n(b?.E,n(b?.T,0)));
+  for(const payload of buffered){
+    const eventTime=n(payload?.E,n(payload?.T,0));
+    if(cutoff>0&&eventTime>0&&eventTime<cutoff)continue;
+    await processMasterStreamPayload(payload,stateModule);
+  }
+  masterUserStream.seeding=false;
+  await publishMasterStreamState();
 }
 async function masterStreamKeepalive(){
   if(controllerIdentity.role!=='master'||!masterRuntimeState.leaseActive)return;
@@ -577,17 +618,28 @@ async function ensureMasterUserStream(){
     if(!r.ok||q?.ok!==true||!q?.listenKey)throw new Error(q?.code||q?.error||('HTTP '+r.status));
     const listenKey=String(q.listenKey);
     const generation=++masterUserStream.connectionSeq;
-    const socket=new WebSocket('wss://fstream.binance.com/private/ws/'+encodeURIComponent(listenKey));
+    const socket=new WebSocket('wss://fstream.binance.com/ws/'+encodeURIComponent(listenKey));
     masterUserStream.ws=socket;
     socket.onopen=async()=>{
       if(masterUserStream.ws!==socket||generation!==masterUserStream.connectionSeq)return;
-      masterUserStream.state=stateModule.markUserStreamConnected(masterUserStream.state,{connectionId:'master-ws-'+generation,at:Date.now()});
+      const connectedAt=Date.now(),connectionId='master-ws-'+generation;
+      masterUserStream.state=stateModule.markUserStreamConnected(masterUserStream.state,{connectionId,at:connectedAt});
+      masterUserStream.seeding=true;
+      masterUserStream.bufferedEvents=[];
       masterUserStream.lastError='';
-      await publishMasterStreamState();
-      scheduleMasterStreamReconcile(100);
       clearMasterStreamTimers();
       masterUserStream.keepaliveTimer=setInterval(masterStreamKeepalive,45*60*1000);
       masterUserStream.restartTimer=setTimeout(()=>closeMasterUserStream('SCHEDULED_23H_RECONNECT',true),23*60*60*1000);
+      masterUserStream.reconcileInterval=setInterval(()=>reconcileMasterUserStream(),15000);
+      await publishMasterStreamState();
+      try{
+        await seedMasterUserStream(connectionId,connectedAt);
+        scheduleMasterStreamReconcile(100);
+      }catch(e){
+        masterUserStream.seeding=false;
+        masterUserStream.lastError=String(e?.message||'RUNTIME_SEED_FAILED');
+        await closeMasterUserStream(masterUserStream.lastError,true);
+      }
     };
     socket.onmessage=async event=>{
       if(masterUserStream.ws!==socket||generation!==masterUserStream.connectionSeq)return;
@@ -596,17 +648,21 @@ async function ensureMasterUserStream(){
         await invalidateMasterStream('STREAM_EVENT_INVALID_JSON');
         return;
       }
-      const result=stateModule.applyUserDataEvent(masterUserStream.state,payload);
-      masterUserStream.state=result.state;
-      if(result.reason==='LISTEN_KEY_EXPIRED'||result.reason==='STREAM_EVENT_OUT_OF_ORDER'||
-         result.reason==='ORDER_EVENT_IDENTITY_INVALID'||result.reason==='ALGO_EVENT_IDENTITY_INVALID'){
-        await publishMasterStreamState();
-        await closeMasterUserStream(result.reason,true);
+      if(masterUserStream.seeding){
+        if(masterUserStream.bufferedEvents.length>=1000){
+          masterUserStream.lastError='STREAM_SEED_BUFFER_OVERFLOW';
+          await closeMasterUserStream(masterUserStream.lastError,true);
+          return;
+        }
+        masterUserStream.bufferedEvents.push(payload);
         return;
       }
-      if(result.applied===true&&['ORDER','ACCOUNT','ALGO'].includes(String(result.kind||''))){
-        await invalidateMasterStream('STREAM_INVENTORY_CHANGED');
-        scheduleMasterStreamReconcile(200);
+      try{
+        await processMasterStreamPayload(payload,stateModule);
+      }catch(e){
+        const reason=String(e?.message||'STREAM_EVENT_INVALID');
+        await publishMasterStreamState();
+        await closeMasterUserStream(reason,true);
       }
     };
     socket.onerror=()=>{masterUserStream.lastError='STREAM_SOCKET_ERROR'};
@@ -615,8 +671,6 @@ async function ensureMasterUserStream(){
       masterUserStream.ws=null;
       await closeMasterUserStream(masterUserStream.lastError||'STREAM_DISCONNECTED',true);
     };
-    if(masterUserStream.reconcileInterval)clearInterval(masterUserStream.reconcileInterval);
-    masterUserStream.reconcileInterval=setInterval(()=>reconcileMasterUserStream(),15000);
     return true;
   }catch(e){
     masterUserStream.lastError=String(e?.message||'USER_STREAM_START_FAILED');
