@@ -534,6 +534,10 @@ if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDD
     !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req)')) {
   fail('zenith-sync must use secure device sessions and same-origin mutation protection');
 }
+if (!sync.includes('validDeviceId(deviceId)') ||
+    !sync.includes('validDeviceId(newDeviceId)')) {
+  fail('pairing and controller replacement must reject malformed or oversized device IDs');
+}
 for (const file of ['api/binance-read.js','api/binance-reconcile.js','api/binance-entry-preflight.js']) {
   const source=fs.readFileSync(file,'utf8');
   if (!source.includes('deviceTokenCandidates(req)')) fail(`${file} must accept the secure device session cookie`);

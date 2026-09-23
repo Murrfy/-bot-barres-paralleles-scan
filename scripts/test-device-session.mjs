@@ -8,6 +8,7 @@ import {
   buildDeviceSessionCookie,
   buildClearDeviceSessionCookie,
   sameOriginMutation,
+  validDeviceId,
 } from '../lib/device-session.mjs';
 
 test('Bearer migration token has precedence and cookie is fallback', () => {
@@ -45,4 +46,13 @@ test('cookie mutation requires exact same origin', () => {
 
 test('legacy Bearer migration remains accepted', () => {
   assert.equal(sameOriginMutation({method:'POST',headers:{authorization:'Bearer legacy-token'}}),true);
+});
+
+
+test('device IDs are bounded and restricted to safe characters', () => {
+  assert.equal(validDeviceId('iphone-12345678'), true);
+  assert.equal(validDeviceId('ipad-550e8400-e29b-41d4-a716-446655440000'), true);
+  assert.equal(validDeviceId('short'), false);
+  assert.equal(validDeviceId('iphone-<script>alert(1)</script>'), false);
+  assert.equal(validDeviceId('x'.repeat(129)), false);
 });

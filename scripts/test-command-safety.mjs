@@ -7,8 +7,8 @@ process.env.ZENITH_PAIRING_DISABLED = '0';
 
 const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
   .replace(
-    /^import \{ DEVICE_SESSION_MAX_AGE_SECONDS, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';\n/m,
-    "const DEVICE_SESSION_MAX_AGE_SECONDS=60*60*24*30; const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
+    /^import \{[^\n]+\} from '\.\.\/lib\/device-session\.mjs';\n/m,
+    "const DEVICE_SESSION_MAX_AGE_SECONDS=60*60*24*30; const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true; const validDeviceId=value=>/^[A-Za-z0-9._:-]{8,128}$/.test(String(value||''));\n"
   )
   .replace(
     /^import \{ normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget \} from '\.\.\/lib\/protective-command\.mjs';\n/m,
