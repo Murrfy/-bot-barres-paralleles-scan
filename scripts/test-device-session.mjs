@@ -4,6 +4,7 @@ import {
   DEVICE_SESSION_COOKIE,
   bearerToken,
   cookieToken,
+  cookieDeviceTokenCandidates,
   deviceTokenCandidates,
   buildDeviceSessionCookie,
   buildClearDeviceSessionCookie,
@@ -24,6 +25,12 @@ test('Bearer migration token has precedence and cookie is fallback', () => {
 test('blank Bearer falls back to secure cookie', () => {
   const req={headers:{authorization:'Bearer ',cookie:`${DEVICE_SESSION_COOKIE}=cookie-token`}};
   assert.deepEqual(deviceTokenCandidates(req),['cookie-token']);
+});
+
+test('normal browser authentication ignores Bearer and accepts only the HttpOnly cookie', () => {
+  const req={headers:{authorization:'Bearer stolen-legacy-token',cookie:`${DEVICE_SESSION_COOKIE}=cookie-token`}};
+  assert.deepEqual(cookieDeviceTokenCandidates(req),['cookie-token']);
+  assert.deepEqual(cookieDeviceTokenCandidates({headers:{authorization:'Bearer stolen-legacy-token'}}),[]);
 });
 
 test('__Host cookie is HttpOnly Secure Strict and host-only', () => {
