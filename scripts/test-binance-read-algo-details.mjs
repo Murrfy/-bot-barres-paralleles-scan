@@ -29,3 +29,16 @@ test('Binance read tolerates alternate REST field names without inventing values
   assert.equal(o.triggerPrice,'3100');
   assert.equal(o.reduceOnly,true);
 });
+
+
+test('Binance read preserves explicit progressive LIMIT price',()=>{
+  const [o]=normalizeAlgoOrderDetails([{
+    symbol:'BTCUSDT',clientAlgoId:'zth-PRO-exact',side:'SELL',positionSide:'BOTH',
+    orderType:'STOP',algoStatus:'NEW',quantity:'0.02',triggerPrice:'50500',
+    price:'50500',reduceOnly:true,closePosition:false,timeInForce:'GTC'
+  }]);
+  assert.equal(o.type,'STOP');
+  assert.equal(o.triggerPrice,'50500');
+  assert.equal(o.price,'50500');
+  assert.equal(o.timeInForce,'GTC');
+});
