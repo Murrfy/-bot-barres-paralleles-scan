@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildControllerRealCloseCommand, realPositionKey } from '../lib/controller-real-command.mjs';
+import { buildControllerRealCloseCommand, realPositionKey, buildControllerCancelEntryCommand, realEntryOrderKey } from '../lib/controller-real-command.mjs';
 
 const longPosition={
   symbol:'btcusdt',
@@ -49,4 +49,21 @@ test('controller command builder cannot create an entry',()=>{
   const source=buildControllerRealCloseCommand(longPosition);
   assert.notEqual(source.type,'EXEC_OPEN_POSITION');
   assert.equal(source.payload.exitMode,'PROTECTIVE_IOC');
+});
+
+
+test('controller can construct only a stable cancel command for a visible non-reduce-only entry',()=>{
+  const order={symbol:'BTCUSDT',clientOrderId:'entry-abc-123',positionSide:'BOTH',reduceOnly:false,updateTime:1790161000000};
+  const a=buildControllerCancelEntryCommand(order);
+  const b=buildControllerCancelEntryCommand({...order});
+  assert.equal(a.type,'EXEC_CANCEL_ENTRY');
+  assert.equal(a.payload.clientOrderId,'entry-abc-123');
+  assert.equal(a.clientCommandId,b.clientCommandId);
+  assert.equal(realEntryOrderKey(order),realEntryOrderKey({...order}));
+});
+
+test('controller refuses canceling reduce-only or hedge orders',()=>{
+  const base={symbol:'BTCUSDT',clientOrderId:'entry-abc-123',positionSide:'BOTH',reduceOnly:false};
+  assert.throws(()=>buildControllerCancelEntryCommand({...base,reduceOnly:true}),/CANCEL_TARGET_IS_REDUCE_ONLY/);
+  assert.throws(()=>buildControllerCancelEntryCommand({...base,positionSide:'LONG'}),/HEDGE_MODE_UNSUPPORTED/);
 });

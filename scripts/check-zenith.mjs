@@ -98,6 +98,9 @@ if (!binanceRead.includes('role-device:controller') || !binanceRead.includes('ro
 if (!binanceRead.includes('/fapi/v1/openAlgoOrders')) {
   fail('api/binance-read.js must count Binance algo TP/SL orders');
 }
+if (!binanceRead.includes('standardOrderDetails') || !binanceRead.includes('clientOrderId') || !binanceRead.includes('reduceOnly')) {
+  fail('api/binance-read.js must expose sanitized standard open-order details for safe controller cancellation');
+}
 
 const binancePreflight = fs.readFileSync('api/binance-entry-preflight.js', 'utf8');
 for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
@@ -168,7 +171,7 @@ if (!userStreamState.includes('needsReconciliation = true') ||
 }
 
 const controllerRealCommand = fs.readFileSync('lib/controller-real-command.mjs','utf8');
-for (const required of ['EXEC_CLOSE_POSITION','PROTECTIVE_IOC','HEDGE_MODE_UNSUPPORTED','clientCommandId']) {
+for (const required of ['EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY','PROTECTIVE_IOC','HEDGE_MODE_UNSUPPORTED','clientCommandId','CANCEL_TARGET_IS_REDUCE_ONLY']) {
   if (!controllerRealCommand.includes(required)) fail(`iPhone real-close command invariant missing: ${required}`);
 }
 if (controllerRealCommand.includes("'EXEC_OPEN_POSITION'")) {
@@ -176,6 +179,9 @@ if (controllerRealCommand.includes("'EXEC_OPEN_POSITION'")) {
 }
 if (!index.includes('Positions réelles Binance') ||
     !index.includes('queueRealPositionClose') ||
+    !index.includes('Ordres d’entrée réels en attente') ||
+    !index.includes('queueRealEntryCancel') ||
+    !index.includes('ANNULER ENTRÉE RÉELLE') ||
     !index.includes("fetch('/api/zenith-sync?action=command'") ||
     !index.includes('FERMER RÉEL · LIMIT IOC') ||
     !index.includes('attend la confirmation Binance')) {
@@ -183,7 +189,7 @@ if (!index.includes('Positions réelles Binance') ||
 }
 
 const masterCommandDispatch = fs.readFileSync('lib/master-command-dispatch.mjs','utf8');
-for (const required of ['masterExecutionEligible','EXEC_CLOSE_POSITION','/api/binance-protective-execute','MASTER_COMMAND_NOT_IMPLEMENTED']) {
+for (const required of ['masterExecutionEligible','EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY','/api/binance-protective-execute','MASTER_COMMAND_NOT_IMPLEMENTED']) {
   if (!masterCommandDispatch.includes(required)) fail(`MASTER command dispatcher invariant missing: ${required}`);
 }
 if (masterCommandDispatch.includes('EXEC_OPEN_POSITION') && !masterCommandDispatch.includes("supported:false")) {
@@ -196,7 +202,11 @@ for (const required of [
   "origClientOrderId",
   "disposition: 'WRITE_LOCKED'",
   "RECOVERED_AFTER_AMBIGUOUS_POST",
-  "ORDER_RESULT_AMBIGUOUS"
+  "ORDER_RESULT_AMBIGUOUS",
+  "cancelEntryOrderIdempotent",
+  "CANCEL_TARGET_UNKNOWN",
+  "CANCEL_RESULT_AMBIGUOUS",
+  "method: 'DELETE'"
 ]) {
   if (!binanceOrderWriter.includes(required)) fail(`Binance idempotent writer invariant missing: ${required}`);
 }
@@ -210,7 +220,10 @@ for (const required of [
   "ZENITH_BINANCE_WRITE_ENABLED",
   "ZENITH_PAIRING_DISABLED",
   "'EXEC_CLOSE_POSITION'",
+  "'EXEC_CANCEL_ENTRY'",
   "'BINANCE_WRITE_LOCKED'",
+  "runtimeEntryOrder",
+  "cancelEntryOrderIdempotent",
   "'CLOSE_QUANTITY_EXCEEDS_POSITION'",
   "'HEDGE_MODE_UNSUPPORTED'",
   "report.status!=='CLEAN_REAL'",

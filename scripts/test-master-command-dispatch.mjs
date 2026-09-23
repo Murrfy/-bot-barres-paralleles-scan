@@ -33,8 +33,28 @@ test('exact normal close requires explicit target price',()=>{
 });
 
 test('entry and not-yet-implemented protective mutations are never dispatched as writes',()=>{
-  for(const type of ['EXEC_OPEN_POSITION','EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION','EXEC_CANCEL_ENTRY']){
+  for(const type of ['EXEC_OPEN_POSITION','EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION']){
     const d=buildMasterCommandDispatch({id:'command-12345678',type,payload:{}});
     assert.equal(d.supported,false,type);
   }
+});
+
+
+test('entry cancellation maps to protective endpoint without position-close fields',()=>{
+  const d=buildMasterCommandDispatch({
+    id:'command-cancel-1234',
+    type:'EXEC_CANCEL_ENTRY',
+    payload:{symbol:'BTCUSDT',clientOrderId:'zenith-entry-123'}
+  });
+  assert.equal(d.supported,true);
+  assert.equal(d.endpoint,'/api/binance-protective-execute');
+  assert.equal(d.body.type,'EXEC_CANCEL_ENTRY');
+  assert.equal(d.body.clientOrderId,'zenith-entry-123');
+  assert.equal('quantity' in d.body,false);
+});
+
+test('cancel entry requires Binance client order id',()=>{
+  assert.throws(()=>buildMasterCommandDispatch({
+    id:'command-cancel-1234',type:'EXEC_CANCEL_ENTRY',payload:{symbol:'BTCUSDT'}
+  }),/CLIENT_ORDER_ID_INVALID/);
 });

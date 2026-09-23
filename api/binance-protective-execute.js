@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
-import { placeStandardOrderIdempotent } from '../lib/binance-order-writer.mjs';
+import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
 
 const PREFIX='zenith:v1';
 const KEY_MASTER=`${PREFIX}:master`;
@@ -80,6 +80,14 @@ function runtimePosition(runtimeState,symbol,dir){
   const list=Array.isArray(runtimeState?.data?.binancePositions)?runtimeState.data.binancePositions:[];
   return list.find(p=>String(p?.symbol||'').toUpperCase()===symbol&&direction(p)===dir)||null;
 }
+function runtimeEntryOrder(runtimeState,symbol,clientOrderId){
+  const list=Array.isArray(runtimeState?.data?.binanceOrders)?runtimeState.data.binanceOrders:[];
+  return list.find(o =>
+    String(o?.orderClass||'STANDARD').toUpperCase()==='STANDARD' &&
+    String(o?.symbol||'').toUpperCase()===symbol &&
+    String(o?.clientOrderId||'')===clientOrderId
+  )||null;
+}
 function validateExecutionArmRecord(record,masterDeviceId,deploymentSha=DEPLOYMENT_SHA){
   if(!deploymentSha)return 'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING';
   if(!record||record.version!==1)return 'REAL_EXECUTION_NOT_ARMED';
@@ -141,7 +149,58 @@ export default async function handler(req,res){
   if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
 
   const type=String(req.body?.type||'').toUpperCase();
-  if(type!=='EXEC_CLOSE_POSITION')return send(res,400,{ok:false,code:'PROTECTIVE_COMMAND_UNSUPPORTED',writeAttempted:false});
+  if(!['EXEC_CLOSE_POSITION','EXEC_CANCEL_ENTRY'].includes(type)){
+    return send(res,400,{ok:false,code:'PROTECTIVE_COMMAND_UNSUPPORTED',writeAttempted:false});
+  }
+
+  const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED);
+
+  if(type==='EXEC_CANCEL_ENTRY'){
+    const symbol=String(req.body?.symbol||'').toUpperCase();
+    const clientOrderId=String(req.body?.clientOrderId||'');
+    const commandId=String(req.body?.commandId||'');
+    if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!clientOrderId||clientOrderId.length>36){
+      return send(res,400,{ok:false,code:'CANCEL_ENTRY_REQUEST_INVALID',writeAttempted:false});
+    }
+    const liveOrder=runtimeEntryOrder(runtimeState,symbol,clientOrderId);
+    if(!liveOrder)return send(res,409,{ok:false,code:'ENTRY_ORDER_NOT_OPEN',writeAttempted:false});
+    if(liveOrder.reduceOnly===true||liveOrder.reduceOnly==='true'){
+      return send(res,409,{ok:false,code:'CANCEL_TARGET_IS_REDUCE_ONLY',writeAttempted:false});
+    }
+    if(String(liveOrder.positionSide||'BOTH').toUpperCase()!=='BOTH'){
+      return send(res,409,{ok:false,code:'HEDGE_MODE_UNSUPPORTED',writeAttempted:false});
+    }
+    if(!writesEnabled){
+      return send(res,423,{
+        ok:false,code:'BINANCE_WRITE_LOCKED',
+        realTradingEnabled:REAL_TRADING_ENABLED,
+        binanceWriteEnabled:BINANCE_WRITE_ENABLED,
+        pairingDisabled:PAIRING_DISABLED,
+        writeAttempted:false,
+      });
+    }
+    try{
+      const result=await cancelEntryOrderIdempotent({
+        apiKey,secret,symbol,clientOrderId,writesEnabled:true,timestamp:Date.now(),
+      });
+      await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+        at:Date.now(),kind:'BINANCE_ENTRY_CANCEL_DISPATCH',
+        deviceId:master.deviceId,commandId,symbol,clientOrderId,
+        disposition:result.disposition,writeAttempted:result.writeAttempted===true,
+      })]);
+      await redis(['LTRIM',KEY_AUDIT,'0','199']);
+      return send(res,200,{ok:true,result});
+    }catch(e){
+      return send(res,502,{
+        ok:false,
+        code:['CANCEL_RESULT_AMBIGUOUS','CANCEL_TARGET_UNKNOWN'].includes(e?.message)?e.message:'BINANCE_ENTRY_CANCEL_FAILED',
+        error:e?.message||'Binance entry cancellation failed.',
+        binanceCode:e?.code??null,
+        ambiguous:e?.ambiguous===true,
+        writeAttempted:true,
+      });
+    }
+  }
 
   const symbol=String(req.body?.symbol||'').toUpperCase();
   const dir=String(req.body?.direction||'').toUpperCase();
@@ -179,7 +238,6 @@ export default async function handler(req,res){
     return send(res,400,{ok:false,code:e?.message||'EXIT_PLAN_INVALID',writeAttempted:false});
   }
 
-  const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED);
   if(!writesEnabled){
     return send(res,423,{
       ok:false,
