@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { deviceRoleAssignmentActive } from '../lib/device-session.mjs';
 
 const sync=fs.readFileSync('api/zenith-sync.js','utf8');
 const index=fs.readFileSync('index.html','utf8');
@@ -48,6 +49,40 @@ test('MASTER revoke destroys real execution authority and stale MASTER state ato
     'KEY_MASTER_DEVICE',
     "'MASTER_REVOKED'",
   ]) assert.ok(block.includes(required),required);
+});
+
+
+test('MASTER revoke requires the normal pause drain before destructive revocation',()=>{
+  assert.ok(block.includes("const pauseTransition = await tryFinalizePendingPause(registeredMaster, 'PAUSE_PENDING')"));
+  assert.ok(block.includes("pauseTransition.masterMode !== 'PAUSED'"));
+  assert.ok(block.includes("'PENDING_COMMAND'"));
+  assert.ok(block.includes("'PROCESSING_COMMAND'"));
+  assert.ok(block.includes('freshCleanReconciliation()'));
+  assert.ok(block.indexOf("tryFinalizePendingPause(registeredMaster, 'PAUSE_PENDING')") < block.indexOf('fetchLiveBinanceActivity()'));
+});
+
+test('MASTER revoke atomically refuses new queue activity and advances the MASTER role epoch',()=>{
+  assert.ok(block.includes("redis.call('LLEN', KEYS[13]) > 0"));
+  assert.ok(block.includes("redis.call('LLEN', KEYS[14]) > 0"));
+  assert.ok(block.includes("redis.call('SET', KEYS[15], ARGV[2])"));
+  assert.equal(block.includes("redis.call('DEL', KEYS[15])"),false);
+  assert.equal(block.includes("redis.call('DEL', KEYS[13])"),false);
+  assert.equal(block.includes("redis.call('DEL', KEYS[14])"),false);
+});
+
+test('MASTER role epoch invalidates sessions issued before revoke',()=>{
+  assert.equal(deviceRoleAssignmentActive({createdAt:1000},1001),false);
+  assert.equal(deviceRoleAssignmentActive({createdAt:1001},1001),true);
+  assert.ok(block.includes("roleAssignmentKey(PREFIX, 'master')"));
+  assert.ok(block.includes('masterRoleEpochAdvancedAt: revokedAt'));
+});
+
+test('PANIC and lease invalidation remain fail-closed after MASTER revoke',()=>{
+  assert.ok(block.includes("redis.call('SET', KEYS[2], '1')"));
+  assert.ok(block.includes("redis.call('DEL', KEYS[5])"));
+  assert.ok(block.includes('masterActivationKey(registeredMaster)'));
+  assert.ok(block.includes("redis.call('DEL', KEYS[11])"));
+  assert.ok(block.includes('emergencyStopActive: true'));
 });
 
 test('iPhone controller exposes explicit confirmed MASTER revoke control',()=>{
