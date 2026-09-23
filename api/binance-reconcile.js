@@ -57,6 +57,7 @@ async function redis(command) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(command),
+    signal: AbortSignal.timeout(8000),
     cache: 'no-store',
   });
 
