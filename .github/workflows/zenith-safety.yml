@@ -51,6 +51,8 @@ jobs:
         run: node --test scripts/test-device-session.mjs
       - name: Test deterministic order planning
         run: node --test scripts/test-order-intent.mjs
+      - name: Test MASTER protective command dispatcher
+        run: node --test scripts/test-master-command-dispatch.mjs
       - name: Test idempotent Binance order writer
         run: node --test scripts/test-binance-order-writer.mjs
       - name: Test protective execution arm gate

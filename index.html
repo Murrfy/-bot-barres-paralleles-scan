@@ -176,6 +176,7 @@ let controllerSyncState={conflict:false,lastOk:0,error:''};
 let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
 let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,realExecutionArmed:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
 let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEvents:[],reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
+let masterExecution={busy:false,timer:null,lastError:'',lastCommandId:''};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
 function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}}
@@ -413,12 +414,14 @@ async function masterRuntimeApi(action,method='GET',body){
 }
 async function loadMasterUserStreamModules(){
   if(masterUserStream.modules)return masterUserStream.modules;
-  const [stateModule,inventoryModule,seedModule]=await Promise.all([
+  const [stateModule,inventoryModule,seedModule,dispatchModule,closeModule]=await Promise.all([
     import('/lib/user-stream-state.mjs'),
     import('/lib/master-runtime-inventory.mjs'),
-    import('/lib/user-stream-seed.mjs')
+    import('/lib/user-stream-seed.mjs'),
+    import('/lib/master-command-dispatch.mjs'),
+    import('/lib/protective-close-state.mjs')
   ]);
-  masterUserStream.modules={stateModule,inventoryModule,seedModule};
+  masterUserStream.modules={stateModule,inventoryModule,seedModule,dispatchModule,closeModule};
   if(!masterUserStream.state)masterUserStream.state=stateModule.createUserStreamState();
   return masterUserStream.modules;
 }
@@ -682,6 +685,215 @@ async function ensureMasterUserStream(){
     masterUserStream.starting=false;
   }
 }
+async function masterCommandDisposition(action,raw,extra={}){
+  return masterRuntimeApi(action,'POST',{raw,...extra});
+}
+async function requeueMasterCommand(raw,reason,delayMs=1500){
+  const {r,q}=await masterCommandDisposition('command-requeue',raw,{
+    deferMs:Math.max(250,Math.min(30000,n(delayMs,1500))),
+    deferReason:String(reason||'MASTER_EXECUTION_RETRY').slice(0,120)
+  });
+  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  return q;
+}
+async function failMasterCommand(raw,reason){
+  const clean=String(reason||'EXECUTION_FAILED').toUpperCase().replace(/[^A-Z0-9_:-]+/g,'_').slice(0,96)||'EXECUTION_FAILED';
+  const {r,q}=await masterCommandDisposition('command-fail',raw,{reason:clean});
+  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  return q;
+}
+async function ackMasterCommand(raw,executionProof){
+  const {r,q}=await masterCommandDisposition('command-ack',raw,{executionProof});
+  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  return q;
+}
+async function callMasterProtectiveExecute(body){
+  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
+  const r=await fetch('/api/binance-protective-execute',{
+    method:'POST',cache:'no-store',
+    headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+    body:JSON.stringify(body)
+  });
+  const q=await r.json().catch(()=>({}));
+  return {r,q};
+}
+async function waitForFullCloseState({symbol,direction,beforeQuantity,clientOrderId},timeoutMs=2500){
+  const {closeModule}=await loadMasterUserStreamModules();
+  const deadline=Date.now()+Math.max(250,n(timeoutMs,2500));
+  let result=closeModule.evaluateFullProtectiveClose({
+    state:masterUserStream.state,symbol,direction,beforeQuantity,clientOrderId
+  });
+  while(Date.now()<deadline){
+    result=closeModule.evaluateFullProtectiveClose({
+      state:masterUserStream.state,symbol,direction,beforeQuantity,clientOrderId
+    });
+    if(result.streamReady&&(result.confirmed||result.terminalSeen))return result;
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  try{await reconcileMasterUserStream()}catch(_){}
+  return closeModule.evaluateFullProtectiveClose({
+    state:masterUserStream.state,symbol,direction,beforeQuantity,clientOrderId
+  });
+}
+async function safeAckFullClose(raw,beforeQuantity,clientOrderId='',alreadySatisfied=false){
+  try{
+    await reconcileMasterUserStream();
+    await ackMasterCommand(raw,{beforeQuantity,clientOrderId,alreadySatisfied});
+    return true;
+  }catch(e){
+    await requeueMasterCommand(raw,'EXEC_CLOSE_ACK_RETRY_'+String(e?.message||'RECONCILE'),1500);
+    return false;
+  }
+}
+async function runMasterFullClose(command,raw){
+  const {closeModule}=await loadMasterUserStreamModules();
+  const payload=command?.payload||{};
+  const symbol=String(payload.symbol||'').toUpperCase();
+  const direction=String(payload.direction||'').toUpperCase();
+  let currentQuantity=closeModule.streamPositionQuantity(masterUserStream.state,symbol,direction);
+
+  if(!(currentQuantity>0)){
+    try{await reconcileMasterUserStream()}catch(_){}
+    currentQuantity=closeModule.streamPositionQuantity(masterUserStream.state,symbol,direction);
+    if(currentQuantity<=1e-12&&masterRuntimeState.userStreamReady===true){
+      return safeAckFullClose(raw,Math.max(n(payload.quantity),1e-12),'',true);
+    }
+    await requeueMasterCommand(raw,'LIVE_POSITION_NOT_READY',1500);
+    return false;
+  }
+
+  const initialQuantity=currentQuantity;
+  const policies=String(payload.exitMode||'PROTECTIVE_IOC').toUpperCase()==='MARKET_LAST_RESORT'
+    ? [closeModule.PROTECTIVE_CLOSE_ATTEMPTS[3]]
+    : closeModule.PROTECTIVE_CLOSE_ATTEMPTS;
+
+  let lastClientOrderId='';
+  for(const policy of policies){
+    currentQuantity=closeModule.streamPositionQuantity(masterUserStream.state,symbol,direction);
+    if(currentQuantity<=1e-12){
+      return safeAckFullClose(raw,initialQuantity,lastClientOrderId,lastClientOrderId==='');
+    }
+
+    const {r,q}=await callMasterProtectiveExecute({
+      type:'EXEC_CLOSE_POSITION',
+      commandId:String(command.id||''),
+      symbol,
+      direction,
+      quantity:currentQuantity,
+      closeAll:true,
+      exitMode:policy.exitMode,
+      attempt:policy.attempt,
+      priceMatch:policy.priceMatch
+    });
+
+    if(!r.ok||q?.ok!==true){
+      const reason=String(q?.code||q?.reason||q?.error||('HTTP_'+r.status));
+      const wrote=q?.writeAttempted===true;
+      const ambiguous=q?.ambiguous===true||q?.result?.ambiguous===true;
+      if(wrote||ambiguous){
+        await failMasterCommand(raw,'AMBIGUOUS_'+reason);
+        masterExecution.lastError='AMBIGUOUS_'+reason;
+        return false;
+      }
+      if(['EXECUTION_NOT_READY','EXECUTION_NOT_ARMED','POSITION_NOT_FOUND','CLOSE_QUANTITY_EXCEEDS_POSITION','FULL_CLOSE_QUANTITY_REQUIRED'].includes(reason)){
+        try{await reconcileMasterUserStream()}catch(_){}
+        await requeueMasterCommand(raw,'PROTECTIVE_EXEC_'+reason,1500);
+        return false;
+      }
+      await failMasterCommand(raw,'PROTECTIVE_EXEC_'+reason);
+      masterExecution.lastError=reason;
+      return false;
+    }
+
+    lastClientOrderId=String(q?.plan?.params?.newClientOrderId||'');
+    if(!lastClientOrderId){
+      await failMasterCommand(raw,'PROTECTIVE_CLIENT_ORDER_ID_MISSING');
+      return false;
+    }
+
+    const outcome=await waitForFullCloseState({
+      symbol,direction,beforeQuantity:currentQuantity,clientOrderId:lastClientOrderId
+    },policy.exitMode==='MARKET_LAST_RESORT'?4000:2500);
+
+    if(outcome.confirmed&&outcome.streamReady){
+      return safeAckFullClose(raw,initialQuantity,lastClientOrderId,false);
+    }
+    if(policy.exitMode==='MARKET_LAST_RESORT'){
+      await failMasterCommand(raw,'MARKET_CLOSE_NOT_CONFIRMED');
+      masterExecution.lastError='MARKET_CLOSE_NOT_CONFIRMED';
+      return false;
+    }
+    if(!outcome.safeToRetry){
+      const reason=outcome.inconsistentFilled
+        ?'FILLED_POSITION_MISMATCH'
+        :outcome.terminalSeen
+          ?'PROTECTIVE_RETRY_NOT_SAFE'
+          :'PROTECTIVE_ORDER_UNCONFIRMED';
+      await failMasterCommand(raw,reason);
+      masterExecution.lastError=reason;
+      return false;
+    }
+  }
+  await failMasterCommand(raw,'PROTECTIVE_CLOSE_ATTEMPTS_EXHAUSTED');
+  return false;
+}
+async function masterExecutionCycle(){
+  if(masterExecution.busy||controllerIdentity.role!=='master')return false;
+  const {dispatchModule}=await loadMasterUserStreamModules();
+  if(!dispatchModule.masterExecutionEligible({
+    role:controllerIdentity.role,
+    hidden:document.hidden,
+    leaseActive:masterRuntimeState.leaseActive,
+    realExecutionArmed:masterRuntimeState.realExecutionArmed,
+    userStreamReady:masterRuntimeState.userStreamReady,
+    mode:masterRuntimeState.mode
+  }))return false;
+
+  masterExecution.busy=true;
+  let raw='';
+  try{
+    const next=await masterRuntimeApi('command-next','POST',{});
+    if(next.r.status===423)return false;
+    if(!next.r.ok||next.q?.ok!==true)throw new Error(next.q?.code||next.q?.error||('HTTP '+next.r.status));
+    if(!next.q.command||!next.q.raw)return false;
+
+    const command=next.q.command;
+    raw=String(next.q.raw);
+    masterExecution.lastCommandId=String(command.id||'');
+
+    let dispatch;
+    try{dispatch=dispatchModule.buildMasterCommandDispatch(command)}
+    catch(e){
+      await failMasterCommand(raw,'MASTER_DISPATCH_INVALID_'+String(e?.message||'COMMAND'));
+      return false;
+    }
+    if(dispatch.supported!==true){
+      await failMasterCommand(raw,dispatch.reason||'MASTER_COMMAND_NOT_IMPLEMENTED');
+      return false;
+    }
+
+    const ok=await runMasterFullClose(command,raw);
+    if(ok){
+      masterExecution.lastError='';
+      scheduleMasterStreamReconcile(100);
+    }
+    return ok;
+  }catch(e){
+    const reason=String(e?.message||'MASTER_EXECUTION_ERROR');
+    masterExecution.lastError=reason;
+    if(raw){
+      try{await requeueMasterCommand(raw,'MASTER_WORKER_RECOVERY_'+reason,1500)}catch(_){}
+    }
+    return false;
+  }finally{
+    masterExecution.busy=false;
+  }
+}
+function startMasterExecutionLoop(){
+  if(controllerIdentity.role!=='master')return;
+  masterExecutionCycle();
+  if(!masterExecution.timer)masterExecution.timer=setInterval(masterExecutionCycle,750);
+}
 async function applyMasterControllerState(state){
   if(!state||!state.data||typeof state.data!=='object')throw new Error('CONTROLLER_STATE_INVALID');
   const revision=Math.max(0,n(state.revision,0)),stateHash=String(state.stateHash||'');
@@ -782,6 +994,7 @@ function startMasterRuntimeLoop(){
   if(controllerIdentity.role!=='master')return;
   loadMasterUserStreamModules().then(()=>publishMasterStreamState()).catch(()=>{});
   masterRuntimeCycle();
+  startMasterExecutionLoop();
   if(!masterRuntimeTimer)masterRuntimeTimer=setInterval(masterRuntimeCycle,8000);
 }
 
@@ -1044,7 +1257,7 @@ $('manualTokenAddBtn').onclick=addManualToken;$('manualTokenInput').addEventList
 $('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();save()});
 $('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('panicClearBtn').onclick=controllerClearPanic;
 $('resetClosedBtn').onclick=()=>{if(!confirm('Effacer les gains, pertes et trades fermés ?'))return;history=[];save();renderAll()};$('resetSimBtn').onclick=()=>{if(!confirm('Réinitialiser les positions simulées et les achats surveillés ?'))return;openPositions=[];validated={};revalidateBlock={};missedSignals={};manualTokens={};save();syncRealtime();renderAll();setStatus('Simulation réinitialisée.')};
-document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio()},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){masterRuntimeCycle();ensureMasterUserStream()}}else if(controllerIdentity.role==='master'){invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
+document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio()},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
 load();applyTheme();renderAll();ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startControllerIdentityCheck();
 </script>
 </body>

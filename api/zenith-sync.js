@@ -17,6 +17,7 @@ const MASTER_PAIRING_CODE = process.env.ZENITH_MASTER_PAIRING_CODE || '';
 const MASTER_ADMIN_CODE = process.env.ZENITH_MASTER_ADMIN_CODE || '';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
+const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
 
 const PREFIX = 'zenith:v1';
 const KEY_MASTER = `${PREFIX}:master`;
@@ -337,6 +338,7 @@ async function realExecutionArmStatus(expectedMasterDeviceId = '') {
   const record = parseStoredJson(raw);
   if (!record || record.version !== 1) return { armed:false, reason:'REAL_EXECUTION_NOT_ARMED', record:null };
   if (!REAL_TRADING_ENABLED) return { armed:false, reason:'REAL_TRADING_DISABLED', record };
+  if (!BINANCE_WRITE_ENABLED) return { armed:false, reason:'BINANCE_WRITE_DISABLED', record };
   if (!DEPLOYMENT_SHA) return { armed:false, reason:'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING', record };
   if (expectedMasterDeviceId && String(record.masterDeviceId || '') !== String(expectedMasterDeviceId)) {
     return { armed:false, reason:'REAL_EXECUTION_ARM_MASTER_CHANGED', record };
@@ -429,6 +431,7 @@ function executionGate(type, halted) {
   const normalized = String(type || '').toUpperCase();
   if (!normalized.startsWith('EXEC_')) return { allowed: true, reason: '' };
   if (!REAL_TRADING_ENABLED) return { allowed: false, reason: 'REAL_TRADING_DISABLED' };
+  if (!BINANCE_WRITE_ENABLED) return { allowed: false, reason: 'BINANCE_WRITE_DISABLED' };
   if (!PAIRING_DISABLED) return { allowed: false, reason: 'PAIRING_OPEN' };
   if (halted && !PROTECTIVE_EXEC_COMMANDS.has(normalized)) {
     return { allowed: false, reason: 'EMERGENCY_STOP_ACTIVE' };
@@ -888,8 +891,9 @@ export default async function handler(req, res) {
       masterAdminConfigured: Boolean(MASTER_ADMIN_CODE),
       pairingDisabled: PAIRING_DISABLED,
       realTradingEnabled: REAL_TRADING_ENABLED,
-      realExecutionEnvironmentReady: Boolean(REAL_TRADING_ENABLED && PAIRING_DISABLED),
-      executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
+      binanceWriteEnabled: BINANCE_WRITE_ENABLED,
+      realExecutionEnvironmentReady: Boolean(REAL_TRADING_ENABLED && BINANCE_WRITE_ENABLED && PAIRING_DISABLED),
+      executionMode: REAL_TRADING_ENABLED && BINANCE_WRITE_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
       mode: 'SYNC_SAFE_SIMULATION',
       masterTtlSeconds: MASTER_TTL_SECONDS,
       masterActivationTtlSeconds: MASTER_ACTIVATION_TTL_SECONDS,
@@ -1283,6 +1287,7 @@ export default async function handler(req, res) {
       if (!device) return;
       if (!(await verifyMasterAdminCode(req, res, device))) return;
       if (!REAL_TRADING_ENABLED) return send(res, 423, { ok:false, code:'REAL_TRADING_DISABLED' });
+      if (!BINANCE_WRITE_ENABLED) return send(res, 423, { ok:false, code:'BINANCE_WRITE_DISABLED' });
       if (!PAIRING_DISABLED) return send(res, 423, { ok:false, code:'PAIRING_MUST_BE_DISABLED' });
       if (!DEPLOYMENT_SHA) return send(res, 423, { ok:false, code:'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING' });
 
@@ -1457,6 +1462,7 @@ export default async function handler(req, res) {
         ok: true,
         executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
         realTradingEnabled: REAL_TRADING_ENABLED,
+        binanceWriteEnabled: BINANCE_WRITE_ENABLED,
         realExecutionArmed: armStatus.armed,
         realExecutionArmReason: armStatus.reason,
         realExecutionArmedAt: Number(armStatus.record?.armedAt || 0),
@@ -1808,11 +1814,7 @@ export default async function handler(req, res) {
       if (type === 'EXEC_CLOSE_POSITION') {
         const payloadStatus = execClosePayloadStatus(payload);
         if (!payloadStatus.ok) {
-          return send(res, 400, {
-            ok:false,
-            code:'COMMAND_PAYLOAD_INVALID',
-            reason:payloadStatus.reason,
-          });
+          return send(res, 400, { ok:false, code:'COMMAND_PAYLOAD_INVALID', reason:payloadStatus.reason });
         }
       }
 
@@ -2055,11 +2057,7 @@ export default async function handler(req, res) {
           payloadStatus.direction
         );
         if (currentQuantity > 1e-12) {
-          return send(res, 409, {
-            ok:false,
-            code:'EXECUTION_ACK_NOT_CONFIRMED',
-            currentQuantity,
-          });
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_NOT_CONFIRMED', currentQuantity });
         }
 
         await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
@@ -2171,6 +2169,18 @@ export default async function handler(req, res) {
             retryAfterMs: 1500,
           });
         }
+      }
+
+      const requestedDelayMs = Math.max(0, Math.min(30000, Number(req.body?.deferMs || 0)));
+      if (requestedDelayMs > 0) {
+        const reason = String(req.body?.deferReason || 'MASTER_EXECUTION_RETRY').slice(0, 120);
+        const deferred = await deferClaimedCommand(raw, command, reason, device.deviceId, requestedDelayMs);
+        return send(res, 200, {
+          ok: true,
+          requeued: deferred,
+          deferred,
+          retryAfterMs: requestedDelayMs,
+        });
       }
 
       const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;

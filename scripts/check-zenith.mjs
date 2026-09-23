@@ -160,6 +160,14 @@ if (!userStreamState.includes('needsReconciliation = true') ||
   fail('Binance user-stream state machine must fail closed on reconnect/discontinuity');
 }
 
+const masterCommandDispatch = fs.readFileSync('lib/master-command-dispatch.mjs','utf8');
+for (const required of ['masterExecutionEligible','EXEC_CLOSE_POSITION','/api/binance-protective-execute','MASTER_COMMAND_NOT_IMPLEMENTED','CLOSE_ALL_REQUIRED','closeAll:true']) {
+  if (!masterCommandDispatch.includes(required)) fail(`MASTER command dispatcher invariant missing: ${required}`);
+}
+if (masterCommandDispatch.includes('EXEC_OPEN_POSITION') && !masterCommandDispatch.includes("supported:false")) {
+  fail('MASTER dispatcher must never route entry execution');
+}
+
 const binanceOrderWriter = fs.readFileSync('lib/binance-order-writer.mjs','utf8');
 for (const required of [
   "queryOrderByClientId",
@@ -197,8 +205,9 @@ for (const required of [
 if (protectiveExecute.includes('EXEC_OPEN_POSITION')) {
   fail('protective execution API must never open a new position');
 }
-if (!protectiveExecute.includes("priceMatch:String(req.body?.priceMatch||'OPPONENT')")) {
-  fail('protective execution must pass audited adaptive priceMatch values through the order planner');
+if (!protectiveExecute.includes("'FULL_CLOSE_QUANTITY_REQUIRED'") ||
+    !protectiveExecute.includes("priceMatch:String(req.body?.priceMatch||'OPPONENT')")) {
+  fail('protective execution must be full-close only and pass audited adaptive priceMatch into the order planner');
 }
 
 const protectiveCloseState = fs.readFileSync('lib/protective-close-state.mjs','utf8');
@@ -257,8 +266,10 @@ for (const file of ['api/binance-read.js','api/binance-reconcile.js','api/binanc
   if (!source.includes('deviceTokenCandidates(req)')) fail(`${file} must accept the secure device session cookie`);
 }
 
-if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'")) {
-  fail('api/zenith-sync.js must keep the explicit real-trading environment lock');
+if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'") ||
+    !sync.includes("process.env.ZENITH_BINANCE_WRITE_ENABLED === '1'") ||
+    !sync.includes("'BINANCE_WRITE_DISABLED'")) {
+  fail('api/zenith-sync.js must keep both explicit real-trading and Binance-write environment locks');
 }
 if (!sync.includes("'SIMULATION_LOCKED'")) {
   fail('api/zenith-sync.js must expose SIMULATION_LOCKED when real trading is not armed');
@@ -374,6 +385,22 @@ if (!index.includes("role==='master'") ||
     !index.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
   fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
 }
+if (!index.includes('masterExecutionCycle') ||
+    !index.includes("masterRuntimeApi('command-next','POST'") ||
+    !index.includes("masterCommandDisposition('command-ack'") ||
+    !index.includes("masterCommandDisposition('command-requeue'") ||
+    !index.includes("masterCommandDisposition('command-fail'") ||
+    !index.includes("fetch('/api/binance-protective-execute'") ||
+    !index.includes('evaluateFullProtectiveClose') ||
+    !index.includes('PROTECTIVE_CLOSE_ATTEMPTS') ||
+    !index.includes('MARKET_CLOSE_NOT_CONFIRMED') ||
+    !index.includes("setInterval(masterExecutionCycle,750)")) {
+  fail('iPad MASTER must confirm protective closes from live inventory, escalate LIMIT-first, and never ACK on dispatch alone');
+}
+if (!sync.includes('deferReason') || !sync.includes('requestedDelayMs') || !sync.includes('Math.min(30000')) {
+  fail('MASTER command requeue must support bounded retry backoff without extending command expiry');
+}
+
 if (!index.includes("wss://fstream.binance.com/ws/") ||
     index.includes("wss://fstream.binance.com/private/ws/") ||
     !index.includes("import('/lib/user-stream-state.mjs')") ||
