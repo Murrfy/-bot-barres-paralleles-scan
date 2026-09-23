@@ -8,9 +8,9 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8').replace(
   /^import \{ deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';\n/m,
   "const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
 );
-const { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches } = await import(
+const { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus } = await import(
   'data:text/javascript;base64,' +
-  Buffer.from(source + '\nexport { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches };').toString('base64')
+  Buffer.from(source + '\nexport { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus };').toString('base64')
 );
 
 const controller = (revision = 3, hash = 'hash-3') => ({
@@ -125,3 +125,36 @@ test('reconciliation data hash detects actual runtime inventory changes', () => 
 function sha256ForTest(value) {
   return requireHash(value);
 }
+
+test('real execution runtime requires a fresh matching MASTER and ready reconciled user stream', () => {
+  const good = {
+    updatedAt: Date.now(),
+    masterDeviceId: 'master-1',
+    data: {
+      executionMode: 'REAL',
+      userStream: { connected:true, ready:true, failClosed:false, needsReconciliation:false, failReasons:[] },
+    },
+  };
+  assert.equal(executionRuntimeReadinessStatus(good, 'master-1').ready, true);
+
+  for (const [change, reason] of [
+    [{ data:{...good.data,executionMode:'SIMULATION'} }, 'MASTER_RUNTIME_NOT_REAL'],
+    [{ data:{...good.data,userStream:{...good.data.userStream,connected:false}} }, 'USER_STREAM_DISCONNECTED'],
+    [{ data:{...good.data,userStream:{...good.data.userStream,ready:false}} }, 'USER_STREAM_NOT_READY'],
+    [{ data:{...good.data,userStream:{...good.data.userStream,failClosed:true}} }, 'USER_STREAM_FAIL_CLOSED'],
+    [{ data:{...good.data,userStream:{...good.data.userStream,needsReconciliation:true}} }, 'USER_STREAM_RECONCILIATION_REQUIRED'],
+  ]) {
+    const candidate={...good,...change};
+    assert.equal(executionRuntimeReadinessStatus(candidate,'master-1').reason,reason);
+  }
+});
+
+test('real execution runtime rejects another MASTER identity and stale runtime', () => {
+  const base = {
+    updatedAt: Date.now(),
+    masterDeviceId:'master-1',
+    data:{executionMode:'REAL',userStream:{connected:true,ready:true,failClosed:false,needsReconciliation:false,failReasons:[]}},
+  };
+  assert.equal(executionRuntimeReadinessStatus(base,'master-2').reason,'MASTER_RUNTIME_WRONG_DEVICE');
+  assert.equal(executionRuntimeReadinessStatus({...base,updatedAt:Date.now()-31000},'master-1').reason,'MASTER_RUNTIME_STALE');
+});
