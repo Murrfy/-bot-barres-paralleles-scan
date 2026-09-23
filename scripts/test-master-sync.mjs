@@ -12,6 +12,10 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
   .replace(
     /^import \{ normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget \} from '\.\.\/lib\/protective-command\.mjs';\n/m,
     "const normalizeProtectiveUpdatePayload=()=>{ throw new Error('NOT_USED_BY_MASTER_SYNC_TESTS'); }; const protectionOnlyMismatchTarget=()=>''; const protectiveRepairTarget=()=>'';\n"
+  )
+  .replace(
+    /^import \{ REAL_RISK_LIMITS \} from '\.\.\/lib\/risk-policy\.mjs';\n/m,
+    "const REAL_RISK_LIMITS={maxLossUsd:400};\n"
   );
 const { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus } = await import(
   'data:text/javascript;base64,' +
