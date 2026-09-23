@@ -72,6 +72,29 @@ function lineNumber(text, index) {
 
 const failures = [];
 
+const gitignorePath = path.join(ROOT, '.gitignore');
+const requiredIgnorePatterns = ['.env', '.env.*', '.vercel/', '*.pem', '*.key', '*.p12', '*.pfx'];
+if (!fs.existsSync(gitignorePath)) {
+  failures.push({ file: '.gitignore', line: 1, rule: 'missing secret ignore policy', source: 'working-tree' });
+} else {
+  const gitignoreLines = new Set(
+    fs.readFileSync(gitignorePath, 'utf8')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+  );
+  for (const pattern of requiredIgnorePatterns) {
+    if (!gitignoreLines.has(pattern)) {
+      failures.push({
+        file: '.gitignore',
+        line: 1,
+        rule: 'missing ignore pattern ' + pattern,
+        source: 'working-tree'
+      });
+    }
+  }
+}
+
 function explicitFakeTestCredential(file, ruleName, match) {
   if (ruleName !== 'hardcoded sensitive configuration') return false;
   const testFixture = String(file || '').startsWith(path.normalize('scripts/test-'));
