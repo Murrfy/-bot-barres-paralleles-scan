@@ -66,6 +66,8 @@ jobs:
         run: node --test scripts/test-command-safety.mjs
       - name: Test real-entry risk preflight
         run: node --test scripts/test-entry-preflight.mjs
+      - name: Test real entry execution rate limit
+        run: node --test scripts/test-entry-execution-rate-limit.mjs
       - name: Test MASTER-only entry preflight HTTP access
         run: node --test scripts/test-entry-preflight-auth.mjs
       - name: Test secure device session
