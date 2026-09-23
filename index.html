@@ -178,7 +178,7 @@ let exchangeMap=new Map(),lastPrices=new Map(),ws=null,wsLive=false,fallbackTime
 const lastAggIds=new Map(),lastAggTimes=new Map(),recoveringSymbols=new Set(),pendingAggTrades=new Map();
 let cursorSaveTimer=null;
 let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,positions:[],standardOrders:[],algoOrders:[],openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
-let controllerRealCommandModule=null,realClosePending=new Set(),realCancelPending=new Set(),realProtectiveUpdatePending=new Set();
+let controllerRealCommandModule=null,realClosePending=new Set(),realCancelPending=new Set(),realProtectiveUpdatePending=new Map();
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
