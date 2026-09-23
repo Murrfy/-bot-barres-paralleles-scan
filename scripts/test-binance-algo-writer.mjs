@@ -92,3 +92,27 @@ test('algo cancel verifies identity before DELETE',async()=>{
   assert.equal(r.disposition,'CANCELED');
   assert.deepEqual(methods,['GET','DELETE','GET']);
 });
+
+
+test('progressive STOP idempotency verifies the explicit LIMIT price',async()=>{
+  const progressive={
+    algoType:'CONDITIONAL',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',triggerPrice:'50500',price:'50500',timeInForce:'GTC',
+    workingType:'CONTRACT_PRICE',priceProtect:'false',quantity:'0.02',
+    reduceOnly:'true',clientAlgoId:'zth-PRO-0123456789abcdef01234567'
+  };
+  const existingProgressive={algoId:2,algoStatus:'NEW',orderType:'STOP',...progressive};
+  const okFetch=async()=>response(existingProgressive);
+  const ok=await placeAlgoOrderIdempotent({
+    fetchImpl:okFetch,apiKey:'k',secret:'s',algoParams:progressive,writesEnabled:true,timestamp:1000
+  });
+  assert.equal(ok.disposition,'EXISTING');
+
+  const badFetch=async()=>response({...existingProgressive,price:'50499.9'});
+  await assert.rejects(
+    placeAlgoOrderIdempotent({
+      fetchImpl:badFetch,apiKey:'k',secret:'s',algoParams:progressive,writesEnabled:true,timestamp:1000
+    }),
+    e=>e instanceof BinanceRequestError&&e.message==='ALGO_LIMIT_PRICE_MISMATCH'
+  );
+});
