@@ -7,7 +7,7 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8');
 test('server device sessions use the same TTL as the secure cookie', () => {
   assert.match(
     source,
-    /import \{ DEVICE_SESSION_MAX_AGE_SECONDS, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';/
+    /import \{[^\n]*DEVICE_SESSION_MAX_AGE_SECONDS[^\n]*deviceTokenCandidates[^\n]*setDeviceSessionCookie[^\n]*clearDeviceSessionCookie[^\n]*sameOriginMutation[^\n]*\} from '\.\.\/lib\/device-session\.mjs';/
   );
 
   assert.match(
