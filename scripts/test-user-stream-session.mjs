@@ -39,7 +39,7 @@ function harness({role='master',registered='master-1',lease='master-1',storedSes
       } else if (c[0] === 'DEL' && c[1] === sessionKey) {
         session = null;
         result = 1;
-      } else if (c[0] === 'EVAL' && String(c[4] || '').includes(':rate:user-stream:')) {
+      } else if (c[0] === 'EVAL' && String(c[3] || '').includes(':rate:user-stream:')) {
         result = rateCount;
       }
       return new Response(JSON.stringify({result}));
