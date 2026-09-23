@@ -1070,10 +1070,17 @@ const masterRevokeIndex = fs.readFileSync('index.html','utf8');
 for (const required of [
   "action === 'master-revoke'",
   "requireDevice(req, res, ['controller'])",
+  'fetchLiveBinanceActivity()',
+  "signedFuturesGet('/fapi/v3/positionRisk'",
+  "signedFuturesGet('/fapi/v1/openOrders'",
+  "signedFuturesGet('/fapi/v1/openAlgoOrders'",
+  "'BINANCE_ACTIVITY_CHECK_FAILED'",
   "'MASTER_REVOKE_DRAIN_REQUIRED'",
   "'MASTER_REVOKED'",
   'KEY_REAL_EXECUTION_ARMED',
   'KEY_USER_STREAM_SESSION',
+  'KEY_PENDING',
+  'KEY_PROCESSING',
   "roleAssignmentKey(PREFIX, 'master')"
 ]) {
   if (!masterRevokeSync.includes(required)) fail(`MASTER emergency revoke must remain fail-closed: ${required}`);
