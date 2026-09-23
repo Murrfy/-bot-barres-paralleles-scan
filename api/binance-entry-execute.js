@@ -31,6 +31,7 @@ const BINANCE_WRITE_ENABLED=process.env.ZENITH_BINANCE_WRITE_ENABLED==='1';
 const PAIRING_DISABLED=process.env.ZENITH_PAIRING_DISABLED==='1';
 const REAL_ENTRY_WRITE_ENABLED=process.env.ZENITH_REAL_ENTRY_WRITE_ENABLED==='1';
 const VERCEL_PRODUCTION_WRITE_ALLOWED=!process.env.VERCEL_ENV||process.env.VERCEL_ENV==='production';
+const ENTRY_EXECUTION_RATE_LIMIT_PER_MINUTE=6;
 
 function send(res,status,body){
   res.setHeader('Cache-Control','no-store, max-age=0');
@@ -73,6 +74,19 @@ async function requireCurrentMaster(req){
   }
   return null;
 }
+
+async function entryExecutionRateAllowed(deviceId){
+  const bucket=Math.floor(Date.now()/60000);
+  const key=`${PREFIX}:rate:entry-execution:${sha256(deviceId)}:${bucket}`;
+  const script=[
+    "local count = redis.call('INCR', KEYS[1])",
+    "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
+    "return count"
+  ].join('\n');
+  const count=Number(await redis(['EVAL',script,'1',key,'120']))||0;
+  return count<=ENTRY_EXECUTION_RATE_LIMIT_PER_MINUTE;
+}
+function retryAfterSeconds(){return Math.max(1,60-(Math.floor(Date.now()/1000)%60));}
 
 async function readExecutionState(){
   const [runtimeRaw,reportRaw,armRaw,modeRaw,panicRaw]=await Promise.all([
@@ -125,6 +139,25 @@ export default async function handler(req,res){
       orderType!=='LIMIT' ||
       !(margin>0)||!(leverage>0)||!(maxLoss>0)||!(limitPrice>0)){
     return send(res,400,{ok:false,code:'ENTRY_EXECUTION_REQUEST_INVALID',writeAttempted:false});
+  }
+
+  try{
+    if(!(await entryExecutionRateAllowed(master.deviceId))){
+      const retryAfter=retryAfterSeconds();
+      res.setHeader('Retry-After',String(retryAfter));
+      return send(res,429,{
+        ok:false,
+        code:'ENTRY_EXECUTION_RATE_LIMIT',
+        retryAfterSeconds:retryAfter,
+        writeAttempted:false,
+      });
+    }
+  }catch(e){
+    return send(res,503,{
+      ok:false,
+      code:e?.code||'RATE_LIMIT_BACKEND_ERROR',
+      writeAttempted:false,
+    });
   }
 
   const apiKey=process.env.BINANCE_API_KEY;
