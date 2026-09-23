@@ -47,6 +47,7 @@ async function redis(command){
     method:'POST',
     headers:{Authorization:`Bearer ${REDIS_TOKEN}`,'Content-Type':'application/json'},
     body:JSON.stringify(command),
+    signal: AbortSignal.timeout(8000),
     cache:'no-store',
   });
   const text=await r.text();
