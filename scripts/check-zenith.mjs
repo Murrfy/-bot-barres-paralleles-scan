@@ -307,6 +307,13 @@ if (!protectiveUpdateExecute.includes('impliedLossUsd<=REAL_RISK_LIMITS.maxLossU
   fail('progressive protection must accept only an emergency MAX-LOSS that is itself within the hard $400 cap');
 }
 
+if (!index.includes('id="tMaxLoss" type="number" min="2" max="400" step="1"') ||
+    !index.includes('requestedMaxLoss>=2&&requestedMaxLoss<=400') ||
+    !index.includes('maxLoss:requestedMaxLoss') ||
+    !index.includes('settings.maxLoss=Math.min(400,Math.max(2,n(settings.maxLoss,400)))')) {
+  fail('controller MAX-LOSS settings must expose, validate and migrate to the same hard $400 real-trading cap');
+}
+
 if (!protectiveUpdateExecute.includes('NEW_PROGRESSIVE_PROTECTION_NOT_CONFIRMED') ||
     !protectiveUpdateExecute.includes('allowedIds.push(update.previousClientAlgoId)') ||
     !index.includes('if(maxLoss||progressive)') ||
