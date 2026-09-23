@@ -174,7 +174,7 @@ const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='z
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
 let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
-let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
+let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,realExecutionArmed:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
 let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEvents:[],reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
@@ -433,9 +433,10 @@ function masterStreamProjection(){
 }
 function masterRuntimeSnapshot(){
   const stream=masterStreamProjection();
+  const executionMode=masterRuntimeState.realExecutionArmed===true?'REAL':'SIMULATION';
   return {
-    executionMode:'SIMULATION',
-    mode:'SIMULATION',
+    executionMode,
+    mode:executionMode,
     openPositions:clone(openPositions),
     activePositions:Math.max(openPositions.length,n(stream.activePositions)),
     openOrders:[],
@@ -718,6 +719,7 @@ async function masterRuntimeCycle(){
     masterRuntimeState.mode=String(hb.q.masterMode||'PAUSED');
     masterRuntimeState.leaseActive=true;
     masterRuntimeState.heartbeatFresh=true;
+    masterRuntimeState.realExecutionArmed=hb.q.realExecutionArmed===true;
     masterRuntimeState.error='';
 
     await loadMasterUserStreamModules();

@@ -414,8 +414,33 @@ if (!sync.includes("'COMMAND_EXPIRED'") ||
     !sync.includes("'COMMAND_QUEUE_FULL'") ||
     !sync.includes('modeBeforeClaim') ||
     !sync.includes('modeNow') ||
-    !sync.includes('executionGate(command.type, halted)')) {
-  fail('MASTER must revalidate age, mode and execution lock after a command is claimed');
+    !sync.includes('executionGate(command.type, halted)') ||
+    !sync.includes('realExecutionReadiness') ||
+    !sync.includes('freshConsistentReconciliation') ||
+    !sync.includes("'EXECUTION_NOT_READY'")) {
+  fail('MASTER must revalidate age, mode, execution lock, private stream readiness and fresh reconciliation before any EXEC command');
+}
+if (!sync.includes('KEY_REAL_EXECUTION_ARMED') ||
+    !sync.includes("action === 'real-execution-arm'") ||
+    !sync.includes("'REAL_EXECUTION_ARM_BLOCKED'") ||
+    !sync.includes('DEPLOYMENT_SHA') ||
+    !sync.includes("'REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED'")) {
+  fail('real execution must require an explicit admin arm bound to the current MASTER and deployment');
+}
+if (!index.includes("masterRuntimeState.realExecutionArmed===true?'REAL':'SIMULATION'") ||
+    !index.includes("hb.q.realExecutionArmed===true")) {
+  fail('iPad MASTER must publish REAL runtime only after server-side real-execution arm');
+}
+if (!masterAdmin.includes('armRealBtn') || !masterAdmin.includes('armRealExecution')) {
+  fail('MASTER admin must expose guarded real-execution arming only when the real env is present');
+}
+
+if (!sync.includes("'MASTER_RUNTIME_NOT_REAL'") ||
+    !sync.includes("'USER_STREAM_NOT_READY'") ||
+    !sync.includes("'USER_STREAM_FAIL_CLOSED'") ||
+    !sync.includes("'USER_STREAM_RECONCILIATION_REQUIRED'") ||
+    !sync.includes("report.status !== 'CLEAN_REAL'")) {
+  fail('real execution must fail closed unless runtime is REAL, user stream is ready and reconciliation is CLEAN_REAL');
 }
 if (!sync.includes('pushDeadLetter') || !sync.includes("redis(['LTRIM', KEY_DEAD")) {
   fail('dead-letter queue must be bounded');
