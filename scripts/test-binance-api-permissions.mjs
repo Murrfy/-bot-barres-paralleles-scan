@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { binanceApiPermissionBlockers } from '../api/zenith-sync.js';
+import { binanceApiPermissionBlockers, fetchBinanceApiPermissions } from '../lib/binance-api-permissions.mjs';
 
 const safe = {
   ipRestrict: true,
@@ -61,4 +61,48 @@ test('non-Futures and extra trading permissions block real execution', () => {
 test('missing or unreadable permission data fails closed', () => {
   assert.deepEqual(binanceApiPermissionBlockers(null), ['BINANCE_API_PERMISSIONS_UNAVAILABLE']);
   assert.ok(binanceApiPermissionBlockers({...safe, enableReading:false}).includes('BINANCE_API_READING_REQUIRED'));
+});
+
+
+test('permission fetch signs the Binance restrictions request and returns the permission record', async () => {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    const u = new URL(url);
+    if (u.pathname === '/api/v3/time') {
+      return new Response(JSON.stringify({ serverTime: 1700000000000 }));
+    }
+    if (u.pathname === '/sapi/v1/account/apiRestrictions') {
+      assert.equal(init.headers['X-MBX-APIKEY'], 'api-key-test');
+      assert.equal(u.searchParams.get('timestamp'), '1700000000000');
+      assert.equal(u.searchParams.get('recvWindow'), '5000');
+      assert.ok(u.searchParams.get('signature'));
+      return new Response(JSON.stringify(safe));
+    }
+    return new Response('{}', { status: 404 });
+  };
+
+  const result = await fetchBinanceApiPermissions({
+    apiKey: 'api-key-test',
+    secret: 'secret',
+    fetchImpl,
+  });
+
+  assert.deepEqual(result, safe);
+  assert.equal(calls.length, 2);
+});
+
+test('permission fetch fails closed when Binance permission data cannot be verified', async () => {
+  const fetchImpl = async (url) => {
+    const u = new URL(url);
+    if (u.pathname === '/api/v3/time') {
+      return new Response(JSON.stringify({ serverTime: 1700000000000 }));
+    }
+    return new Response(JSON.stringify({ code: -2015, msg: 'rejected' }), { status: 401 });
+  };
+
+  await assert.rejects(
+    fetchBinanceApiPermissions({ apiKey: 'api-key-test', secret: 'secret', fetchImpl }),
+    error => error?.code === 'BINANCE_API_PERMISSION_CHECK_FAILED',
+  );
 });
