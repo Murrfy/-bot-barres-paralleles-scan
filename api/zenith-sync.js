@@ -2189,9 +2189,11 @@ export default async function handler(req, res) {
                 (order?.closePosition === true || order?.closePosition === 'true');
             }
             return String(order?.type || '').toUpperCase() === 'STOP' &&
+              String(order?.timeInForce || '').toUpperCase() === 'GTC' &&
               (order?.reduceOnly === true || order?.reduceOnly === 'true') &&
               numberMatches(order?.origQty, payloadStatus.quantity) &&
-              String(order?.priceMatch || '').toUpperCase() === 'OPPONENT';
+              numberMatches(order?.price, payloadStatus.limitPrice) &&
+              (!order?.priceMatch || String(order?.priceMatch || '').toUpperCase() === 'NONE');
           });
           if (payloadStatus.protectionKind === 'PROGRESSIVE') {
             const entryPrice = Number(position?.entryPrice || 0);
