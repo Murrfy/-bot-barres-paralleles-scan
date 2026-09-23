@@ -825,9 +825,10 @@ if (!sync.includes('KEY_REAL_EXECUTION_ARMED') ||
 if (!sync.includes("BINANCE_API_RESTRICTIONS_PATH = '/sapi/v1/account/apiRestrictions'") ||
     !sync.includes('fetchBinanceApiPermissions') ||
     !sync.includes('binanceApiPermissionBlockers') ||
+    !sync.includes("'BINANCE_API_IP_RESTRICTION_REQUIRED'") ||
     !sync.includes("'BINANCE_API_WITHDRAWALS_MUST_BE_DISABLED'") ||
     !sync.includes("'BINANCE_API_FUTURES_REQUIRED'")) {
-  fail('real execution arm must verify safe Binance API permissions before arming');
+  fail('real execution arm must verify IP-restricted safe Binance API permissions before arming');
 }
 if (!index.includes("masterRuntimeState.realExecutionArmed===true?'REAL':'SIMULATION'") ||
     !index.includes("hb.q.realExecutionArmed===true")) {
