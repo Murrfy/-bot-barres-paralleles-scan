@@ -17,6 +17,7 @@ const MASTER_PAIRING_CODE = process.env.ZENITH_MASTER_PAIRING_CODE || '';
 const MASTER_ADMIN_CODE = process.env.ZENITH_MASTER_ADMIN_CODE || '';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
+const REAL_ENTRY_ENABLED = process.env.ZENITH_REAL_ENTRY_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
 
 const PREFIX = 'zenith:v1';
@@ -375,6 +376,7 @@ const ALLOWED_COMMAND_TYPES = new Set([
   'UPDATE_PROTECTION',
   'CLOSE_POSITION',
   'CANCEL_ENTRY',
+  'EXEC_OPEN_POSITION',
   'EXEC_UPDATE_EXIT',
   'EXEC_UPDATE_PROTECTION',
   'EXEC_CLOSE_POSITION',
@@ -392,6 +394,26 @@ function commandTypeAllowed(type) {
   return ALLOWED_COMMAND_TYPES.has(String(type || '').toUpperCase());
 }
 
+function execOpenPayloadStatus(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok:false, reason:'PAYLOAD_OBJECT_REQUIRED' };
+  const symbol = String(payload.symbol || '').toUpperCase();
+  const side = String(payload.side || '').toUpperCase();
+  const orderType = String(payload.orderType || 'LIMIT').toUpperCase();
+  const limitPrice = Number(payload.limitPrice);
+  const margin = Number(payload.margin);
+  const leverage = Number(payload.leverage);
+  const maxLoss = Number(payload.maxLoss);
+  if (!/^[A-Z0-9]{3,30}$/.test(symbol)) return { ok:false, reason:'SYMBOL_INVALID' };
+  if (!['BUY','SELL'].includes(side)) return { ok:false, reason:'SIDE_INVALID' };
+  if (orderType !== 'LIMIT') return { ok:false, reason:'REAL_ENTRY_LIMIT_ONLY' };
+  if (!Number.isFinite(limitPrice) || limitPrice <= 0) return { ok:false, reason:'LIMIT_PRICE_INVALID' };
+  if (!Number.isFinite(margin) || margin <= 0 || margin > 1000) return { ok:false, reason:'MARGIN_INVALID' };
+  if (!Number.isFinite(leverage) || leverage <= 0 || leverage > 10) return { ok:false, reason:'LEVERAGE_INVALID' };
+  if (!Number.isFinite(maxLoss) || maxLoss <= 0 || maxLoss > 400 || maxLoss > margin) return { ok:false, reason:'MAX_LOSS_INVALID' };
+  if (margin * leverage > 10000) return { ok:false, reason:'NOTIONAL_OVER_SERVER_CAP' };
+  return { ok:true, symbol, side, orderType:'LIMIT', limitPrice, margin, leverage, maxLoss };
+}
+
 function execClosePayloadStatus(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok:false, reason:'PAYLOAD_OBJECT_REQUIRED' };
   const symbol = String(payload.symbol || '').toUpperCase();
@@ -404,6 +426,47 @@ function execClosePayloadStatus(payload) {
   if (payload.closeAll !== true) return { ok:false, reason:'CLOSE_ALL_REQUIRED' };
   if (!['PROTECTIVE_IOC','MARKET_LAST_RESORT'].includes(exitMode)) return { ok:false, reason:'EXIT_MODE_INVALID' };
   return { ok:true, symbol, direction, quantity, exitMode, closeAll:true };
+}
+
+function entryExecutionKey(commandId) {
+  return `${PREFIX}:entry-execution:${String(commandId || '')}`;
+}
+
+function runtimeOpenEntryEvidence(runtimeState, payloadStatus, record) {
+  const data = runtimeState?.data && typeof runtimeState.data === 'object' ? runtimeState.data : {};
+  const orders = Array.isArray(data.binanceOrders) ? data.binanceOrders : [];
+  const positions = Array.isArray(data.binancePositions) ? data.binancePositions : [];
+  const clientOrderId = String(record?.clientOrderId || '');
+  const plannedQuantity = Number(record?.plannedQuantity);
+  const order = orders.find(o =>
+    String(o?.orderClass || 'STANDARD').toUpperCase() === 'STANDARD' &&
+    String(o?.symbol || '').toUpperCase() === payloadStatus.symbol &&
+    String(o?.clientOrderId || '') === clientOrderId
+  ) || null;
+
+  if (order) {
+    if (String(order.side || '').toUpperCase() !== payloadStatus.side) return { ok:false, reason:'ENTRY_ACK_ORDER_SIDE_MISMATCH' };
+    if (String(order.positionSide || 'BOTH').toUpperCase() !== 'BOTH') return { ok:false, reason:'ENTRY_ACK_HEDGE_MODE' };
+    if (order.reduceOnly === true || order.reduceOnly === 'true') return { ok:false, reason:'ENTRY_ACK_REDUCE_ONLY' };
+    if (String(order.type || '').toUpperCase() !== 'LIMIT') return { ok:false, reason:'ENTRY_ACK_ORDER_TYPE_MISMATCH' };
+    const originalQuantity = Number(order.origQty);
+    if (!Number.isFinite(originalQuantity) || Math.abs(originalQuantity - plannedQuantity) > 1e-12) {
+      return { ok:false, reason:'ENTRY_ACK_ORDER_QUANTITY_MISMATCH' };
+    }
+  }
+
+  const expectedDirection = payloadStatus.side === 'BUY' ? 'LONG' : 'SHORT';
+  let positionQuantity = 0;
+  for (const position of positions) {
+    if (String(position?.symbol || '').toUpperCase() !== payloadStatus.symbol) continue;
+    const side = String(position?.positionSide || 'BOTH').toUpperCase();
+    const amount = Number(position?.positionAmt ?? position?.quantity ?? 0);
+    const direction = side === 'LONG' || side === 'SHORT' ? side : amount < 0 ? 'SHORT' : 'LONG';
+    if (direction === expectedDirection) positionQuantity = Math.max(positionQuantity, Math.abs(Number.isFinite(amount) ? amount : 0));
+  }
+  if (positionQuantity > plannedQuantity + 1e-12) return { ok:false, reason:'ENTRY_ACK_POSITION_EXCEEDS_PLAN' };
+  if (!order && !(positionQuantity > 1e-12)) return { ok:false, reason:'ENTRY_ACK_NOT_CONFIRMED' };
+  return { ok:true, orderSeen:Boolean(order), positionQuantity };
 }
 
 function runtimeClosePositionQuantity(runtimeState, symbol, direction) {
@@ -431,6 +494,7 @@ function executionGate(type, halted) {
   const normalized = String(type || '').toUpperCase();
   if (!normalized.startsWith('EXEC_')) return { allowed: true, reason: '' };
   if (!REAL_TRADING_ENABLED) return { allowed: false, reason: 'REAL_TRADING_DISABLED' };
+  if (normalized === 'EXEC_OPEN_POSITION' && !REAL_ENTRY_ENABLED) return { allowed: false, reason: 'REAL_ENTRY_DISABLED' };
   if (!BINANCE_WRITE_ENABLED) return { allowed: false, reason: 'BINANCE_WRITE_DISABLED' };
   if (!PAIRING_DISABLED) return { allowed: false, reason: 'PAIRING_OPEN' };
   if (halted && !PROTECTIVE_EXEC_COMMANDS.has(normalized)) {
@@ -1811,6 +1875,12 @@ export default async function handler(req, res) {
           maxBytes: COMMAND_PAYLOAD_MAX_BYTES,
         });
       }
+      if (type === 'EXEC_OPEN_POSITION') {
+        const payloadStatus = execOpenPayloadStatus(payload);
+        if (!payloadStatus.ok) {
+          return send(res, 400, { ok:false, code:'COMMAND_PAYLOAD_INVALID', reason:payloadStatus.reason });
+        }
+      }
       if (type === 'EXEC_CLOSE_POSITION') {
         const payloadStatus = execClosePayloadStatus(payload);
         if (!payloadStatus.ok) {
@@ -1911,6 +1981,13 @@ export default async function handler(req, res) {
       if (!command || !commandTypeAllowed(command.type)) {
         await rejectClaimedCommand(raw, 'COMMAND_TYPE_NOT_ALLOWED');
         return send(res, 200, { ok: true, command: null, typeRejected: true, recovery });
+      }
+      if (String(command.type || '').toUpperCase() === 'EXEC_OPEN_POSITION') {
+        const payloadStatus = execOpenPayloadStatus(command.payload);
+        if (!payloadStatus.ok) {
+          await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason });
+          return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
+        }
       }
       if (String(command.type || '').toUpperCase() === 'EXEC_CLOSE_POSITION') {
         const payloadStatus = execClosePayloadStatus(command.payload);
@@ -2028,6 +2105,56 @@ export default async function handler(req, res) {
       let command = null;
       try { command = JSON.parse(raw); } catch {}
       const commandId = String(command?.id || '');
+
+      if (String(command?.type || '').toUpperCase() === 'EXEC_OPEN_POSITION') {
+        const payloadStatus = execOpenPayloadStatus(command?.payload);
+        if (!payloadStatus.ok) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_PAYLOAD_INVALID', reason:payloadStatus.reason });
+        }
+        const record = parseStoredJson(await redis(['GET', entryExecutionKey(commandId)]));
+        if (!record || record.version !== 1 ||
+            String(record.commandId || '') !== commandId ||
+            String(record.masterDeviceId || '') !== String(device.deviceId) ||
+            String(record.deploymentSha || '') !== DEPLOYMENT_SHA ||
+            String(record.symbol || '').toUpperCase() !== payloadStatus.symbol ||
+            String(record.side || '').toUpperCase() !== payloadStatus.side ||
+            String(record.orderType || '').toUpperCase() !== 'LIMIT' ||
+            Math.abs(Number(record.limitPrice) - payloadStatus.limitPrice) > 1e-12 ||
+            !(Number(record.plannedQuantity) > 0) ||
+            !/^[.A-Z:/a-z0-9_-]{1,36}$/.test(String(record.clientOrderId || ''))) {
+          return send(res, 409, { ok:false, code:'ENTRY_EXECUTION_RECORD_INVALID' });
+        }
+        const proofClientOrderId = String(req.body?.executionProof?.clientOrderId || '');
+        if (proofClientOrderId !== String(record.clientOrderId)) {
+          return send(res, 409, { ok:false, code:'ENTRY_EXECUTION_PROOF_INVALID' });
+        }
+        const readiness = await freshConsistentReconciliation(device.deviceId);
+        if (!readiness.ok) {
+          return send(res, 409, {
+            ok:false,
+            code:'EXECUTION_ACK_RECONCILIATION_REQUIRED',
+            reason:readiness.reason,
+          });
+        }
+        const evidence = runtimeOpenEntryEvidence(readiness.runtimeState, payloadStatus, record);
+        if (!evidence.ok) {
+          return send(res, 409, { ok:false, code:evidence.reason || 'ENTRY_ACK_NOT_CONFIRMED' });
+        }
+        await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+          at:Date.now(),
+          kind:'EXEC_OPEN_CONFIRMED',
+          commandId,
+          deviceId:device.deviceId,
+          symbol:payloadStatus.symbol,
+          side:payloadStatus.side,
+          clientOrderId:String(record.clientOrderId),
+          plannedQuantity:Number(record.plannedQuantity),
+          orderSeen:evidence.orderSeen,
+          positionQuantity:evidence.positionQuantity,
+          reconciliationObservedAt:Number(readiness.report?.observedAt || 0),
+        })]);
+        await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      }
 
       if (String(command?.type || '').toUpperCase() === 'EXEC_CLOSE_POSITION') {
         const payloadStatus = execClosePayloadStatus(command?.payload);
