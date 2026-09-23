@@ -2078,7 +2078,7 @@ async function refreshBinanceAccount(){
   try{
     const r=await fetch('/api/binance-read',{
       cache:'no-store',
-      headers:{Accept:'application/json',...(token?{}:{})}
+      headers:{Accept:'application/json'}
     });
     let q={};try{q=await r.json()}catch(_){q={}}
     if(!r.ok||q?.ok!==true){
