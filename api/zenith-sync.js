@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation } from '../lib/device-session.mjs';
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
+import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -458,6 +459,8 @@ function runtimeEmergencyProtection(runtimeState, symbol, direction, entryPrice,
   const sym = String(symbol || '').toUpperCase();
   const dir = String(direction || '').toUpperCase();
   const expectedSide = dir === 'LONG' ? 'SELL' : 'BUY';
+  const position = runtimePositionRecord(runtimeState, sym, dir);
+  const quantity = Math.abs(Number(position?.positionAmt ?? position?.quantity ?? 0));
   return runtimeOpenOrder(runtimeState, order => {
     if (String(order?.orderClass || '').toUpperCase() !== 'ALGO') return false;
     if (String(order?.symbol || '').toUpperCase() !== sym) return false;
@@ -465,11 +468,18 @@ function runtimeEmergencyProtection(runtimeState, symbol, direction, entryPrice,
     if (String(order?.positionSide || 'BOTH').toUpperCase() !== 'BOTH') return false;
     if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') return false;
     if (!(order?.closePosition === true || order?.closePosition === 'true')) return false;
-    if (excludeClientAlgoId && String(order?.clientAlgoId || '') === String(excludeClientAlgoId)) return false;
+    const clientAlgoId=String(order?.clientAlgoId||'');
+    if(!/^zth-[A-Za-z0-9._:-]+$/.test(clientAlgoId)||clientAlgoId.length>36)return false;
+    if (excludeClientAlgoId && clientAlgoId === String(excludeClientAlgoId)) return false;
     const trigger = Number(order?.triggerPrice ?? order?.stopPrice);
     const entry = Number(entryPrice);
-    if (!(trigger > 0) || !(entry > 0)) return false;
-    return dir === 'LONG' ? trigger < entry : trigger > entry;
+    if (!(trigger > 0) || !(entry > 0) || !(quantity > 0)) return false;
+    const lossSide = dir === 'LONG' ? trigger < entry : trigger > entry;
+    if(!lossSide)return false;
+    const impliedLossUsd = dir === 'LONG'
+      ? (entry-trigger)*quantity
+      : (trigger-entry)*quantity;
+    return impliedLossUsd<=REAL_RISK_LIMITS.maxLossUsd+1e-8;
   });
 }
 
