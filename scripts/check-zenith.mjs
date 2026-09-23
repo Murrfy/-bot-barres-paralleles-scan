@@ -412,6 +412,14 @@ if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'") ||
 if (!sync.includes("'SIMULATION_LOCKED'")) {
   fail('api/zenith-sync.js must expose SIMULATION_LOCKED when real trading is not armed');
 }
+
+if (!sync.includes("import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';") ||
+    !sync.includes("/^zth-[A-Za-z0-9._:-]+$/.test(clientAlgoId)") ||
+    !sync.includes('impliedLossUsd<=REAL_RISK_LIMITS.maxLossUsd+1e-8') ||
+    !sync.includes('numberMatches(order?.price, payloadStatus.limitPrice)') ||
+    !sync.includes("String(order?.timeInForce || '').toUpperCase() === 'GTC'")) {
+  fail('protective ACK must prove exact progressive LIMIT identity and a Zenith-managed MAX-LOSS within the hard loss cap');
+}
 if (!sync.includes("KEY_EMERGENCY_STOP")) {
   fail('api/zenith-sync.js must keep the persistent emergency-stop key');
 }
