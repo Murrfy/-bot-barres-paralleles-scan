@@ -82,3 +82,23 @@ test('explicit reconciliation invalidation keeps connection but fails closed',()
   assert.equal(s.failClosed,true);
   assert.ok(s.failReasons.includes('RUNTIME_CHANGED'));
 });
+
+
+test('certified REST reconciliation clears transient inventory invalidation',()=>{
+  let s=readyState();
+  s=markUserStreamNeedsReconciliation(s,'STREAM_INVENTORY_CHANGED');
+  assert.equal(userStreamReady(s),false);
+  const r=markUserStreamReconciled(s,{observedAt:1900,runtimeHash:'fresh-hash'});
+  assert.equal(userStreamReady(r),true);
+  assert.deepEqual(r.failReasons,[]);
+});
+
+test('fresh websocket connection resets stale connection-local failures before reconciliation',()=>{
+  let s=readyState();
+  s=markUserStreamDisconnected(s,{at:2000,reason:'SCHEDULED_23H_RECONNECT'});
+  assert.ok(s.failReasons.includes('SCHEDULED_23H_RECONNECT'));
+  s=markUserStreamConnected(s,{connectionId:'ws-2',at:2100});
+  assert.deepEqual(s.failReasons,['RECONCILIATION_REQUIRED_AFTER_CONNECT']);
+  s=markUserStreamReconciled(s,{observedAt:2200,runtimeHash:'new-connection-hash'});
+  assert.equal(userStreamReady(s),true);
+});
