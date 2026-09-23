@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
+import { protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 
 const PREFIX='zenith:v1';
 const KEY_MASTER=`${PREFIX}:master`;
@@ -119,18 +120,7 @@ function executionReadiness(runtimeState,report,masterDeviceId,repairTarget=''){
   if(clean)return '';
 
   const target=String(repairTarget||'').toUpperCase();
-  const missing=Array.isArray(report?.differences?.missingProtections)
-    ?report.differences.missingProtections.map(x=>String(x||'').toUpperCase())
-    :[];
-  const protectionOnly=
-    target &&
-    report.status==='MISMATCH' &&
-    report.failClosed===true &&
-    report.reasons.length===1 &&
-    report.reasons[0]==='MISSING_BINANCE_PROTECTION' &&
-    missing.length===1 &&
-    missing[0]===target;
-  if(protectionOnly)return '';
+  if(target&&protectionOnlyMismatchTarget(report)===target)return '';
 
   return 'BINANCE_RECONCILIATION_MISMATCH';
 }
@@ -169,14 +159,11 @@ export default async function handler(req,res){
     return send(res,400,{ok:false,code:'PROTECTIVE_COMMAND_UNSUPPORTED',writeAttempted:false});
   }
 
-  const repairSymbol=String(req.body?.symbol||'').toUpperCase();
-  const repairDirection=String(req.body?.direction||'').toUpperCase();
-  const repairTarget=
-    type==='EXEC_CLOSE_POSITION' &&
-    /^[A-Z0-9]{3,30}$/.test(repairSymbol) &&
-    ['LONG','SHORT'].includes(repairDirection)
-      ?`${repairSymbol}:${repairDirection}`
-      :'';
+  const repairTarget=protectiveRepairTarget(type,{
+    symbol:req.body?.symbol,
+    direction:req.body?.direction,
+    closeAll:req.body?.closeAll,
+  });
   const readinessReason=executionReadiness(runtimeState,report,master.deviceId,repairTarget);
   if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
 
