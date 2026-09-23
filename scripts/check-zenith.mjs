@@ -386,6 +386,13 @@ if (!protectiveCommand.includes('AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION') ||
   fail('place-first protection replacement must explicitly reconcile the old+new transition before retiring the old protection');
 }
 
+if (!index.includes('async function awaitMasterReconciliation(timeoutMs=5000)') ||
+    !index.includes("'RECONCILIATION_BUSY_TIMEOUT'") ||
+    !index.includes("const reconciled=await awaitMasterReconciliation();") ||
+    !index.includes("throw new Error('RECONCILIATION_NOT_READY')")) {
+  fail('critical MASTER mutations must serialize reconciliation and must not ACK a full close without reconciled stream readiness');
+}
+
 if (!userStreamSeed.includes('positionLifecycleAt:Number(p.updateTime||snapshot.observedAt||0)') ||
     !userStreamState.includes('positionLifecycleAt=sameCore') ||
     !masterRuntimeInventory.includes('lifecycleAt: Number(p.positionLifecycleAt || p.eventTime || 0)') ||

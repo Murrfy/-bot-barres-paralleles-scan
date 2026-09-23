@@ -1019,6 +1019,17 @@ async function reconcileMasterUserStream(secondPass=false){
     masterUserStream.reconcileBusy=false;
   }
 }
+async function awaitMasterReconciliation(timeoutMs=5000){
+  const deadline=Date.now()+Math.max(500,n(timeoutMs,5000));
+  while(masterUserStream.reconcileBusy&&Date.now()<deadline){
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  if(masterUserStream.reconcileBusy){
+    masterUserStream.lastError='RECONCILIATION_BUSY_TIMEOUT';
+    return false;
+  }
+  return reconcileMasterUserStream();
+}
 function scheduleMasterStreamReconcile(delay=250){
   if(masterUserStream.reconcileDebounceTimer)clearTimeout(masterUserStream.reconcileDebounceTimer);
   masterUserStream.reconcileDebounceTimer=setTimeout(()=>{
@@ -1228,7 +1239,7 @@ async function waitForStreamOrder({kind,clientId,terminal=false},timeoutMs=3000)
 }
 async function safeAckAfterReconcile(raw,executionProof,failureReason='EXECUTION_ACK_FAILED'){
   try{
-    const reconciled=await reconcileMasterUserStream();
+    const reconciled=await awaitMasterReconciliation();
     if(reconciled!==true||masterRuntimeState.userStreamReady!==true)throw new Error('RECONCILIATION_NOT_READY');
     await ackMasterCommand(raw,executionProof);
     return true;
@@ -1302,7 +1313,7 @@ async function runMasterProtectiveUpdate(command,raw,dispatch){
       masterExecution.lastError='PREVIOUS_PROTECTIVE_ORDER_CANCEL_NOT_CONFIRMED';
       return false;
     }
-    const reconciled=await reconcileMasterUserStream();
+    const reconciled=await awaitMasterReconciliation();
     if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
       await failMasterCommand(raw,'POST_CANCEL_RECONCILIATION_FAILED');
       return false;
@@ -1329,7 +1340,7 @@ async function runMasterProtectiveUpdate(command,raw,dispatch){
       return '';
     }
     await publishMasterStreamState();
-    const reconciled=await reconcileMasterUserStream();
+    const reconciled=await awaitMasterReconciliation();
     if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
       await failMasterCommand(raw,'POST_PLACE_RECONCILIATION_FAILED');
       return '';
@@ -1365,14 +1376,17 @@ async function waitForFullCloseState({symbol,direction,beforeQuantity,clientOrde
     if(result.streamReady&&(result.confirmed||result.terminalSeen))return result;
     await new Promise(resolve=>setTimeout(resolve,100));
   }
-  try{await reconcileMasterUserStream()}catch(_){}
+  try{await awaitMasterReconciliation()}catch(_){}
   return closeModule.evaluateFullProtectiveClose({
     state:masterUserStream.state,symbol,direction,beforeQuantity,clientOrderId
   });
 }
 async function safeAckFullClose(raw,beforeQuantity,clientOrderId='',alreadySatisfied=false){
   try{
-    await reconcileMasterUserStream();
+    const reconciled=await awaitMasterReconciliation();
+    if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
+      throw new Error('RECONCILIATION_NOT_READY');
+    }
     await ackMasterCommand(raw,{beforeQuantity,clientOrderId,alreadySatisfied});
     return true;
   }catch(e){
@@ -1388,7 +1402,7 @@ async function runMasterFullClose(command,raw){
   let currentQuantity=closeModule.streamPositionQuantity(masterUserStream.state,symbol,direction);
 
   if(!(currentQuantity>0)){
-    try{await reconcileMasterUserStream()}catch(_){}
+    try{await awaitMasterReconciliation()}catch(_){}
     currentQuantity=closeModule.streamPositionQuantity(masterUserStream.state,symbol,direction);
     if(currentQuantity<=1e-12&&masterRuntimeState.userStreamReady===true){
       return safeAckFullClose(raw,Math.max(n(payload.quantity),1e-12),'',true);
@@ -1431,7 +1445,7 @@ async function runMasterFullClose(command,raw){
         return false;
       }
       if(['EXECUTION_NOT_READY','EXECUTION_NOT_ARMED','POSITION_NOT_FOUND','CLOSE_QUANTITY_EXCEEDS_POSITION','FULL_CLOSE_QUANTITY_REQUIRED'].includes(reason)){
-        try{await reconcileMasterUserStream()}catch(_){}
+        try{await awaitMasterReconciliation()}catch(_){}
         await requeueMasterCommand(raw,'PROTECTIVE_EXEC_'+reason,1500);
         return false;
       }
@@ -1675,7 +1689,7 @@ async function executeMasterAutoProgressive(plan){
     return false;
   }
   await publishMasterStreamState();
-  if(await reconcileMasterUserStream()!==true){
+  if(await awaitMasterReconciliation()!==true){
     masterAutoProtection.lastError='AUTO_POST_PLACE_RECONCILIATION_FAILED';
     return false;
   }
@@ -1696,7 +1710,7 @@ async function executeMasterAutoProgressive(plan){
       masterAutoProtection.lastError='AUTO_OLD_PROTECTION_CANCEL_NOT_CONFIRMED';
       return false;
     }
-    if(await reconcileMasterUserStream()!==true){
+    if(await awaitMasterReconciliation()!==true){
       masterAutoProtection.lastError='AUTO_POST_CANCEL_RECONCILIATION_FAILED';
       return false;
     }
