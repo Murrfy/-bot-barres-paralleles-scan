@@ -11,17 +11,25 @@ const source = fs.readFileSync('api/binance-reconcile.js', 'utf8').replace(
   /^import \{ deviceTokenCandidates \} from '\.\.\/lib\/device-session\.mjs';\n/m,
   "const deviceTokenCandidates = req => { const h=String(req?.headers?.authorization||''); const t=h.startsWith('Bearer ')?h.slice(7).trim():''; return t?[t]:[]; };\n"
 );
-const { default: handler, reconcile, normalizeActualPosition, normalizeActualOrder } = await import(
-  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, normalizeActualPosition, normalizeActualOrder };').toString('base64')
+const { default: handler, reconcile, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder } = await import(
+  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder };').toString('base64')
 );
 const runtime = (positions = [], orders = [], mode = 'REAL') => ({
   updatedAt: Date.now(), data: { executionMode: mode, binancePositions: positions, binanceOrders: orders },
 });
-const position = { symbol: 'BTCUSDT', positionSide: 'BOTH', positionAmt: '1' };
+const position = { symbol: 'BTCUSDT', positionSide: 'BOTH', positionAmt: '1', entryPrice: '50000' };
 const stop = { symbol: 'BTCUSDT', positionSide: 'BOTH', side: 'SELL', type: 'STOP_MARKET',
   orderId: 42, origQty: '1', executedQty: '0', reduceOnly: true, closePosition: false };
+const emergency = { orderClass:'ALGO', symbol:'BTCUSDT', positionSide:'BOTH', side:'SELL',
+  type:'STOP_MARKET', algoId:77, clientAlgoId:'zth-MAX-test', triggerPrice:'48000',
+  reduceOnly:false, closePosition:true, algoStatus:'NEW' };
+const progressive = { orderClass:'ALGO', symbol:'BTCUSDT', positionSide:'BOTH', side:'SELL',
+  type:'STOP', algoId:78, clientAlgoId:'zth-PRO-test', quantity:'1', triggerPrice:'51000',
+  reduceOnly:true, closePosition:false, algoStatus:'NEW' };
 const normalized = normalizeActualPosition(position);
 const normalizedStop = normalizeActualOrder(stop);
+const normalizedEmergency = normalizeActualAlgoOrder(emergency);
+const normalizedProgressive = normalizeActualAlgoOrder(progressive);
 
 test('fresh simulation with empty Binance inventory is clean', () => {
   assert.equal(reconcile(runtime([], [], 'SIMULATION'), [], []).status, 'CLEAN_IDLE');
@@ -34,16 +42,46 @@ test('missing or stale runtime never certifies clean', () => {
 test('unknown Binance activity blocks simulation', () => {
   assert.equal(reconcile(runtime([], [], 'SIMULATION'), [normalized], []).failClosed, true);
 });
-test('matching position and closing stop are reconciled', () => {
-  assert.equal(reconcile(runtime([position], [stop]), [normalized], [normalizedStop]).failClosed, false);
+test('matching position requires a valid close-all MAX-LOSS algo stop', () => {
+  const result = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
+  assert.equal(result.failClosed, false);
+  assert.deepEqual(result.differences.missingMaxLossProtections, []);
+  assert.deepEqual(result.differences.ambiguousMaxLossProtections, []);
 });
 test('quantity changes and missing positions block', () => {
-  assert.ok(reconcile(runtime([{ ...position, positionAmt: '2' }], [stop]), [normalized], [normalizedStop]).reasons.includes('BINANCE_POSITION_QUANTITY_MISMATCH'));
+  assert.ok(reconcile(runtime([{ ...position, positionAmt: '2' }], [emergency]), [normalized], [normalizedEmergency]).reasons.includes('BINANCE_POSITION_QUANTITY_MISMATCH'));
   assert.ok(reconcile(runtime([position]), [], []).reasons.includes('MISSING_BINANCE_POSITION'));
 });
 test('missing protection blocks even if runtime did not declare it', () => {
-  assert.ok(reconcile(runtime([position]), [normalized], []).reasons.includes('MISSING_BINANCE_PROTECTION'));
+  const result = reconcile(runtime([position]), [normalized], []);
+  assert.ok(result.reasons.includes('MISSING_BINANCE_PROTECTION'));
+  assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
 });
+test('progressive STOP alone never substitutes for the emergency MAX-LOSS stop', () => {
+  const result = reconcile(runtime([position], [progressive]), [normalized], [normalizedProgressive]);
+  assert.equal(result.reasons.includes('MISSING_BINANCE_PROTECTION'), false);
+  assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
+  assert.deepEqual(result.differences.missingMaxLossProtections, ['BTCUSDT:LONG']);
+});
+
+test('MAX-LOSS STOP_MARKET must trigger on the loss side of the entry', () => {
+  const wrong = { ...emergency, algoId:79, clientAlgoId:'zth-MAX-wrong', triggerPrice:'51000' };
+  const actual = normalizeActualAlgoOrder(wrong);
+  const result = reconcile(runtime([position], [wrong]), [normalized], [actual]);
+  assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
+});
+
+test('multiple valid MAX-LOSS close-all stops fail closed as ambiguous', () => {
+  const second = { ...emergency, algoId:80, clientAlgoId:'zth-MAX-second', triggerPrice:'47000' };
+  const result = reconcile(
+    runtime([position], [emergency, second]),
+    [normalized],
+    [normalizedEmergency, normalizeActualAlgoOrder(second)]
+  );
+  assert.ok(result.reasons.includes('AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION'));
+  assert.deepEqual(result.differences.ambiguousMaxLossProtections, ['BTCUSDT:LONG']);
+});
+
 test('string false is not a reduce-only protection', () => {
   const unsafe = normalizeActualOrder({ ...stop, reduceOnly: 'false' });
   assert.equal(unsafe.reduceOnly, false);
