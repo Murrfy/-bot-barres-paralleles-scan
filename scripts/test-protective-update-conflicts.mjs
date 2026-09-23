@@ -84,3 +84,10 @@ test('SHORT emergency protection uses the same $400 hard cap',()=>{
   assert.ok(emergencyProtection(runtime([{...base,triggerPrice:'50400'}]),update,50000));
   assert.equal(emergencyProtection(runtime([{...base,triggerPrice:'50400.01'}]),update,50000),null);
 });
+
+
+test('cancel-old MAX-LOSS may use the exact transition repair target only with a confirmed new id',async()=>{
+  const api=await readFile(new URL('../api/binance-protective-update-execute.js',import.meta.url),'utf8');
+  assert.match(api,/phase==='CANCEL_OLD'&&update\.protectionKind==='MAX_LOSS'&&String\(req\.body\?\.newClientAlgoId\|\|''\)/);
+  assert.match(api,/NEW_MAX_LOSS_PROTECTION_NOT_CONFIRMED/);
+});

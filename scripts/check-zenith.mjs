@@ -287,6 +287,7 @@ for (const required of [
 ]) {
   if (!realProtectionLevels.includes(required)) fail(`real protection level invariant missing: ${required}`);
 }
+const protectiveCommand = fs.readFileSync('lib/protective-command.mjs','utf8');
 const protectiveUpdateIntent = fs.readFileSync('lib/protective-update-intent.mjs','utf8');
 if (!protectiveUpdateIntent.includes("params.type='STOP'") ||
     !protectiveUpdateIntent.includes("params.timeInForce='GTC'") ||
@@ -374,6 +375,15 @@ if (!index.includes('orphanZenithCleanupOrders(q.report)') ||
     !index.includes('COMPTE BINANCE INACCESSIBLE') ||
     index.includes('BINANCE HORS LIGNE')) {
   fail('MASTER must auto-clean confirmed Zenith orphans and UI must distinguish private account access from public Binance market data');
+}
+
+if (!protectiveCommand.includes('AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION') ||
+    !protectiveCommand.includes("'ambiguousMaxLossProtections'") ||
+    !index.includes('await publishMasterStreamState();') ||
+    !index.includes('newClientId=await placeNew();') ||
+    !index.includes('await cancelOld(newClientId)') ||
+    !protectiveUpdateExecute.includes("phase==='CANCEL_OLD'&&update.protectionKind==='MAX_LOSS'")) {
+  fail('place-first protection replacement must explicitly reconcile the old+new transition before retiring the old protection');
 }
 
 if (!userStreamSeed.includes('positionLifecycleAt:Number(p.updateTime||snapshot.observedAt||0)') ||

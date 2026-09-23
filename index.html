@@ -1001,7 +1001,7 @@ async function reconcileMasterUserStream(secondPass=false){
         observedAt:Number(q.report.observedAt||Date.now()),
         runtimeHash:String(q.report.runtimeDataHash||q.report.runtimeHash||'')
       });
-      masterUserStream.lastError=repairTarget?'MISSING_BINANCE_PROTECTION_REPAIR_REQUIRED':'';
+      masterUserStream.lastError=repairTarget?'PROTECTION_REPAIR_REQUIRED':'';
       await publishMasterStreamState();
       if(!secondPass){
         masterUserStream.reconcileBusy=false;
@@ -1328,6 +1328,7 @@ async function runMasterProtectiveUpdate(command,raw,dispatch){
       masterExecution.lastError='PROTECTIVE_NEW_ORDER_NOT_STREAM_CONFIRMED';
       return '';
     }
+    await publishMasterStreamState();
     const reconciled=await reconcileMasterUserStream();
     if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
       await failMasterCommand(raw,'POST_PLACE_RECONCILIATION_FAILED');
@@ -1673,6 +1674,7 @@ async function executeMasterAutoProgressive(plan){
     masterAutoProtection.lastError='AUTO_NEW_PROTECTION_IDENTITY_MISMATCH';
     return false;
   }
+  await publishMasterStreamState();
   if(await reconcileMasterUserStream()!==true){
     masterAutoProtection.lastError='AUTO_POST_PLACE_RECONCILIATION_FAILED';
     return false;
