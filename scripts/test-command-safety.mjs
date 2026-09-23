@@ -82,3 +82,22 @@ test('real entry has its own explicit release lock', () => {
   );
   assert.ok(sourceEntryLocked.includes("normalized === 'EXEC_OPEN_POSITION' && !REAL_ENTRY_ENABLED"));
 });
+
+
+test('execution gate blocks real entry behind the dedicated release flag', async () => {
+  process.env.ZENITH_REAL_TRADING_ENABLED='1';
+  process.env.ZENITH_REAL_ENTRY_ENABLED='0';
+  process.env.ZENITH_BINANCE_WRITE_ENABLED='1';
+  process.env.ZENITH_PAIRING_DISABLED='1';
+  const lockedSource = fs.readFileSync('api/zenith-sync.js','utf8').replace(
+    /^import \{ deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';\n/m,
+    "const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
+  );
+  const mod = await import(
+    'data:text/javascript;base64,' +
+    Buffer.from(lockedSource + '\nexport { executionGate };\n// entry-lock-test').toString('base64')
+  );
+  const gate=mod.executionGate('EXEC_OPEN_POSITION',false);
+  assert.equal(gate.allowed,false);
+  assert.equal(gate.reason,'REAL_ENTRY_DISABLED');
+});
