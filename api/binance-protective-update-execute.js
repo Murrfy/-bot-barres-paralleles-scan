@@ -87,7 +87,7 @@ async function requireCurrentMaster(req){
     if(String(lease||'')!==String(device.deviceId)){
       const e=new Error('MASTER_LEASE_REQUIRED');e.code='MASTER_LEASE_REQUIRED';throw e;
     }
-    return device;
+    return { ...device, roleIssuedAt: String(issuedAt || '') };
   }
   return null;
 }
@@ -98,9 +98,74 @@ async function readState(){
   ]);
   return {
     runtimeState:parseJson(runtimeRaw),report:parseJson(reportRaw),
-    armRecord:parseJson(armRaw),masterMode:String(modeRaw||'PAUSED').toUpperCase(),
+    armRecord:parseJson(armRaw),armRaw:String(armRaw||''),
+    masterMode:String(modeRaw||'PAUSED').toUpperCase(),
   };
 }
+
+async function finalProtectiveDispatchGate(masterDeviceId,masterRoleEpoch,expectedArmRaw){
+  const script=[
+    "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
+    "if registered ~= ARGV[1] then return -1 end",
+    "local lease = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if lease ~= ARGV[1] then return -2 end",
+    "local mode = tostring(redis.call('GET', KEYS[3]) or 'PAUSED')",
+    "if mode ~= 'RUNNING' and mode ~= 'PAUSE_PENDING' then return -3 end",
+    "local arm = tostring(redis.call('GET', KEYS[4]) or '')",
+    "if arm ~= ARGV[3] then return -4 end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[5]) or '')",
+    "if roleEpoch ~= ARGV[2] then return -5 end",
+    "return 1"
+  ].join('\n');
+  const result=Number(await redis([
+    'EVAL',script,'5',
+    KEY_MASTER_DEVICE,KEY_MASTER,KEY_MASTER_MODE,KEY_REAL_EXECUTION_ARMED,
+    roleAssignmentKey(PREFIX,'master'),
+    String(masterDeviceId||''),String(masterRoleEpoch||''),String(expectedArmRaw||''),
+  ]));
+  return {
+    ok:result===1,
+    reason:result===-1
+      ?'MASTER_ROLE_CHANGED_DURING_PROTECTIVE_WRITE'
+      :result===-2
+        ?'MASTER_LEASE_CHANGED_DURING_PROTECTIVE_WRITE'
+        :result===-3
+          ?'MASTER_PROTECTIVE_MODE_CHANGED'
+          :result===-4
+            ?'REAL_EXECUTION_ARM_CHANGED_DURING_PROTECTIVE_WRITE'
+            :result===-5
+              ?'MASTER_ROLE_EPOCH_CHANGED_DURING_PROTECTIVE_WRITE'
+              :'PROTECTIVE_DISPATCH_GATE_FAILED',
+  };
+}
+
+async function finalOrphanCleanupGate(masterDeviceId,masterRoleEpoch){
+  const script=[
+    "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
+    "if registered ~= ARGV[1] then return -1 end",
+    "local lease = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if lease ~= ARGV[1] then return -2 end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if roleEpoch ~= ARGV[2] then return -3 end",
+    "return 1"
+  ].join('\n');
+  const result=Number(await redis([
+    'EVAL',script,'3',
+    KEY_MASTER_DEVICE,KEY_MASTER,roleAssignmentKey(PREFIX,'master'),
+    String(masterDeviceId||''),String(masterRoleEpoch||''),
+  ]));
+  return {
+    ok:result===1,
+    reason:result===-1
+      ?'MASTER_ROLE_CHANGED_DURING_ORPHAN_CLEANUP'
+      :result===-2
+        ?'MASTER_LEASE_CHANGED_DURING_ORPHAN_CLEANUP'
+        :result===-3
+          ?'MASTER_ROLE_EPOCH_CHANGED_DURING_ORPHAN_CLEANUP'
+          :'ORPHAN_CLEANUP_GATE_FAILED',
+  };
+}
+
 function runtimePosition(runtimeState,symbol,direction){
   const list=Array.isArray(runtimeState?.data?.binancePositions)?runtimeState.data.binancePositions:[];
   const sym=String(symbol||'').toUpperCase(),dir=String(direction||'').toUpperCase();
@@ -306,6 +371,14 @@ export default async function handler(req,res){
       const flat=await directSymbolFlat(symbol,apiKey,secret);
       if(!flat)return send(res,409,{ok:false,code:'ORPHAN_CLEANUP_POSITION_NOT_FLAT',writeAttempted:false});
 
+      const cleanupGate=await finalOrphanCleanupGate(master.deviceId,master.roleIssuedAt);
+      if(!cleanupGate.ok){
+        return send(res,423,{
+          ok:false,code:'ORPHAN_CLEANUP_DISPATCH_BLOCKED',
+          reason:cleanupGate.reason,writeAttempted:false,
+        });
+      }
+
       let result;
       if(orderClass==='STANDARD'){
         result=await cancelReduceOnlyOrderIdempotent({
@@ -423,6 +496,15 @@ export default async function handler(req,res){
            !bool(old.reduceOnly)||String(old.side||'').toUpperCase()!==expectedSide){
           return send(res,409,{ok:false,code:'PREVIOUS_EXIT_IDENTITY_MISMATCH',writeAttempted:false});
         }
+        const dispatchGate=await finalProtectiveDispatchGate(
+          master.deviceId,master.roleIssuedAt,state.armRaw
+        );
+        if(!dispatchGate.ok){
+          return send(res,423,{
+            ok:false,code:'PROTECTIVE_DISPATCH_BLOCKED',
+            reason:dispatchGate.reason,writeAttempted:false
+          });
+        }
         result=await cancelReduceOnlyOrderIdempotent({
           apiKey,secret,symbol:update.symbol,clientOrderId:update.previousClientOrderId,
           expectedSide,writesEnabled:true,timestamp:Date.now()
@@ -440,6 +522,15 @@ export default async function handler(req,res){
             ok:false,code:'CONFLICTING_EXIT_ORDER_OPEN',
             conflictingIds:conflicts.map(o=>String(o?.clientOrderId||'')),
             writeAttempted:false
+          });
+        }
+        const dispatchGate=await finalProtectiveDispatchGate(
+          master.deviceId,master.roleIssuedAt,state.armRaw
+        );
+        if(!dispatchGate.ok){
+          return send(res,423,{
+            ok:false,code:'PROTECTIVE_DISPATCH_BLOCKED',
+            reason:dispatchGate.reason,writeAttempted:false
           });
         }
         result=await placeStandardOrderIdempotent({
@@ -502,6 +593,15 @@ export default async function handler(req,res){
           expected.price=String(oldPrice);
           expected.triggerPrice=String(oldTrigger);
         }
+        const dispatchGate=await finalProtectiveDispatchGate(
+          master.deviceId,master.roleIssuedAt,state.armRaw
+        );
+        if(!dispatchGate.ok){
+          return send(res,423,{
+            ok:false,code:'PROTECTIVE_DISPATCH_BLOCKED',
+            reason:dispatchGate.reason,writeAttempted:false
+          });
+        }
         result=await cancelAlgoOrderIdempotent({
           apiKey,secret,symbol:update.symbol,clientAlgoId:update.previousClientAlgoId,
           expected,writesEnabled:true,timestamp:Date.now()
@@ -537,6 +637,15 @@ export default async function handler(req,res){
               :'CONFLICTING_PROGRESSIVE_PROTECTION_OPEN',
             conflictingIds:conflicts.map(o=>String(o?.clientAlgoId||o?.clientOrderId||o?.orderId||'')),
             writeAttempted:false
+          });
+        }
+        const dispatchGate=await finalProtectiveDispatchGate(
+          master.deviceId,master.roleIssuedAt,state.armRaw
+        );
+        if(!dispatchGate.ok){
+          return send(res,423,{
+            ok:false,code:'PROTECTIVE_DISPATCH_BLOCKED',
+            reason:dispatchGate.reason,writeAttempted:false
           });
         }
         result=await placeAlgoOrderIdempotent({
