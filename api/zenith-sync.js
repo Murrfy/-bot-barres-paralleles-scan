@@ -54,6 +54,7 @@ const MASTER_ADMIN_LOCK_SECONDS = 15 * 60;
 const RUNTIME_STATE_STALE_MS = 30 * 1000;
 const COMMAND_MAX_AGE_MS = 2 * 60 * 1000;
 const COMMAND_QUEUE_MAX = 100;
+const COMMAND_SUBMIT_RATE_LIMIT = 30;
 const COMMAND_PAYLOAD_MAX_BYTES = 16 * 1024;
 const DEAD_LETTER_MAX = 500;
 
@@ -132,6 +133,14 @@ async function controllerReplacementRateAllowed(req) {
   const count = Number(await redis(['INCR', key])) || 0;
   if (count === 1) await redis(['EXPIRE', key, '120']);
   return count <= CONTROLLER_REPLACEMENT_RATE_LIMIT;
+}
+
+async function commandSubmitRateAllowed(deviceId) {
+  const bucket = Math.floor(Date.now() / 60000);
+  const key = `${PREFIX}:command-submit-rate:${sha256(String(deviceId || 'unknown'))}:${bucket}`;
+  const count = Number(await redis(['INCR', key])) || 0;
+  if (count === 1) await redis(['EXPIRE', key, '120']);
+  return { allowed: count <= COMMAND_SUBMIT_RATE_LIMIT, count };
 }
 
 function masterAdminFailureKey(device) {
@@ -1809,6 +1818,20 @@ export default async function handler(req, res) {
     if (action === 'command' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller']);
       if (!device) return;
+
+      let submitRate = null;
+      try {
+        submitRate = await commandSubmitRateAllowed(device.deviceId);
+      } catch {
+        return send(res, 503, { ok: false, code: 'COMMAND_RATE_LIMIT_UNAVAILABLE' });
+      }
+      if (!submitRate.allowed) {
+        return send(res, 429, {
+          ok: false,
+          code: 'COMMAND_RATE_LIMIT',
+          limitPerMinute: COMMAND_SUBMIT_RATE_LIMIT,
+        });
+      }
 
       const type = String(req.body?.type || '').trim().toUpperCase();
       const clientCommandId = String(req.body?.clientCommandId || '').trim();
