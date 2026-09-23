@@ -186,6 +186,7 @@ let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,mas
 let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,realExecutionArmed:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
 let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEvents:[],reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
 let masterExecution={busy:false,timer:null,lastError:'',lastCommandId:''};
+let masterAutoProtection={pending:new Set(),highWater:new Map(),lastError:'',lastActionAt:0};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
 function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}renderRealPositions();renderRealEntryOrders()}
@@ -779,14 +780,19 @@ async function masterRuntimeApi(action,method='GET',body){
 }
 async function loadMasterUserStreamModules(){
   if(masterUserStream.modules)return masterUserStream.modules;
-  const [stateModule,inventoryModule,seedModule,dispatchModule,closeModule]=await Promise.all([
+  const [stateModule,inventoryModule,seedModule,dispatchModule,closeModule,autoProtectionModule,protectionLevelsModule]=await Promise.all([
     import('/lib/user-stream-state.mjs'),
     import('/lib/master-runtime-inventory.mjs'),
     import('/lib/user-stream-seed.mjs'),
     import('/lib/master-command-dispatch.mjs'),
-    import('/lib/protective-close-state.mjs')
+    import('/lib/protective-close-state.mjs'),
+    import('/lib/master-auto-protection.mjs'),
+    import('/lib/real-protection-levels.mjs')
   ]);
-  masterUserStream.modules={stateModule,inventoryModule,seedModule,dispatchModule,closeModule};
+  masterUserStream.modules={
+    stateModule,inventoryModule,seedModule,dispatchModule,closeModule,
+    autoProtectionModule,protectionLevelsModule
+  };
   if(!masterUserStream.state)masterUserStream.state=stateModule.createUserStreamState();
   return masterUserStream.modules;
 }
