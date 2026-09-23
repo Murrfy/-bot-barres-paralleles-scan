@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DEVICE_SESSION_MAX_AGE_SECONDS, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation } from '../lib/device-session.mjs';
+import { DEVICE_SESSION_MAX_AGE_SECONDS, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId } from '../lib/device-session.mjs';
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
@@ -972,7 +972,7 @@ export default async function handler(req, res) {
       const role = String(req.body?.role || '').trim();
       const deviceName = String(req.body?.deviceName || '').trim().slice(0, 80);
 
-      if (!deviceId || !['controller', 'master'].includes(role)) {
+      if (!validDeviceId(deviceId) || !['controller', 'master'].includes(role)) {
         return send(res, 400, { ok: false, code: 'PAIRING_REQUEST_INVALID' });
       }
 
@@ -1069,7 +1069,7 @@ export default async function handler(req, res) {
       const newDeviceId = String(req.body?.deviceId || '').trim();
       const deviceName = String(req.body?.deviceName || 'iPhone contrôleur Zenith').trim().slice(0, 80);
 
-      if (!newDeviceId || normalizeReplacementCode(recoveryCode).length < 12) {
+      if (!validDeviceId(newDeviceId) || normalizeReplacementCode(recoveryCode).length < 12) {
         return send(res, 400, { ok: false, code: 'CONTROLLER_REPLACEMENT_REQUEST_INVALID' });
       }
 
