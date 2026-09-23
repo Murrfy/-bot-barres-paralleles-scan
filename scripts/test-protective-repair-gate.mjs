@@ -24,11 +24,20 @@ function runtime(){
   };
   return {updatedAt:Date.now(),masterDeviceId:'master-1',data};
 }
-function report(rt,reasons=['MISSING_BINANCE_PROTECTION'],missing=['BTCUSDT:LONG']){
+function report(
+  rt,
+  reasons=['MISSING_BINANCE_PROTECTION','MISSING_BINANCE_MAX_LOSS_PROTECTION'],
+  missing=['BTCUSDT:LONG'],
+  missingMaxLoss=['BTCUSDT:LONG']
+){
   return {
     version:2,observedAt:Date.now(),status:'MISMATCH',failClosed:true,reasons,
     actual:{positions:1,orders:0},
-    differences:{missingProtections:missing},
+    differences:{
+      missingProtections:missing,
+      missingMaxLossProtections:missingMaxLoss,
+      ambiguousMaxLossProtections:[],
+    },
     runtimeDataHash:hash(rt.data),
   };
 }
@@ -55,8 +64,24 @@ test('repair classifier rejects progressive, target update, wrong position and m
   assert.equal(exactProtectiveRepairAllowed(r,'EXEC_CLOSE_POSITION',{
     symbol:'ETHUSDT',direction:'LONG',closeAll:true
   }),false);
-  assert.equal(protectionOnlyMismatchTarget(report(rt,['MISSING_BINANCE_PROTECTION','UNTRACKED_BINANCE_ORDER'])), '');
-  assert.equal(protectionOnlyMismatchTarget(report(rt,['MISSING_BINANCE_PROTECTION'],['BTCUSDT:LONG','ETHUSDT:SHORT'])), '');
+  assert.equal(protectionOnlyMismatchTarget(report(
+    rt,
+    ['MISSING_BINANCE_PROTECTION','UNTRACKED_BINANCE_ORDER'],
+    ['BTCUSDT:LONG'],
+    []
+  )), '');
+  assert.equal(protectionOnlyMismatchTarget(report(
+    rt,
+    ['MISSING_BINANCE_PROTECTION','MISSING_BINANCE_MAX_LOSS_PROTECTION'],
+    ['BTCUSDT:LONG'],
+    ['ETHUSDT:SHORT']
+  )), '');
+  assert.equal(protectionOnlyMismatchTarget(report(
+    rt,
+    ['AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION'],
+    [],
+    []
+  )), '');
 });
 
 test('execution readiness allows exact protective repair but nothing broader',()=>{
@@ -65,7 +90,7 @@ test('execution readiness allows exact protective repair but nothing broader',()
   assert.equal(executionReadiness(rt,r,'master-1','ETHUSDT:LONG'),'BINANCE_RECONCILIATION_MISMATCH');
   assert.equal(executionReadiness(rt,r,'master-1',''),'BINANCE_RECONCILIATION_MISMATCH');
 
-  const mixed=report(rt,['MISSING_BINANCE_PROTECTION','UNTRACKED_BINANCE_ORDER']);
+  const mixed=report(rt,['MISSING_BINANCE_PROTECTION','UNTRACKED_BINANCE_ORDER'],['BTCUSDT:LONG'],[]);
   assert.equal(executionReadiness(rt,mixed,'master-1','BTCUSDT:LONG'),'BINANCE_RECONCILIATION_MISMATCH');
 });
 
@@ -78,4 +103,14 @@ test('repair path still requires fresh stream and exact runtime hash',()=>{
   const changed=structuredClone(rt);
   changed.data.binancePositions[0].positionAmt='0.03';
   assert.equal(executionReadiness(changed,r,'master-1','BTCUSDT:LONG'),'BINANCE_RECONCILIATION_RUNTIME_CHANGED');
+});
+
+
+test('repair classifier accepts emergency-only missing protection for one exact position',()=>{
+  const rt=runtime();
+  const r=report(rt,['MISSING_BINANCE_MAX_LOSS_PROTECTION'],[],['BTCUSDT:LONG']);
+  assert.equal(protectionOnlyMismatchTarget(r),'BTCUSDT:LONG');
+  assert.equal(exactProtectiveRepairAllowed(r,'EXEC_UPDATE_PROTECTION',{
+    symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:48000,protectionKind:'MAX_LOSS'
+  }),true);
 });
