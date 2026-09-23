@@ -550,9 +550,11 @@ if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDD
 }
 if (!deviceSessionSource.includes('allowBearer = false') ||
     !sync.includes("action === 'whoami' && req.method === 'GET'") ||
-    !sync.includes("{ allowBearer: true }") ||
-    (sync.match(/allowBearer:\s*true/g) || []).length !== 1) {
-  fail('legacy Bearer must be accepted only for one-time whoami migration; normal Zenith API auth must be cookie-only');
+    !sync.includes('migrateLegacyBearerSession') ||
+    !sync.includes('const legacy = bearerToken(req)') ||
+    !sync.includes("redis.call('DEL', KEYS[1])") ||
+    sync.includes('{ allowBearer: true }')) {
+  fail('legacy Bearer must be atomically rotated only during whoami migration; normal Zenith API auth must be cookie-only');
 }
 if (!sync.includes('function deviceSessionRemainingSeconds(device, now = Date.now())') ||
     !sync.includes('absoluteExpiresAt = createdAt + DEVICE_SESSION_MAX_AGE_SECONDS * 1000') ||
