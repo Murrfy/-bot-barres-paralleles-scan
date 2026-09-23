@@ -45,6 +45,6 @@ test('iPhone builds progressive and max-loss protection updates',()=>{
 test('protection trigger side is direction-safe',()=>{
   assert.throws(()=>buildControllerUpdateProtectionCommand(longPosition,49000,'PROGRESSIVE'),/LONG_PROGRESSIVE_TRIGGER_BELOW_ENTRY/);
   assert.throws(()=>buildControllerUpdateProtectionCommand(longPosition,51000,'MAX_LOSS'),/LONG_MAX_LOSS_TRIGGER_NOT_BELOW_ENTRY/);
-  assert.throws(()=>buildControllerUpdateProtectionCommand(shortPosition,2900,'PROGRESSIVE'),/SHORT_PROGRESSIVE_TRIGGER_ABOVE_ENTRY/);
+  assert.throws(()=>buildControllerUpdateProtectionCommand(shortPosition,3100,'PROGRESSIVE'),/SHORT_PROGRESSIVE_TRIGGER_ABOVE_ENTRY/);
   assert.throws(()=>buildControllerUpdateProtectionCommand(shortPosition,2900,'MAX_LOSS'),/SHORT_MAX_LOSS_TRIGGER_NOT_ABOVE_ENTRY/);
 });
