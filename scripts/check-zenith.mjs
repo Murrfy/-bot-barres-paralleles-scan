@@ -492,6 +492,19 @@ if (!sync.includes("ZENITH_MASTER_ADMIN_CODE") ||
     !sync.includes("action === 'controller-replacement-redeem'")) {
   fail('api/zenith-sync.js must keep secure controller replacement recovery');
 }
+const replacementAuthStart = sync.indexOf("if (action === 'controller-replacement-authorize' && req.method === 'POST')");
+const replacementAuthEnd = replacementAuthStart >= 0
+  ? sync.indexOf("if (action === 'controller-replacement-redeem' && req.method === 'POST')", replacementAuthStart)
+  : -1;
+const replacementAuthBlock = replacementAuthStart >= 0 && replacementAuthEnd > replacementAuthStart
+  ? sync.slice(replacementAuthStart, replacementAuthEnd)
+  : '';
+if (!replacementAuthBlock ||
+    !replacementAuthBlock.includes("requireDevice(req, res, ['master'])") ||
+    !replacementAuthBlock.includes('hasMasterLease(device.deviceId)') ||
+    !replacementAuthBlock.includes("'MASTER_LEASE_REQUIRED'")) {
+  fail('controller replacement authorization must require the currently leased MASTER');
+}
 if (!sync.includes('CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60') ||
     !sync.includes("redis.call('DEL', KEYS[1])")) {
   fail('controller replacement code must remain short-lived and one-time use');

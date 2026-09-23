@@ -81,3 +81,13 @@ test('resume requires an active lease; controller has no recovery action', async
   await p.run('authorizeReplacement()');
   assert.equal(p.posts.length, 0);
 });
+
+test('MASTER without an active lease cannot authorize controller replacement', async () => {
+  const p = page('master', 'PAUSED'); p.state.lease = false;
+  await p.run('verifyMaster()');
+  assert.equal(p.elements.replaceBtn.hidden, false);
+  assert.equal(p.elements.replaceBtn.disabled, true);
+  p.elements.adminCode.value = 'test-admin';
+  await p.run('authorizeReplacement()');
+  assert.equal(p.posts.length, 0);
+});

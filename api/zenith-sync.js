@@ -1007,8 +1007,11 @@ export default async function handler(req, res) {
     }
 
     if (action === 'controller-replacement-authorize' && req.method === 'POST') {
-      const device = await requireDevice(req, res, ['controller', 'master']);
+      const device = await requireDevice(req, res, ['master']);
       if (!device) return;
+      if (!(await hasMasterLease(device.deviceId))) {
+        return send(res, 409, { ok: false, code: 'MASTER_LEASE_REQUIRED' });
+      }
 
       if (!(await verifyMasterAdminCode(req, res, device))) return;
 
