@@ -30,3 +30,10 @@ test('central execution arm and command gate reject non-production Vercel deploy
   assert.ok(source.includes("reason: 'NON_PRODUCTION_DEPLOYMENT'"));
   assert.ok(source.includes("code:'NON_PRODUCTION_DEPLOYMENT'"));
 });
+
+test('Binance user-stream mutations are blocked outside Vercel production', () => {
+  const source = fs.readFileSync('api/binance-user-stream-session.js', 'utf8');
+  assert.ok(source.includes("const VERCEL_PRODUCTION_WRITE_ALLOWED = !process.env.VERCEL_ENV || process.env.VERCEL_ENV === 'production';"));
+  assert.ok(source.includes("['start', 'keepalive', 'close'].includes(action)"));
+  assert.ok(source.includes("'NON_PRODUCTION_DEPLOYMENT'"));
+});
