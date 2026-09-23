@@ -109,8 +109,15 @@ if (!index.includes("normalExit:'LIMIT_EXACT_GTC'") ||
     !index.includes("fallback:'MARKET_LAST_RESORT'")) {
   fail('Zenith must keep LIMIT-first exit execution policy with market only as last resort');
 }
-if (!index.includes("Authorization:'Bearer '+token")) {
-  fail('index.html must authenticate Binance account reads with the paired device token');
+for (const file of ['index.html','master-admin.html','master-standby.html','controller-status.html']) {
+  const html=fs.readFileSync(file,'utf8');
+  const bearerUses=[...html.matchAll(/Authorization\s*:\s*['"`]Bearer\s*['"`]\s*\+\s*(?:token|legacyToken)/g)].length;
+  const legacyRead=[...html.matchAll(/localStorage\.getItem\([^\n]*TOKEN_KEY[^\n]*\)/g)].length;
+  if (file === 'index.html' && bearerUses > 1) fail('index.html may use Bearer only for one-time legacy session migration');
+  if (file === 'master-admin.html' && bearerUses > 1) fail('master-admin.html may use Bearer only for one-time legacy session migration');
+  if (file === 'master-standby.html' && bearerUses > 1) fail('master-standby.html may use Bearer only for one-time legacy session migration');
+  if (file === 'controller-status.html' && bearerUses > 1) fail('controller-status.html may use Bearer only for one-time legacy session migration');
+  if (legacyRead > 1) fail(`${file} must not repeatedly read device credentials from localStorage`);
 }
 
 for (const [name, source] of [
