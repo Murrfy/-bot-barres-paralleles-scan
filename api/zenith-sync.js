@@ -79,11 +79,15 @@ function sha256(v) {
   return crypto.createHash('sha256').update(String(v)).digest('hex');
 }
 
-function adminSecretPolicyBlockers() {
+function adminSecretPolicyBlockers({
+  adminCode = MASTER_ADMIN_CODE,
+  pairingCode = PAIRING_CODE,
+  masterPairingCode = MASTER_PAIRING_CODE,
+} = {}) {
   const blockers = [];
-  const admin = String(MASTER_ADMIN_CODE || '');
+  const admin = String(adminCode || '');
   if (admin.length < 16) blockers.push('MASTER_ADMIN_CODE_TOO_WEAK');
-  if (admin && (timingSafeEqualText(admin, PAIRING_CODE) || timingSafeEqualText(admin, MASTER_PAIRING_CODE))) {
+  if (admin && (timingSafeEqualText(admin, pairingCode) || timingSafeEqualText(admin, masterPairingCode))) {
     blockers.push('MASTER_ADMIN_CODE_REUSED');
   }
   return blockers;
