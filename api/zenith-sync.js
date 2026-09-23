@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DEVICE_SESSION_MAX_AGE_SECONDS, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId } from '../lib/device-session.mjs';
+import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId } from '../lib/device-session.mjs';
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
@@ -333,14 +333,25 @@ async function quarantineCommandsForDevice(deviceId) {
 }
 
 async function authDevice(req, allowBearer = false) {
-  for (const token of deviceTokenCandidates(req, { allowBearer })) {
-    const hash = sha256(token);
+  const cookie = cookieToken(req);
+  const bearer = allowBearer ? bearerToken(req) : '';
+  const candidates = [];
+  if (cookie) candidates.push({ token: cookie, credentialSource: 'cookie' });
+  if (bearer && bearer !== cookie) candidates.push({ token: bearer, credentialSource: 'bearer' });
+
+  for (const candidate of candidates) {
+    const hash = sha256(candidate.token);
     const raw = await redis(['GET', `${PREFIX}:device:${hash}`]);
     if (!raw) continue;
     try {
       const device = JSON.parse(raw);
       if (!device?.deviceId || !['controller', 'master'].includes(device?.role)) continue;
-      return { ...device, tokenHash: hash, sessionToken: token };
+      return {
+        ...device,
+        tokenHash: hash,
+        sessionToken: candidate.token,
+        credentialSource: candidate.credentialSource,
+      };
     } catch {}
   }
   return null;
@@ -397,7 +408,56 @@ async function touchDevice(device) {
   return { expired:false, remainingSeconds };
 }
 
-async function requireDevice(req, res, roles, { allowBearer = false } = {}) {
+async function rotateLegacyBearerSession(device) {
+  if (!device?.tokenHash || device.credentialSource !== 'bearer') {
+    return { ok:false, reason:'BEARER_MIGRATION_NOT_REQUIRED' };
+  }
+
+  const remainingSeconds = deviceSessionRemainingSeconds(device);
+  if (remainingSeconds <= 0) {
+    await redis(['DEL', `${PREFIX}:device:${device.tokenHash}`]);
+    return { ok:false, reason:'DEVICE_SESSION_EXPIRED' };
+  }
+
+  const newToken = crypto.randomBytes(32).toString('base64url');
+  const newTokenHash = sha256(newToken);
+  const updated = { ...device, lastSeenAt: Date.now() };
+  delete updated.tokenHash;
+  delete updated.sessionToken;
+  delete updated.credentialSource;
+
+  const script = [
+    "local currentRole = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if currentRole ~= ARGV[1] then return -1 end",
+    "local old = redis.call('GET', KEYS[1])",
+    "if not old then return 0 end",
+    "redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])",
+    "redis.call('DEL', KEYS[1])",
+    "return 1"
+  ].join('\n');
+
+  const result = Number(await redis([
+    'EVAL', script, '3',
+    `${PREFIX}:device:${device.tokenHash}`,
+    `${PREFIX}:device:${newTokenHash}`,
+    roleDeviceKey(device.role),
+    String(device.deviceId),
+    JSON.stringify(updated),
+    String(remainingSeconds),
+  ]));
+
+  if (result === -1) return { ok:false, reason:'ROLE_DEVICE_CONFLICT' };
+  if (result !== 1) return { ok:false, reason:'LEGACY_BEARER_ALREADY_USED' };
+
+  return {
+    ok:true,
+    token:newToken,
+    remainingSeconds,
+    device:{ ...updated, tokenHash:newTokenHash, credentialSource:'cookie' },
+  };
+}
+
+async function requireDevice(req, res, roles, { allowBearer = false, rotateBearer = false } = {}) {
   const device = await authDevice(req, allowBearer);
   if (!device) {
     clearDeviceSessionCookie(res);
@@ -413,6 +473,24 @@ async function requireDevice(req, res, roles, { allowBearer = false } = {}) {
     send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
     return null;
   }
+
+  if (rotateBearer && device.credentialSource === 'bearer') {
+    const migration = await rotateLegacyBearerSession(device);
+    if (!migration.ok) {
+      clearDeviceSessionCookie(res);
+      send(res, migration.reason === 'ROLE_DEVICE_CONFLICT' ? 409 : 401, {
+        ok:false,
+        code:migration.reason,
+      });
+      return null;
+    }
+    setDeviceSessionCookie(res, migration.token, migration.remainingSeconds);
+    const safeDevice = { ...migration.device };
+    delete safeDevice.sessionToken;
+    delete safeDevice.credentialSource;
+    return safeDevice;
+  }
+
   const session = await touchDevice(device);
   if (session.expired) {
     clearDeviceSessionCookie(res);
@@ -422,6 +500,7 @@ async function requireDevice(req, res, roles, { allowBearer = false } = {}) {
   setDeviceSessionCookie(res, device.sessionToken, session.remainingSeconds);
   const safeDevice = { ...device };
   delete safeDevice.sessionToken;
+  delete safeDevice.credentialSource;
   return safeDevice;
 }
 
@@ -1321,8 +1400,8 @@ export default async function handler(req, res) {
 
     if (action === 'whoami' && req.method === 'GET') {
       // One-time legacy migration: an old Bearer token is accepted only here.
-      // requireDevice re-issues the secure HttpOnly cookie; the UI then removes localStorage.
-      const device = await requireDevice(req, res, undefined, { allowBearer: true });
+      // The legacy token is atomically replaced by a fresh HttpOnly cookie token.
+      const device = await requireDevice(req, res, undefined, { allowBearer: true, rotateBearer: true });
       if (!device) return;
       return send(res, 200, {
         ok: true,
