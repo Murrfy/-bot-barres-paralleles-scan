@@ -15,12 +15,22 @@ test('MASTER revoke is controller-only and ADMIN protected',()=>{
   assert.ok(block.includes('verifyMasterAdminCode(req, res, device)'));
 });
 
-test('MASTER revoke fails closed before invalidating an active MASTER',()=>{
+test('MASTER revoke fails closed and checks live Binance before invalidating MASTER',()=>{
   assert.ok(block.includes("redis(['SET', KEY_EMERGENCY_STOP, '1'])"));
   assert.ok(block.includes("setMasterMode('PAUSE_PENDING')"));
-  assert.ok(block.includes("tryFinalizePendingPause(currentMaster, 'PAUSE_PENDING')"));
+  assert.ok(block.includes('fetchLiveBinanceActivity()'));
+  assert.ok(block.includes("'BINANCE_ACTIVITY_CHECK_FAILED'"));
   assert.ok(block.includes("'MASTER_REVOKE_DRAIN_REQUIRED'"));
+  assert.ok(block.includes('liveActivity.activePositions > 0 || liveActivity.openOrders > 0'));
+  assert.ok(block.indexOf('fetchLiveBinanceActivity()') < block.indexOf("const revokeScript = ["));
   assert.ok(block.indexOf("'MASTER_REVOKE_DRAIN_REQUIRED'") < block.indexOf("const revokeScript = ["));
+});
+
+test('MASTER revoke direct Binance check covers positions, standard orders and algo orders',()=>{
+  assert.ok(sync.includes("signedFuturesGet('/fapi/v3/positionRisk'"));
+  assert.ok(sync.includes("signedFuturesGet('/fapi/v1/openOrders'"));
+  assert.ok(sync.includes("signedFuturesGet('/fapi/v1/openAlgoOrders'"));
+  assert.ok(sync.includes("algoType: 'CONDITIONAL'"));
 });
 
 test('MASTER revoke destroys real execution authority and stale MASTER state atomically',()=>{
@@ -32,6 +42,8 @@ test('MASTER revoke destroys real execution authority and stale MASTER state ato
     'KEY_RECONCILE_LAST',
     'KEY_STATE',
     'KEY_USER_STREAM_SESSION',
+    'KEY_PENDING',
+    'KEY_PROCESSING',
     "roleAssignmentKey(PREFIX, 'master')",
     'KEY_MASTER_DEVICE',
     "'MASTER_REVOKED'",
