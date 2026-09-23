@@ -351,6 +351,14 @@ if (!index.includes('orphanZenithCleanupOrders(q.report)') ||
   fail('MASTER must auto-clean confirmed Zenith orphans and UI must distinguish private account access from public Binance market data');
 }
 
+if (!userStreamSeed.includes('positionLifecycleAt:Number(p.updateTime||snapshot.observedAt||0)') ||
+    !userStreamState.includes('positionLifecycleAt=sameCore') ||
+    !masterRuntimeInventory.includes('lifecycleAt: Number(p.positionLifecycleAt || p.eventTime || 0)') ||
+    !index.includes('pruneMasterAutoProtectionHighWater') ||
+    !index.includes('position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime')) {
+  fail('MASTER progressive high-water must be isolated to one stable Binance position lifecycle and pruned after flat positions');
+}
+
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
 if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
     !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req)')) {

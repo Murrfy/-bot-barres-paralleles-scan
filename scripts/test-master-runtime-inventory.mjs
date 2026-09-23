@@ -19,7 +19,7 @@ function baseState(overrides={}) {
 test('ready stream exports complete real inventory shape while mode can remain simulation-locked',()=>{
   const out=runtimeInventoryFromUserStream(baseState({
     positions:{
-      'BTCUSDT:BOTH':{symbol:'BTCUSDT',positionSide:'BOTH',positionAmount:'0.02',entryPrice:'50000',marginType:'isolated',eventTime:10}
+      'BTCUSDT:BOTH':{symbol:'BTCUSDT',positionSide:'BOTH',positionAmount:'0.02',entryPrice:'50000',marginType:'isolated',positionLifecycleAt:7,eventTime:10}
     },
     standardOrders:{
       a:{symbol:'BTCUSDT',orderId:'1',clientOrderId:'zth-1',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',status:'NEW',originalQuantity:'0.02',cumulativeFilledQuantity:'0',reduceOnly:true,closePosition:false,terminal:false,eventTime:11}
@@ -29,6 +29,7 @@ test('ready stream exports complete real inventory shape while mode can remain s
   assert.equal(out.activePositions,1);
   assert.equal(out.openOrderCount,1);
   assert.equal(out.binancePositions[0].positionAmt,'0.02');
+  assert.equal(out.binancePositions[0].lifecycleAt,7);
   assert.equal(out.binanceOrders[0].reduceOnly,true);
   assert.equal(out.userStream.ready,true);
 });
