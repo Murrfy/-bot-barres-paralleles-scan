@@ -52,8 +52,10 @@ const MASTER_ACTIVATION_TTL_SECONDS = 120;
 const COMMAND_CLAIM_TTL_MS = 90 * 1000;
 const COMMAND_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 30;
 const PAIR_RATE_LIMIT = 5;
+const PAIR_GLOBAL_RATE_LIMIT = 30;
 const CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60;
 const CONTROLLER_REPLACEMENT_RATE_LIMIT = 5;
+const CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT = 30;
 const MASTER_ADMIN_FAILURE_LIMIT = 5;
 const MASTER_ADMIN_LOCK_SECONDS = 15 * 60;
 const AUTH_SECRET_INPUT_MAX_CHARS = 256;
@@ -262,18 +264,36 @@ async function incrementWithExpiry(key, ttlSeconds) {
   return Number(await redis(['EVAL', script, '1', key, String(ttlSeconds)])) || 0;
 }
 
+async function incrementWithGlobalExpiry(localKey, globalKey, ttlSeconds) {
+  const script = [
+    "local localCount = redis.call('INCR', KEYS[1])",
+    "if localCount == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
+    "local globalCount = redis.call('INCR', KEYS[2])",
+    "if globalCount == 1 then redis.call('EXPIRE', KEYS[2], ARGV[1]) end",
+    "return {localCount, globalCount}"
+  ].join('\n');
+  const result = await redis(['EVAL', script, '2', localKey, globalKey, String(ttlSeconds)]);
+  return {
+    localCount: Number(Array.isArray(result) ? result[0] : 0) || 0,
+    globalCount: Number(Array.isArray(result) ? result[1] : 0) || 0,
+  };
+}
+
 async function pairRateAllowed(req) {
   const bucket = Math.floor(Date.now() / 60000);
-  const key = `${PREFIX}:pair-rate:${sha256(clientIp(req))}:${bucket}`;
-  const count = await incrementWithExpiry(key, 120);
-  return count <= PAIR_RATE_LIMIT;
+  const localKey = `${PREFIX}:pair-rate:${sha256(clientIp(req))}:${bucket}`;
+  const globalKey = `${PREFIX}:pair-rate:global:${bucket}`;
+  const counts = await incrementWithGlobalExpiry(localKey, globalKey, 120);
+  return counts.localCount <= PAIR_RATE_LIMIT && counts.globalCount <= PAIR_GLOBAL_RATE_LIMIT;
 }
 
 async function controllerReplacementRateAllowed(req) {
   const bucket = Math.floor(Date.now() / 60000);
-  const key = `${PREFIX}:controller-replacement-rate:${sha256(clientIp(req))}:${bucket}`;
-  const count = await incrementWithExpiry(key, 120);
-  return count <= CONTROLLER_REPLACEMENT_RATE_LIMIT;
+  const localKey = `${PREFIX}:controller-replacement-rate:${sha256(clientIp(req))}:${bucket}`;
+  const globalKey = `${PREFIX}:controller-replacement-rate:global:${bucket}`;
+  const counts = await incrementWithGlobalExpiry(localKey, globalKey, 120);
+  return counts.localCount <= CONTROLLER_REPLACEMENT_RATE_LIMIT &&
+    counts.globalCount <= CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT;
 }
 
 function masterAdminFailureKey(device) {
