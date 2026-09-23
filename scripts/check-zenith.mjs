@@ -192,6 +192,12 @@ for (const required of [
 for (const forbidden of ['/fapi/v1/order','/fapi/v1/algoOrder','BINANCE_API_SECRET']) {
   if (userStreamSession.includes(forbidden)) fail(`user-stream session must never access trading write/secret path: ${forbidden}`);
 }
+if (!userStreamSession.includes('USER_STREAM_MUTATION_RATE_LIMIT_PER_MINUTE = 12') ||
+    !userStreamSession.includes('userStreamMutationRateAllowed') ||
+    !userStreamSession.includes("'USER_STREAM_RATE_LIMIT'") ||
+    !userStreamSession.includes("res.setHeader('Retry-After'")) {
+  fail('Binance user-stream mutations must be rate-limited before Binance calls');
+}
 
 const masterRuntimeInventory = fs.readFileSync('lib/master-runtime-inventory.mjs', 'utf8');
 for (const required of ['binancePositions','binanceOrders','openPositions','openOrders','userStream','TERMINAL_ALGO']) {

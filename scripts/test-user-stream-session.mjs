@@ -17,7 +17,7 @@ function response() {
   };
 }
 
-function harness({role='master',registered='master-1',lease='master-1',storedSession=null}={}) {
+function harness({role='master',registered='master-1',lease='master-1',storedSession=null,rateCount=1}={}) {
   const original = globalThis.fetch;
   let session = storedSession;
   const binanceCalls = [];
@@ -39,6 +39,8 @@ function harness({role='master',registered='master-1',lease='master-1',storedSes
       } else if (c[0] === 'DEL' && c[1] === sessionKey) {
         session = null;
         result = 1;
+      } else if (c[0] === 'EVAL' && String(c[3] || '').includes(':rate:user-stream:')) {
+        result = rateCount;
       }
       return new Response(JSON.stringify({result}));
     }
@@ -142,6 +144,19 @@ test('status never exposes the listenKey',async()=>{
     assert.equal(res.body.active,true);
     assert.equal('listenKey' in res.body.session,false);
     assert.equal(res.body.session.hasListenKey,true);
+    assert.deepEqual(h.binanceCalls,[]);
+  }finally{h.restore();}
+});
+
+
+test('user-stream mutations are rate-limited before Binance',async()=>{
+  const h=harness({rateCount:13});
+  try{
+    const res=response();
+    await handler(req('POST','start'),res);
+    assert.equal(res.code,429);
+    assert.equal(res.body.code,'USER_STREAM_RATE_LIMIT');
+    assert.ok(Number(res.headers['Retry-After'])>=1);
     assert.deepEqual(h.binanceCalls,[]);
   }finally{h.restore();}
 });
