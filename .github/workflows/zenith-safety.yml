@@ -67,6 +67,8 @@ jobs:
         run: node --test scripts/test-device-session-server-ttl.mjs
       - name: Test minimal public health disclosure
         run: node --test scripts/test-public-health-minimal.mjs
+      - name: Test Vercel browser security headers
+        run: node --test scripts/test-vercel-security-headers.mjs
       - name: Test deterministic order planning
         run: node --test scripts/test-order-intent.mjs
       - name: Test fail-closed entry protection gate
