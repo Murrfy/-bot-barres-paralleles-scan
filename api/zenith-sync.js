@@ -45,6 +45,7 @@ const KEY_PENDING = `${PREFIX}:commands:pending`;
 const KEY_PROCESSING = `${PREFIX}:commands:processing`;
 const KEY_DEAD = `${PREFIX}:commands:dead`;
 const KEY_EMERGENCY_STOP = `${PREFIX}:safety:emergency-stop`;
+const KEY_EMERGENCY_STOP_EPOCH = `${PREFIX}:safety:emergency-stop:epoch`;
 const KEY_REAL_EXECUTION_ARMED = `${PREFIX}:safety:real-execution-armed`;
 const KEY_MASTER_MODE = `${PREFIX}:master-mode`;
 const DEPLOYMENT_SHA = String(process.env.VERCEL_GIT_COMMIT_SHA || '');
@@ -671,6 +672,19 @@ async function emergencyStopActive() {
   const value = await redis(['GET', KEY_EMERGENCY_STOP]);
   if (value === null || value === undefined || value === '') return true;
   return String(value) !== '0';
+}
+
+async function assertEmergencyStop() {
+  const script = [
+    "redis.call('SET', KEYS[1], '1')",
+    "local epoch = redis.call('INCR', KEYS[2])",
+    "return epoch"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL', script, '2',
+    KEY_EMERGENCY_STOP,
+    KEY_EMERGENCY_STOP_EPOCH,
+  ])) || 0;
 }
 
 async function realExecutionArmStatus(expectedMasterDeviceId = '') {
@@ -1747,7 +1761,7 @@ export default async function handler(req, res) {
       ]);
 
       // Compromise response is fail-closed immediately, before any remote check.
-      await redis(['SET', KEY_EMERGENCY_STOP, '1']);
+      await assertEmergencyStop();
       await setMasterMode('PAUSE_PENDING');
 
       const revokedAt = Date.now();
@@ -3236,7 +3250,7 @@ export default async function handler(req, res) {
         emergencyStopActive(),
         masterMode(),
       ]);
-      await redis(['SET', KEY_EMERGENCY_STOP, '1']);
+      const panicEpoch = await assertEmergencyStop();
 
       // PANIC must always remain immediately available, but repeated presses must not flood audit history.
       if (wasActive && currentMode !== 'RUNNING') {
@@ -3247,6 +3261,7 @@ export default async function handler(req, res) {
           executionMode: 'STOPPED',
           masterMode: currentMode,
           blockers: [],
+          panicEpoch,
         });
       }
 
@@ -3264,6 +3279,7 @@ export default async function handler(req, res) {
         role: device.role,
         masterMode: transition.masterMode,
         blockers: transition.blockers || [],
+        panicEpoch,
       })]);
       await redis(['LTRIM', KEY_AUDIT, '0', '199']);
 
@@ -3274,6 +3290,7 @@ export default async function handler(req, res) {
         executionMode: 'STOPPED',
         masterMode: transition.masterMode,
         blockers: transition.blockers || [],
+        panicEpoch,
       });
     }
 
@@ -3289,11 +3306,13 @@ export default async function handler(req, res) {
         return send(res, 423, { ok: false, code: 'PAIRING_MUST_BE_DISABLED' });
       }
 
-      const [currentMaster, registeredMaster, currentMode] = await Promise.all([
+      const [currentMaster, registeredMaster, currentMode, panicEpochRaw] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('master'),
         masterMode(),
+        redis(['GET', KEY_EMERGENCY_STOP_EPOCH]),
       ]);
+      const panicEpoch = String(panicEpochRaw || '0');
       if (!currentMaster || !registeredMaster || String(currentMaster) !== String(registeredMaster)) {
         return send(res, 409, {
           ok: false,
@@ -3346,7 +3365,43 @@ export default async function handler(req, res) {
         });
       }
 
-      await redis(['SET', KEY_EMERGENCY_STOP, '0']);
+      const clearScript = [
+        "local epoch = tostring(redis.call('GET', KEYS[2]) or '0')",
+        "if epoch ~= ARGV[1] then return -1 end",
+        "local panic = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if panic == '0' then return -2 end",
+        "local mode = tostring(redis.call('GET', KEYS[3]) or 'PAUSED')",
+        "if mode ~= 'PAUSED' then return -3 end",
+        "local lease = tostring(redis.call('GET', KEYS[4]) or '')",
+        "local registered = tostring(redis.call('GET', KEYS[5]) or '')",
+        "if lease ~= ARGV[2] or registered ~= ARGV[2] then return -4 end",
+        "redis.call('SET', KEYS[1], '0')",
+        "return 1"
+      ].join('\n');
+      const clearResult = Number(await redis([
+        'EVAL', clearScript, '5',
+        KEY_EMERGENCY_STOP,
+        KEY_EMERGENCY_STOP_EPOCH,
+        KEY_MASTER_MODE,
+        KEY_MASTER,
+        KEY_MASTER_DEVICE,
+        panicEpoch,
+        String(currentMaster),
+      ]));
+      if (clearResult !== 1) {
+        const code = clearResult === -1
+          ? 'EMERGENCY_STOP_CHANGED_DURING_CLEAR'
+          : clearResult === -2
+            ? 'EMERGENCY_STOP_NOT_ACTIVE'
+            : clearResult === -3
+              ? 'MASTER_MUST_BE_PAUSED'
+              : 'MASTER_LEASE_REQUIRED';
+        return send(res, 409, {
+          ok: false,
+          code,
+          emergencyStopActive: true,
+        });
+      }
       const at = Date.now();
       await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
         at,
@@ -3355,6 +3410,7 @@ export default async function handler(req, res) {
         role: device.role,
         masterDeviceId: currentMaster,
         reconciliationObservedAt: Number(reconciliation.report?.observedAt || 0),
+        panicEpoch: Number(panicEpoch || 0),
       })]);
       await redis(['LTRIM', KEY_AUDIT, '0', '199']);
 
