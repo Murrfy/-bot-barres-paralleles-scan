@@ -133,6 +133,12 @@ for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batch
 for (const required of ['/fapi/v1/symbolConfig','/fapi/v1/leverageBracket','/fapi/v1/positionSide/dual','/fapi/v1/openOrders','/fapi/v1/openAlgoOrders']) {
   if (!binancePreflight.includes(required)) fail(`api/binance-entry-preflight.js missing required read-only check: ${required}`);
 }
+if (!binancePreflight.includes("'MASTER_REQUIRED'") ||
+    !binancePreflight.includes('requireCurrentMaster') ||
+    !binancePreflight.includes("'MASTER_LEASE_REQUIRED'") ||
+    !binancePreflight.includes('role-device:master')) {
+  fail('api/binance-entry-preflight.js HTTP handler must require the registered leased MASTER');
+}
 if (!binancePreflight.includes('READ_ONLY_PREFLIGHT') || !binancePreflight.includes('writeAttempted: false')) {
   fail('entry preflight must explicitly remain read-only');
 }
