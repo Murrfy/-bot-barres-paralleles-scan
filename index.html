@@ -314,39 +314,56 @@ function realProtectionInventory(position){
   const amount=n(position?.positionAmt,0);
   const direction=amount>=0?'LONG':'SHORT';
   const side=direction==='LONG'?'SELL':'BUY';
+  const qty=Math.abs(amount),entry=n(position?.entryPrice,0);
   const standard=Array.isArray(binanceAccount.standardOrders)?binanceAccount.standardOrders:[];
   const algo=Array.isArray(binanceAccount.algoOrders)?binanceAccount.algoOrders:[];
-  const exits=standard.filter(o=>
+  const sameStandardPurpose=o=>
     String(o?.symbol||'').toUpperCase()===symbol&&
     String(o?.side||'').toUpperCase()===side&&
     String(o?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
     String(o?.type||'').toUpperCase()==='LIMIT'&&
-    String(o?.timeInForce||'').toUpperCase()==='GTC'&&
-    o?.reduceOnly===true
-  );
-  const progressive=algo.filter(o=>
+    o?.reduceOnly===true;
+  const sameAlgoPurpose=(o,type,flag)=>
     String(o?.symbol||'').toUpperCase()===symbol&&
     String(o?.side||'').toUpperCase()===side&&
     String(o?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
-    String(o?.type||'').toUpperCase()==='STOP'&&
-    o?.reduceOnly===true
-  );
-  const maxLoss=algo.filter(o=>
-    String(o?.symbol||'').toUpperCase()===symbol&&
-    String(o?.side||'').toUpperCase()===side&&
-    String(o?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
-    String(o?.type||'').toUpperCase()==='STOP_MARKET'&&
-    o?.closePosition===true
-  );
-  const singleManaged=(rows,idField)=>rows.length===1&&zenithManagedRealId(rows[0]?.[idField])?rows[0]:null;
+    String(o?.type||'').toUpperCase()===type&&
+    flag(o);
+  const exitCandidates=standard.filter(sameStandardPurpose);
+  const progressiveCandidates=algo.filter(o=>sameAlgoPurpose(o,'STOP',x=>x?.reduceOnly===true));
+  const maxLossCandidates=algo.filter(o=>sameAlgoPurpose(o,'STOP_MARKET',x=>x?.closePosition===true));
+  const exits=exitCandidates.filter(o=>{
+    const px=n(o?.price,0),remaining=Math.max(0,n(o?.origQty,0)-n(o?.executedQty,0));
+    const profitSide=direction==='LONG'?px>entry:px<entry;
+    return entry>0&&qty>0&&String(o?.timeInForce||'').toUpperCase()==='GTC'&&
+      realNumberMatches(remaining,qty)&&px>0&&profitSide;
+  });
+  const progressive=progressiveCandidates.filter(o=>{
+    const trigger=n(o?.triggerPrice??o?.stopPrice,0),px=n(o?.price,0),oq=n(o?.origQty,0);
+    const protectedSide=direction==='LONG'?trigger>=entry:trigger<=entry;
+    return entry>0&&qty>0&&String(o?.timeInForce||'').toUpperCase()==='GTC'&&
+      realNumberMatches(oq,qty)&&trigger>0&&px>0&&realNumberMatches(px,trigger)&&
+      protectedSide&&(!o?.priceMatch||String(o.priceMatch).toUpperCase()==='NONE');
+  });
+  const maxLoss=maxLossCandidates.filter(o=>{
+    const trigger=n(o?.triggerPrice??o?.stopPrice,0);
+    const lossSide=direction==='LONG'?trigger<entry:trigger>entry;
+    return entry>0&&trigger>0&&lossSide&&o?.reduceOnly!==true;
+  });
+  const managed=(candidates,valid,idField)=>
+    candidates.length===1&&valid.length===1&&
+    zenithManagedRealId(valid[0]?.[idField])?valid[0]:null;
+  const conflict=(candidates,valid,idField)=>
+    candidates.length>1||
+    (candidates.length===1&&(valid.length!==1||!zenithManagedRealId(valid[0]?.[idField])));
   return {
     exits,progressive,maxLoss,
-    managedExit:singleManaged(exits,'clientOrderId'),
-    managedProgressive:singleManaged(progressive,'clientAlgoId'),
-    managedMaxLoss:singleManaged(maxLoss,'clientAlgoId'),
-    exitConflict:exits.length>1||(exits.length===1&&!zenithManagedRealId(exits[0]?.clientOrderId)),
-    progressiveConflict:progressive.length>1||(progressive.length===1&&!zenithManagedRealId(progressive[0]?.clientAlgoId)),
-    maxLossConflict:maxLoss.length>1||(maxLoss.length===1&&!zenithManagedRealId(maxLoss[0]?.clientAlgoId)),
+    managedExit:managed(exitCandidates,exits,'clientOrderId'),
+    managedProgressive:managed(progressiveCandidates,progressive,'clientAlgoId'),
+    managedMaxLoss:managed(maxLossCandidates,maxLoss,'clientAlgoId'),
+    exitConflict:conflict(exitCandidates,exits,'clientOrderId'),
+    progressiveConflict:conflict(progressiveCandidates,progressive,'clientAlgoId'),
+    maxLossConflict:conflict(maxLossCandidates,maxLoss,'clientAlgoId'),
   };
 }
 function realUpdatePendingKey(position,kind){
