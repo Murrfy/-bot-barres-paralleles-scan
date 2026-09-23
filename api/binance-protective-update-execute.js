@@ -264,8 +264,8 @@ export default async function handler(req,res){
     return send(res,400,{ok:false,code:'PROTECTIVE_UPDATE_OPERATION_INVALID',writeAttempted:false});
   }
 
-  const apiKey=process.env.BINANCE_API_KEY,secret=process.env.BINANCE_API_SECRET;
-  if(!apiKey||!secret)return send(res,503,{ok:false,code:'MISSING_ENV',writeAttempted:false});
+  const apiKey=process.env.BINANCE_TRADING_API_KEY,secret=process.env.BINANCE_TRADING_API_SECRET;
+  if(!apiKey||!secret)return send(res,503,{ok:false,code:'BINANCE_TRADING_CREDENTIALS_MISSING',writeAttempted:false});
 
   if(orphanCleanup){
     try{
