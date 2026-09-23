@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { binanceApiPermissionBlockers } from '../api/zenith-sync.js';
+import { binanceApiPermissionBlockers, binanceCredentialSeparationBlockers } from '../api/zenith-sync.js';
 
 const safe = {
   ipRestrict: true,
@@ -61,4 +61,16 @@ test('non-Futures and extra trading permissions block real execution', () => {
 test('missing or unreadable permission data fails closed', () => {
   assert.deepEqual(binanceApiPermissionBlockers(null), ['BINANCE_API_PERMISSIONS_UNAVAILABLE']);
   assert.ok(binanceApiPermissionBlockers({...safe, enableReading:false}).includes('BINANCE_API_READING_REQUIRED'));
+});
+
+
+test('distinct Binance read and trading API keys are required', () => {
+  assert.deepEqual(binanceCredentialSeparationBlockers({
+    readApiKey:'read-key-123',
+    tradingApiKey:'trade-key-456',
+  }), []);
+  assert.deepEqual(binanceCredentialSeparationBlockers({
+    readApiKey:'same-key-123',
+    tradingApiKey:'same-key-123',
+  }), ['BINANCE_TRADING_KEY_MUST_DIFFER_FROM_READ_KEY']);
 });
