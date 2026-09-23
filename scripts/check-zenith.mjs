@@ -254,7 +254,7 @@ if (userStreamStartIndex < 0 || userStreamKeepaliveIndex < 0 || userStreamCloseI
   if (!/\blistenKey\b/.test(startSuccess)) {
     fail('user-stream start must expose listenKey only to the leased MASTER that opens the WebSocket');
   }
-  if (/\blistenKey\s*:/.test(keepaliveSuccess) || /\blistenKey\s*,/.test(keepaliveSuccess)) {
+  if (/^\s*listenKey\s*[:,]/m.test(keepaliveSuccess)) {
     fail('user-stream keepalive must not expose the listenKey value');
   }
 }
