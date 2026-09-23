@@ -130,6 +130,17 @@ function pairingSecretPolicyBlockers({
   return blockers;
 }
 
+function binanceCredentialSeparationBlockers({
+  readApiKey = process.env.BINANCE_API_KEY || '',
+  tradingApiKey = process.env.BINANCE_TRADING_API_KEY || '',
+} = {}) {
+  const blockers = [];
+  if (readApiKey && tradingApiKey && timingSafeEqualText(readApiKey, tradingApiKey)) {
+    blockers.push('BINANCE_TRADING_KEY_MUST_DIFFER_FROM_READ_KEY');
+  }
+  return blockers;
+}
+
 function binanceApiPermissionBlockers(permission) {
   if (!permission || typeof permission !== 'object') return ['BINANCE_API_PERMISSIONS_UNAVAILABLE'];
   const blockers = [];
@@ -681,6 +692,10 @@ async function realExecutionArmStatus(expectedMasterDeviceId = '') {
   if (!REAL_TRADING_ENABLED) return { armed:false, reason:'REAL_TRADING_DISABLED', record };
   const adminSecretBlockers = adminSecretPolicyBlockers();
   if (adminSecretBlockers.length) return { armed:false, reason:adminSecretBlockers[0], blockers:adminSecretBlockers, record };
+  const credentialSeparationBlockers = binanceCredentialSeparationBlockers();
+  if (credentialSeparationBlockers.length) {
+    return { armed:false, reason:credentialSeparationBlockers[0], blockers:credentialSeparationBlockers, record };
+  }
   if (!BINANCE_WRITE_ENABLED) return { armed:false, reason:'BINANCE_WRITE_DISABLED', record };
   if (!VERCEL_PRODUCTION_WRITE_ALLOWED) return { armed:false, reason:'NON_PRODUCTION_DEPLOYMENT', record };
   if (!DEPLOYMENT_SHA) return { armed:false, reason:'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING', record };
@@ -1897,7 +1912,10 @@ export default async function handler(req, res) {
         redis(['LLEN', KEY_PROCESSING]),
         redis(['GET', KEY_STATE]),
       ]);
-      const blockers = [...adminSecretPolicyBlockers()];
+      const blockers = [
+        ...adminSecretPolicyBlockers(),
+        ...binanceCredentialSeparationBlockers(),
+      ];
       if (!currentMaster || !registeredMaster || String(currentMaster) !== String(registeredMaster)) blockers.push('MASTER_LEASE_REQUIRED');
       if (device.role === 'master' && String(currentMaster) !== String(device.deviceId)) blockers.push('NOT_MASTER');
       if (currentMode !== 'PAUSED') blockers.push('MASTER_MUST_BE_PAUSED');
@@ -3173,6 +3191,6 @@ export default async function handler(req, res) {
   }
 }
 
-export { binanceApiPermissionBlockers, adminSecretPolicyBlockers, pairingSecretPolicyBlockers };
+export { binanceApiPermissionBlockers, binanceCredentialSeparationBlockers, adminSecretPolicyBlockers, pairingSecretPolicyBlockers };
 
 export { clientIp };
