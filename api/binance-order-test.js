@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
+import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
 
 const BASE='https://fapi.binance.com';
 const TEST_ORDER_PATH='/fapi/v1/order/test';
@@ -70,7 +71,10 @@ async function jsonFetch(url,init={}){
     const text=await r.text();let data={};try{data=text?JSON.parse(text):{}}catch{data={raw:text}}
     if(!r.ok||data?.code){
       const e=new Error(data?.msg||`Binance HTTP ${r.status}`);
-      e.status=r.status;e.binanceCode=data?.code;throw e;
+      e.status=r.status;
+      e.binanceCode=data?.code;
+      e.retryAfterSeconds=Math.max(0,Math.ceil(Number(r?.headers?.get?.('retry-after'))||0));
+      throw e;
     }
     return data;
   }finally{clearTimeout(timer)}
@@ -131,6 +135,21 @@ export default async function handler(req,res){
   const apiKey=process.env.BINANCE_TRADING_API_KEY,secret=process.env.BINANCE_TRADING_API_SECRET;
   if(!apiKey||!secret)return send(res,503,{ok:false,code:'BINANCE_TRADING_CREDENTIALS_MISSING'});
 
+  try{
+    const backoff=await readBinanceWriteBackoff(redis);
+    if(backoff.active){
+      res.setHeader('Retry-After',String(backoff.retryAfterSeconds));
+      return send(res,429,{
+        ok:false,code:'BINANCE_WRITE_BACKOFF_ACTIVE',
+        retryAfterSeconds:backoff.retryAfterSeconds,
+        binanceStatus:backoff.status,
+        matchingEngineSubmitted:false,tradingWriteAttempted:false,
+      });
+    }
+  }catch{
+    return send(res,503,{ok:false,code:'BINANCE_BACKOFF_STATE_UNAVAILABLE',matchingEngineSubmitted:false,tradingWriteAttempted:false});
+  }
+
   let params;
   try{params=cleanParams(req.body?.params)}catch(e){return send(res,400,{ok:false,code:e?.message||'PARAMS_INVALID'})}
 
@@ -153,6 +172,16 @@ export default async function handler(req,res){
       result,
     });
   }catch(e){
+    const retryAfter=binanceBackoffSecondsFromError(e);
+    if(retryAfter>0){
+      try{await registerBinanceWriteBackoff(redis,e)}catch{}
+      res.setHeader('Retry-After',String(retryAfter));
+      return send(res,429,{
+        ok:false,code:Number(e?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
+        retryAfterSeconds:retryAfter,binanceStatus:Number(e?.status)||0,
+        binanceCode:e?.binanceCode??null,matchingEngineSubmitted:false,tradingWriteAttempted:false,
+      });
+    }
     return send(res,502,{
       ok:false,code:'BINANCE_TEST_ORDER_FAILED',error:'Test order failed',
       binanceCode:e?.binanceCode??null,matchingEngineSubmitted:false,tradingWriteAttempted:false,

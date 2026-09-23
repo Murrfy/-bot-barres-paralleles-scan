@@ -4,6 +4,7 @@ import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
 import { protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
+import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
 
 const PREFIX='zenith:v1';
 const KEY_MASTER=`${PREFIX}:master`;
@@ -145,6 +146,21 @@ export default async function handler(req,res){
   const secret=process.env.BINANCE_TRADING_API_SECRET;
   if(!apiKey||!secret)return send(res,503,{ok:false,code:'BINANCE_TRADING_CREDENTIALS_MISSING'});
 
+  try{
+    const backoff=await readBinanceWriteBackoff(redis);
+    if(backoff.active){
+      res.setHeader('Retry-After',String(backoff.retryAfterSeconds));
+      return send(res,429,{
+        ok:false,code:'BINANCE_WRITE_BACKOFF_ACTIVE',
+        retryAfterSeconds:backoff.retryAfterSeconds,
+        binanceStatus:backoff.status,
+        writeAttempted:false,
+      });
+    }
+  }catch{
+    return send(res,503,{ok:false,code:'BINANCE_BACKOFF_STATE_UNAVAILABLE',writeAttempted:false});
+  }
+
   const [runtimeRaw,reportRaw,armRaw,masterModeRaw]=await Promise.all([
     redis(['GET',KEY_STATE]),
     redis(['GET',KEY_RECONCILE_LAST]),
@@ -212,6 +228,16 @@ export default async function handler(req,res){
       await redis(['LTRIM',KEY_AUDIT,'0','199']);
       return send(res,200,{ok:true,result});
     }catch(e){
+      const retryAfter=binanceBackoffSecondsFromError(e);
+      if(retryAfter>0){
+        try{await registerBinanceWriteBackoff(redis,e)}catch{}
+        res.setHeader('Retry-After',String(retryAfter));
+        return send(res,429,{
+          ok:false,code:Number(e?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
+          retryAfterSeconds:retryAfter,binanceStatus:Number(e?.status)||0,
+          binanceCode:e?.code??null,ambiguous:false,writeAttempted:false,
+        });
+      }
       return send(res,502,{
         ok:false,
         code:['CANCEL_RESULT_AMBIGUOUS','CANCEL_TARGET_UNKNOWN'].includes(e?.message)?e.message:'BINANCE_ENTRY_CANCEL_FAILED',
@@ -298,6 +324,16 @@ export default async function handler(req,res){
     await redis(['LTRIM',KEY_AUDIT,'0','199']);
     return send(res,200,{ok:true,plan,result});
   }catch(e){
+    const retryAfter=binanceBackoffSecondsFromError(e);
+    if(retryAfter>0){
+      try{await registerBinanceWriteBackoff(redis,e)}catch{}
+      res.setHeader('Retry-After',String(retryAfter));
+      return send(res,429,{
+        ok:false,code:Number(e?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
+        retryAfterSeconds:retryAfter,binanceStatus:Number(e?.status)||0,
+        binanceCode:e?.code??null,ambiguous:false,writeAttempted:false,
+      });
+    }
     return send(res,502,{
       ok:false,
       code:e?.message==='ORDER_RESULT_AMBIGUOUS'?'ORDER_RESULT_AMBIGUOUS':'BINANCE_PROTECTIVE_EXECUTION_FAILED',

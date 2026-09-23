@@ -6,6 +6,7 @@ import { findCoveringEntryProtection } from '../lib/entry-protection-gate.mjs';
 import { runLiveEntryPreflight } from './binance-entry-preflight.js';
 import { validateExecutionArmRecord, executionReadiness } from './binance-protective-execute.js';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
+import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
 
 const PREFIX='zenith:v1';
 const KEY_MASTER=`${PREFIX}:master`;
@@ -235,6 +236,21 @@ export default async function handler(req,res){
   if(!apiKey||!secret)return send(res,503,{ok:false,code:'BINANCE_TRADING_CREDENTIALS_MISSING',writeAttempted:false});
 
   try{
+    const backoff=await readBinanceWriteBackoff(redis);
+    if(backoff.active){
+      res.setHeader('Retry-After',String(backoff.retryAfterSeconds));
+      return send(res,429,{
+        ok:false,code:'BINANCE_WRITE_BACKOFF_ACTIVE',
+        retryAfterSeconds:backoff.retryAfterSeconds,
+        binanceStatus:backoff.status,
+        writeAttempted:false,
+      });
+    }
+  }catch{
+    return send(res,503,{ok:false,code:'BINANCE_BACKOFF_STATE_UNAVAILABLE',writeAttempted:false});
+  }
+
+  try{
     const before=await readExecutionState();
     const beforeReason=entryReadinessReason(before,master.deviceId);
     if(beforeReason)return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:beforeReason,writeAttempted:false});
@@ -350,6 +366,20 @@ export default async function handler(req,res){
       confirmationRequired:true,
     });
   }catch(e){
+    const retryAfter=binanceBackoffSecondsFromError(e);
+    if(retryAfter>0){
+      try{await registerBinanceWriteBackoff(redis,e)}catch{}
+      res.setHeader('Retry-After',String(retryAfter));
+      return send(res,429,{
+        ok:false,
+        code:Number(e?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
+        retryAfterSeconds:retryAfter,
+        binanceStatus:Number(e?.status)||0,
+        binanceCode:e?.code??null,
+        ambiguous:false,
+        writeAttempted:false,
+      });
+    }
     return send(res,502,{
       ok:false,
       code:e?.message==='ORDER_RESULT_AMBIGUOUS'?'ORDER_RESULT_AMBIGUOUS':'BINANCE_ENTRY_EXECUTION_FAILED',
