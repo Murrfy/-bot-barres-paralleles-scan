@@ -110,6 +110,27 @@ async function signedGet(path, apiKey, secret, serverTime, extra = {}) {
   });
 }
 
+export function normalizeAlgoOrderDetails(openAlgoOrders) {
+  return (Array.isArray(openAlgoOrders) ? openAlgoOrders : []).map(o => ({
+    symbol: String(o?.symbol || '').toUpperCase(),
+    algoId: String(o?.algoId ?? ''),
+    clientAlgoId: String(o?.clientAlgoId ?? o?.clientOrderId ?? ''),
+    side: String(o?.side || '').toUpperCase(),
+    positionSide: String(o?.positionSide || 'BOTH').toUpperCase(),
+    type: String(o?.orderType ?? o?.type ?? '').toUpperCase(),
+    status: String(o?.algoStatus ?? o?.status ?? '').toUpperCase(),
+    origQty: String(o?.quantity ?? o?.origQty ?? ''),
+    price: String(o?.price ?? ''),
+    triggerPrice: String(o?.triggerPrice ?? o?.stopPrice ?? ''),
+    reduceOnly: o?.reduceOnly === true || o?.reduceOnly === 'true',
+    closePosition: o?.closePosition === true || o?.closePosition === 'true',
+    timeInForce: String(o?.timeInForce || ''),
+    workingType: String(o?.workingType || ''),
+    priceMatch: String(o?.priceMatch || ''),
+    updateTime: Number(o?.updateTime ?? o?.time ?? o?.createTime ?? 0),
+  }));
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, { ok: false, code: 'METHOD_NOT_ALLOWED' });
 
@@ -191,6 +212,8 @@ export default async function handler(req, res) {
       updateTime: Number(o?.updateTime ?? o?.time ?? 0),
     }));
 
+    const algoOrderDetails = normalizeAlgoOrderDetails(openAlgoOrders);
+
     return send(res, 200, {
       ok: true,
       mode: 'READ_ONLY',
@@ -215,6 +238,7 @@ export default async function handler(req, res) {
       standardOpenOrders: Array.isArray(openOrders) ? openOrders.length : 0,
       standardOrderDetails,
       algoOpenOrders: Array.isArray(openAlgoOrders) ? openAlgoOrders.length : 0,
+      algoOrderDetails,
     });
   } catch (e) {
     return send(res, 502, {
