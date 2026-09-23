@@ -401,13 +401,31 @@ export default async function handler(req,res){
         if(!update.previousClientAlgoId)return send(res,400,{ok:false,code:'PREVIOUS_PROTECTION_ID_REQUIRED',writeAttempted:false});
         const old=findAlgo(state.runtimeState,update.symbol,update.previousClientAlgoId);
         if(!old)return send(res,409,{ok:false,code:'PREVIOUS_PROTECTION_NOT_OPEN',writeAttempted:false});
+
+        const newId=String(req.body?.newClientAlgoId||'');
+        const confirmedNew=findAlgo(state.runtimeState,update.symbol,newId);
         if(update.protectionKind==='MAX_LOSS'){
-          const newId=String(req.body?.newClientAlgoId||'');
-          const confirmedNew=findAlgo(state.runtimeState,update.symbol,newId);
           if(!newId||!confirmedNew||String(confirmedNew.type||'').toUpperCase()!=='STOP_MARKET'||!bool(confirmedNew.closePosition)){
             return send(res,423,{ok:false,code:'NEW_MAX_LOSS_PROTECTION_NOT_CONFIRMED',writeAttempted:false});
           }
+        }else{
+          const newPrice=n(confirmedNew?.price);
+          const newTrigger=n(confirmedNew?.triggerPrice??confirmedNew?.stopPrice);
+          if(!newId||!confirmedNew||
+             String(confirmedNew.type||'').toUpperCase()!=='STOP'||
+             String(confirmedNew.timeInForce||'').toUpperCase()!=='GTC'||
+             !bool(confirmedNew.reduceOnly)||
+             String(confirmedNew.side||'').toUpperCase()!==sideForDirection(update.direction)||
+             Math.abs(n(confirmedNew.origQty)-update.quantity)>1e-12||
+             !(newPrice>0)||!(newTrigger>0)||
+             Math.abs(newPrice-newTrigger)>Math.max(1e-9,Math.abs(newTrigger)*1e-10)||
+             Math.abs(newTrigger-update.triggerPrice)>Math.max(1e-9,Math.abs(update.triggerPrice)*1e-10)||
+             Math.abs(newPrice-update.limitPrice)>Math.max(1e-9,Math.abs(update.limitPrice)*1e-10)||
+             (confirmedNew.priceMatch&&String(confirmedNew.priceMatch).toUpperCase()!=='NONE')){
+            return send(res,423,{ok:false,code:'NEW_PROGRESSIVE_PROTECTION_NOT_CONFIRMED',writeAttempted:false});
+          }
         }
+
         const expected={
           symbol:update.symbol,side:sideForDirection(update.direction),positionSide:'BOTH',
           clientAlgoId:update.previousClientAlgoId,
@@ -435,7 +453,22 @@ export default async function handler(req,res){
         });
       }else{
         const allowedIds=[plan.params.clientAlgoId];
-        if(update.protectionKind==='MAX_LOSS'&&update.previousClientAlgoId){
+        if(update.previousClientAlgoId){
+          const old=findAlgo(state.runtimeState,update.symbol,update.previousClientAlgoId);
+          if(!old)return send(res,409,{ok:false,code:'PREVIOUS_PROTECTION_NOT_OPEN',writeAttempted:false});
+          if(update.protectionKind==='PROGRESSIVE'){
+            const oldPrice=n(old?.price);
+            const oldTrigger=n(old?.triggerPrice??old?.stopPrice);
+            if(String(old.type||'').toUpperCase()!=='STOP'||
+               String(old.timeInForce||'').toUpperCase()!=='GTC'||
+               !bool(old.reduceOnly)||
+               String(old.side||'').toUpperCase()!==sideForDirection(update.direction)||
+               !(oldPrice>0)||!(oldTrigger>0)||
+               Math.abs(oldPrice-oldTrigger)>Math.max(1e-9,Math.abs(oldTrigger)*1e-10)||
+               (old.priceMatch&&String(old.priceMatch).toUpperCase()!=='NONE')){
+              return send(res,409,{ok:false,code:'PREVIOUS_PROGRESSIVE_NOT_EXACT_LIMIT',writeAttempted:false});
+            }
+          }
           allowedIds.push(update.previousClientAlgoId);
         }
         const conflicts=conflictingProtectiveOrders(
