@@ -389,6 +389,37 @@ function commandTypeAllowed(type) {
   return ALLOWED_COMMAND_TYPES.has(String(type || '').toUpperCase());
 }
 
+function execClosePayloadStatus(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok:false, reason:'PAYLOAD_OBJECT_REQUIRED' };
+  const symbol = String(payload.symbol || '').toUpperCase();
+  const direction = String(payload.direction || '').toUpperCase();
+  const quantity = Number(payload.quantity);
+  const exitMode = String(payload.exitMode || 'PROTECTIVE_IOC').toUpperCase();
+  const targetPrice = Number(payload.targetPrice || 0);
+  if (!/^[A-Z0-9]{3,30}$/.test(symbol)) return { ok:false, reason:'SYMBOL_INVALID' };
+  if (!['LONG','SHORT'].includes(direction)) return { ok:false, reason:'DIRECTION_INVALID' };
+  if (!Number.isFinite(quantity) || quantity <= 0) return { ok:false, reason:'QUANTITY_INVALID' };
+  if (!['PROTECTIVE_IOC','NORMAL_LIMIT','MARKET_LAST_RESORT'].includes(exitMode)) return { ok:false, reason:'EXIT_MODE_INVALID' };
+  if (exitMode === 'NORMAL_LIMIT' && (!Number.isFinite(targetPrice) || targetPrice <= 0)) return { ok:false, reason:'TARGET_PRICE_INVALID' };
+  return { ok:true, symbol, direction, quantity, exitMode, targetPrice };
+}
+
+function runtimeClosePositionQuantity(runtimeState, symbol, direction) {
+  const positions = Array.isArray(runtimeState?.data?.binancePositions) ? runtimeState.data.binancePositions : [];
+  const sym = String(symbol || '').toUpperCase();
+  const dir = String(direction || '').toUpperCase();
+  for (const position of positions) {
+    if (String(position?.symbol || '').toUpperCase() !== sym) continue;
+    const positionSide = String(position?.positionSide || 'BOTH').toUpperCase();
+    const amount = Number(position?.positionAmt ?? position?.quantity ?? 0);
+    const actualDirection = positionSide === 'LONG' || positionSide === 'SHORT'
+      ? positionSide
+      : amount < 0 ? 'SHORT' : 'LONG';
+    if (actualDirection === dir) return Math.abs(Number.isFinite(amount) ? amount : 0);
+  }
+  return 0;
+}
+
 function commandExpired(command, now = Date.now()) {
   const createdAt = Number(command?.createdAt || 0);
   const expiresAt = Number(command?.expiresAt || 0);
@@ -1749,6 +1780,16 @@ export default async function handler(req, res) {
           maxBytes: COMMAND_PAYLOAD_MAX_BYTES,
         });
       }
+      if (type === 'EXEC_CLOSE_POSITION') {
+        const payloadStatus = execClosePayloadStatus(payload);
+        if (!payloadStatus.ok) {
+          return send(res, 400, {
+            ok: false,
+            code: 'COMMAND_PAYLOAD_INVALID',
+            reason: payloadStatus.reason,
+          });
+        }
+      }
 
       const createdAt = Date.now();
       const command = {
@@ -1833,6 +1874,13 @@ export default async function handler(req, res) {
       if (!command || !commandTypeAllowed(command.type)) {
         await rejectClaimedCommand(raw, 'COMMAND_TYPE_NOT_ALLOWED');
         return send(res, 200, { ok: true, command: null, typeRejected: true, recovery });
+      }
+      if (String(command.type || '').toUpperCase() === 'EXEC_CLOSE_POSITION') {
+        const payloadStatus = execClosePayloadStatus(command.payload);
+        if (!payloadStatus.ok) {
+          await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason: payloadStatus.reason });
+          return send(res, 200, { ok: true, command: null, payloadRejected: true, payloadReason: payloadStatus.reason, recovery });
+        }
       }
 
       if (commandExpired(command)) {
@@ -1934,13 +1982,97 @@ export default async function handler(req, res) {
       }
       const raw = String(req.body?.raw || '');
       if (!raw) return send(res, 400, { ok: false, code: 'RAW_REQUIRED' });
-      let commandId = '';
-      try { commandId = String(JSON.parse(raw)?.id || ''); } catch {}
+      let command = null;
+      try { command = JSON.parse(raw); } catch {}
+      const commandId = String(command?.id || '');
+
+      if (String(command?.type || '').toUpperCase() === 'EXEC_CLOSE_POSITION') {
+        const payloadStatus = execClosePayloadStatus(command?.payload);
+        if (!payloadStatus.ok) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_PAYLOAD_INVALID', reason:payloadStatus.reason });
+        }
+        const proof = req.body?.executionProof;
+        const beforeQuantity = Number(proof?.beforeQuantity);
+        const clientOrderId = String(proof?.clientOrderId || '');
+        if (!proof || !Number.isFinite(beforeQuantity) || beforeQuantity <= 0 ||
+            payloadStatus.quantity > beforeQuantity + 1e-12 ||
+            !/^[.A-Z:/a-z0-9_-]{1,36}$/.test(clientOrderId)) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
+        }
+
+        const readiness = await freshConsistentReconciliation(device.deviceId);
+        if (!readiness.ok) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_RECONCILIATION_REQUIRED', reason:readiness.reason });
+        }
+        const currentQuantity = runtimeClosePositionQuantity(
+          readiness.runtimeState,
+          payloadStatus.symbol,
+          payloadStatus.direction
+        );
+        const targetRemaining = Math.max(0, beforeQuantity - payloadStatus.quantity);
+        if (currentQuantity > targetRemaining + 1e-12) {
+          return send(res, 409, {
+            ok:false,
+            code:'EXECUTION_ACK_NOT_CONFIRMED',
+            currentQuantity,
+            targetRemaining,
+          });
+        }
+
+        await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+          at:Date.now(),
+          kind:'EXEC_CLOSE_CONFIRMED',
+          commandId,
+          deviceId:device.deviceId,
+          symbol:payloadStatus.symbol,
+          direction:payloadStatus.direction,
+          beforeQuantity,
+          currentQuantity,
+          targetRemaining,
+          clientOrderId,
+          reconciliationObservedAt:Number(readiness.report?.observedAt || 0),
+        })]);
+        await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      }
+
       if (commandId) {
         await redis(['SET', `${PREFIX}:command:done:${commandId}`, String(Date.now()), 'EX', String(60 * 60 * 24 * 30)]);
       }
       await redis(['LREM', KEY_PROCESSING, '1', raw]);
-      return send(res, 200, { ok: true });
+      return send(res, 200, { ok: true, commandId });
+    }
+
+    if (action === 'command-fail' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+      if (!(await hasMasterLease(device.deviceId))) {
+        return send(res, 409, { ok:false, code:'NOT_MASTER' });
+      }
+      const raw = String(req.body?.raw || '');
+      const reason = String(req.body?.reason || 'EXECUTION_FAILED').toUpperCase();
+      if (!raw) return send(res, 400, { ok:false, code:'RAW_REQUIRED' });
+      if (!/^[A-Z0-9_:-]{3,96}$/.test(reason)) return send(res, 400, { ok:false, code:'FAIL_REASON_INVALID' });
+      let command = null;
+      try { command = JSON.parse(raw); } catch {}
+      const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+      if (removed > 0) {
+        await pushDeadLetter({
+          raw,
+          rejectedAt:Date.now(),
+          rejectedReason:reason,
+          failedBy:device.deviceId,
+        });
+        await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+          at:Date.now(),
+          kind:'COMMAND_EXECUTION_FAILED',
+          commandId:String(command?.id || ''),
+          commandType:String(command?.type || ''),
+          reason,
+          deviceId:device.deviceId,
+        })]);
+        await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      }
+      return send(res, 200, { ok:true, failed:removed > 0 });
     }
 
     if (action === 'command-requeue' && req.method === 'POST') {

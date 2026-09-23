@@ -182,6 +182,9 @@ for (const required of [
 if (protectiveExecute.includes('EXEC_OPEN_POSITION')) {
   fail('protective execution API must never open a new position');
 }
+if (!protectiveExecute.includes("priceMatch:String(req.body?.priceMatch||'OPPONENT')")) {
+  fail('protective execution API must pass only the audited adaptive priceMatch into order planning');
+}
 
 const protectiveCloseState = fs.readFileSync('lib/protective-close-state.mjs','utf8');
 for (const required of [
@@ -489,6 +492,14 @@ if (!sync.includes("'MASTER_RUNTIME_NOT_REAL'") ||
 }
 if (!sync.includes('pushDeadLetter') || !sync.includes("redis(['LTRIM', KEY_DEAD")) {
   fail('dead-letter queue must be bounded');
+}
+if (!sync.includes('execClosePayloadStatus') ||
+    !sync.includes("'COMMAND_PAYLOAD_INVALID'") ||
+    !sync.includes("action === 'command-fail'") ||
+    !sync.includes("'EXECUTION_ACK_NOT_CONFIRMED'") ||
+    !sync.includes('runtimeClosePositionQuantity') ||
+    !sync.includes('freshConsistentReconciliation(device.deviceId)')) {
+  fail('EXEC_CLOSE_POSITION must have strict payload validation, fail endpoint and server-verified reconciliation proof before ACK');
 }
 
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');

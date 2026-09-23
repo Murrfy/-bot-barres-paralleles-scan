@@ -151,6 +151,7 @@ export default async function handler(req,res){
       exitMode,
       targetPrice:Number(req.body?.targetPrice||0),
       attempt:Number(req.body?.attempt||0),
+      priceMatch:String(req.body?.priceMatch||'OPPONENT'),
     });
   }catch(e){
     return send(res,400,{ok:false,code:e?.message||'EXIT_PLAN_INVALID',writeAttempted:false});
@@ -185,6 +186,7 @@ export default async function handler(req,res){
       symbol,
       direction:dir,
       exitMode,
+      priceMatch:String(plan.params.priceMatch||''),
       clientOrderId:plan.params.newClientOrderId,
       disposition:result.disposition,
       writeAttempted:result.writeAttempted===true,
