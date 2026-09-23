@@ -926,5 +926,11 @@ if (!syncTrustedIp.includes("headers['x-vercel-forwarded-for']") ||
   fail('Zenith auth rate limits must prefer Vercel trusted forwarded IP while retaining cloud fallback');
 }
 
+const syncErrorSurface = fs.readFileSync('api/zenith-sync.js','utf8');
+if (!syncErrorSurface.includes("error: 'Zenith sync unavailable.'") ||
+    syncErrorSurface.includes("error: e?.message || 'Zenith sync error'")) {
+  fail('Zenith sync must not expose raw internal exception messages');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
