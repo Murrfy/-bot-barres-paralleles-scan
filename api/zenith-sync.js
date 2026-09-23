@@ -369,6 +369,7 @@ async function requireDevice(req, res, roles) {
     return null;
   }
   if (!(await verifyRoleDevice(device.role, device.deviceId))) {
+    clearDeviceSessionCookie(res);
     send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
     return null;
   }
