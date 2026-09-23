@@ -401,6 +401,14 @@ if (!index.includes('async function awaitMasterReconciliation(timeoutMs=5000)') 
   fail('critical MASTER mutations must serialize reconciliation and must not ACK a full close without reconciled stream readiness');
 }
 
+if (!index.includes("navigator.wakeLock.request('screen')") ||
+    !index.includes('function masterWakeLockWanted()') ||
+    !index.includes("mode==='RUNNING'||mode==='PAUSE_PENDING'") ||
+    !index.includes("releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')") ||
+    !index.includes('ÉCRAN MASTER · ÉVEILLÉ')) {
+  fail('iPad MASTER must request a screen wake lock only while active while preserving PAGE_HIDDEN fail-closed behavior');
+}
+
 const masterAutoProtection = fs.readFileSync('lib/master-auto-protection.mjs','utf8');
 if (!masterAutoProtection.includes('STANDARD_REDUCE_ONLY_LIMIT_ALREADY_OPEN') ||
     !masterAutoProtection.includes('managedExitId(order?.clientOrderId)') ||
