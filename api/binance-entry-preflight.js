@@ -17,6 +17,7 @@ const REDIS_TOKEN =
   process.env.KV_REST_API_TOKEN;
 
 const PREFIX = 'zenith:v1';
+const ENTRY_PREFLIGHT_HTTP_RATE_LIMIT_PER_MINUTE = 6;
 
 function send(res, status, body) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -78,6 +79,22 @@ async function requireCurrentMaster(req) {
     return device;
   }
   return null;
+}
+
+async function entryPreflightHttpRateAllowed(deviceId) {
+  const bucket = Math.floor(Date.now() / 60000);
+  const key = `${PREFIX}:rate:entry-preflight-http:${sha256(deviceId)}:${bucket}`;
+  const script = [
+    "local count = redis.call('INCR', KEYS[1])",
+    "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
+    "return count"
+  ].join('\n');
+  const count = Number(await redis(['EVAL', script, '1', key, '120'])) || 0;
+  return count <= ENTRY_PREFLIGHT_HTTP_RATE_LIMIT_PER_MINUTE;
+}
+
+function retryAfterSeconds() {
+  return Math.max(1, 60 - (Math.floor(Date.now() / 1000) % 60));
 }
 
 async function jsonFetch(url, init = {}) {
@@ -220,6 +237,24 @@ export default async function handler(req, res) {
   }
   if (!master) {
     return send(res, 401, { ok: false, code: 'MASTER_REQUIRED' });
+  }
+
+  try {
+    if (!(await entryPreflightHttpRateAllowed(master.deviceId))) {
+      const retryAfter = retryAfterSeconds();
+      res.setHeader('Retry-After', String(retryAfter));
+      return send(res, 429, {
+        ok: false,
+        code: 'ENTRY_PREFLIGHT_HTTP_RATE_LIMIT',
+        retryAfterSeconds: retryAfter,
+      });
+    }
+  } catch (e) {
+    return send(res, 503, {
+      ok: false,
+      code: e?.code || 'RATE_LIMIT_BACKEND_ERROR',
+      error: 'Protection anti-abus indisponible.',
+    });
   }
 
   const symbol = String(req.query?.symbol || '').trim().toUpperCase();
