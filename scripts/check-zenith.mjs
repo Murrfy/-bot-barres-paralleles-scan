@@ -789,8 +789,11 @@ if (!securityHeaders.includes("frame-ancestors 'none'") || !securityHeaders.incl
 if (!sync.includes('COMMAND_MAX_AGE_MS = 2 * 60 * 1000') ||
     !sync.includes('COMMAND_QUEUE_MAX = 100') ||
     !sync.includes('COMMAND_PAYLOAD_MAX_BYTES = 16 * 1024') ||
+    !sync.includes('COMMAND_RAW_MAX_BYTES = 64 * 1024') ||
+    !sync.includes("'COMMAND_RAW_TOO_LARGE'") ||
+    !sync.includes('commandRawStatus(req.body?.raw)') ||
     !sync.includes('DEAD_LETTER_MAX = 500')) {
-  fail('command queue must have bounded age, depth, payload size and dead-letter retention');
+  fail('command queue must bound age, depth, payloads, MASTER raw command strings and dead-letter retention');
 }
 if (!sync.includes('ALLOWED_COMMAND_TYPES') ||
     !sync.includes("'COMMAND_TYPE_NOT_ALLOWED'") ||
