@@ -545,14 +545,19 @@ if (!sync.includes("import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs'") 
   fail('central execution ACK must independently require a Zenith-managed emergency stop within the shared $400 cap');
 }
 if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
-    !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req')) {
+    !sync.includes('setDeviceSessionCookie(res, token)') ||
+    !sync.includes('cookieToken(req)') || !sync.includes('bearerToken(req)')) {
   fail('zenith-sync must use secure device sessions and same-origin mutation protection');
 }
 if (!deviceSessionSource.includes('allowBearer = false') ||
     !sync.includes("action === 'whoami' && req.method === 'GET'") ||
-    !sync.includes("{ allowBearer: true }") ||
-    (sync.match(/allowBearer:\s*true/g) || []).length !== 1) {
-  fail('legacy Bearer must be accepted only for one-time whoami migration; normal Zenith API auth must be cookie-only');
+    !sync.includes("{ allowBearer: true, rotateBearer: true }") ||
+    !sync.includes('async function rotateLegacyBearerSession(device)') ||
+    !sync.includes("redis.call('DEL', KEYS[1])") ||
+    !sync.includes("'LEGACY_BEARER_ALREADY_USED'") ||
+    (sync.match(/allowBearer:\s*true/g) || []).length !== 1 ||
+    (sync.match(/rotateBearer:\s*true/g) || []).length !== 1) {
+  fail('legacy Bearer must be one-shot: whoami rotates it to a fresh cookie token and invalidates the old token');
 }
 if (!sync.includes('function deviceSessionRemainingSeconds(device, now = Date.now())') ||
     !sync.includes('absoluteExpiresAt = createdAt + DEVICE_SESSION_MAX_AGE_SECONDS * 1000') ||
