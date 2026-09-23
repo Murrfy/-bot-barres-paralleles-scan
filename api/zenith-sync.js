@@ -544,6 +544,72 @@ function reconciliationRuntimeMatches(report, runtimeRaw) {
   return Boolean(report?.runtimeHash) && sha256(runtimeRaw) === String(report.runtimeHash);
 }
 
+function executionRuntimeReadinessStatus(runtimeState, expectedMasterDeviceId = '') {
+  const runtime = runtimeSnapshotStatus(runtimeState, expectedMasterDeviceId);
+  if (!runtime.fresh) return { ready: false, reason: runtime.reason };
+
+  const data = runtimeState?.data || {};
+  const executionMode = String(data.executionMode || data.mode || '').toUpperCase();
+  if (executionMode !== 'REAL') return { ready: false, reason: 'MASTER_RUNTIME_NOT_REAL' };
+
+  const stream = data.userStream;
+  if (!stream || typeof stream !== 'object') return { ready: false, reason: 'USER_STREAM_STATE_MISSING' };
+  if (stream.connected !== true) return { ready: false, reason: 'USER_STREAM_DISCONNECTED' };
+  if (stream.ready !== true) return { ready: false, reason: 'USER_STREAM_NOT_READY' };
+  if (stream.failClosed !== false) return { ready: false, reason: 'USER_STREAM_FAIL_CLOSED' };
+  if (stream.needsReconciliation !== false) return { ready: false, reason: 'USER_STREAM_RECONCILIATION_REQUIRED' };
+  if (Array.isArray(stream.failReasons) && stream.failReasons.length) {
+    return { ready: false, reason: 'USER_STREAM_HAS_FAILURES' };
+  }
+
+  return { ready: true, reason: 'EXECUTION_RUNTIME_READY', runtime };
+}
+
+async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAgeMs = 10000) {
+  const [reportRaw, runtimeRaw] = await Promise.all([
+    redis(['GET', KEY_RECONCILE_LAST]),
+    redis(['GET', KEY_STATE]),
+  ]);
+  if (!reportRaw) return { ok: false, reason: 'BINANCE_RECONCILIATION_REQUIRED' };
+
+  const report = parseStoredJson(reportRaw);
+  const runtimeState = parseStoredJson(runtimeRaw);
+  if (!report || !runtimeState) return { ok: false, reason: 'BINANCE_RECONCILIATION_INVALID' };
+
+  const runtimeReady = executionRuntimeReadinessStatus(runtimeState, expectedMasterDeviceId);
+  if (!runtimeReady.ready) return { ok: false, reason: runtimeReady.reason };
+
+  const ageMs = Date.now() - Number(report.observedAt || 0);
+  if (report.failClosed !== false ||
+      report.version !== 2 ||
+      report.status !== 'CLEAN_REAL' ||
+      !Array.isArray(report.reasons) ||
+      report.reasons.length ||
+      !report.actual ||
+      !Number.isInteger(report.actual.positions) ||
+      report.actual.positions < 0 ||
+      !Number.isInteger(report.actual.orders) ||
+      report.actual.orders < 0 ||
+      !(report.runtimeDataHash || report.runtimeHash)) {
+    return { ok: false, reason: 'BINANCE_RECONCILIATION_MISMATCH' };
+  }
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMs) {
+    return { ok: false, reason: 'BINANCE_RECONCILIATION_STALE' };
+  }
+  if (!reconciliationRuntimeMatches(report, runtimeRaw)) {
+    return { ok: false, reason: 'BINANCE_RECONCILIATION_RUNTIME_CHANGED' };
+  }
+
+  return { ok: true, report, runtimeState, runtimeReady };
+}
+
+async function realExecutionReadiness(expectedMasterDeviceId = '') {
+  if (!expectedMasterDeviceId) return { ok: false, reason: 'MASTER_LEASE_REQUIRED' };
+  const reconciliation = await freshConsistentReconciliation(expectedMasterDeviceId);
+  if (!reconciliation.ok) return reconciliation;
+  return { ok: true, reconciliation };
+}
+
 async function freshCleanReconciliation(maxAgeMs = 30000) {
   const raw = await redis(['GET', KEY_RECONCILE_LAST]);
   if (!raw) return { ok: false, reason: 'BINANCE_RECONCILIATION_REQUIRED' };
@@ -1568,6 +1634,14 @@ export default async function handler(req, res) {
             pairingDisabled: PAIRING_DISABLED,
           });
         }
+        const readiness = await realExecutionReadiness(activeMaster);
+        if (!readiness.ok) {
+          return send(res, 423, {
+            ok: false,
+            code: 'EXECUTION_NOT_READY',
+            reason: readiness.reason,
+          });
+        }
       }
       if (!/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId)) {
         return send(res, 400, { ok: false, code: 'CLIENT_COMMAND_ID_REQUIRED' });
@@ -1727,6 +1801,17 @@ export default async function handler(req, res) {
             recovery,
           });
         }
+        const readiness = await realExecutionReadiness(device.deviceId);
+        if (!readiness.ok) {
+          await rejectClaimedCommand(raw, 'EXECUTION_NOT_READY_' + readiness.reason);
+          return send(res, 200, {
+            ok: true,
+            command: null,
+            executionRejected: true,
+            executionReason: readiness.reason,
+            recovery,
+          });
+        }
       }
 
       return send(res, 200, {
@@ -1809,6 +1894,11 @@ export default async function handler(req, res) {
         if (!gate.allowed) {
           await rejectClaimedCommand(raw, 'EXECUTION_LOCKED_' + gate.reason);
           return send(res, 200, { ok: true, requeued: false, executionRejected: true, executionReason: gate.reason });
+        }
+        const readiness = await realExecutionReadiness(device.deviceId);
+        if (!readiness.ok) {
+          await rejectClaimedCommand(raw, 'EXECUTION_NOT_READY_' + readiness.reason);
+          return send(res, 200, { ok: true, requeued: false, executionRejected: true, executionReason: readiness.reason });
         }
       }
 

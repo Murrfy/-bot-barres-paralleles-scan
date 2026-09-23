@@ -397,8 +397,18 @@ if (!sync.includes("'COMMAND_EXPIRED'") ||
     !sync.includes("'COMMAND_QUEUE_FULL'") ||
     !sync.includes('modeBeforeClaim') ||
     !sync.includes('modeNow') ||
-    !sync.includes('executionGate(command.type, halted)')) {
-  fail('MASTER must revalidate age, mode and execution lock after a command is claimed');
+    !sync.includes('executionGate(command.type, halted)') ||
+    !sync.includes('realExecutionReadiness') ||
+    !sync.includes('freshConsistentReconciliation') ||
+    !sync.includes("'EXECUTION_NOT_READY'")) {
+  fail('MASTER must revalidate age, mode, execution lock, private stream readiness and fresh reconciliation before any EXEC command');
+}
+if (!sync.includes("'MASTER_RUNTIME_NOT_REAL'") ||
+    !sync.includes("'USER_STREAM_NOT_READY'") ||
+    !sync.includes("'USER_STREAM_FAIL_CLOSED'") ||
+    !sync.includes("'USER_STREAM_RECONCILIATION_REQUIRED'") ||
+    !sync.includes("report.status !== 'CLEAN_REAL'")) {
+  fail('real execution must fail closed unless runtime is REAL, user stream is ready and reconciliation is CLEAN_REAL');
 }
 if (!sync.includes('pushDeadLetter') || !sync.includes("redis(['LTRIM', KEY_DEAD")) {
   fail('dead-letter queue must be bounded');
