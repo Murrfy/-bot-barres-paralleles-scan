@@ -34,3 +34,19 @@ test('MASTER admin failure lock uses the same atomic counter',()=>{
   assert.equal(admin.includes("redis(['INCR', key])"),false);
   assert.equal(admin.includes("redis(['EXPIRE', key"),false);
 });
+
+
+test('pairing and controller replacement also enforce global anti-botnet ceilings',()=>{
+  assert.ok(source.includes('const PAIR_GLOBAL_RATE_LIMIT = 30;'));
+  assert.ok(source.includes('const CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT = 30;'));
+
+  const pair=block('async function pairRateAllowed','async function controllerReplacementRateAllowed');
+  assert.ok(pair.includes(':pair-rate:global:'));
+  assert.ok(pair.includes('globalCount <= PAIR_GLOBAL_RATE_LIMIT'));
+  assert.ok((pair.match(/incrementWithExpiry\(/g)||[]).length >= 2);
+
+  const replacement=block('async function controllerReplacementRateAllowed','function masterAdminFailureKey');
+  assert.ok(replacement.includes(':controller-replacement-rate:global:'));
+  assert.ok(replacement.includes('globalCount <= CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT'));
+  assert.ok((replacement.match(/incrementWithExpiry\(/g)||[]).length >= 2);
+});
