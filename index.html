@@ -175,7 +175,7 @@ let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdenti
 let controllerSyncState={conflict:false,lastOk:0,error:''};
 let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
 let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
-let masterUserStream={state:null,ws:null,starting:false,reconcileBusy:false,reconcileTimer:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
+let masterUserStream={state:null,ws:null,starting:false,reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
 function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'BINANCE HORS LIGNE':'BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'compte Futures inaccessible · trading simulation':'portefeuille Futures Binance · connexion serveur requise'}}
@@ -463,8 +463,12 @@ async function masterUserStreamApi(action,method='GET'){
   return {r,q};
 }
 function clearMasterStreamTimers(){
-  for(const key of ['keepaliveTimer','restartTimer']){
-    if(masterUserStream[key]){clearTimeout(masterUserStream[key]);clearInterval(masterUserStream[key]);masterUserStream[key]=null}
+  for(const key of ['keepaliveTimer','restartTimer','reconcileDebounceTimer','reconcileInterval']){
+    if(masterUserStream[key]){
+      clearTimeout(masterUserStream[key]);
+      clearInterval(masterUserStream[key]);
+      masterUserStream[key]=null;
+    }
   }
 }
 function scheduleMasterStreamReconnect(delay=1500){
@@ -530,9 +534,9 @@ async function reconcileMasterUserStream(secondPass=false){
   }
 }
 function scheduleMasterStreamReconcile(delay=250){
-  if(masterUserStream.reconcileTimer)clearTimeout(masterUserStream.reconcileTimer);
-  masterUserStream.reconcileTimer=setTimeout(()=>{
-    masterUserStream.reconcileTimer=null;
+  if(masterUserStream.reconcileDebounceTimer)clearTimeout(masterUserStream.reconcileDebounceTimer);
+  masterUserStream.reconcileDebounceTimer=setTimeout(()=>{
+    masterUserStream.reconcileDebounceTimer=null;
     reconcileMasterUserStream();
   },Math.max(50,delay));
 }
@@ -611,8 +615,8 @@ async function ensureMasterUserStream(){
       masterUserStream.ws=null;
       await closeMasterUserStream(masterUserStream.lastError||'STREAM_DISCONNECTED',true);
     };
-    if(masterUserStream.reconcileTimer)clearTimeout(masterUserStream.reconcileTimer);
-    masterUserStream.reconcileTimer=setInterval(()=>reconcileMasterUserStream(),15000);
+    if(masterUserStream.reconcileInterval)clearInterval(masterUserStream.reconcileInterval);
+    masterUserStream.reconcileInterval=setInterval(()=>reconcileMasterUserStream(),15000);
     return true;
   }catch(e){
     masterUserStream.lastError=String(e?.message||'USER_STREAM_START_FAILED');

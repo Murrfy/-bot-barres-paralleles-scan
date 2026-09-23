@@ -235,8 +235,10 @@ if (!sync.includes("'MASTER_PAUSED'") ||
   fail('MASTER command consumption must stop while paused, including a post-claim race check');
 }
 if (!sync.includes('freshCleanReconciliation') ||
-    !sync.includes("'BINANCE_RECONCILIATION_REQUIRED'")) {
-  fail('real MASTER resume must require fresh clean Binance reconciliation');
+    !sync.includes("'BINANCE_RECONCILIATION_REQUIRED'") ||
+    !sync.includes('reconciliationRuntimeMatches') ||
+    !sync.includes('report.runtimeDataHash || report.runtimeHash')) {
+  fail('real MASTER resume must require fresh clean Binance reconciliation and tolerate heartbeat-only runtime timestamp changes');
 }
 if (!sync.includes("requireDevice(req, res, ['controller', 'master'])")) {
   fail('MASTER pause/resume must be callable by both controller and MASTER');
@@ -311,8 +313,10 @@ if (!index.includes("wss://fstream.binance.com/private/ws/") ||
     !index.includes("masterUserStreamApi('keepalive','POST')") ||
     !index.includes("reconcileMasterUserStream") ||
     !index.includes("45*60*1000") ||
-    !index.includes("23*60*60*1000")) {
-  fail('iPad MASTER must maintain the official Binance private user stream with keepalive, reconnect and REST reconciliation');
+    !index.includes("23*60*60*1000") ||
+    !index.includes('reconcileDebounceTimer') ||
+    !index.includes('reconcileInterval')) {
+  fail('iPad MASTER must maintain the official Binance private user stream with independent keepalive, reconnect and REST reconciliation timers');
 }
 if (!index.includes("invalidateMasterStream('PAGE_HIDDEN')") ||
     !index.includes("STREAM_EVENT_OUT_OF_ORDER") ||
