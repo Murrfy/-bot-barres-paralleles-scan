@@ -786,7 +786,7 @@ if (sync.includes('claimOrVerifyRoleDevice') ||
     !sync.includes('async function claimRoleDevice') ||
     !sync.includes('async function verifyRoleDevice') ||
     !sync.includes('await claimRoleDevice(role, deviceId)') ||
-    !sync.includes('await verifyRoleDevice(device.role, device.deviceId)')) {
+    !sync.includes('await verifyRoleDevice(device.role, device)')) {
   fail('authenticated devices must never auto-claim a missing controller or MASTER role');
 }
 if (!sync.includes('MASTER_ADMIN_FAILURE_LIMIT = 5') ||
