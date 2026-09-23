@@ -9,6 +9,9 @@ import {
   buildClearDeviceSessionCookie,
   sameOriginMutation,
   validDeviceId,
+  deviceSessionRemainingSeconds,
+  deviceSessionRecordActive,
+  DEVICE_SESSION_MAX_AGE_SECONDS,
 } from '../lib/device-session.mjs';
 
 test('Bearer migration token has precedence and cookie is fallback', () => {
@@ -63,4 +66,17 @@ test('device IDs are bounded and restricted to safe characters', () => {
   assert.equal(validDeviceId('short'), false);
   assert.equal(validDeviceId('iphone-<script>alert(1)</script>'), false);
   assert.equal(validDeviceId('x'.repeat(129)), false);
+});
+
+
+test('device session records expire absolutely from original creation time', () => {
+  const now=1_800_000_000_000;
+  const recent={createdAt:now-(10*24*60*60*1000)};
+  const expired={createdAt:now-((30*24*60*60*1000)+1)};
+  assert.equal(deviceSessionRecordActive(recent,now),true);
+  assert.ok(deviceSessionRemainingSeconds(recent,now)>0);
+  assert.equal(deviceSessionRecordActive(expired,now),false);
+  assert.equal(deviceSessionRemainingSeconds(expired,now),0);
+  assert.equal(deviceSessionRecordActive({},now),false);
+  assert.equal(DEVICE_SESSION_MAX_AGE_SECONDS,30*24*60*60);
 });
