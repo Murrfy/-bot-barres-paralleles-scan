@@ -17,6 +17,10 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
   .replace(
     /^import \{ REAL_RISK_LIMITS \} from '\.\.\/lib\/risk-policy\.mjs';\n/m,
     "const REAL_RISK_LIMITS=Object.freeze({maxLossUsd:400});\n"
+  )
+  .replace(
+    /^import \{ requestBodyStatus \} from '\.\.\/lib\/request-body-limit\.mjs';\n/m,
+    "const requestBodyStatus=()=>({ok:true,bytes:0,maxBytes:1024*1024});\n"
   );
 const { commandTypeAllowed, commandExpired, executionGate, deferredCommandPayload, commandRawStatus } = await import(
   'data:text/javascript;base64,' +
