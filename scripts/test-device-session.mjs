@@ -14,12 +14,12 @@ import {
   DEVICE_SESSION_MAX_AGE_SECONDS,
 } from '../lib/device-session.mjs';
 
-test('secure cookie is the default credential and Bearer is opt-in migration only', () => {
+test('Bearer parser is migration-only while normal auth candidates are cookie-only', () => {
   const req={headers:{authorization:'Bearer legacy-token',cookie:`${DEVICE_SESSION_COOKIE}=cookie-token`}};
   assert.equal(bearerToken(req),'legacy-token');
   assert.equal(cookieToken(req),'cookie-token');
   assert.deepEqual(deviceTokenCandidates(req),['cookie-token']);
-  assert.deepEqual(deviceTokenCandidates(req,{allowBearer:true}),['legacy-token','cookie-token']);
+  assert.deepEqual(deviceTokenCandidates({headers:{authorization:'Bearer legacy-token'}}),[]);
 });
 
 test('blank Bearer falls back to secure cookie', () => {
