@@ -150,6 +150,12 @@ for (const required of ['/fapi/v3/positionRisk','/fapi/v1/openOrders','/fapi/v1/
 for (const forbidden of ['/fapi/v1/order','/fapi/v1/algoOrder','/fapi/v1/batchOrders']) {
   if (runtimeSnapshotApi.includes(forbidden)) fail(`runtime snapshot must stay read-only: ${forbidden}`);
 }
+if (!runtimeSnapshotApi.includes('BINANCE_RUNTIME_SNAPSHOT_RATE_LIMIT_PER_MINUTE = 12') ||
+    !runtimeSnapshotApi.includes('runtimeSnapshotRateAllowed') ||
+    !runtimeSnapshotApi.includes("'BINANCE_RUNTIME_SNAPSHOT_RATE_LIMIT'") ||
+    !runtimeSnapshotApi.includes("res.setHeader('Retry-After'")) {
+  fail('runtime snapshot must rate-limit leased MASTER reads before contacting Binance');
+}
 const userStreamSeed = fs.readFileSync('lib/user-stream-seed.mjs','utf8');
 for (const required of ['RECONCILIATION_REQUIRED_AFTER_SEED','standardOrders','algoOrders','positions']) {
   if (!userStreamSeed.includes(required)) fail(`user-stream seed invariant missing: ${required}`);
@@ -383,6 +389,12 @@ if (!binanceReconcile.includes("'MASTER_REQUIRED'") ||
 }
 if (!binanceReconcile.includes("'MISMATCH'") || !binanceReconcile.includes('failClosed')) {
   fail('api/binance-reconcile.js must fail closed on Binance/runtime mismatches');
+}
+if (!binanceReconcile.includes('BINANCE_RECONCILE_RATE_LIMIT_PER_MINUTE = 30') ||
+    !binanceReconcile.includes('reconciliationRateAllowed') ||
+    !binanceReconcile.includes("'BINANCE_RECONCILE_RATE_LIMIT'") ||
+    !binanceReconcile.includes("res.setHeader('Retry-After'")) {
+  fail('Binance reconciliation must rate-limit leased MASTER reads before contacting Binance');
 }
 if (!binanceReconcile.includes('/fapi/v1/openAlgoOrders')) {
   fail('api/binance-reconcile.js must reconcile Binance algo TP/SL orders');

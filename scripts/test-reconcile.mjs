@@ -111,7 +111,7 @@ test('duplicate and absent order identities block', () => {
 test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance reads', async () => {
   const original = globalThis.fetch;
   try {
-    for (const scenario of ['controller', 'replaced', 'missing-owner', 'lease-mismatch', 'invalid', 'unavailable', 'clean', 'runtime-race']) {
+    for (const scenario of ['controller', 'replaced', 'missing-owner', 'lease-mismatch', 'rate-limited', 'invalid', 'unavailable', 'clean', 'runtime-race']) {
       const state = JSON.stringify(runtime([], [], 'SIMULATION'));
       let stored;
       let binanceCalls = 0;
@@ -134,9 +134,13 @@ test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance
             }
           }
           if (c[0] === 'EVAL') {
-            const report = JSON.parse(c[6]);
-            result = scenario === 'runtime-race' && !report.failClosed ? -1 : 1;
-            if (result === 1) stored = report;
+            if (c[2] === '1') {
+              result = scenario === 'rate-limited' ? 31 : 1;
+            } else {
+              const report = JSON.parse(c[6]);
+              result = scenario === 'runtime-race' && !report.failClosed ? -1 : 1;
+              if (result === 1) stored = report;
+            }
           }
           return new Response(JSON.stringify({ result }));
         }
@@ -154,6 +158,8 @@ test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance
         assert.equal(res.code, 401); assert.equal(binanceCalls, 0);
       } else if (scenario === 'lease-mismatch') {
         assert.equal(res.code, 409); assert.equal(res.body.code, 'MASTER_LEASE_REQUIRED'); assert.equal(binanceCalls, 0);
+      } else if (scenario === 'rate-limited') {
+        assert.equal(res.code, 429); assert.equal(res.body.code, 'BINANCE_RECONCILE_RATE_LIMIT'); assert.equal(binanceCalls, 0);
       } else if (scenario === 'clean') {
         assert.equal(res.code, 200); assert.equal(stored.failClosed, false);
         assert.equal(stored.deviceRole, 'master');
