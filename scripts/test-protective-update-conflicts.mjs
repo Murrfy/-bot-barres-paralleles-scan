@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { conflictingProtectiveOrders } from '../api/binance-protective-update-execute.js';
+import { conflictingProtectiveOrders, emergencyProtection } from '../api/binance-protective-update-execute.js';
 
 const update={symbol:'BTCUSDT',direction:'LONG'};
 
@@ -66,4 +66,21 @@ test('server refuses cancel-old progressive until the replacement STOP+LIMIT is 
   assert.match(api,/confirmedNew\.price/);
   assert.match(api,/confirmedNew\?\.triggerPrice/);
   assert.match(api,/allowedIds\.push\(update\.previousClientAlgoId\)/);
+});
+
+
+test('emergency protection validator accepts $400 but rejects anything above the hard cap',()=>{
+  const base={orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP_MARKET',closePosition:true,clientAlgoId:'zth-MAX-cap'};
+  const update={symbol:'BTCUSDT',direction:'LONG',quantity:1};
+  assert.ok(emergencyProtection(runtime([{...base,triggerPrice:'49600'}]),update,50000));
+  assert.equal(emergencyProtection(runtime([{...base,triggerPrice:'49599.99'}]),update,50000),null);
+});
+
+test('SHORT emergency protection uses the same $400 hard cap',()=>{
+  const base={orderClass:'ALGO',symbol:'BTCUSDT',side:'BUY',positionSide:'BOTH',
+    type:'STOP_MARKET',closePosition:true,clientAlgoId:'zth-MAX-short'};
+  const update={symbol:'BTCUSDT',direction:'SHORT',quantity:1};
+  assert.ok(emergencyProtection(runtime([{...base,triggerPrice:'50400'}]),update,50000));
+  assert.equal(emergencyProtection(runtime([{...base,triggerPrice:'50400.01'}]),update,50000),null);
 });
