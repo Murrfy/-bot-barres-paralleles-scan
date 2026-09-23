@@ -367,6 +367,14 @@ if (!index.includes("String(o?.timeInForce||'').toUpperCase()==='GTC'") ||
   fail('iPhone protection inventory must classify exit/progressive/MAX-LOSS orders with strict identity and price-side rules');
 }
 
+if (!protectiveUpdateExecute.includes("/^zth-[A-Za-z0-9._:-]+$/.test(clientAlgoId)") ||
+    !binanceReconcile.includes('if (!zenithManagedOrderId(order)) return false;') ||
+    !index.includes('if(!zenithManagedRealId(o?.clientAlgoId))return false;') ||
+    !index.includes('const emergencyReady=Boolean(inv.managedMaxLoss)&&inv.maxLossConflict!==true') ||
+    !index.includes('aucune protection MAX-LOSS Zenith unique et confirmée')) {
+  fail('protective execution, reconciliation, MASTER and controller must require a unique Zenith-managed MAX-LOSS');
+}
+
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
 if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
     !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req)')) {
