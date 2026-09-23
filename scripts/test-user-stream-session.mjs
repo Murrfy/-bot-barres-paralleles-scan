@@ -19,9 +19,13 @@ function response() {
   };
 }
 
-function harness({role='master',registered='master-1',lease='master-1',storedSession=null,rateCount=1}={}) {
+function harness({
+  role='master',registered='master-1',lease='master-1',storedSession=null,rateCount=1,
+  roleEpoch=Date.now()-1000,gateRoleEpoch=null,mutationLocked=false
+}={}) {
   const original = globalThis.fetch;
   let session = storedSession;
+  let lockToken = mutationLocked ? 'other-mutation' : '';
   const binanceCalls = [];
   globalThis.fetch = async (url, init={}) => {
     if (url === 'https://redis.test') {
@@ -33,6 +37,8 @@ function harness({role='master',registered='master-1',lease='master-1',storedSes
         result = registered;
       } else if (c[0] === 'GET' && c[1] === 'zenith:v1:master') {
         result = lease;
+      } else if (c[0] === 'GET' && c[1] === 'zenith:v1:role-issued-at:master') {
+        result = String(roleEpoch);
       } else if (c[0] === 'GET' && c[1] === sessionKey) {
         result = session ? JSON.stringify(session) : null;
       } else if (c[0] === 'SET' && c[1] === sessionKey) {
@@ -43,6 +49,29 @@ function harness({role='master',registered='master-1',lease='master-1',storedSes
         result = 1;
       } else if (c[0] === 'EVAL' && String(c[3] || '').includes(':rate:user-stream:')) {
         result = rateCount;
+      } else if (c[0] === 'EVAL' && c[2] === '4' &&
+                 c[3] === 'zenith:v1:role-device:master' &&
+                 c[4] === 'zenith:v1:master' &&
+                 c[6] === 'zenith:v1:binance-user-stream:mutation-lock') {
+        const observedEpoch = gateRoleEpoch == null ? String(roleEpoch) : String(gateRoleEpoch);
+        if (String(registered || '') !== String(c[7] || '') || String(lease || '') !== String(c[7] || '')) {
+          result = -1;
+        } else if (observedEpoch !== String(c[8] || '')) {
+          result = -2;
+        } else if (lockToken) {
+          result = 0;
+        } else {
+          lockToken = String(c[9] || '');
+          result = 1;
+        }
+      } else if (c[0] === 'EVAL' && c[2] === '1' &&
+                 c[3] === 'zenith:v1:binance-user-stream:mutation-lock') {
+        if (lockToken && lockToken === String(c[4] || '')) {
+          lockToken = '';
+          result = 1;
+        } else {
+          result = 0;
+        }
       }
       return new Response(JSON.stringify({result}));
     }
@@ -59,6 +88,7 @@ function harness({role='master',registered='master-1',lease='master-1',storedSes
   return {
     binanceCalls,
     get session(){ return session; },
+    get mutationLocked(){ return Boolean(lockToken); },
     restore(){ globalThis.fetch=original; },
   };
 }
@@ -161,5 +191,39 @@ test('user-stream mutations are rate-limited before Binance',async()=>{
     assert.equal(res.body.code,'USER_STREAM_RATE_LIMIT');
     assert.ok(Number(res.headers['Retry-After'])>=1);
     assert.deepEqual(h.binanceCalls,[]);
+  }finally{h.restore();}
+});
+
+
+test('concurrent user-stream mutation is fenced before Binance',async()=>{
+  const h=harness({mutationLocked:true});
+  try{
+    const res=response();
+    await handler(req('POST','start'),res);
+    assert.equal(res.code,409);
+    assert.equal(res.body.code,'USER_STREAM_MUTATION_BUSY');
+    assert.deepEqual(h.binanceCalls,[]);
+  }finally{h.restore();}
+});
+
+test('MASTER role-epoch change is fenced before Binance user-stream mutation',async()=>{
+  const baseEpoch=Date.now()-1000;
+  const h=harness({roleEpoch:baseEpoch,gateRoleEpoch:baseEpoch+1});
+  try{
+    const res=response();
+    await handler(req('POST','start'),res);
+    assert.equal(res.code,409);
+    assert.equal(res.body.code,'MASTER_ROLE_CHANGED');
+    assert.deepEqual(h.binanceCalls,[]);
+  }finally{h.restore();}
+});
+
+test('user-stream mutation lock is released after a successful Binance mutation',async()=>{
+  const h=harness();
+  try{
+    const res=response();
+    await handler(req('POST','start'),res);
+    assert.equal(res.code,200);
+    assert.equal(h.mutationLocked,false);
   }finally{h.restore();}
 });
