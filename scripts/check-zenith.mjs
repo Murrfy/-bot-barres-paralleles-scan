@@ -359,6 +359,14 @@ if (!userStreamSeed.includes('positionLifecycleAt:Number(p.updateTime||snapshot.
   fail('MASTER progressive high-water must be isolated to one stable Binance position lifecycle and pruned after flat positions');
 }
 
+if (!index.includes("String(o?.timeInForce||'').toUpperCase()==='GTC'") ||
+    !index.includes('realNumberMatches(oq,qty)') ||
+    !index.includes('realNumberMatches(px,trigger)') ||
+    !index.includes("protectedSide&&(!o?.priceMatch||String(o.priceMatch).toUpperCase()==='NONE')") ||
+    !index.includes("const lossSide=direction==='LONG'?trigger<entry:trigger>entry")) {
+  fail('iPhone protection inventory must classify exit/progressive/MAX-LOSS orders with strict identity and price-side rules');
+}
+
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
 if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
     !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req)')) {
