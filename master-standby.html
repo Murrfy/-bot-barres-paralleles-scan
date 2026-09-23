@@ -36,10 +36,10 @@ let syncBusy=false, heartbeatTimer=null;
 function box(id,msg,type=''){
   const e=document.getElementById(id);e.textContent=msg;e.className='status'+(type?' '+type:'');
 }
-async function api(action,method='GET',body,legacyToken=''){
+async function api(action,method='GET',body){
   const r=await fetch('/api/zenith-sync?action='+action,{
     method,cache:'no-store',
-    headers:{Accept:'application/json',...(legacyToken?{Authorization:'Bearer '+legacyToken}:{}),...(body?{'Content-Type':'application/json'}:{})},
+    headers:{Accept:'application/json',...(body?{'Content-Type':'application/json'}:{})},
     ...(body?{body:JSON.stringify(body)}:{})
   });
   const q=await r.json().catch(()=>({}));
@@ -145,7 +145,16 @@ async function syncCycle(){
 async function start(){
   const token=localStorage.getItem(TOKEN_KEY)||'';
   try{
-    const {r,q}=await api('whoami','GET',undefined,token);
+    if(token){
+      const mr=await fetch('/api/zenith-sync?action=session-migrate',{
+        method:'POST',cache:'no-store',
+        headers:{Accept:'application/json',Authorization:'Bearer '+token}
+      });
+      const mq=await mr.json().catch(()=>({}));
+      if(!mr.ok||mq?.ok!==true||mq?.sessionReady!==true)throw new Error(mq?.code||mq?.error||('HTTP '+mr.status));
+      localStorage.removeItem(TOKEN_KEY);
+    }
+    const {r,q}=await api('whoami');
     if(!r.ok||q?.ok!==true||q?.device?.role!=='master')throw new Error(q?.code||q?.error||('ROLE_'+String(q?.device?.role||'UNKNOWN')));
     localStorage.removeItem(TOKEN_KEY);
     box('identity','Identité vérifiée : cet appareil est le MASTER enregistré.','ok');
