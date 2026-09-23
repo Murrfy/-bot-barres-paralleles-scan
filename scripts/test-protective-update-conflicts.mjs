@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { conflictingProtectiveOrders } from '../api/binance-protective-update-execute.js';
 
 const update={symbol:'BTCUSDT',direction:'LONG'};
@@ -52,4 +53,17 @@ test('progressive replacement temporarily allows only the identified old and new
       .map(x=>x.clientAlgoId),
     ['manual-stop']
   );
+});
+
+
+test('server refuses cancel-old progressive until the replacement STOP+LIMIT is confirmed',async()=>{
+  const api=await readFile(new URL('../api/binance-protective-update-execute.js',import.meta.url),'utf8');
+  assert.match(api,/NEW_PROGRESSIVE_PROTECTION_NOT_CONFIRMED/);
+  assert.match(api,/newClientAlgoId/);
+  assert.match(api,/confirmedNew\.type/);
+  assert.match(api,/confirmedNew\.timeInForce/);
+  assert.match(api,/confirmedNew\.reduceOnly/);
+  assert.match(api,/confirmedNew\.price/);
+  assert.match(api,/confirmedNew\?\.triggerPrice/);
+  assert.match(api,/allowedIds\.push\(update\.previousClientAlgoId\)/);
 });
