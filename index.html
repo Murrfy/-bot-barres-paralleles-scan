@@ -47,6 +47,7 @@
     <span id="accountBadge" class="live">BINANCE —</span>
     <span id="controllerBadge" class="live">CONTRÔLEUR —</span>
     <span id="masterModeBadge" class="live" hidden>MASTER —</span>
+    <span id="masterWakeBadge" class="live" hidden>ÉCRAN MASTER —</span>
     <a class="btn" href="/master-admin.html">Administration MASTER</a>
     <button id="masterPauseBtn" class="btn danger" hidden>Pause MASTER</button>
     <button id="masterCancelPauseBtn" class="btn" hidden>Annuler pause en attente</button>
@@ -212,6 +213,7 @@ let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdenti
 let controllerSyncState={conflict:false,lastOk:0,error:''};
 let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
 let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,realExecutionArmed:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
+let masterWakeLock={sentinel:null,requesting:false,lastAttemptAt:0,error:''};
 let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEvents:[],reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
 let masterExecution={busy:false,timer:null,lastError:'',lastCommandId:''};
 const MASTER_AUTO_HIGHWATER_KEY='zenith_master_auto_protection_highwater_v1';
@@ -602,6 +604,88 @@ function applyMasterReadOnlyPolicy(){
     el.setAttribute('aria-disabled','true');
   });
 }
+function masterWakeLockWanted(){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='master'))return false;
+  if(document.visibilityState!=='visible')return false;
+  const mode=String(masterRuntimeState.mode||'PAUSED').toUpperCase();
+  return mode==='RUNNING'||mode==='PAUSE_PENDING';
+}
+function renderMasterWakeLock(){
+  const badge=$('masterWakeBadge');if(!badge)return;
+  const isMaster=controllerIdentity.paired&&controllerIdentity.role==='master';
+  badge.hidden=!isMaster;
+  if(!isMaster)return;
+  if(!('wakeLock' in navigator)){
+    badge.textContent='ÉCRAN MASTER · VEILLE NON BLOQUÉE';
+    badge.classList.remove('on');
+    return;
+  }
+  if(masterWakeLock.sentinel&&masterWakeLock.sentinel.released!==true){
+    badge.textContent='ÉCRAN MASTER · ÉVEILLÉ';
+    badge.classList.add('on');
+    return;
+  }
+  const mode=String(masterRuntimeState.mode||'PAUSED').toUpperCase();
+  if(mode==='PAUSED'){
+    badge.textContent='ÉCRAN MASTER · PAUSE';
+    badge.classList.remove('on');
+  }else{
+    badge.textContent=masterWakeLock.error?'ÉCRAN MASTER · VEILLE NON BLOQUÉE':'ÉCRAN MASTER · ACTIVATION';
+    badge.classList.remove('on');
+  }
+}
+async function releaseMasterWakeLock(){
+  const sentinel=masterWakeLock.sentinel;
+  masterWakeLock.sentinel=null;
+  if(sentinel&&sentinel.released!==true){
+    try{await sentinel.release()}catch(_){}
+  }
+  renderMasterWakeLock();
+}
+async function syncMasterWakeLock(force=false){
+  if(!masterWakeLockWanted()){
+    if(masterWakeLock.sentinel)await releaseMasterWakeLock();
+    else renderMasterWakeLock();
+    return false;
+  }
+  if(!('wakeLock' in navigator)){
+    masterWakeLock.error='WAKE_LOCK_UNSUPPORTED';
+    renderMasterWakeLock();
+    return false;
+  }
+  if(masterWakeLock.sentinel&&masterWakeLock.sentinel.released!==true){
+    masterWakeLock.error='';
+    renderMasterWakeLock();
+    return true;
+  }
+  if(masterWakeLock.requesting)return false;
+  const now=Date.now();
+  if(!force&&now-masterWakeLock.lastAttemptAt<15000){
+    renderMasterWakeLock();
+    return false;
+  }
+  masterWakeLock.requesting=true;
+  masterWakeLock.lastAttemptAt=now;
+  try{
+    const sentinel=await navigator.wakeLock.request('screen');
+    masterWakeLock.sentinel=sentinel;
+    masterWakeLock.error='';
+    sentinel.addEventListener('release',()=>{
+      if(masterWakeLock.sentinel===sentinel)masterWakeLock.sentinel=null;
+      masterWakeLock.error=masterWakeLockWanted()?'WAKE_LOCK_RELEASED':'';
+      renderMasterWakeLock();
+    },{once:true});
+    renderMasterWakeLock();
+    return true;
+  }catch(e){
+    masterWakeLock.sentinel=null;
+    masterWakeLock.error=String(e?.name||e?.message||'WAKE_LOCK_FAILED');
+    renderMasterWakeLock();
+    return false;
+  }finally{
+    masterWakeLock.requesting=false;
+  }
+}
 function renderControllerIdentity(){
   const b=$('controllerBadge');
   if(!b)return;
@@ -625,6 +709,7 @@ function renderControllerIdentity(){
     b.textContent=controllerIdentity.error?'APPAREIL HORS LIGNE':'APPAREIL NON JUMELÉ';
     b.classList.remove('on');
   }
+  renderMasterWakeLock();
   applyMasterReadOnlyPolicy();
 }
 function renderMasterControls(){
@@ -781,6 +866,7 @@ async function refreshControllerIdentity(){
     const role=String(q?.device?.role||'');
     if(!r.ok||q?.ok!==true||!['controller','master'].includes(role)){
       controllerIdentity={paired:false,role,lastOk:0,error:q?.code||q?.error||('HTTP '+r.status)};
+      releaseMasterWakeLock();
       renderControllerIdentity();
       return false;
     }
@@ -798,6 +884,7 @@ async function refreshControllerIdentity(){
     return true;
   }catch(e){
     controllerIdentity={...controllerIdentity,paired:false,error:e?.message||'Connexion impossible'};
+    releaseMasterWakeLock();
     renderControllerIdentity();
     return false;
   }
@@ -1818,11 +1905,13 @@ async function masterRuntimeCycle(){
     if(!hb.r.ok||hb.q?.ok!==true){
       masterRuntimeState={...masterRuntimeState,leaseActive:false,heartbeatFresh:false,synchronized:false,userStreamReady:false,error:String(hb.q?.code||hb.q?.error||('HTTP '+hb.r.status))};
       renderControllerIdentity();
+      releaseMasterWakeLock();
       if(masterUserStream.ws)closeMasterUserStream('MASTER_LEASE_LOST',false);
       return false;
     }
     masterRuntimeState.mode=String(hb.q.masterMode||'PAUSED');
     masterRuntimeState.leaseActive=true;
+    syncMasterWakeLock();
     masterRuntimeState.heartbeatFresh=true;
     masterRuntimeState.realExecutionArmed=hb.q.realExecutionArmed===true;
     masterRuntimeState.error='';
@@ -1885,6 +1974,7 @@ async function masterRuntimeCycle(){
 }
 function startMasterRuntimeLoop(){
   if(controllerIdentity.role!=='master')return;
+  syncMasterWakeLock(true);
   loadMasterAutoProtectionHighWater();
   loadMasterUserStreamModules().then(()=>publishMasterStreamState()).catch(()=>{});
   masterRuntimeCycle();
@@ -2246,7 +2336,7 @@ $('manualTokenAddBtn').onclick=addManualToken;$('manualTokenInput').addEventList
 $('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();save()});
 $('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('panicClearBtn').onclick=controllerClearPanic;
 $('resetClosedBtn').onclick=()=>{if(!confirm('Effacer les gains, pertes et trades fermés ?'))return;history=[];save();renderAll()};$('resetSimBtn').onclick=()=>{if(!confirm('Réinitialiser les positions simulées et les achats surveillés ?'))return;openPositions=[];validated={};revalidateBlock={};missedSignals={};manualTokens={};save();syncRealtime();renderAll();setStatus('Simulation réinitialisée.')};
-document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio()},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
+document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio();if(controllerIdentity.role==='master')syncMasterWakeLock(true)},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){syncMasterWakeLock(true);masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
 load();applyTheme();renderAll();ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startControllerIdentityCheck();
 </script>
 </body>
