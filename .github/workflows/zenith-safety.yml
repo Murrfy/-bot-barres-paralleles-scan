@@ -19,6 +19,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Check secret hygiene
+        run: node scripts/check-secret-hygiene.mjs
       - name: Check HTML and safety invariants
         run: node scripts/check-zenith.mjs
       - name: Check Binance read API syntax
