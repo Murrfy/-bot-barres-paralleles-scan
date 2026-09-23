@@ -74,6 +74,8 @@ jobs:
         run: node --test scripts/test-entry-preflight-auth.mjs
       - name: Test secure device session
         run: node --test scripts/test-device-session.mjs
+      - name: Test trusted Vercel client IP
+        run: node --test scripts/test-trusted-client-ip.mjs
       - name: Test server-side device session TTL
         run: node --test scripts/test-device-session-server-ttl.mjs
       - name: Test minimal public health disclosure

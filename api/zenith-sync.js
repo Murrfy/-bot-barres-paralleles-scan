@@ -165,9 +165,20 @@ function stableStringify(value) {
   return '{' + parts.join(',') + '}';
 }
 
+function firstForwardedIp(value) {
+  return String(value || '').split(',')[0].trim();
+}
+
 function clientIp(req) {
-  const xf = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return xf || String(req.headers['x-real-ip'] || 'unknown');
+  const headers = req?.headers || {};
+  const onVercel = process.env.VERCEL === '1' || Boolean(process.env.VERCEL_ENV);
+  if (onVercel) {
+    const vercelForwarded = firstForwardedIp(headers['x-vercel-forwarded-for']);
+    if (vercelForwarded) return vercelForwarded;
+  }
+  return firstForwardedIp(headers['x-forwarded-for']) ||
+    firstForwardedIp(headers['x-real-ip']) ||
+    'unknown';
 }
 
 async function redis(command) {
@@ -2681,3 +2692,5 @@ export default async function handler(req, res) {
 }
 
 export { binanceApiPermissionBlockers };
+
+export { clientIp };
