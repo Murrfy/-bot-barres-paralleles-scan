@@ -1110,10 +1110,15 @@ for (const file of roleEpochApiFiles) {
 
 const atomicPairSession = fs.readFileSync('api/zenith-sync.js','utf8');
 if (!atomicPairSession.includes('const pairSessionScript = [') ||
-    !atomicPairSession.includes("'EVAL', pairSessionScript, '2'") ||
+    !atomicPairSession.includes("'EVAL', pairSessionScript, '3'") ||
+    !atomicPairSession.includes("local current = redis.call('GET', KEYS[1])") ||
+    !atomicPairSession.includes("if current and current ~= ARGV[1] then return 0 end") ||
     !atomicPairSession.includes("redis.call('SET', KEYS[1], ARGV[1])") ||
-    !atomicPairSession.includes("redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])")) {
-  fail('pairing must atomically advance the role epoch and create the new device session');
+    !atomicPairSession.includes("redis.call('SET', KEYS[2], ARGV[2])") ||
+    !atomicPairSession.includes("redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[4])") ||
+    !atomicPairSession.includes('roleDeviceKey(role)') ||
+    !atomicPairSession.includes('roleAssignmentKey(PREFIX, role)')) {
+  fail('pairing must atomically claim the role, advance the role epoch and create the new device session');
 }
 
 const secretCompareSource = fs.readFileSync('api/zenith-sync.js','utf8');
