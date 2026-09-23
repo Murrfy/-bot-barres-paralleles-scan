@@ -66,10 +66,12 @@ async function requireCurrentMaster(req){
     if(!deviceSessionRecordActive(device)||!device?.deviceId||device.role!=='master')continue;
     const activeSessionHash=await redis(['GET',roleSessionKey('master')]);
     if(activeSessionHash&&String(activeSessionHash)!==tokenHash)continue;
-    const [registered,lease]=await Promise.all([
+    const [registered,lease,activeSessionHash]=await Promise.all([
       redis(['GET',KEY_MASTER_DEVICE]),
       redis(['GET',KEY_MASTER]),
+      redis(['GET',roleSessionKey('master')]),
     ]);
+    if(activeSessionHash&&String(activeSessionHash)!==tokenHash)continue;
     if(String(registered||'')!==String(device.deviceId))continue;
     if(String(lease||'')!==String(device.deviceId)){
       const e=new Error('MASTER_LEASE_REQUIRED');e.code='MASTER_LEASE_REQUIRED';throw e;
