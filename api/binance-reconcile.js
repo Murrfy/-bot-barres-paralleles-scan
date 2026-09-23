@@ -20,6 +20,7 @@ const PREFIX = 'zenith:v1';
 const KEY_STATE = `${PREFIX}:state`;
 const KEY_RECONCILE_LAST = `${PREFIX}:reconcile:last`;
 const KEY_AUDIT = `${PREFIX}:audit`;
+const BINANCE_RECONCILE_RATE_LIMIT_PER_MINUTE = 30;
 
 function send(res, status, body) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -95,6 +96,22 @@ async function requireCurrentMaster(req) {
     return device;
   }
   return null;
+}
+
+async function reconciliationRateAllowed(deviceId) {
+  const bucket = Math.floor(Date.now() / 60000);
+  const key = `${PREFIX}:rate:binance-reconcile:${sha256(deviceId)}:${bucket}`;
+  const script = [
+    "local count = redis.call('INCR', KEYS[1])",
+    "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
+    "return count"
+  ].join('\n');
+  const count = Number(await redis(['EVAL', script, '1', key, '120'])) || 0;
+  return count <= BINANCE_RECONCILE_RATE_LIMIT_PER_MINUTE;
+}
+
+function retryAfterSeconds() {
+  return Math.max(1, 60 - (Math.floor(Date.now() / 1000) % 60));
 }
 
 async function jsonFetch(url, init = {}) {
@@ -512,6 +529,24 @@ export default async function handler(req, res) {
       ok: false,
       code: 'MASTER_REQUIRED',
       error: 'MASTER Zenith autorisé requis.',
+    });
+  }
+
+  try {
+    if (!(await reconciliationRateAllowed(device.deviceId))) {
+      const retryAfter = retryAfterSeconds();
+      res.setHeader('Retry-After', String(retryAfter));
+      return send(res, 429, {
+        ok: false,
+        code: 'BINANCE_RECONCILE_RATE_LIMIT',
+        retryAfterSeconds: retryAfter,
+      });
+    }
+  } catch (e) {
+    return send(res, 503, {
+      ok: false,
+      code: e?.code || 'RATE_LIMIT_BACKEND_ERROR',
+      error: 'Protection anti-abus indisponible.',
     });
   }
 
