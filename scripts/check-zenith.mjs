@@ -460,6 +460,16 @@ for (const file of ['api/binance-read.js','api/binance-reconcile.js','api/binanc
   if (!source.includes('deviceTokenCandidates(req)')) fail(`${file} must accept the secure device session cookie`);
 }
 
+const auditStart = sync.indexOf("if (action === 'audit' && req.method === 'GET')");
+const auditEnd = auditStart >= 0 ? sync.indexOf("return send(res, 404, { ok: false, code: 'UNKNOWN_ACTION' })", auditStart) : -1;
+const auditBlock = auditStart >= 0 && auditEnd > auditStart ? sync.slice(auditStart, auditEnd) : '';
+if (!auditBlock ||
+    !auditBlock.includes("requireDevice(req, res, ['master'])") ||
+    !auditBlock.includes('hasMasterLease(device.deviceId)') ||
+    !auditBlock.includes("'MASTER_LEASE_REQUIRED'")) {
+  fail('Zenith audit log must be restricted to the currently leased MASTER');
+}
+
 if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'") ||
     !sync.includes("process.env.ZENITH_BINANCE_WRITE_ENABLED === '1'") ||
     !sync.includes("'BINANCE_WRITE_DISABLED'")) {
