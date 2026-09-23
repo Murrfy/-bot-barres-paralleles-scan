@@ -65,6 +65,8 @@ jobs:
         run: node --test scripts/test-device-session.mjs
       - name: Test server-side device session TTL
         run: node --test scripts/test-device-session-server-ttl.mjs
+      - name: Test minimal public health disclosure
+        run: node --test scripts/test-public-health-minimal.mjs
       - name: Test deterministic order planning
         run: node --test scripts/test-order-intent.mjs
       - name: Test fail-closed entry protection gate
