@@ -36,11 +36,25 @@ test('EXEC_CLOSE_POSITION is full-close only and does not accept normal target o
   }),/EXIT_MODE_INVALID/);
 });
 
-test('entry and not-yet-implemented protective mutations are never dispatched as writes',()=>{
-  for(const type of ['EXEC_OPEN_POSITION','EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION']){
-    const d=buildMasterCommandDispatch({id:'command-12345678',type,payload:{}});
-    assert.equal(d.supported,false,type);
-  }
+test('real opening remains unimplemented while protective updates are dispatched',()=>{
+  const open=buildMasterCommandDispatch({id:'command-12345678',type:'EXEC_OPEN_POSITION',payload:{}});
+  assert.equal(open.supported,false);
+
+  const exit=buildMasterCommandDispatch({
+    id:'command-exit-1234',type:'EXEC_UPDATE_EXIT',
+    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0.02,targetPrice:51000}
+  });
+  assert.equal(exit.supported,true);
+  assert.equal(exit.endpoint,'/api/binance-protective-update-execute');
+  assert.equal(exit.body.targetPrice,51000);
+
+  const protection=buildMasterCommandDispatch({
+    id:'command-protect-12',type:'EXEC_UPDATE_PROTECTION',
+    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:50500,protectionKind:'PROGRESSIVE'}
+  });
+  assert.equal(protection.supported,true);
+  assert.equal(protection.body.protectionKind,'PROGRESSIVE');
+  assert.equal(protection.body.triggerPrice,50500);
 });
 
 
