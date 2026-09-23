@@ -89,6 +89,8 @@ jobs:
         run: node --test scripts/test-controller-protection-inventory.mjs
       - name: Test read-only Binance algo order details
         run: node --test scripts/test-binance-read-algo-details.mjs
+      - name: Test Binance read anti-abuse rate limit
+        run: node --test scripts/test-binance-read-rate-limit.mjs
       - name: Test idempotent Binance order writer
         run: node --test scripts/test-binance-order-writer.mjs
       - name: Test idempotent Binance algo writer
