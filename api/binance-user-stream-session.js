@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, sameOriginMutation } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive } from '../lib/device-session.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const PREFIX = 'zenith:v1';
@@ -65,7 +65,7 @@ async function requireCurrentMaster(req) {
     if (!raw) continue;
     let device = null;
     try { device = JSON.parse(raw); } catch {}
-    if (!device?.deviceId || device.role !== 'master') continue;
+    if (!deviceSessionRecordActive(device) || !device?.deviceId || device.role !== 'master') continue;
 
     const [registered, lease] = await Promise.all([
       redis(['GET', KEY_MASTER_DEVICE]),
