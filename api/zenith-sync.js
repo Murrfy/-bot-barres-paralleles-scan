@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { DEVICE_SESSION_MAX_AGE_SECONDS, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId } from '../lib/device-session.mjs';
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
+import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -1101,6 +1102,13 @@ export default async function handler(req, res) {
 
   if (!sameOriginMutation(req)) {
     return send(res, 403, { ok: false, code: 'ORIGIN_FORBIDDEN' });
+  }
+
+  if (req.method === 'POST') {
+    const bodyStatus = requestBodyStatus(req, 768 * 1024);
+    if (!bodyStatus.ok) {
+      return send(res, 413, { ok:false, code:'REQUEST_BODY_TOO_LARGE', maxBytes:bodyStatus.maxBytes });
+    }
   }
 
   if (action === 'health' && req.method === 'GET') {
