@@ -11,7 +11,7 @@ const {default:handler}=await import('../api/binance-runtime-snapshot.js?test='+
 function response(){
   return {headers:{},setHeader(k,v){this.headers[k]=String(v)},status(n){this.code=n;return this},json(body){this.body=body;return body}};
 }
-function req(){return {method:'GET',headers:{authorization:'Bearer master-token'}}}
+function req(){return {method:'GET',headers:{cookie:'__Host-zenith_device=master-token'}}}
 function harness({role='master',registered='master-1',lease='master-1',rateCount=1,redisFailure=false}={}){
   const original=globalThis.fetch;
   const calls=[];

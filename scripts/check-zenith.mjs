@@ -537,6 +537,7 @@ if (!protectiveUpdateExecute.includes("/^zth-[A-Za-z0-9._:-]+$/.test(clientAlgoI
 }
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
+const deviceSessionSource = fs.readFileSync('lib/device-session.mjs', 'utf8');
 if (!sync.includes("import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs'") ||
     !sync.includes('function runtimeEmergencyProtection(runtimeState, symbol, direction, entryPrice, quantity, excludeClientAlgoId') ||
     !sync.includes("/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId || ''))") ||
@@ -544,8 +545,14 @@ if (!sync.includes("import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs'") 
   fail('central execution ACK must independently require a Zenith-managed emergency stop within the shared $400 cap');
 }
 if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
-    !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req)')) {
+    !sync.includes('setDeviceSessionCookie(res, token)') || !sync.includes('deviceTokenCandidates(req')) {
   fail('zenith-sync must use secure device sessions and same-origin mutation protection');
+}
+if (!deviceSessionSource.includes('allowBearer = false') ||
+    !sync.includes("action === 'whoami' && req.method === 'GET'") ||
+    !sync.includes("{ allowBearer: true }") ||
+    (sync.match(/allowBearer:\s*true/g) || []).length !== 1) {
+  fail('legacy Bearer must be accepted only for one-time whoami migration; normal Zenith API auth must be cookie-only');
 }
 if (!sync.includes('function deviceSessionRemainingSeconds(device, now = Date.now())') ||
     !sync.includes('absoluteExpiresAt = createdAt + DEVICE_SESSION_MAX_AGE_SECONDS * 1000') ||
@@ -570,6 +577,7 @@ for (const file of [
 ]) {
   const source=fs.readFileSync(file,'utf8');
   if (!source.includes('deviceTokenCandidates(req)')) fail(`${file} must accept the secure device session cookie`);
+  if (source.includes('allowBearer: true')) fail(`${file} must never accept legacy Bearer migration credentials`);
   if (!source.includes('deviceSessionRecordActive(device)')) fail(`${file} must reject absolutely expired Zenith device sessions`);
 }
 

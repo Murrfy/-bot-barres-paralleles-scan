@@ -18,7 +18,7 @@ function response() {
 }
 
 function request() {
-  return { method: 'GET', headers: { authorization: 'Bearer controller-token' } };
+  return { method: 'GET', headers: { cookie: '__Host-zenith_device=controller-token' } };
 }
 
 function harness({ rateCount = 1, redisFailure = false } = {}) {
