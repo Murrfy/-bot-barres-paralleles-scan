@@ -40,14 +40,18 @@ if (csp.includes("'unsafe-inline'") && /script-src[^;]*'unsafe-inline'/.test(csp
 }
 
 const scriptSrc = /(?:^|;\s*)script-src\s+([^;]+)/.exec(csp)?.[1] || '';
-for (const token of unique) {
-  if (!scriptSrc.includes(token)) {
-    console.error('Missing CSP script hash: ' + token);
-    process.exit(1);
-  }
+const declared = [...scriptSrc.matchAll(/'sha256-[A-Za-z0-9+/=]+'/g)].map(m => m[0]).sort();
+const missing = unique.filter(token => !declared.includes(token));
+if (missing.length) {
+  console.error('Missing CSP script hashes:');
+  for (const token of missing) console.error(token);
+  console.error('Expected exact script hashes:');
+  for (const token of unique) console.error(token);
+  console.error('Currently declared script hashes:');
+  for (const token of declared) console.error(token);
+  process.exit(1);
 }
 
-const declared = [...scriptSrc.matchAll(/'sha256-[A-Za-z0-9+/=]+'/g)].map(m => m[0]).sort();
 if (JSON.stringify(declared) !== JSON.stringify(unique)) {
   console.error('CSP contains stale or unexpected script hashes.');
   console.error('Expected:');
