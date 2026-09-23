@@ -458,7 +458,7 @@ if (!index.includes('masterExecutionCycle') ||
     !index.includes("import('/lib/entry-execution-state.mjs')") ||
     !index.includes("masterCommandDisposition('command-requeue'") ||
     !index.includes("masterCommandDisposition('command-fail'") ||
-    !index.includes("fetch('/api/binance-protective-execute'") ||
+    !index.includes("callMasterExecutionEndpoint('/api/binance-protective-execute'") ||
     !index.includes('evaluateFullProtectiveClose') ||
     !index.includes('PROTECTIVE_CLOSE_ATTEMPTS') ||
     !index.includes('MARKET_CLOSE_NOT_CONFIRMED') ||
@@ -558,8 +558,10 @@ if (!sync.includes('COMMAND_MAX_AGE_MS = 2 * 60 * 1000') ||
 }
 if (!sync.includes('ALLOWED_COMMAND_TYPES') ||
     !sync.includes("'COMMAND_TYPE_NOT_ALLOWED'") ||
-    sync.includes("'EXEC_OPEN_POSITION'")) {
-  fail('command queue must use a protective-only allowlist until real entry execution is audited');
+    !sync.includes("'EXEC_OPEN_POSITION'") ||
+    !sync.includes('execOpenPayloadStatus') ||
+    !sync.includes("normalized === 'EXEC_OPEN_POSITION' && !REAL_ENTRY_ENABLED")) {
+  fail('command queue must allow real entry only behind payload validation and the dedicated release lock');
 }
 if (!sync.includes("'COMMAND_EXPIRED'") ||
     !sync.includes("'COMMAND_QUEUE_FULL'") ||
