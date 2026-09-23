@@ -916,5 +916,12 @@ if (!requireDeviceBlock.includes("code: 'ROLE_DEVICE_CONFLICT'") ||
   fail('role ownership conflicts must clear the stale secure device cookie');
 }
 
+const syncTrustedIp = fs.readFileSync('api/zenith-sync.js','utf8');
+if (!syncTrustedIp.includes("headers['x-vercel-forwarded-for']") ||
+    !syncTrustedIp.includes("process.env.VERCEL === '1'") ||
+    !syncTrustedIp.includes("headers['x-forwarded-for']")) {
+  fail('Zenith auth rate limits must prefer Vercel trusted forwarded IP while retaining cloud fallback');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
