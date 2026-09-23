@@ -186,6 +186,7 @@ let masterControlState={mode:'',masterLeaseActive:false,controllerRevision:0,mas
 let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,realExecutionArmed:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
 let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEvents:[],reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
 let masterExecution={busy:false,timer:null,lastError:'',lastCommandId:''};
+const MASTER_AUTO_HIGHWATER_KEY='zenith_master_auto_protection_highwater_v1';
 let masterAutoProtection={pending:new Set(),highWater:new Map(),lastError:'',lastActionAt:0};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
@@ -1446,6 +1447,206 @@ function startMasterExecutionLoop(){
   masterExecutionCycle();
   if(!masterExecution.timer)masterExecution.timer=setInterval(masterExecutionCycle,750);
 }
+function loadMasterAutoProtectionHighWater(){
+  if(controllerIdentity.role!=='master')return;
+  try{
+    const raw=JSON.parse(localStorage.getItem(MASTER_AUTO_HIGHWATER_KEY)||'{}');
+    masterAutoProtection.highWater=new Map(
+      Object.entries(raw||{}).filter(([,v])=>Number.isFinite(Number(v)))
+        .map(([k,v])=>[k,Number(v)])
+    );
+  }catch(_){
+    masterAutoProtection.highWater=new Map();
+  }
+}
+function saveMasterAutoProtectionHighWater(){
+  if(controllerIdentity.role!=='master')return;
+  try{
+    const obj={};
+    for(const [k,v] of masterAutoProtection.highWater.entries()){
+      if(Number.isFinite(Number(v)))obj[k]=Number(v);
+    }
+    localStorage.setItem(MASTER_AUTO_HIGHWATER_KEY,JSON.stringify(obj));
+  }catch(_){}
+}
+function masterAutoPositionKey(position){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const direction=amount>=0?'LONG':'SHORT';
+  const qty=Math.abs(amount);
+  const entry=n(position?.entryPrice,0);
+  return `${symbol}:${direction}:${qty}:${entry}`;
+}
+function observedRealLinearPnl(position,mark){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const qty=Math.abs(amount),entry=n(position?.entryPrice,0),px=n(mark,0);
+  if(!(qty>0)||!(entry>0)||!(px>0))return NaN;
+  return (amount>=0?1:-1)*(px-entry)*qty;
+}
+function updateMasterAutoHighWater(position,mark){
+  const observed=observedRealLinearPnl(position,mark);
+  if(!Number.isFinite(observed))return NaN;
+  const key=masterAutoPositionKey(position);
+  const previous=n(masterAutoProtection.highWater.get(key),NaN);
+  const next=Number.isFinite(previous)?Math.max(previous,observed):observed;
+  if(!Number.isFinite(previous)||next>previous+1e-8){
+    masterAutoProtection.highWater.set(key,next);
+    saveMasterAutoProtectionHighWater();
+  }
+  return next;
+}
+function masterHasSingleMaxLoss(position,orders){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const direction=amount>=0?'LONG':'SHORT';
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const side=direction==='LONG'?'SELL':'BUY';
+  const entry=n(position?.entryPrice,0);
+  const rows=(Array.isArray(orders)?orders:[]).filter(o=>{
+    if(String(o?.orderClass||'').toUpperCase()!=='ALGO')return false;
+    if(String(o?.symbol||'').toUpperCase()!==symbol)return false;
+    if(String(o?.side||'').toUpperCase()!==side)return false;
+    if(String(o?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
+    if(String(o?.type||'').toUpperCase()!=='STOP_MARKET')return false;
+    if(!(o?.closePosition===true||o?.closePosition==='true'))return false;
+    const trigger=n(o?.triggerPrice??o?.stopPrice,0);
+    if(!(trigger>0&&entry>0))return false;
+    return direction==='LONG'?trigger<entry:trigger>entry;
+  });
+  return rows.length===1;
+}
+async function executeMasterAutoProgressive(plan){
+  const live=plan.live,level=plan.level;
+  const body={
+    type:'EXEC_UPDATE_PROTECTION',
+    commandId:`auto-protect-${live.symbol}-${live.direction}-${Math.round(plan.stage.armProfitUsd*10)}-${Math.round(plan.stage.protectedProfitUsd*10)}-${live.updateTime||0}`,
+    symbol:live.symbol,
+    direction:live.direction,
+    quantity:live.quantity,
+    triggerPrice:level.triggerPrice,
+    limitPrice:level.limitPrice,
+    protectionKind:'PROGRESSIVE',
+    ...(plan.previousClientAlgoId?{previousClientAlgoId:plan.previousClientAlgoId}:{})
+  };
+
+  if(plan.previousClientAlgoId){
+    const canceled=await callMasterProtectiveUpdateExecute({...body,phase:'CANCEL_OLD'});
+    if(!canceled.r.ok||canceled.q?.ok!==true){
+      masterAutoProtection.lastError='AUTO_CANCEL_'+String(canceled.q?.code||canceled.q?.reason||canceled.q?.error||('HTTP_'+canceled.r.status));
+      return false;
+    }
+    const terminal=await waitForStreamOrder({
+      kind:'ALGO',clientId:plan.previousClientAlgoId,terminal:true
+    },3000);
+    const terminalStatus=String(terminal?.status||canceled.q?.result?.algoOrder?.algoStatus||'').toUpperCase();
+    if(!['CANCELED','EXPIRED','REJECTED'].includes(terminalStatus)){
+      masterAutoProtection.lastError='AUTO_OLD_PROTECTION_CANCEL_NOT_CONFIRMED';
+      return false;
+    }
+    if(await reconcileMasterUserStream()!==true){
+      masterAutoProtection.lastError='AUTO_POST_CANCEL_RECONCILIATION_FAILED';
+      return false;
+    }
+  }
+
+  const placed=await callMasterProtectiveUpdateExecute({...body,phase:'PLACE_NEW'});
+  if(!placed.r.ok||placed.q?.ok!==true){
+    masterAutoProtection.lastError='AUTO_PLACE_'+String(placed.q?.code||placed.q?.reason||placed.q?.error||('HTTP_'+placed.r.status));
+    return false;
+  }
+  const clientId=String(placed.q?.plan?.params?.clientAlgoId||'');
+  if(!clientId){
+    masterAutoProtection.lastError='AUTO_NEW_PROTECTION_ID_MISSING';
+    return false;
+  }
+  const order=await waitForStreamOrder({kind:'ALGO',clientId,terminal:false},3500);
+  if(!order){
+    masterAutoProtection.lastError='AUTO_NEW_PROTECTION_NOT_STREAM_CONFIRMED';
+    return false;
+  }
+  if(String(order?.type||'').toUpperCase()!=='STOP'||
+     String(order?.timeInForce||'').toUpperCase()!=='GTC'||
+     !(order?.reduceOnly===true||order?.reduceOnly==='true')||
+     !realNumberMatches(order?.triggerPrice,level.triggerPrice)||
+     !realNumberMatches(order?.price,level.limitPrice)||
+     (order?.priceMatch&&String(order.priceMatch).toUpperCase()!=='NONE')){
+    masterAutoProtection.lastError='AUTO_NEW_PROTECTION_IDENTITY_MISMATCH';
+    return false;
+  }
+  if(await reconcileMasterUserStream()!==true){
+    masterAutoProtection.lastError='AUTO_POST_PLACE_RECONCILIATION_FAILED';
+    return false;
+  }
+  masterAutoProtection.lastError='';
+  masterAutoProtection.lastActionAt=Date.now();
+  return true;
+}
+async function runMasterAutoProtection(symbol,mark){
+  if(controllerIdentity.role!=='master'||document.hidden)return false;
+  if(!masterRuntimeState.synchronized||!masterRuntimeState.heartbeatFresh)return false;
+  const {dispatchModule,autoProtectionModule}=await loadMasterUserStreamModules();
+  if(!dispatchModule.masterExecutionEligible({
+    role:controllerIdentity.role,
+    hidden:document.hidden,
+    leaseActive:masterRuntimeState.leaseActive,
+    realExecutionArmed:masterRuntimeState.realExecutionArmed,
+    userStreamReady:masterRuntimeState.userStreamReady,
+    mode:masterRuntimeState.mode
+  }))return false;
+
+  const position=masterRealPositionBySymbol(symbol);
+  if(!position)return false;
+  const tokenCfg=tokenSettings[String(symbol||'').toUpperCase()];
+  if(!tokenCfg||!Array.isArray(tokenCfg.protectionStages))return false;
+
+  await ensureExchange();
+  const rules=symbolRules(String(symbol||'').toUpperCase());
+  const priceFilter=rules?.filters?.PRICE_FILTER;
+  if(!priceFilter)return false;
+
+  const projection=masterStreamProjection();
+  const orders=Array.isArray(projection.binanceOrders)?projection.binanceOrders:[];
+  if(!masterHasSingleMaxLoss(position,orders)){
+    masterAutoProtection.lastError='AUTO_MAX_LOSS_NOT_UNIQUE';
+    return false;
+  }
+
+  const highWater=updateMasterAutoHighWater(position,mark);
+  const cfgNow=cfg(String(symbol||'').toUpperCase());
+  const stages=normalizeProtections(
+    tokenCfg.protectionStages,
+    n(tokenCfg.manualTargetProfit,n(tokenCfg.targetProfit,n(cfgNow.targetProfit,settings.targetProfit)))
+  );
+  const plan=autoProtectionModule.evaluateMasterAutoProgressiveProtection({
+    position,
+    markPrice:mark,
+    protectionStages:stages,
+    currentOrders:orders,
+    priceFilter,
+    previousHighWaterProfitUsd:highWater
+  });
+  if(plan.action==='BLOCK'){
+    masterAutoProtection.lastError=String(plan.reason||'AUTO_PROTECTION_BLOCKED');
+    return false;
+  }
+  if(plan.action!=='REPLACE')return false;
+  return executeMasterAutoProgressive(plan);
+}
+function scheduleMasterAutoProtection(symbol,mark){
+  if(controllerIdentity.role!=='master')return;
+  const position=masterRealPositionBySymbol(symbol);
+  if(!position)return;
+  updateMasterAutoHighWater(position,mark);
+  const key=masterAutoPositionKey(position);
+  if(masterAutoProtection.pending.has(key))return;
+  masterAutoProtection.pending.add(key);
+  Promise.resolve().then(()=>runMasterAutoProtection(symbol,mark)).catch(e=>{
+    masterAutoProtection.lastError=String(e?.message||'AUTO_PROTECTION_ERROR');
+  }).finally(()=>{
+    masterAutoProtection.pending.delete(key);
+    const latest=n(lastPrices.get(String(symbol||'').toUpperCase()),0);
+    if(latest>0&&latest!==n(mark,0))setTimeout(()=>scheduleMasterAutoProtection(symbol,latest),0);
+  });
+}
 async function applyMasterControllerState(state){
   if(!state||!state.data||typeof state.data!=='object')throw new Error('CONTROLLER_STATE_INVALID');
   const revision=Math.max(0,n(state.revision,0)),stateHash=String(state.stateHash||'');
@@ -1544,6 +1745,7 @@ async function masterRuntimeCycle(){
 }
 function startMasterRuntimeLoop(){
   if(controllerIdentity.role!=='master')return;
+  loadMasterAutoProtectionHighWater();
   loadMasterUserStreamModules().then(()=>publishMasterStreamState()).catch(()=>{});
   masterRuntimeCycle();
   startMasterExecutionLoop();
