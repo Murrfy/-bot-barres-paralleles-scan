@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation } from '../lib/device-session.mjs';
+import { DEVICE_SESSION_MAX_AGE_SECONDS, deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation } from '../lib/device-session.mjs';
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
@@ -261,7 +261,7 @@ async function touchDevice(device) {
   const updated = { ...device, lastSeenAt: Date.now() };
   delete updated.tokenHash;
   delete updated.sessionToken;
-  await redis(['SET', `${PREFIX}:device:${device.tokenHash}`, JSON.stringify(updated)]);
+  await redis(['SET', `${PREFIX}:device:${device.tokenHash}`, JSON.stringify(updated), 'EX', String(DEVICE_SESSION_MAX_AGE_SECONDS)]);
 }
 
 async function requireDevice(req, res, roles) {
@@ -1016,7 +1016,7 @@ export default async function handler(req, res) {
         createdAt: Date.now(),
         lastSeenAt: Date.now(),
       };
-      await redis(['SET', `${PREFIX}:device:${tokenHash}`, JSON.stringify(record)]);
+      await redis(['SET', `${PREFIX}:device:${tokenHash}`, JSON.stringify(record), 'EX', String(DEVICE_SESSION_MAX_AGE_SECONDS)]);
       setDeviceSessionCookie(res, token);
       return send(res, 201, { ok: true, sessionReady: true, device: record });
     }
@@ -1104,7 +1104,7 @@ export default async function handler(req, res) {
         "  return {-1, currentController, oldController}",
         "end",
         "redis.call('SET', KEYS[2], ARGV[1])",
-        "redis.call('SET', KEYS[3], ARGV[2])",
+        "redis.call('SET', KEYS[3], ARGV[2], 'EX', ARGV[3])",
         "redis.call('DEL', KEYS[1])",
         "return {1, oldController, ARGV[1]}"
       ].join('\n');
@@ -1116,6 +1116,7 @@ export default async function handler(req, res) {
         `${PREFIX}:device:${tokenHash}`,
         newDeviceId,
         JSON.stringify(deviceRecord),
+        String(DEVICE_SESSION_MAX_AGE_SECONDS),
       ]);
 
       const code = Number(Array.isArray(result) ? result[0] : 0);
