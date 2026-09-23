@@ -9,9 +9,9 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8').replace(
   /^import \{ deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';\n/m,
   "const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
 );
-const { commandTypeAllowed, commandExpired, executionGate } = await import(
+const { commandTypeAllowed, commandExpired, executionGate, commandFailureNeedsEmergencyStop } = await import(
   'data:text/javascript;base64,' +
-  Buffer.from(source + '\nexport { commandTypeAllowed, commandExpired, executionGate };').toString('base64')
+  Buffer.from(source + '\nexport { commandTypeAllowed, commandExpired, executionGate, commandFailureNeedsEmergencyStop };').toString('base64')
 );
 
 test('only audited protective command types are accepted', () => {
@@ -43,4 +43,11 @@ test('execution gate fails closed while real trading is disabled', () => {
   const gate = executionGate('EXEC_CLOSE_POSITION', false);
   assert.equal(gate.allowed, false);
   assert.equal(gate.reason, 'REAL_TRADING_DISABLED');
+});
+
+test('attempted or ambiguous command failures require fail-closed emergency stop', () => {
+  assert.equal(commandFailureNeedsEmergencyStop(false, false), false);
+  assert.equal(commandFailureNeedsEmergencyStop(true, false), true);
+  assert.equal(commandFailureNeedsEmergencyStop(false, true), true);
+  assert.equal(commandFailureNeedsEmergencyStop(true, true), true);
 });

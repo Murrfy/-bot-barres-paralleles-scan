@@ -458,6 +458,29 @@ if (!sync.includes('ALLOWED_COMMAND_TYPES') ||
     sync.includes("'EXEC_OPEN_POSITION'")) {
   fail('command queue must use a protective-only allowlist until real entry execution is audited');
 }
+if (!sync.includes("action === 'command-fail'") ||
+    !sync.includes("'COMMAND_EXECUTION_FAIL_CLOSED'") ||
+    !sync.includes("'COMMAND_DISPATCH_ALREADY_STARTED'") ||
+    !sync.includes('commandDispatchKey(commandId)') ||
+    !sync.includes("await redis(['SET', KEY_EMERGENCY_STOP, '1'])")) {
+  fail('MASTER command failures must be terminal, dispatch-aware and fail closed after any attempted or ambiguous write');
+}
+if (!index.includes("masterRuntimeApi('command-next','POST'") ||
+    !index.includes("fetch('/api/binance-protective-execute'") ||
+    !index.includes("masterRuntimeApi('command-ack','POST'") ||
+    !index.includes("masterRuntimeApi('command-fail','POST'") ||
+    !index.includes('PROTECTIVE_EXECUTION_NETWORK_AMBIGUOUS') ||
+    !index.includes('setInterval(masterCommandCycle,1200)')) {
+  fail('iPad MASTER must consume protective commands, dispatch through the guarded writer, ACK success and terminally fail ambiguous writes');
+}
+if (!protectiveExecute.includes('command:dispatch:') ||
+    !protectiveExecute.includes("status:'STARTED'") ||
+    !protectiveExecute.includes("status:'CONFIRMED'") ||
+    !protectiveExecute.includes("'AMBIGUOUS':'FAILED_AFTER_DISPATCH'") ||
+    !protectiveExecute.includes("'COMMAND_DISPATCH_ALREADY_STARTED'")) {
+  fail('protective execution must persist a durable dispatch marker before any live order attempt');
+}
+
 if (!sync.includes("'COMMAND_EXPIRED'") ||
     !sync.includes("'COMMAND_QUEUE_FULL'") ||
     !sync.includes('modeBeforeClaim') ||

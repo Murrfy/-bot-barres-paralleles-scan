@@ -397,6 +397,14 @@ function commandExpired(command, now = Date.now()) {
   return now > expiresAt || now - createdAt > COMMAND_MAX_AGE_MS;
 }
 
+function commandFailureNeedsEmergencyStop(writeAttempted, ambiguous) {
+  return writeAttempted === true || ambiguous === true;
+}
+
+function commandDispatchKey(commandId) {
+  return `${PREFIX}:command:dispatch:${String(commandId || '')}`;
+}
+
 function executionGate(type, halted) {
   const normalized = String(type || '').toUpperCase();
   if (!normalized.startsWith('EXEC_')) return { allowed: true, reason: '' };
@@ -755,6 +763,32 @@ async function recoverStaleProcessing(deviceId) {
 
     const claimedAt = Number(command?.claimedAt || 0);
     if (!claimedAt || now - claimedAt <= COMMAND_CLAIM_TTL_MS) continue;
+
+    if (String(command?.type || '').toUpperCase().startsWith('EXEC_') && commandId) {
+      const dispatchRaw = await redis(['GET', commandDispatchKey(commandId)]);
+      if (dispatchRaw) {
+        const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+        if (removed > 0) {
+          await pushDeadLetter({
+            raw,
+            rejectedAt: now,
+            rejectedReason: 'COMMAND_DISPATCH_ALREADY_STARTED',
+            dispatch: parseStoredJson(dispatchRaw),
+          });
+          await redis(['SET', KEY_EMERGENCY_STOP, '1']);
+          await setMasterMode('PAUSE_PENDING');
+          await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+            at: now,
+            kind: 'COMMAND_STALE_AFTER_DISPATCH_FAIL_CLOSED',
+            deviceId: String(deviceId || ''),
+            commandId,
+          })]);
+          await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+          dead += 1;
+        }
+        continue;
+      }
+    }
 
     if (String(command?.type || '').toUpperCase().startsWith('EXEC_')) {
       const halted = await emergencyStopActive();
@@ -1943,6 +1977,67 @@ export default async function handler(req, res) {
       }
       await redis(['LREM', KEY_PROCESSING, '1', raw]);
       return send(res, 200, { ok: true });
+    }
+
+    if (action === 'command-fail' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+      if (!(await hasMasterLease(device.deviceId))) {
+        return send(res, 409, { ok: false, code: 'NOT_MASTER' });
+      }
+
+      const raw = String(req.body?.raw || '');
+      if (!raw) return send(res, 400, { ok: false, code: 'RAW_REQUIRED' });
+
+      let command = null;
+      try { command = JSON.parse(raw); } catch {}
+      if (!command || !commandTypeAllowed(command.type)) {
+        return send(res, 400, { ok: false, code: 'COMMAND_INVALID' });
+      }
+
+      const reasonRaw = String(req.body?.reason || 'MASTER_EXECUTION_FAILED').toUpperCase();
+      const reason = reasonRaw.replace(/[^A-Z0-9_:-]/g, '_').slice(0, 120) || 'MASTER_EXECUTION_FAILED';
+      const writeAttempted = req.body?.writeAttempted === true;
+      const ambiguous = req.body?.ambiguous === true;
+      const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+      if (removed <= 0) {
+        return send(res, 409, { ok: false, code: 'COMMAND_NOT_PROCESSING' });
+      }
+
+      await pushDeadLetter({
+        raw,
+        rejectedAt: Date.now(),
+        rejectedReason: reason,
+        writeAttempted,
+        ambiguous,
+        failedBy: device.deviceId,
+      });
+
+      const failClosed = commandFailureNeedsEmergencyStop(writeAttempted, ambiguous);
+      if (failClosed) {
+        await redis(['SET', KEY_EMERGENCY_STOP, '1']);
+        await setMasterMode('PAUSE_PENDING');
+      }
+
+      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+        at: Date.now(),
+        kind: failClosed ? 'COMMAND_EXECUTION_FAIL_CLOSED' : 'COMMAND_EXECUTION_FAILED',
+        deviceId: device.deviceId,
+        commandId: String(command.id || ''),
+        type: String(command.type || ''),
+        reason,
+        writeAttempted,
+        ambiguous,
+      })]);
+      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+
+      return send(res, 200, {
+        ok: true,
+        failed: true,
+        failClosed,
+        emergencyStopActive: failClosed ? true : await emergencyStopActive(),
+        masterMode: await masterMode(),
+      });
     }
 
     if (action === 'command-requeue' && req.method === 'POST') {

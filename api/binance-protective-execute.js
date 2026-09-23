@@ -10,6 +10,7 @@ const KEY_STATE=`${PREFIX}:state`;
 const KEY_RECONCILE_LAST=`${PREFIX}:reconcile:last`;
 const KEY_AUDIT=`${PREFIX}:audit`;
 const KEY_REAL_EXECUTION_ARMED=`${PREFIX}:safety:real-execution-armed`;
+const DISPATCH_TTL_SECONDS=60*60*24*30;
 const KEY_MASTER_MODE=`${PREFIX}:master-mode`;
 const DEPLOYMENT_SHA=String(process.env.VERCEL_GIT_COMMIT_SHA||'');
 
@@ -192,6 +193,49 @@ export default async function handler(req,res){
     });
   }
 
+  const dispatchKey=`${PREFIX}:command:dispatch:${commandId}`;
+  const existingDispatchRaw=await redis(['GET',dispatchKey]);
+  let existingDispatch=null;
+  try{existingDispatch=existingDispatchRaw?JSON.parse(existingDispatchRaw):null}catch{}
+  if(existingDispatch?.status==='CONFIRMED'){
+    return send(res,200,{
+      ok:true,
+      recoveredFromDispatchRecord:true,
+      plan,
+      result:{
+        ok:true,
+        disposition:String(existingDispatch.disposition||'CONFIRMED'),
+        writeAttempted:existingDispatch.writeAttempted===true,
+        order:{
+          orderId:String(existingDispatch.orderId||''),
+          clientOrderId:String(existingDispatch.clientOrderId||plan.params.newClientOrderId||''),
+        },
+      },
+    });
+  }
+  if(existingDispatch){
+    return send(res,409,{
+      ok:false,
+      code:'COMMAND_DISPATCH_ALREADY_STARTED',
+      dispatchStatus:String(existingDispatch.status||'UNKNOWN'),
+      writeAttempted:true,
+      ambiguous:true,
+    });
+  }
+
+  const dispatchStartedAt=Date.now();
+  await redis(['SET',dispatchKey,JSON.stringify({
+    version:1,
+    status:'STARTED',
+    at:dispatchStartedAt,
+    masterDeviceId:master.deviceId,
+    commandId,
+    symbol,
+    direction:dir,
+    exitMode,
+    clientOrderId:plan.params.newClientOrderId,
+  }),'EX',String(DISPATCH_TTL_SECONDS),'NX']);
+
   try{
     const result=await placeStandardOrderIdempotent({
       apiKey,
@@ -200,6 +244,21 @@ export default async function handler(req,res){
       writesEnabled:true,
       timestamp:Date.now(),
     });
+    await redis(['SET',dispatchKey,JSON.stringify({
+      version:1,
+      status:'CONFIRMED',
+      at:dispatchStartedAt,
+      confirmedAt:Date.now(),
+      masterDeviceId:master.deviceId,
+      commandId,
+      symbol,
+      direction:dir,
+      exitMode,
+      clientOrderId:plan.params.newClientOrderId,
+      disposition:result.disposition,
+      writeAttempted:result.writeAttempted===true,
+      orderId:String(result.order?.orderId??''),
+    }),'EX',String(DISPATCH_TTL_SECONDS)]);
     await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
       at:Date.now(),
       kind:'BINANCE_PROTECTIVE_ORDER_DISPATCH',
@@ -216,6 +275,21 @@ export default async function handler(req,res){
     await redis(['LTRIM',KEY_AUDIT,'0','199']);
     return send(res,200,{ok:true,plan,result});
   }catch(e){
+    const ambiguous=e?.ambiguous===true||e?.message==='ORDER_RESULT_AMBIGUOUS';
+    await redis(['SET',dispatchKey,JSON.stringify({
+      version:1,
+      status:ambiguous?'AMBIGUOUS':'FAILED_AFTER_DISPATCH',
+      at:dispatchStartedAt,
+      failedAt:Date.now(),
+      masterDeviceId:master.deviceId,
+      commandId,
+      symbol,
+      direction:dir,
+      exitMode,
+      clientOrderId:plan.params.newClientOrderId,
+      error:String(e?.message||'BINANCE_PROTECTIVE_EXECUTION_FAILED'),
+      ambiguous,
+    }),'EX',String(DISPATCH_TTL_SECONDS)]);
     return send(res,502,{
       ok:false,
       code:e?.message==='ORDER_RESULT_AMBIGUOUS'?'ORDER_RESULT_AMBIGUOUS':'BINANCE_PROTECTIVE_EXECUTION_FAILED',
