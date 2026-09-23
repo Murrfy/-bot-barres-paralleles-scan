@@ -16,6 +16,7 @@ test('real LONG position maps to one protective close command',()=>{
   assert.equal(c.payload.symbol,'BTCUSDT');
   assert.equal(c.payload.direction,'LONG');
   assert.equal(c.payload.quantity,0.02);
+  assert.equal(c.payload.closeAll,true);
   assert.equal(c.payload.exitMode,'PROTECTIVE_IOC');
   assert.match(c.clientCommandId,/^[A-Za-z0-9._:-]{8,128}$/);
 });

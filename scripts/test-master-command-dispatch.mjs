@@ -15,7 +15,7 @@ test('close command maps only to protective execution endpoint',()=>{
   const d=buildMasterCommandDispatch({
     id:'command-12345678',
     type:'EXEC_CLOSE_POSITION',
-    payload:{symbol:'btcusdt',direction:'LONG',quantity:'0.02',exitMode:'PROTECTIVE_IOC'}
+    payload:{symbol:'btcusdt',direction:'LONG',quantity:'0.02',closeAll:true,exitMode:'PROTECTIVE_IOC'}
   });
   assert.equal(d.supported,true);
   assert.equal(d.endpoint,'/api/binance-protective-execute');
@@ -25,11 +25,15 @@ test('close command maps only to protective execution endpoint',()=>{
   assert.equal(d.body.exitMode,'PROTECTIVE_IOC');
 });
 
-test('exact normal close requires explicit target price',()=>{
+test('EXEC_CLOSE_POSITION is full-close only and does not accept normal target orders',()=>{
   assert.throws(()=>buildMasterCommandDispatch({
     id:'command-12345678',type:'EXEC_CLOSE_POSITION',
-    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0.02,exitMode:'NORMAL_LIMIT'}
-  }),/TARGET_PRICE_REQUIRED/);
+    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0.02,exitMode:'PROTECTIVE_IOC'}
+  }),/CLOSE_ALL_REQUIRED/);
+  assert.throws(()=>buildMasterCommandDispatch({
+    id:'command-12345678',type:'EXEC_CLOSE_POSITION',
+    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0.02,closeAll:true,exitMode:'NORMAL_LIMIT',targetPrice:51000}
+  }),/EXIT_MODE_INVALID/);
 });
 
 test('entry and not-yet-implemented protective mutations are never dispatched as writes',()=>{
