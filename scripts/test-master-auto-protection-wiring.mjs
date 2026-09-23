@@ -48,3 +48,12 @@ test('manual/controller progressive replacement also uses place-new-before-cance
   assert.match(block,/if\(maxLoss\|\|progressive\)/);
   assert.match(block,/newClientId=await placeNew\(\)[\s\S]*cancelOld\(newClientId\)/);
 });
+
+
+test('auto-protection high-water is scoped to the exact Binance position lifecycle',()=>{
+  assert.match(html,/position\?\.lifecycleAt\?\?position\?\.positionLifecycleAt\?\?position\?\.updateTime/);
+  assert.match(html,/return \`\$\{symbol\}:\$\{direction\}:\$\{qty\}:\$\{entry\}:\$\{lifecycle\}\`/);
+  assert.match(html,/pruneMasterAutoProtectionHighWater\(\)/);
+  assert.match(html,/projection\.userStream\?\.ready!==true/);
+  assert.match(html,/live\.lifecycleAt\|\|live\.updateTime/);
+});
