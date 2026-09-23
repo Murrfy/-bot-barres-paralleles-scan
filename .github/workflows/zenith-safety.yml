@@ -78,6 +78,8 @@ jobs:
         run: node --test scripts/test-master-wakelock.mjs
       - name: Test controller-to-MASTER cloud synchronization
         run: node --test scripts/test-cloud-controller-master-sync.mjs
+      - name: Test bounded shared JSON structures
+        run: node --test scripts/test-json-structure.mjs
       - name: Test live current price beside determined buy
         run: node --test scripts/test-current-price-reference.mjs
       - name: Test command queue safety
