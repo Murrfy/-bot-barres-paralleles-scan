@@ -76,6 +76,9 @@ const deviceSession = fs.readFileSync('lib/device-session.mjs', 'utf8');
 for (const required of ["__Host-zenith_device","HttpOnly","Secure","SameSite=Strict","Priority=High","sameOriginMutation","deviceTokenCandidates"]) {
   if (!deviceSession.includes(required)) fail(`device session hardening missing: ${required}`);
 }
+if (deviceSession.includes('if (bearerToken(req)) return true;')) {
+  fail('Bearer device tokens must never bypass same-origin mutation checks');
+}
 for (const file of ['pair-controller.html','pair-master.html','replace-controller.html']) {
   const html=fs.readFileSync(file,'utf8');
   if (html.includes('localStorage.setItem(DEVICE_TOKEN_KEY')) fail(`${file} must not store device credentials in localStorage`);

@@ -65,7 +65,7 @@ function req(method,action){
   return {
     method,
     query:{action},
-    headers:{authorization:'Bearer master-token'},
+    headers:{authorization:'Bearer master-token',host:'zenith.test','x-forwarded-proto':'https',origin:'https://zenith.test'},
   };
 }
 
