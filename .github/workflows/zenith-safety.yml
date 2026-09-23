@@ -78,6 +78,8 @@ jobs:
         run: node --test scripts/test-entry-preflight-auth.mjs
       - name: Test secure device session
         run: node --test scripts/test-device-session.mjs
+      - name: Test Binance cookie-only authentication
+        run: node --test scripts/test-binance-cookie-only-auth.mjs
       - name: Test trusted Vercel client IP
         run: node --test scripts/test-trusted-client-ip.mjs
       - name: Test server-side device session TTL
