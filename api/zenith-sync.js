@@ -1164,6 +1164,7 @@ export default async function handler(req, res) {
       let reconciliation = null;
       if (REAL_TRADING_ENABLED) {
         if (!PAIRING_DISABLED) blockers.push('PAIRING_MUST_BE_DISABLED');
+        if (await emergencyStopActive()) blockers.push('EMERGENCY_STOP_ACTIVE');
         reconciliation = await freshCleanReconciliation();
         if (!reconciliation.ok) blockers.push(reconciliation.reason);
       }
@@ -1813,11 +1814,19 @@ export default async function handler(req, res) {
 
       const at = Date.now();
       await redis(['SET', KEY_EMERGENCY_STOP, '1']);
+
+      // PANIC blocks new entries immediately but keeps close/protection work available.
+      await setMasterMode('PAUSE_PENDING');
+      const currentMaster = await masterDeviceId();
+      const transition = await tryFinalizePendingPause(currentMaster, 'PAUSE_PENDING');
+
       await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
         at,
         kind: 'EMERGENCY_STOP_SET',
         deviceId: device.deviceId,
         role: device.role,
+        masterMode: transition.masterMode,
+        blockers: transition.blockers || [],
       })]);
       await redis(['LTRIM', KEY_AUDIT, '0', '199']);
 
@@ -1825,6 +1834,93 @@ export default async function handler(req, res) {
         ok: true,
         emergencyStopActive: true,
         executionMode: 'STOPPED',
+        masterMode: transition.masterMode,
+        blockers: transition.blockers || [],
+      });
+    }
+
+    if (action === 'emergency-stop-clear' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller', 'master']);
+      if (!device) return;
+
+      if (!(await verifyMasterAdminCode(req, res, device))) return;
+      if (!REAL_TRADING_ENABLED) {
+        return send(res, 423, { ok: false, code: 'REAL_TRADING_DISABLED' });
+      }
+      if (!PAIRING_DISABLED) {
+        return send(res, 423, { ok: false, code: 'PAIRING_MUST_BE_DISABLED' });
+      }
+
+      const [currentMaster, registeredMaster, currentMode] = await Promise.all([
+        masterDeviceId(),
+        roleDeviceId('master'),
+        masterMode(),
+      ]);
+      if (!currentMaster || !registeredMaster || String(currentMaster) !== String(registeredMaster)) {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_LEASE_REQUIRED',
+          currentMaster,
+          registeredMaster,
+        });
+      }
+      if (device.role === 'master' && String(currentMaster) !== String(device.deviceId)) {
+        return send(res, 409, { ok: false, code: 'NOT_MASTER' });
+      }
+      if (currentMode !== 'PAUSED') {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_MUST_BE_PAUSED',
+          masterMode: currentMode,
+        });
+      }
+
+      const configSync = await readMasterConfigSync(currentMaster);
+      if (!configSync.status.synchronized) {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_CONFIG_OUT_OF_SYNC',
+          masterSyncStatus: configSync.status.reason,
+          controllerRevision: configSync.status.controllerRevision,
+          appliedRevision: configSync.status.appliedRevision,
+        });
+      }
+
+      const heartbeatRaw = await redis(['GET', KEY_MASTER_HEARTBEAT]);
+      const heartbeat = heartbeatStatus(heartbeatRaw, currentMaster);
+      if (!heartbeat.fresh) {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_HEARTBEAT_STALE',
+          masterHeartbeatAgeMs: heartbeat.ageMs,
+        });
+      }
+
+      const reconciliation = await freshCleanReconciliation();
+      if (!reconciliation.ok) {
+        return send(res, 409, {
+          ok: false,
+          code: reconciliation.reason,
+        });
+      }
+
+      await redis(['SET', KEY_EMERGENCY_STOP, '0']);
+      const at = Date.now();
+      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+        at,
+        kind: 'EMERGENCY_STOP_CLEARED',
+        deviceId: device.deviceId,
+        role: device.role,
+        masterDeviceId: currentMaster,
+        reconciliationObservedAt: Number(reconciliation.report?.observedAt || 0),
+      })]);
+      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+
+      return send(res, 200, {
+        ok: true,
+        emergencyStopActive: false,
+        executionMode: 'REAL_ARMED_BY_ENV',
+        masterMode: currentMode,
       });
     }
 

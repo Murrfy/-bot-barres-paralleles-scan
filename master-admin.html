@@ -39,6 +39,8 @@ button:disabled{opacity:.5}
     <button id="pauseBtn" disabled>Mettre le MASTER en pause</button>
     <button id="cancelPauseBtn" disabled hidden>Annuler la pause en attente</button>
     <button id="resumeBtn" disabled>Reprendre le MASTER</button>
+    <button id="panicBtn" disabled>PANIC STOP</button>
+    <button id="clearPanicBtn" disabled hidden>Réarmer la sécurité réelle</button>
     <button id="replaceBtn" disabled hidden>Autoriser le remplacement de l’iPhone</button>
 
     <div id="status" class="status">Prêt. Si une position est active, la pause sera mise en attente jusqu’à la fermeture de la dernière position.</div>
@@ -57,6 +59,10 @@ function renderActions(){
   $('cancelPauseBtn').hidden=mode!=='PAUSE_PENDING';
   $('cancelPauseBtn').disabled=!valid||mode!=='PAUSE_PENDING'||verifiedState.masterLeaseActive!==true;
   $('resumeBtn').disabled=!valid||mode!=='PAUSED'||verifiedState.masterLeaseActive!==true;
+  $('panicBtn').disabled=!valid||verifiedState?.emergencyStopActive===true;
+  $('panicBtn').textContent=verifiedState?.emergencyStopActive===true?'PANIC STOP ACTIF':'PANIC STOP';
+  $('clearPanicBtn').hidden=!(verifiedState?.emergencyStopActive===true&&verifiedState?.realTradingEnabled===true);
+  $('clearPanicBtn').disabled=!valid||$('clearPanicBtn').hidden||mode!=='PAUSED'||verifiedState.masterLeaseActive!==true||verifiedState.masterSyncFailClosed||verifiedState.masterHeartbeatFresh!==true;
   $('replaceBtn').hidden=adminRole!=='master';
   $('replaceBtn').disabled=!valid||adminRole!=='master';
 }
@@ -110,6 +116,52 @@ async function refreshMasterMode(){
     setBox('masterMode','État MASTER non vérifié : '+String(e?.message||'erreur')+'.','err');
     return false;
   }finally{renderActions()}
+}
+
+async function panicStop(){
+  if(busy||checking||!adminRole||!verifiedState)return;
+  const token=localStorage.getItem(TOKEN_KEY)||'';
+  busy=true;renderActions();
+  setBox('status','Activation du PANIC STOP…','warn');
+  try{
+    const r=await fetch('/api/zenith-sync?action=emergency-stop',{
+      method:'POST',cache:'no-store',
+      headers:{Accept:'application/json',Authorization:'Bearer '+token}
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    setBox('status','PANIC STOP activé : nouvelles entrées bloquées ; sorties/protections conservées.','ok');
+  }catch(e){
+    setBox('status','PANIC STOP non confirmé : '+String(e?.message||'erreur')+'.','err');
+  }finally{
+    await verifyMaster();
+    busy=false;renderActions();
+  }
+}
+
+async function clearPanic(){
+  if(busy||checking||!adminRole||!verifiedState)return;
+  const token=localStorage.getItem(TOKEN_KEY)||'';
+  const adminCode=$('adminCode').value;
+  if(!adminCode){setBox('status','Entre le code ADMIN MASTER.','err');return;}
+  busy=true;renderActions();$('adminCode').value='';
+  setBox('status','Réarmement de la sécurité réelle après contrôles…','warn');
+  try{
+    const r=await fetch('/api/zenith-sync?action=emergency-stop-clear',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+      body:JSON.stringify({adminCode})
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    setBox('status','Sécurité réelle réarmée. Le MASTER reste en pause jusqu’à reprise explicite.','ok');
+  }catch(e){
+    setBox('status','Réarmement refusé : '+String(e?.message||'erreur')+'.','err');
+  }finally{
+    $('adminCode').value='';
+    await verifyMaster();
+    busy=false;renderActions();
+  }
 }
 
 async function setMasterMode(action){
@@ -206,6 +258,8 @@ async function authorizeReplacement(){
 $('pauseBtn').addEventListener('click',()=>setMasterMode('master-pause'));
 $('cancelPauseBtn').addEventListener('click',()=>setMasterMode('master-pause-cancel'));
 $('resumeBtn').addEventListener('click',()=>setMasterMode('master-resume'));
+$('panicBtn').addEventListener('click',panicStop);
+$('clearPanicBtn').addEventListener('click',clearPanic);
 $('replaceBtn').addEventListener('click',authorizeReplacement);
 // Enter never triggers an unrelated critical operation.
 document.addEventListener('visibilitychange',()=>{

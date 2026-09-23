@@ -236,6 +236,24 @@ if (!sync.includes('MASTER_ADMIN_FAILURE_LIMIT = 5') ||
 if (!sync.includes("'PAIRING_MUST_BE_DISABLED'") || !sync.includes('pairingDisabled: PAIRING_DISABLED')) {
   fail('real execution must remain locked while device pairing is open');
 }
+if (!sync.includes("action === 'emergency-stop-clear'") ||
+    !sync.includes("'MASTER_MUST_BE_PAUSED'") ||
+    !sync.includes("'EMERGENCY_STOP_CLEARED'") ||
+    !sync.includes("blockers.push('EMERGENCY_STOP_ACTIVE')")) {
+  fail('PANIC reset must require ADMIN, paused MASTER, clean re-arm checks and block real resume while still active');
+}
+if (!sync.includes("await setMasterMode('PAUSE_PENDING')") ||
+    !sync.includes("kind: 'EMERGENCY_STOP_SET'")) {
+  fail('PANIC STOP must immediately block new entries while preserving the PAUSE_PENDING protective drain path');
+}
+if (!index.includes('panicStopBtn') || !index.includes('panicClearBtn') ||
+    !index.includes('controllerPanicStop') || !index.includes('controllerClearPanic')) {
+  fail('iPhone controller must expose PANIC STOP and protected re-arm controls');
+}
+if (!masterAdmin.includes('panicBtn') || !masterAdmin.includes('clearPanicBtn') ||
+    !masterAdmin.includes('panicStop') || !masterAdmin.includes('clearPanic')) {
+  fail('MASTER admin must expose PANIC STOP and protected re-arm controls');
+}
 if (!index.includes('escapeHtml') || !index.includes('escapeHtml(h.reason)') || !index.includes('escapeHtml(p.symbol)')) {
   fail('dynamic trading UI strings must be HTML-escaped');
 }
