@@ -241,6 +241,10 @@ if (!userStreamSession.includes('USER_STREAM_MUTATION_RATE_LIMIT_PER_MINUTE = 12
     !userStreamSession.includes("res.setHeader('Retry-After'")) {
   fail('Binance user-stream mutations must be rate-limited before Binance calls');
 }
+if (!userStreamSession.includes('listenKey,\n        session: publicSession(record)') ||
+    userStreamSession.includes('listenKey: refreshedListenKey')) {
+  fail('user-stream start may expose listenKey to the leased MASTER, but keepalive/status must not expose its value');
+}
 
 const masterRuntimeInventory = fs.readFileSync('lib/master-runtime-inventory.mjs', 'utf8');
 for (const required of ['binancePositions','binanceOrders','openPositions','openOrders','userStream','TERMINAL_ALGO']) {
