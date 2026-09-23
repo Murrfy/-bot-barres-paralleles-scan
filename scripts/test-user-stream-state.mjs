@@ -5,6 +5,7 @@ import {
   markUserStreamConnected,
   markUserStreamDisconnected,
   markUserStreamReconciled,
+  markUserStreamNeedsReconciliation,
   applyUserDataEvent,
   userStreamReady,
 } from '../lib/user-stream-state.mjs';
@@ -72,4 +73,12 @@ test('ALGO_UPDATE is tracked separately from standard orders',()=>{
   const r=applyUserDataEvent(readyState(),{e:'ALGO_UPDATE',E:1800,T:1799,o:{s:'BTCUSDT',ai:77,ca:'protect-77',X:'NEW',o:'STOP_MARKET',S:'SELL',ps:'BOTH',sp:'49000',ia:true}});
   assert.equal(Object.keys(r.state.algoOrders).length,1);
   assert.equal(r.state.algoOrders['BTCUSDT:algo:77'].activated,true);
+});
+
+test('explicit reconciliation invalidation keeps connection but fails closed',()=>{
+  const s=markUserStreamNeedsReconciliation(readyState(),'RUNTIME_CHANGED');
+  assert.equal(s.connected,true);
+  assert.equal(s.needsReconciliation,true);
+  assert.equal(s.failClosed,true);
+  assert.ok(s.failReasons.includes('RUNTIME_CHANGED'));
 });

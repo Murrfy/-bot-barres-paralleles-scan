@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import crypto from 'node:crypto';
+const requireHash = value => crypto.createHash('sha256').update(String(value)).digest('hex');
 
 const source = fs.readFileSync('api/zenith-sync.js', 'utf8').replace(
   /^import \{ deviceTokenCandidates, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation \} from '\.\.\/lib\/device-session\.mjs';\n/m,
   "const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true;\n"
 );
-const { masterConfigSyncStatus, stableStringify } = await import(
+const { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches } = await import(
   'data:text/javascript;base64,' +
-  Buffer.from(source + '\nexport { masterConfigSyncStatus, stableStringify };').toString('base64')
+  Buffer.from(source + '\nexport { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches };').toString('base64')
 );
 
 const controller = (revision = 3, hash = 'hash-3') => ({
@@ -105,3 +107,21 @@ test('real-mode synchronization rejects runtime from another MASTER', () => {
   assert.equal(wrongMaster.failClosed, true);
   assert.equal(wrongMaster.reason, 'MASTER_RUNTIME_WRONG_DEVICE');
 });
+
+test('reconciliation data hash survives heartbeat-only runtime timestamp changes', () => {
+  const runtimeA = { version: 2, updatedAt: 1000, masterDeviceId: 'master-1', data: { executionMode:'SIMULATION', binancePositions:[], binanceOrders:[] } };
+  const runtimeB = { ...runtimeA, updatedAt: 9000 };
+  const runtimeDataHash = sha256ForTest(stableStringify(runtimeA.data));
+  assert.equal(reconciliationRuntimeMatches({ runtimeDataHash }, JSON.stringify(runtimeB)), true);
+});
+
+test('reconciliation data hash detects actual runtime inventory changes', () => {
+  const runtimeA = { version: 2, updatedAt: 1000, data: { executionMode:'SIMULATION', binancePositions:[], binanceOrders:[] } };
+  const runtimeB = { version: 2, updatedAt: 2000, data: { executionMode:'SIMULATION', binancePositions:[{symbol:'BTCUSDT'}], binanceOrders:[] } };
+  const runtimeDataHash = sha256ForTest(stableStringify(runtimeA.data));
+  assert.equal(reconciliationRuntimeMatches({ runtimeDataHash }, JSON.stringify(runtimeB)), false);
+});
+
+function sha256ForTest(value) {
+  return requireHash(value);
+}

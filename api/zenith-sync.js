@@ -534,6 +534,16 @@ function heartbeatStatus(raw, expectedMasterDeviceId = '') {
   return { heartbeat, at, ageMs: Number.isFinite(ageMs) ? ageMs : null, fresh };
 }
 
+function reconciliationRuntimeMatches(report, runtimeRaw) {
+  if (!runtimeRaw) return false;
+  if (report?.runtimeDataHash) {
+    const runtimeState = parseStoredJson(runtimeRaw);
+    if (!runtimeState?.data || typeof runtimeState.data !== 'object') return false;
+    return sha256(stableStringify(runtimeState.data)) === String(report.runtimeDataHash);
+  }
+  return Boolean(report?.runtimeHash) && sha256(runtimeRaw) === String(report.runtimeHash);
+}
+
 async function freshCleanReconciliation(maxAgeMs = 30000) {
   const raw = await redis(['GET', KEY_RECONCILE_LAST]);
   if (!raw) return { ok: false, reason: 'BINANCE_RECONCILIATION_REQUIRED' };
@@ -547,9 +557,9 @@ async function freshCleanReconciliation(maxAgeMs = 30000) {
         !Array.isArray(report.reasons) || report.reasons.length ||
         !report.actual || !Number.isInteger(report.actual.positions) || report.actual.positions < 0 ||
         !Number.isInteger(report.actual.orders) || report.actual.orders < 0 ||
-        !report.runtimeHash) return { ok: false, reason: 'BINANCE_RECONCILIATION_INVALID' };
+        !(report.runtimeDataHash || report.runtimeHash)) return { ok: false, reason: 'BINANCE_RECONCILIATION_INVALID' };
     const runtimeRaw = await redis(['GET', KEY_STATE]);
-    if (!runtimeRaw || sha256(runtimeRaw) !== report.runtimeHash) return { ok: false, reason: 'BINANCE_RECONCILIATION_RUNTIME_CHANGED' };
+    if (!reconciliationRuntimeMatches(report, runtimeRaw)) return { ok: false, reason: 'BINANCE_RECONCILIATION_RUNTIME_CHANGED' };
     if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMs) return { ok: false, reason: 'BINANCE_RECONCILIATION_STALE' };
     if (positions > 0 || orders > 0) return { ok: false, reason: 'BINANCE_ACTIVITY_PRESENT' };
     return { ok: true, report };

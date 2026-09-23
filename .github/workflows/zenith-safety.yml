@@ -47,5 +47,7 @@ jobs:
         run: node --test scripts/test-order-intent.mjs
       - name: Test Binance user-stream state machine
         run: node --test scripts/test-user-stream-state.mjs
+      - name: Test MASTER stream inventory projection
+        run: node --test scripts/test-master-runtime-inventory.mjs
       - name: Test Binance user-stream session lifecycle
         run: node --test scripts/test-user-stream-session.mjs

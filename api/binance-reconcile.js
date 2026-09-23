@@ -30,6 +30,17 @@ function sha256(v) {
   return crypto.createHash('sha256').update(String(v)).digest('hex');
 }
 
+function stableStringify(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(item => item === undefined ? 'null' : stableStringify(item)).join(',') + ']';
+  const parts = [];
+  for (const key of Object.keys(value).sort()) {
+    const encoded = stableStringify(value[key]);
+    if (encoded !== undefined) parts.push(JSON.stringify(key) + ':' + encoded);
+  }
+  return '{' + parts.join(',') + '}';
+}
+
 async function redis(command) {
   if (!REDIS_URL || !REDIS_TOKEN) {
     const e = new Error('UPSTASH_NOT_CONFIGURED');
@@ -477,6 +488,7 @@ export default async function handler(req, res) {
       observedAt,
       completedAt: Date.now(),
       runtimeHash: sha256(runtimeRaw || ''),
+      runtimeDataHash: sha256(stableStringify(runtimeState?.data ?? null)),
       serverTime,
       latencyMs: Date.now() - started,
       deviceRole: device.role,

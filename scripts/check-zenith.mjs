@@ -121,6 +121,14 @@ for (const forbidden of ['/fapi/v1/order','/fapi/v1/algoOrder','BINANCE_API_SECR
   if (userStreamSession.includes(forbidden)) fail(`user-stream session must never access trading write/secret path: ${forbidden}`);
 }
 
+const masterRuntimeInventory = fs.readFileSync('lib/master-runtime-inventory.mjs', 'utf8');
+for (const required of ['binancePositions','binanceOrders','openPositions','openOrders','userStream','TERMINAL_ALGO']) {
+  if (!masterRuntimeInventory.includes(required)) fail(`MASTER runtime inventory projection missing: ${required}`);
+}
+if (!masterRuntimeInventory.includes("executionMode: mode") || !masterRuntimeInventory.includes("failClosed: state?.failClosed !== false")) {
+  fail('MASTER runtime inventory must preserve execution mode and fail closed on unsafe stream state');
+}
+
 const userStreamState = fs.readFileSync('lib/user-stream-state.mjs', 'utf8');
 for (const required of ['ORDER_TRADE_UPDATE','ACCOUNT_UPDATE','ALGO_UPDATE','listenKeyExpired','RECONCILIATION_REQUIRED_AFTER_CONNECT','STREAM_EVENT_OUT_OF_ORDER']) {
   if (!userStreamState.includes(required)) fail(`user-stream safety invariant missing: ${required}`);
@@ -166,6 +174,9 @@ if (!binanceReconcile.includes("'MISMATCH'") || !binanceReconcile.includes('fail
 }
 if (!binanceReconcile.includes('/fapi/v1/openAlgoOrders')) {
   fail('api/binance-reconcile.js must reconcile Binance algo TP/SL orders');
+}
+if (!binanceReconcile.includes('runtimeDataHash') || !binanceReconcile.includes('stableStringify(runtimeState?.data ?? null)')) {
+  fail('Binance reconciliation must hash canonical runtime data separately from heartbeat timestamps');
 }
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
@@ -224,8 +235,10 @@ if (!sync.includes("'MASTER_PAUSED'") ||
   fail('MASTER command consumption must stop while paused, including a post-claim race check');
 }
 if (!sync.includes('freshCleanReconciliation') ||
-    !sync.includes("'BINANCE_RECONCILIATION_REQUIRED'")) {
-  fail('real MASTER resume must require fresh clean Binance reconciliation');
+    !sync.includes("'BINANCE_RECONCILIATION_REQUIRED'") ||
+    !sync.includes('reconciliationRuntimeMatches') ||
+    !sync.includes('report.runtimeDataHash || report.runtimeHash')) {
+  fail('real MASTER resume must require fresh clean Binance reconciliation and tolerate heartbeat-only runtime timestamp changes');
 }
 if (!sync.includes("requireDevice(req, res, ['controller', 'master'])")) {
   fail('MASTER pause/resume must be callable by both controller and MASTER');
@@ -293,6 +306,25 @@ if (!index.includes("role==='master'") ||
     !index.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
   fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
 }
+if (!index.includes("wss://fstream.binance.com/private/ws/") ||
+    !index.includes("import('/lib/user-stream-state.mjs')") ||
+    !index.includes("import('/lib/master-runtime-inventory.mjs')") ||
+    !index.includes("masterUserStreamApi('start','POST')") ||
+    !index.includes("masterUserStreamApi('keepalive','POST')") ||
+    !index.includes("reconcileMasterUserStream") ||
+    !index.includes("45*60*1000") ||
+    !index.includes("23*60*60*1000") ||
+    !index.includes('reconcileDebounceTimer') ||
+    !index.includes('reconcileInterval')) {
+  fail('iPad MASTER must maintain the official Binance private user stream with independent keepalive, reconnect and REST reconciliation timers');
+}
+if (!index.includes("invalidateMasterStream('PAGE_HIDDEN')") ||
+    !index.includes("STREAM_EVENT_OUT_OF_ORDER") ||
+    !index.includes("LISTEN_KEY_EXPIRED") ||
+    !index.includes("STREAM_INVENTORY_CHANGED")) {
+  fail('MASTER user stream must fail closed on backgrounding, expiry, ordering gaps and inventory changes');
+}
+
 if (!index.includes('applyMasterReadOnlyPolicy') ||
     !index.includes('IPAD MASTER LECTURE SEULE') ||
     !index.includes('MASTER_APPLIED_CONFIG_HASH_MISMATCH') ||
