@@ -259,10 +259,9 @@ async function queueRealPositionClose(position){
   if(!confirm(`ARGENT RÉEL — Confirmer la fermeture de ${symbol} ?\n\nZenith enverra une sortie LIMIT IOC reduce-only au plus près du marché. La position restera affichée jusqu’à confirmation Binance.`))return;
   realClosePending.add(key);renderRealPositions();
   try{
-    const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
     const r=await fetch('/api/zenith-sync?action=command',{
       method:'POST',cache:'no-store',
-      headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify(command)
     });
     const q=await r.json().catch(()=>({}));
@@ -288,10 +287,9 @@ async function queueRealEntryCancel(order){
   if(!confirm(`ARGENT RÉEL — Annuler l’ordre d’entrée ${symbol} ?\n\nOrdre Binance : ${cid}\nAucune position existante ne sera fermée par cette action.`))return;
   realCancelPending.add(key);renderRealEntryOrders();
   try{
-    const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
     const r=await fetch('/api/zenith-sync?action=command',{
       method:'POST',cache:'no-store',
-      headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify(command)
     });
     const q=await r.json().catch(()=>({}));
@@ -466,10 +464,9 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
   realProtectiveUpdatePending.set(key,{symbol:String(position.symbol||''),kind:normalizedKind,price:wanted,at:Date.now()});
   renderRealPositions();
   try{
-    const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
     const r=await fetch('/api/zenith-sync?action=command',{
       method:'POST',cache:'no-store',
-      headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify(command)
     });
     const q=await r.json().catch(()=>({}));
@@ -751,11 +748,10 @@ async function refreshMasterControls(){
     renderMasterControls();
     return false;
   }
-  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   try{
     const r=await fetch('/api/zenith-sync?action=safety',{
       cache:'no-store',
-      headers:{Accept:'application/json',Authorization:'Bearer '+token}
+      headers:{Accept:'application/json'}
     });
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
@@ -780,12 +776,11 @@ async function refreshMasterControls(){
 }
 async function controllerPanicStop(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
-  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   const panicBtn=$('panicStopBtn');if(panicBtn)panicBtn.disabled=true;
   try{
     const r=await fetch('/api/zenith-sync?action=emergency-stop',{
       method:'POST',cache:'no-store',
-      headers:{Accept:'application/json',Authorization:'Bearer '+token}
+      headers:{Accept:'application/json'}
     });
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
@@ -801,11 +796,10 @@ async function controllerClearPanic(){
   const adminCode=prompt('Code ADMIN MASTER pour réarmer la sécurité réelle :');
   if(adminCode===null)return;
   if(!adminCode)return setStatus('Code ADMIN MASTER requis.',true);
-  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   try{
     const r=await fetch('/api/zenith-sync?action=emergency-stop-clear',{
       method:'POST',cache:'no-store',
-      headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify({adminCode})
     });
     const q=await r.json().catch(()=>({}));
@@ -827,14 +821,13 @@ async function controllerMasterAction(action){
   const adminCode=prompt('Code ADMIN MASTER pour '+label+' :');
   if(adminCode===null)return;
   if(!adminCode)return setStatus('Code ADMIN MASTER requis.',true);
-  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   const pauseBtn=$('masterPauseBtn'),cancelBtn=$('masterCancelPauseBtn'),resumeBtn=$('masterResumeBtn');
   if(pauseBtn)pauseBtn.disabled=true;if(cancelBtn)cancelBtn.disabled=true;if(resumeBtn)resumeBtn.disabled=true;
   try{
     const r=await fetch('/api/zenith-sync?action='+action,{
       method:'POST',
       cache:'no-store',
-      headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify({adminCode})
     });
     const q=await r.json().catch(()=>({}));
@@ -903,10 +896,9 @@ function masterEntryBlockMessage(){
   return masterRuntimeState.error||'MASTER non prêt';
 }
 async function masterRuntimeApi(action,method='GET',body){
-  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   const r=await fetch('/api/zenith-sync?action='+action,{
     method,cache:'no-store',
-    headers:{Accept:'application/json',Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},
+    headers:{Accept:'application/json',...(body?{'Content-Type':'application/json'}:{})},
     ...(body?{body:JSON.stringify(body)}:{})
   });
   const q=await r.json().catch(()=>({}));
@@ -964,19 +956,17 @@ async function postMasterRuntimeState(){
   return true;
 }
 async function masterUserStreamApi(action,method='GET'){
-  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   const r=await fetch('/api/binance-user-stream-session?action='+action,{
     method,cache:'no-store',
-    headers:{Accept:'application/json',Authorization:'Bearer '+token}
+    headers:{Accept:'application/json'}
   });
   const q=await r.json().catch(()=>({}));
   return {r,q};
 }
 async function masterRuntimeSeedApi(){
-  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   const r=await fetch('/api/binance-runtime-snapshot',{
     cache:'no-store',
-    headers:{Accept:'application/json',Authorization:'Bearer '+token}
+    headers:{Accept:'application/json'}
   });
   const q=await r.json().catch(()=>({}));
   return {r,q};
@@ -1021,8 +1011,7 @@ async function reconcileMasterUserStream(secondPass=false){
   if(!ws||ws.readyState!==WebSocket.OPEN)return false;
   masterUserStream.reconcileBusy=true;
   try{
-    const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
-    const r=await fetch('/api/binance-reconcile',{cache:'no-store',headers:{Accept:'application/json',Authorization:'Bearer '+token}});
+    const r=await fetch('/api/binance-reconcile',{cache:'no-store',headers:{Accept:'application/json'}});
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true||!q?.report){
       const reason=String(q?.code||q?.error||('HTTP '+r.status));
@@ -1278,20 +1267,18 @@ async function ackMasterCommand(raw,executionProof){
   return q;
 }
 async function callMasterProtectiveExecute(body){
-  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   const r=await fetch('/api/binance-protective-execute',{
     method:'POST',cache:'no-store',
-    headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+    headers:{'Content-Type':'application/json',Accept:'application/json'},
     body:JSON.stringify(body)
   });
   const q=await r.json().catch(()=>({}));
   return {r,q};
 }
 async function callMasterProtectiveUpdateExecute(body){
-  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   const r=await fetch('/api/binance-protective-update-execute',{
     method:'POST',cache:'no-store',
-    headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:'Bearer '+token},
+    headers:{'Content-Type':'application/json',Accept:'application/json'},
     body:JSON.stringify(body)
   });
   const q=await r.json().catch(()=>({}));
@@ -1992,14 +1979,12 @@ function controllerCloudStatePayload(){
 }
 async function syncControllerCloudStateNow(){
   if(!controllerIdentity.paired||controllerIdentity.role!=='controller')return false;
-  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
-
   const payload=controllerCloudStatePayload();
 
   try{
     const currentResponse=await fetch('/api/zenith-sync?action=controller-state',{
       cache:'no-store',
-      headers:{Accept:'application/json',Authorization:'Bearer '+token}
+      headers:{Accept:'application/json'}
     });
     const current=await currentResponse.json().catch(()=>({}));
     if(!currentResponse.ok||current?.ok!==true){
@@ -2049,7 +2034,7 @@ async function syncControllerCloudStateNow(){
       headers:{
         'Content-Type':'application/json',
         Accept:'application/json',
-        Authorization:'Bearer '+token
+        
       },
       body:JSON.stringify({expectedRevision:localRevision,data:payload})
     });
@@ -2091,10 +2076,9 @@ function startControllerIdentityCheck(){
 }
 async function refreshBinanceAccount(){
   try{
-    const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
     const r=await fetch('/api/binance-read',{
       cache:'no-store',
-      headers:{Accept:'application/json',...(token?{Authorization:'Bearer '+token}:{})}
+      headers:{Accept:'application/json',...(token?{}:{})}
     });
     let q={};try{q=await r.json()}catch(_){q={}}
     if(!r.ok||q?.ok!==true){
