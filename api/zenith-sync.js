@@ -52,8 +52,10 @@ const MASTER_ACTIVATION_TTL_SECONDS = 120;
 const COMMAND_CLAIM_TTL_MS = 90 * 1000;
 const COMMAND_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 30;
 const PAIR_RATE_LIMIT = 5;
+const PAIR_GLOBAL_RATE_LIMIT = 20;
 const CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60;
 const CONTROLLER_REPLACEMENT_RATE_LIMIT = 5;
+const CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT = 20;
 const MASTER_ADMIN_FAILURE_LIMIT = 5;
 const MASTER_ADMIN_LOCK_SECONDS = 15 * 60;
 const AUTH_SECRET_INPUT_MAX_CHARS = 256;
@@ -262,18 +264,38 @@ async function incrementWithExpiry(key, ttlSeconds) {
   return Number(await redis(['EVAL', script, '1', key, String(ttlSeconds)])) || 0;
 }
 
+async function dualRateAllowed(perIpKey, globalKey, perIpLimit, globalLimit, ttlSeconds = 120) {
+  const script = [
+    "local perIp = redis.call('INCR', KEYS[1])",
+    "if perIp == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
+    "local global = redis.call('INCR', KEYS[2])",
+    "if global == 1 then redis.call('EXPIRE', KEYS[2], ARGV[1]) end",
+    "return {perIp, global}"
+  ].join('\n');
+  const result = await redis(['EVAL', script, '2', perIpKey, globalKey, String(ttlSeconds)]);
+  const perIp = Number(Array.isArray(result) ? result[0] : 0) || 0;
+  const global = Number(Array.isArray(result) ? result[1] : 0) || 0;
+  return perIp <= perIpLimit && global <= globalLimit;
+}
+
 async function pairRateAllowed(req) {
   const bucket = Math.floor(Date.now() / 60000);
-  const key = `${PREFIX}:pair-rate:${sha256(clientIp(req))}:${bucket}`;
-  const count = await incrementWithExpiry(key, 120);
-  return count <= PAIR_RATE_LIMIT;
+  const perIpKey = `${PREFIX}:pair-rate:${sha256(clientIp(req))}:${bucket}`;
+  const globalKey = `${PREFIX}:pair-rate:global:${bucket}`;
+  return await dualRateAllowed(perIpKey, globalKey, PAIR_RATE_LIMIT, PAIR_GLOBAL_RATE_LIMIT, 120);
 }
 
 async function controllerReplacementRateAllowed(req) {
   const bucket = Math.floor(Date.now() / 60000);
-  const key = `${PREFIX}:controller-replacement-rate:${sha256(clientIp(req))}:${bucket}`;
-  const count = await incrementWithExpiry(key, 120);
-  return count <= CONTROLLER_REPLACEMENT_RATE_LIMIT;
+  const perIpKey = `${PREFIX}:controller-replacement-rate:${sha256(clientIp(req))}:${bucket}`;
+  const globalKey = `${PREFIX}:controller-replacement-rate:global:${bucket}`;
+  return await dualRateAllowed(
+    perIpKey,
+    globalKey,
+    CONTROLLER_REPLACEMENT_RATE_LIMIT,
+    CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT,
+    120
+  );
 }
 
 function masterAdminFailureKey(device) {
