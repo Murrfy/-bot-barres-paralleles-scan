@@ -158,7 +158,7 @@ export default async function handler(req, res) {
     return send(res, 503, {
       ok: false,
       code: e?.code || 'AUTH_BACKEND_ERROR',
-      error: e?.message || 'Authentification Zenith indisponible.',
+      error: 'Authentification Zenith indisponible.',
     });
   }
 
@@ -279,7 +279,7 @@ export default async function handler(req, res) {
     return send(res, 502, {
       ok: false,
       code: 'BINANCE_READ_FAILED',
-      error: e?.message || 'Connexion Binance impossible.',
+      error: 'Lecture Binance indisponible.',
       binanceCode: e?.binanceCode ?? null,
     });
   }
