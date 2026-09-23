@@ -4,16 +4,16 @@ import test from 'node:test';
 
 const sync=fs.readFileSync('api/zenith-sync.js','utf8');
 
-function actionBlock(action,nextAction){
+function actionBlock(action){
   const start=sync.indexOf(`if (action === '${action}' && req.method === 'POST')`);
-  const end=sync.indexOf(`if (action === '${nextAction}'`,start);
+  const end=sync.indexOf("\n    if (action === '",start+10);
   assert.ok(start>=0&&end>start,`missing action block: ${action}`);
   return sync.slice(start,end);
 }
 
-const controller=actionBlock('controller-state','master-config');
-const ack=actionBlock('master-config-ack','state');
-const state=actionBlock('state','command');
+const controller=actionBlock('controller-state');
+const ack=actionBlock('master-config-ack');
+const state=actionBlock('state');
 
 test('controller-state commit atomically revalidates controller owner and role epoch',()=>{
   assert.ok(controller.includes("local currentController = tostring(redis.call('GET', KEYS[4]) or '')"));
