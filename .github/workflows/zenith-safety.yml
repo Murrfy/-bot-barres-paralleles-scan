@@ -54,6 +54,8 @@ jobs:
         run: node --test scripts/test-orphan-protection-cleanup.mjs
       - name: Test shared MASTER administration
         run: node --test scripts/test-master-admin.mjs
+      - name: Test atomic auth rate-limit counters
+        run: node --test scripts/test-auth-rate-limit-atomic.mjs
       - name: Test MASTER configuration synchronization
         run: node --test scripts/test-master-sync.mjs
       - name: Test iPad MASTER screen wake lock

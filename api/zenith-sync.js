@@ -196,19 +196,26 @@ async function redis(command) {
   return data?.result;
 }
 
+async function incrementWithExpiry(key, ttlSeconds) {
+  const script = [
+    "local count = redis.call('INCR', KEYS[1])",
+    "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
+    "return count"
+  ].join('\n');
+  return Number(await redis(['EVAL', script, '1', key, String(ttlSeconds)])) || 0;
+}
+
 async function pairRateAllowed(req) {
   const bucket = Math.floor(Date.now() / 60000);
   const key = `${PREFIX}:pair-rate:${sha256(clientIp(req))}:${bucket}`;
-  const count = Number(await redis(['INCR', key])) || 0;
-  if (count === 1) await redis(['EXPIRE', key, '120']);
+  const count = await incrementWithExpiry(key, 120);
   return count <= PAIR_RATE_LIMIT;
 }
 
 async function controllerReplacementRateAllowed(req) {
   const bucket = Math.floor(Date.now() / 60000);
   const key = `${PREFIX}:controller-replacement-rate:${sha256(clientIp(req))}:${bucket}`;
-  const count = Number(await redis(['INCR', key])) || 0;
-  if (count === 1) await redis(['EXPIRE', key, '120']);
+  const count = await incrementWithExpiry(key, 120);
   return count <= CONTROLLER_REPLACEMENT_RATE_LIMIT;
 }
 
@@ -233,8 +240,7 @@ async function verifyMasterAdminCode(req, res, device) {
 
   const supplied = String(req.body?.adminCode || '');
   if (!timingSafeEqualText(supplied, MASTER_ADMIN_CODE)) {
-    const failures = Number(await redis(['INCR', key])) || 0;
-    if (failures === 1) await redis(['EXPIRE', key, String(MASTER_ADMIN_LOCK_SECONDS)]);
+    const failures = await incrementWithExpiry(key, MASTER_ADMIN_LOCK_SECONDS);
     if (failures >= MASTER_ADMIN_FAILURE_LIMIT) {
       send(res, 429, { ok: false, code: 'MASTER_ADMIN_LOCKED', retryAfterSeconds: MASTER_ADMIN_LOCK_SECONDS });
     } else {
