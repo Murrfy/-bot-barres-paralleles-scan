@@ -43,3 +43,5 @@ jobs:
         run: node --test scripts/test-device-session.mjs
       - name: Test deterministic order planning
         run: node --test scripts/test-order-intent.mjs
+      - name: Test Binance user-stream state machine
+        run: node --test scripts/test-user-stream-state.mjs
