@@ -182,3 +182,12 @@ test('external reduce-only order is not classified as a Zenith orphan', () => {
   const result = reconcile(runtime([], [external]), [], [external]);
   assert.equal(result.reasons.includes('ORPHAN_ZENITH_PROTECTIVE_ORDER'),false);
 });
+
+
+test('external close-all STOP_MARKET never satisfies Zenith mandatory MAX-LOSS', () => {
+  const external = { ...emergency, algoId:181, clientAlgoId:'manual-max-loss' };
+  const actual = normalizeActualAlgoOrder(external);
+  const result = reconcile(runtime([position], [external]), [normalized], [actual]);
+  assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
+  assert.deepEqual(result.differences.missingMaxLossProtections, ['BTCUSDT:LONG']);
+});
