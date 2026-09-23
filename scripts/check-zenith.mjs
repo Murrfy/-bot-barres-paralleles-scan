@@ -300,6 +300,13 @@ if (!protectiveUpdateExecute.includes('validateMaxLossTrigger({') ||
     !protectiveUpdateExecute.includes('MAX_LOSS_TRIGGER_INVALID')) {
   fail('real MAX-LOSS updates must be revalidated server-side against the hard $400 loss cap');
 }
+
+if (!protectiveUpdateExecute.includes('NEW_PROGRESSIVE_PROTECTION_NOT_CONFIRMED') ||
+    !protectiveUpdateExecute.includes('allowedIds.push(update.previousClientAlgoId)') ||
+    !index.includes('if(maxLoss||progressive)') ||
+    !index.includes("phase:'CANCEL_OLD',newClientAlgoId:clientId")) {
+  fail('progressive protection replacement must confirm the new STOP+LIMIT before canceling the old protection');
+}
 if (!index.includes("import('/lib/real-protection-levels.mjs')") ||
     !index.includes('OBJECTIF AUTO') ||
     !index.includes('PERTE MAX AUTO')) {

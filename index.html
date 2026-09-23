@@ -1318,7 +1318,7 @@ async function runMasterProtectiveUpdate(command,raw,dispatch){
   }
 
   let newClientId='';
-  if(maxLoss){
+  if(maxLoss||progressive){
     newClientId=await placeNew();
     if(!newClientId)return false;
     if(!(await cancelOld(newClientId)))return false;
@@ -1600,26 +1600,6 @@ async function executeMasterAutoProgressive(plan){
     ...(plan.previousClientAlgoId?{previousClientAlgoId:plan.previousClientAlgoId}:{})
   };
 
-  if(plan.previousClientAlgoId){
-    const canceled=await callMasterProtectiveUpdateExecute({...body,phase:'CANCEL_OLD'});
-    if(!canceled.r.ok||canceled.q?.ok!==true){
-      masterAutoProtection.lastError='AUTO_CANCEL_'+String(canceled.q?.code||canceled.q?.reason||canceled.q?.error||('HTTP_'+canceled.r.status));
-      return false;
-    }
-    const terminal=await waitForStreamOrder({
-      kind:'ALGO',clientId:plan.previousClientAlgoId,terminal:true
-    },3000);
-    const terminalStatus=String(terminal?.status||canceled.q?.result?.algoOrder?.algoStatus||'').toUpperCase();
-    if(!['CANCELED','EXPIRED','REJECTED'].includes(terminalStatus)){
-      masterAutoProtection.lastError='AUTO_OLD_PROTECTION_CANCEL_NOT_CONFIRMED';
-      return false;
-    }
-    if(await reconcileMasterUserStream()!==true){
-      masterAutoProtection.lastError='AUTO_POST_CANCEL_RECONCILIATION_FAILED';
-      return false;
-    }
-  }
-
   const placed=await callMasterProtectiveUpdateExecute({...body,phase:'PLACE_NEW'});
   if(!placed.r.ok||placed.q?.ok!==true){
     masterAutoProtection.lastError='AUTO_PLACE_'+String(placed.q?.code||placed.q?.reason||placed.q?.error||('HTTP_'+placed.r.status));
@@ -1648,6 +1628,29 @@ async function executeMasterAutoProgressive(plan){
     masterAutoProtection.lastError='AUTO_POST_PLACE_RECONCILIATION_FAILED';
     return false;
   }
+
+  if(plan.previousClientAlgoId){
+    const canceled=await callMasterProtectiveUpdateExecute({
+      ...body,phase:'CANCEL_OLD',newClientAlgoId:clientId
+    });
+    if(!canceled.r.ok||canceled.q?.ok!==true){
+      masterAutoProtection.lastError='AUTO_CANCEL_'+String(canceled.q?.code||canceled.q?.reason||canceled.q?.error||('HTTP_'+canceled.r.status));
+      return false;
+    }
+    const terminal=await waitForStreamOrder({
+      kind:'ALGO',clientId:plan.previousClientAlgoId,terminal:true
+    },3000);
+    const terminalStatus=String(terminal?.status||canceled.q?.result?.algoOrder?.algoStatus||'').toUpperCase();
+    if(!['CANCELED','EXPIRED','REJECTED'].includes(terminalStatus)){
+      masterAutoProtection.lastError='AUTO_OLD_PROTECTION_CANCEL_NOT_CONFIRMED';
+      return false;
+    }
+    if(await reconcileMasterUserStream()!==true){
+      masterAutoProtection.lastError='AUTO_POST_CANCEL_RECONCILIATION_FAILED';
+      return false;
+    }
+  }
+
   masterAutoProtection.lastError='';
   masterAutoProtection.lastActionAt=Date.now();
   return true;

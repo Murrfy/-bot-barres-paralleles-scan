@@ -26,3 +26,25 @@ test('automatic progressive replacement uses exact trigger and LIMIT price with 
   assert.match(html,/waitForStreamOrder\(\{kind:'ALGO',clientId,terminal:false\}/);
   assert.match(html,/realNumberMatches\(order\?\.price,level\.limitPrice\)/);
 });
+
+
+test('automatic progressive replacement places and confirms new protection before canceling old',()=>{
+  const start=html.indexOf('async function executeMasterAutoProgressive(plan)');
+  const end=html.indexOf('async function runMasterAutoProtection',start);
+  assert.ok(start>=0&&end>start);
+  const block=html.slice(start,end);
+  const place=block.indexOf("phase:'PLACE_NEW'");
+  const confirm=block.indexOf("waitForStreamOrder({kind:'ALGO',clientId,terminal:false}");
+  const cancel=block.indexOf("phase:'CANCEL_OLD'");
+  assert.ok(place>=0&&confirm>place&&cancel>confirm);
+  assert.match(block,/newClientAlgoId:clientId/);
+});
+
+test('manual/controller progressive replacement also uses place-new-before-cancel-old',()=>{
+  const start=html.indexOf('async function runMasterProtectiveUpdate(command,raw,dispatch)');
+  const end=html.indexOf('async function waitForFullCloseState',start);
+  assert.ok(start>=0&&end>start);
+  const block=html.slice(start,end);
+  assert.match(block,/if\(maxLoss\|\|progressive\)/);
+  assert.match(block,/newClientId=await placeNew\(\)[\s\S]*cancelOld\(newClientId\)/);
+});
