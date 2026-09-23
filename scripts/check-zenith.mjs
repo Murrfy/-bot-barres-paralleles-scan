@@ -805,8 +805,13 @@ if (!sync.includes("action === 'emergency-stop-clear'") ||
   fail('PANIC reset must require ADMIN, paused MASTER, clean re-arm checks and block real resume while still active');
 }
 if (!sync.includes("await setMasterMode('PAUSE_PENDING')") ||
-    !sync.includes("kind: 'EMERGENCY_STOP_SET'")) {
+    !sync.includes("'EMERGENCY_STOP_SET'")) {
   fail('PANIC STOP must immediately block new entries while preserving the PAUSE_PENDING protective drain path');
+}
+if (!sync.includes("if (wasActive && currentMode !== 'RUNNING')") ||
+    !sync.includes('alreadyActive: true') ||
+    !sync.includes("'EMERGENCY_STOP_REASSERTED'")) {
+  fail('repeated PANIC must be idempotent without weakening reassertion if MASTER is unexpectedly running');
 }
 if (!index.includes('panicStopBtn') || !index.includes('panicClearBtn') ||
     !index.includes('controllerPanicStop') || !index.includes('controllerClearPanic')) {

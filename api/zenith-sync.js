@@ -2727,8 +2727,25 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res, ['controller', 'master']);
       if (!device) return;
 
-      const at = Date.now();
+      const [wasActive, currentMode] = await Promise.all([
+        emergencyStopActive(),
+        masterMode(),
+      ]);
       await redis(['SET', KEY_EMERGENCY_STOP, '1']);
+
+      // PANIC must always remain immediately available, but repeated presses must not flood audit history.
+      if (wasActive && currentMode !== 'RUNNING') {
+        return send(res, 200, {
+          ok: true,
+          emergencyStopActive: true,
+          alreadyActive: true,
+          executionMode: 'STOPPED',
+          masterMode: currentMode,
+          blockers: [],
+        });
+      }
+
+      const at = Date.now();
 
       // PANIC blocks new entries immediately but keeps close/protection work available.
       await setMasterMode('PAUSE_PENDING');
@@ -2737,7 +2754,7 @@ export default async function handler(req, res) {
 
       await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
         at,
-        kind: 'EMERGENCY_STOP_SET',
+        kind: wasActive ? 'EMERGENCY_STOP_REASSERTED' : 'EMERGENCY_STOP_SET',
         deviceId: device.deviceId,
         role: device.role,
         masterMode: transition.masterMode,
@@ -2748,6 +2765,7 @@ export default async function handler(req, res) {
       return send(res, 200, {
         ok: true,
         emergencyStopActive: true,
+        alreadyActive: wasActive,
         executionMode: 'STOPPED',
         masterMode: transition.masterMode,
         blockers: transition.blockers || [],
