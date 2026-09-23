@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive } from '../lib/device-session.mjs';
+import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const PREFIX = 'zenith:v1';
@@ -158,6 +159,13 @@ function publicSession(record) {
 export default async function handler(req, res) {
   if (!sameOriginMutation(req)) {
     return send(res, 403, { ok: false, code: 'ORIGIN_FORBIDDEN' });
+  }
+
+  if (req.method === 'POST') {
+    const bodyStatus = requestBodyStatus(req, 64 * 1024);
+    if (!bodyStatus.ok) {
+      return send(res, 413, { ok:false, code:'REQUEST_BODY_TOO_LARGE', maxBytes:bodyStatus.maxBytes, tradingWriteAttempted:false });
+    }
   }
 
   let master = null;
