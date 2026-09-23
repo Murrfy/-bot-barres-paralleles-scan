@@ -49,6 +49,8 @@ jobs:
         run: node --test scripts/test-master-sync.mjs
       - name: Test controller-to-MASTER cloud synchronization
         run: node --test scripts/test-cloud-controller-master-sync.mjs
+      - name: Test live current price beside determined buy
+        run: node --test scripts/test-current-price-reference.mjs
       - name: Test command queue safety
         run: node --test scripts/test-command-safety.mjs
       - name: Test real-entry risk preflight
