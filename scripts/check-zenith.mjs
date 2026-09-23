@@ -77,6 +77,30 @@ if (!binanceRead.includes('/fapi/v1/openAlgoOrders')) {
   fail('api/binance-read.js must count Binance algo TP/SL orders');
 }
 
+const binancePreflight = fs.readFileSync('api/binance-entry-preflight.js', 'utf8');
+for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
+  if (binancePreflight.includes(forbidden)) {
+    fail(`api/binance-entry-preflight.js must remain read-only; forbidden endpoint found: ${forbidden}`);
+  }
+}
+for (const required of ['/fapi/v1/symbolConfig','/fapi/v1/leverageBracket','/fapi/v1/positionSide/dual','/fapi/v1/openOrders','/fapi/v1/openAlgoOrders']) {
+  if (!binancePreflight.includes(required)) fail(`api/binance-entry-preflight.js missing required read-only check: ${required}`);
+}
+if (!binancePreflight.includes('READ_ONLY_PREFLIGHT') || !binancePreflight.includes('writeAttempted: false')) {
+  fail('entry preflight must explicitly remain read-only');
+}
+
+const riskPolicy = fs.readFileSync('lib/risk-policy.mjs', 'utf8');
+if (!riskPolicy.includes('maxActivePositions: 3') ||
+    !riskPolicy.includes('maxLeverage: 10') ||
+    !riskPolicy.includes('maxMarginUsdt: 1000') ||
+    !riskPolicy.includes('maxNotionalUsdt: 10000') ||
+    !riskPolicy.includes('maxLossUsd: 400') ||
+    !riskPolicy.includes('POSITION_MODE_HEDGE_UNSUPPORTED') ||
+    !riskPolicy.includes('MARGIN_TYPE_NOT_ISOLATED')) {
+  fail('real-entry risk policy must enforce server-side position, leverage, margin, notional, loss, position-mode and isolated-margin gates');
+}
+
 const binanceReconcile = fs.readFileSync('api/binance-reconcile.js', 'utf8');
 for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders']) {
   if (binanceReconcile.includes(forbidden)) {
