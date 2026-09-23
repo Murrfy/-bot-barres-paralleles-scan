@@ -105,6 +105,22 @@ if (!binancePreflight.includes('READ_ONLY_PREFLIGHT') || !binancePreflight.inclu
   fail('entry preflight must explicitly remain read-only');
 }
 
+const userStreamSession = fs.readFileSync('api/binance-user-stream-session.js', 'utf8');
+for (const required of [
+  "'/fapi/v1/listenKey'",
+  "binanceListenKey('POST')",
+  "binanceListenKey('PUT')",
+  "binanceListenKey('DELETE')",
+  "'MASTER_LEASE_REQUIRED'",
+  "sameOriginMutation(req)",
+  "tradingWriteAttempted: false"
+]) {
+  if (!userStreamSession.includes(required)) fail(`user-stream session invariant missing: ${required}`);
+}
+for (const forbidden of ['/fapi/v1/order','/fapi/v1/algoOrder','BINANCE_API_SECRET']) {
+  if (userStreamSession.includes(forbidden)) fail(`user-stream session must never access trading write/secret path: ${forbidden}`);
+}
+
 const userStreamState = fs.readFileSync('lib/user-stream-state.mjs', 'utf8');
 for (const required of ['ORDER_TRADE_UPDATE','ACCOUNT_UPDATE','ALGO_UPDATE','listenKeyExpired','RECONCILIATION_REQUIRED_AFTER_CONNECT','STREAM_EVENT_OUT_OF_ORDER']) {
   if (!userStreamState.includes(required)) fail(`user-stream safety invariant missing: ${required}`);

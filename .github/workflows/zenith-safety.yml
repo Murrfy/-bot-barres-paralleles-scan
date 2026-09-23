@@ -27,6 +27,8 @@ jobs:
         run: node --check api/binance-reconcile.js
       - name: Check Binance entry preflight API syntax
         run: node --check api/binance-entry-preflight.js
+      - name: Check Binance user-stream session API syntax
+        run: node --check api/binance-user-stream-session.js
       - name: Check Zenith sync API syntax
         run: node --check api/zenith-sync.js
       - name: Test reconciliation failure scenarios
@@ -45,3 +47,5 @@ jobs:
         run: node --test scripts/test-order-intent.mjs
       - name: Test Binance user-stream state machine
         run: node --test scripts/test-user-stream-state.mjs
+      - name: Test Binance user-stream session lifecycle
+        run: node --test scripts/test-user-stream-session.mjs
