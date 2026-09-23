@@ -99,6 +99,9 @@ if (!index.includes('simulation uniquement')) {
 if (!index.includes('startBinanceAccountReadOnly()')) {
   fail('index.html must keep Binance read-only account refresh');
 }
+if (index.includes("...(token?{}:{})")) {
+  fail('Binance read-only refresh must not reference the removed browser Bearer token');
+}
 if (!index.includes('protectionValidationError') ||
     !index.includes('step="0.1" inputmode="decimal"') ||
     !index.includes('Décimales acceptées avec un point (ex. 7.8)') ||
