@@ -65,7 +65,7 @@ function req(method,action){
   return {
     method,
     query:{action},
-    headers:{authorization:'Bearer master-token'},
+    headers:{cookie:'__Host-zenith_device=master-token',host:'zenith.test','x-forwarded-proto':'https',origin:'https://zenith.test'},
   };
 }
 
