@@ -7,10 +7,15 @@ process.env.UPSTASH_REDIS_REST_URL = 'https://redis.test';
 process.env.UPSTASH_REDIS_REST_TOKEN = 'test-only';
 process.env.BINANCE_API_KEY = 'test-only';
 process.env.BINANCE_API_SECRET = 'test-only';
-const source = fs.readFileSync('api/binance-reconcile.js', 'utf8').replace(
-  /^import \{ deviceTokenCandidates \} from '\.\.\/lib\/device-session\.mjs';\n/m,
-  "const deviceTokenCandidates = req => { const h=String(req?.headers?.authorization||''); const t=h.startsWith('Bearer ')?h.slice(7).trim():''; return t?[t]:[]; };\n"
-);
+const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
+  .replace(
+    /^import \{ deviceTokenCandidates \} from '\.\.\/lib\/device-session\.mjs';\n/m,
+    "const deviceTokenCandidates = req => { const h=String(req?.headers?.authorization||''); const t=h.startsWith('Bearer ')?h.slice(7).trim():''; return t?[t]:[]; };\n"
+  )
+  .replace(
+    /^import \{ REAL_RISK_LIMITS \} from '\.\.\/lib\/risk-policy\.mjs';\n/m,
+    "const REAL_RISK_LIMITS = Object.freeze({ maxLossUsd: 400 });\n"
+  );
 const { default: handler, reconcile, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder } = await import(
   'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder };').toString('base64')
 );
@@ -21,7 +26,7 @@ const position = { symbol: 'BTCUSDT', positionSide: 'BOTH', positionAmt: '1', en
 const stop = { symbol: 'BTCUSDT', positionSide: 'BOTH', side: 'SELL', type: 'STOP_MARKET',
   orderId: 42, origQty: '1', executedQty: '0', reduceOnly: true, closePosition: false };
 const emergency = { orderClass:'ALGO', symbol:'BTCUSDT', positionSide:'BOTH', side:'SELL',
-  type:'STOP_MARKET', algoId:77, clientAlgoId:'zth-MAX-test', triggerPrice:'48000',
+  type:'STOP_MARKET', algoId:77, clientAlgoId:'zth-MAX-test', triggerPrice:'49600',
   reduceOnly:false, closePosition:true, algoStatus:'NEW' };
 const progressive = { orderClass:'ALGO', symbol:'BTCUSDT', positionSide:'BOTH', side:'SELL',
   type:'STOP', algoId:78, clientAlgoId:'zth-PRO-test', quantity:'1', triggerPrice:'51000',
@@ -72,7 +77,7 @@ test('MAX-LOSS STOP_MARKET must trigger on the loss side of the entry', () => {
 });
 
 test('multiple valid MAX-LOSS close-all stops fail closed as ambiguous', () => {
-  const second = { ...emergency, algoId:80, clientAlgoId:'zth-MAX-second', triggerPrice:'47000' };
+  const second = { ...emergency, algoId:80, clientAlgoId:'zth-MAX-second', triggerPrice:'49700' };
   const result = reconcile(
     runtime([position], [emergency, second]),
     [normalized],
@@ -181,4 +186,24 @@ test('external reduce-only order is not classified as a Zenith orphan', () => {
   });
   const result = reconcile(runtime([], [external]), [], [external]);
   assert.equal(result.reasons.includes('ORPHAN_ZENITH_PROTECTIVE_ORDER'),false);
+});
+
+
+test('MAX-LOSS beyond the hard $400 cap is treated as missing protection', () => {
+  const unsafe = normalizeActualAlgoOrder({
+    ...emergency,
+    algoId:177,
+    clientAlgoId:'zth-MAX-too-far',
+    triggerPrice:'49599'
+  });
+  const result = reconcile(runtime([position], [unsafe]), [normalized], [unsafe]);
+  assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
+  assert.equal(result.differences.unsafeMaxLossProtections.length,1);
+  assert.ok(result.differences.unsafeMaxLossProtections[0].impliedLossUsd>400);
+});
+
+test('MAX-LOSS exactly at the hard $400 cap remains valid', () => {
+  const result = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
+  assert.equal(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'),false);
+  assert.equal(result.differences.unsafeMaxLossProtections.length,0);
 });

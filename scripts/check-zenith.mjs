@@ -301,6 +301,12 @@ if (!protectiveUpdateExecute.includes('validateMaxLossTrigger({') ||
   fail('real MAX-LOSS updates must be revalidated server-side against the hard $400 loss cap');
 }
 
+if (!protectiveUpdateExecute.includes('impliedLossUsd<=REAL_RISK_LIMITS.maxLossUsd+1e-8') ||
+    !index.includes('function masterHasSingleMaxLoss(position,orders,hardMaxLossUsd=400)') ||
+    !index.includes('return impliedLossUsd<=cap+1e-8')) {
+  fail('progressive protection must accept only an emergency MAX-LOSS that is itself within the hard $400 cap');
+}
+
 if (!protectiveUpdateExecute.includes('NEW_PROGRESSIVE_PROTECTION_NOT_CONFIRMED') ||
     !protectiveUpdateExecute.includes('allowedIds.push(update.previousClientAlgoId)') ||
     !index.includes('if(maxLoss||progressive)') ||
@@ -330,6 +336,12 @@ if (!binanceReconcile.includes('/fapi/v1/openAlgoOrders')) {
 }
 if (!binanceReconcile.includes('runtimeDataHash') || !binanceReconcile.includes('stableStringify(runtimeState?.data ?? null)')) {
   fail('Binance reconciliation must hash canonical runtime data separately from heartbeat timestamps');
+}
+
+if (!binanceReconcile.includes("import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs'") ||
+    !binanceReconcile.includes('unsafeMaxLossProtections') ||
+    !binanceReconcile.includes('impliedLossUsd > REAL_RISK_LIMITS.maxLossUsd + 1e-8')) {
+  fail('Binance reconciliation must reject emergency MAX-LOSS orders whose implied loss exceeds the shared $400 hard cap');
 }
 
 if (!binanceReconcile.includes('ORPHAN_ZENITH_PROTECTIVE_ORDER') ||

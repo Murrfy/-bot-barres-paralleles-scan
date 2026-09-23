@@ -97,6 +97,8 @@ jobs:
         run: node --test scripts/test-protective-repair-wiring.mjs
       - name: Test protective update conflict guards
         run: node --test scripts/test-protective-update-conflicts.mjs
+      - name: Test MAX-LOSS hard-cap wiring
+        run: node --test scripts/test-maxloss-hard-cap-wiring.mjs
       - name: Test MASTER command worker routing
         run: node --test scripts/test-master-worker-routing.mjs
       - name: Test idempotent real entry cancellation
