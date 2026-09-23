@@ -16,6 +16,7 @@ import {
   cancelAlgoOrderIdempotent,
 } from '../lib/binance-algo-writer.mjs';
 import { validateExecutionArmRecord, protectiveModeReason, executionReadiness } from './binance-protective-execute.js';
+import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
 
 const BASE='https://fapi.binance.com';
 const PREFIX='zenith:v1';
@@ -267,6 +268,21 @@ export default async function handler(req,res){
   const apiKey=process.env.BINANCE_TRADING_API_KEY,secret=process.env.BINANCE_TRADING_API_SECRET;
   if(!apiKey||!secret)return send(res,503,{ok:false,code:'BINANCE_TRADING_CREDENTIALS_MISSING',writeAttempted:false});
 
+  try{
+    const backoff=await readBinanceWriteBackoff(redis);
+    if(backoff.active){
+      res.setHeader('Retry-After',String(backoff.retryAfterSeconds));
+      return send(res,429,{
+        ok:false,code:'BINANCE_WRITE_BACKOFF_ACTIVE',
+        retryAfterSeconds:backoff.retryAfterSeconds,
+        binanceStatus:backoff.status,
+        writeAttempted:false,
+      });
+    }
+  }catch{
+    return send(res,503,{ok:false,code:'BINANCE_BACKOFF_STATE_UNAVAILABLE',writeAttempted:false});
+  }
+
   if(orphanCleanup){
     try{
       const state=await readState();
@@ -320,6 +336,16 @@ export default async function handler(req,res){
       await redis(['LTRIM',KEY_AUDIT,'0','199']);
       return send(res,200,{ok:true,type,phase,target,result,flatProof:true});
     }catch(e){
+      const retryAfter=binanceBackoffSecondsFromError(e);
+      if(retryAfter>0){
+        try{await registerBinanceWriteBackoff(redis,e)}catch{}
+        res.setHeader('Retry-After',String(retryAfter));
+        return send(res,429,{
+          ok:false,code:Number(e?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
+          retryAfterSeconds:retryAfter,binanceStatus:Number(e?.status)||0,
+          binanceCode:e?.code??null,ambiguous:false,writeAttempted:false,
+        });
+      }
       const ambiguous=e?.ambiguous===true;
       return send(res,502,{
         ok:false,code:ambiguous?'ORPHAN_CLEANUP_RESULT_AMBIGUOUS':'BINANCE_ORPHAN_CLEANUP_FAILED',
@@ -529,6 +555,16 @@ export default async function handler(req,res){
     await redis(['LTRIM',KEY_AUDIT,'0','199']);
     return send(res,200,{ok:true,type,phase,plan,result,emergencyProtection:emergency||null});
   }catch(e){
+    const retryAfter=binanceBackoffSecondsFromError(e);
+    if(retryAfter>0){
+      try{await registerBinanceWriteBackoff(redis,e)}catch{}
+      res.setHeader('Retry-After',String(retryAfter));
+      return send(res,429,{
+        ok:false,code:Number(e?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
+        retryAfterSeconds:retryAfter,binanceStatus:Number(e?.status)||0,
+        binanceCode:e?.code??null,ambiguous:false,writeAttempted:false,
+      });
+    }
     const ambiguous=e?.ambiguous===true;
     return send(res,502,{
       ok:false,code:ambiguous?'PROTECTIVE_UPDATE_RESULT_AMBIGUOUS':'BINANCE_PROTECTIVE_UPDATE_FAILED',
