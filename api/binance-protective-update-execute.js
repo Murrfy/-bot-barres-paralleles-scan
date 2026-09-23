@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive } from '../lib/device-session.mjs';
+import { cookieToken, sameOriginMutation, deviceSessionRecordActive } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { buildProtectiveAlgoPlan } from '../lib/protective-update-intent.mjs';
 import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition, protectiveRepairTarget, orphanZenithCleanupOrders } from '../lib/protective-command.mjs';
@@ -73,7 +73,7 @@ async function redis(command){
   return data?.result;
 }
 async function requireCurrentMaster(req){
-  for(const token of deviceTokenCandidates(req)){
+  for (const token of [cookieToken(req)].filter(Boolean)){
     const tokenHash=sha256(token),raw=await redis(['GET',`${PREFIX}:device:${tokenHash}`]);
     if(!raw)continue;
     const device=parseJson(raw);
