@@ -232,7 +232,7 @@ export default async function handler(req, res) {
     return send(res, 503, {
       ok: false,
       code: e?.code || 'AUTH_BACKEND_ERROR',
-      error: e?.message || 'Authentification Zenith indisponible.',
+      error: 'Authentification Zenith indisponible.',
     });
   }
   if (!master) {
@@ -299,7 +299,7 @@ export default async function handler(req, res) {
     return send(res, 502, {
       ok: false,
       code: e?.code === 'PREFLIGHT_REQUEST_INVALID' ? e.code : 'BINANCE_PREFLIGHT_FAILED',
-      error: e?.message || 'Pré-contrôle Binance indisponible.',
+      error: 'Pré-contrôle Binance indisponible.',
       binanceCode: e?.binanceCode,
       status: e?.status,
     });
