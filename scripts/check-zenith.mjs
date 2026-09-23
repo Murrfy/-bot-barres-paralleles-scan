@@ -544,9 +544,20 @@ if (!sync.includes('validDeviceId(deviceId)') ||
     !sync.includes('validDeviceId(newDeviceId)')) {
   fail('pairing and controller replacement must reject malformed or oversized device IDs');
 }
-for (const file of ['api/binance-read.js','api/binance-reconcile.js','api/binance-entry-preflight.js']) {
+for (const file of [
+  'api/binance-read.js',
+  'api/binance-reconcile.js',
+  'api/binance-entry-preflight.js',
+  'api/binance-entry-execute.js',
+  'api/binance-protective-execute.js',
+  'api/binance-protective-update-execute.js',
+  'api/binance-runtime-snapshot.js',
+  'api/binance-user-stream-session.js',
+  'api/binance-order-test.js',
+]) {
   const source=fs.readFileSync(file,'utf8');
   if (!source.includes('deviceTokenCandidates(req)')) fail(`${file} must accept the secure device session cookie`);
+  if (!source.includes('deviceSessionRecordActive(device)')) fail(`${file} must reject absolutely expired Zenith device sessions`);
 }
 
 const auditStart = sync.indexOf("if (action === 'audit' && req.method === 'GET')");

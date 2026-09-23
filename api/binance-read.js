@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, deviceSessionRecordActive } from '../lib/device-session.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -58,7 +58,7 @@ async function requireZenithDevice(req) {
     if (!raw) continue;
     try {
       const device = JSON.parse(raw);
-      if (!device?.deviceId || !['controller', 'master'].includes(device?.role)) continue;
+      if (!deviceSessionRecordActive(device) || !device?.deviceId || !['controller', 'master'].includes(device?.role)) continue;
       const roleKey = device.role === 'master'
         ? `${PREFIX}:role-device:master`
         : `${PREFIX}:role-device:controller`;

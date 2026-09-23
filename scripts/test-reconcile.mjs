@@ -9,8 +9,8 @@ process.env.BINANCE_API_KEY = 'test-only';
 process.env.BINANCE_API_SECRET = 'test-only';
 const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
   .replace(
-    /^import \{ deviceTokenCandidates \} from '\.\.\/lib\/device-session\.mjs';\n/m,
-    "const deviceTokenCandidates = req => { const h=String(req?.headers?.authorization||''); const t=h.startsWith('Bearer ')?h.slice(7).trim():''; return t?[t]:[]; };\n"
+    /^import \{[^\n]*deviceTokenCandidates[^\n]*\} from '\.\.\/lib\/device-session\.mjs';\n/m,
+    "const deviceTokenCandidates = req => { const h=String(req?.headers?.authorization||''); const t=h.startsWith('Bearer ')?h.slice(7).trim():''; return t?[t]:[]; }; const deviceSessionRecordActive = () => true;\n"
   )
   .replace(
     /^import \{ REAL_RISK_LIMITS \} from '\.\.\/lib\/risk-policy\.mjs';\n/m,
