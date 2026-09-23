@@ -242,6 +242,24 @@ if (!userStreamSession.includes('USER_STREAM_MUTATION_RATE_LIMIT_PER_MINUTE = 12
   fail('Binance user-stream mutations must be rate-limited before Binance calls');
 }
 
+const userStreamStartIndex = userStreamSession.indexOf("if (action === 'start' && req.method === 'POST')");
+const userStreamKeepaliveIndex = userStreamSession.indexOf("if (action === 'keepalive' && req.method === 'POST')");
+const userStreamCloseIndex = userStreamSession.indexOf("if (action === 'close' && req.method === 'POST')");
+if (userStreamStartIndex < 0 || userStreamKeepaliveIndex < 0 || userStreamCloseIndex < 0) {
+  fail('user-stream lifecycle blocks must remain explicit');
+} else {
+  const startBlock = userStreamSession.slice(userStreamStartIndex, userStreamKeepaliveIndex);
+  const keepaliveBlock = userStreamSession.slice(userStreamKeepaliveIndex, userStreamCloseIndex);
+  const startSuccess = /return send\(res, 200, \{([\s\S]*?)\}\);/.exec(startBlock)?.[1] || '';
+  const keepaliveSuccess = /const record = await saveSession\([\s\S]*?return send\(res, 200, \{([\s\S]*?)\}\);/.exec(keepaliveBlock)?.[1] || '';
+  if (!/\blistenKey\b/.test(startSuccess)) {
+    fail('user-stream start must expose listenKey only to the leased MASTER that opens the WebSocket');
+  }
+  if (/^\s*listenKey\s*[:,]/m.test(keepaliveSuccess)) {
+    fail('user-stream keepalive must not expose the listenKey value');
+  }
+}
+
 const masterRuntimeInventory = fs.readFileSync('lib/master-runtime-inventory.mjs', 'utf8');
 for (const required of ['binancePositions','binanceOrders','openPositions','openOrders','userStream','TERMINAL_ALGO']) {
   if (!masterRuntimeInventory.includes(required)) fail(`MASTER runtime inventory projection missing: ${required}`);
