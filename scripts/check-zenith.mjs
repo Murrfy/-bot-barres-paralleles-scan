@@ -56,6 +56,13 @@ if (!index.includes('simulation uniquement')) {
 if (!index.includes('startBinanceAccountReadOnly()')) {
   fail('index.html must keep Binance read-only account refresh');
 }
+if (!index.includes('protectionValidationError') ||
+    !index.includes('step="0.1" inputmode="decimal"') ||
+    !index.includes('Décimales acceptées avec un point (ex. 7.8)') ||
+    !index.includes('le gain protégé doit être inférieur au gain atteint') ||
+    !index.includes('le niveau PROTÉGÉ ne peut pas redescendre')) {
+  fail('gain protections must support decimal input and reject incoherent protection ladders');
+}
 if (!index.includes("normalExit:'LIMIT_EXACT_GTC'") ||
     !index.includes("protectiveExit:'LIMIT_IOC_ADAPTIVE'") ||
     !index.includes("primaryPriceMatch:'OPPONENT'") ||
