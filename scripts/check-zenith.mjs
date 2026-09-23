@@ -304,6 +304,23 @@ if (!index.includes("role==='master'") ||
     !index.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
   fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
 }
+if (!index.includes("wss://fstream.binance.com/private/ws/") ||
+    !index.includes("import('/lib/user-stream-state.mjs')") ||
+    !index.includes("import('/lib/master-runtime-inventory.mjs')") ||
+    !index.includes("masterUserStreamApi('start','POST')") ||
+    !index.includes("masterUserStreamApi('keepalive','POST')") ||
+    !index.includes("reconcileMasterUserStream") ||
+    !index.includes("45*60*1000") ||
+    !index.includes("23*60*60*1000")) {
+  fail('iPad MASTER must maintain the official Binance private user stream with keepalive, reconnect and REST reconciliation');
+}
+if (!index.includes("invalidateMasterStream('PAGE_HIDDEN')") ||
+    !index.includes("STREAM_EVENT_OUT_OF_ORDER") ||
+    !index.includes("LISTEN_KEY_EXPIRED") ||
+    !index.includes("STREAM_INVENTORY_CHANGED")) {
+  fail('MASTER user stream must fail closed on backgrounding, expiry, ordering gaps and inventory changes');
+}
+
 if (!index.includes('applyMasterReadOnlyPolicy') ||
     !index.includes('IPAD MASTER LECTURE SEULE') ||
     !index.includes('MASTER_APPLIED_CONFIG_HASH_MISMATCH') ||
