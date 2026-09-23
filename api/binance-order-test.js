@@ -149,7 +149,7 @@ export default async function handler(req,res){
     });
   }catch(e){
     return send(res,502,{
-      ok:false,code:'BINANCE_TEST_ORDER_FAILED',error:e?.message||'Test order failed',
+      ok:false,code:'BINANCE_TEST_ORDER_FAILED',error:'Test order failed',
       binanceCode:e?.binanceCode??null,matchingEngineSubmitted:false,tradingWriteAttempted:false,
     });
   }
