@@ -2616,7 +2616,7 @@ export default async function handler(req, res) {
     return send(res, 500, {
       ok: false,
       code: e?.code || 'SYNC_ERROR',
-      error: e?.message || 'Zenith sync error',
+      error: 'Zenith sync error',
     });
   }
 }
