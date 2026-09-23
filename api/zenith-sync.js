@@ -79,6 +79,16 @@ function sha256(v) {
   return crypto.createHash('sha256').update(String(v)).digest('hex');
 }
 
+function adminSecretPolicyBlockers() {
+  const blockers = [];
+  const admin = String(MASTER_ADMIN_CODE || '');
+  if (admin.length < 16) blockers.push('MASTER_ADMIN_CODE_TOO_WEAK');
+  if (admin && (timingSafeEqualText(admin, PAIRING_CODE) || timingSafeEqualText(admin, MASTER_PAIRING_CODE))) {
+    blockers.push('MASTER_ADMIN_CODE_REUSED');
+  }
+  return blockers;
+}
+
 function binanceApiPermissionBlockers(permission) {
   if (!permission || typeof permission !== 'object') return ['BINANCE_API_PERMISSIONS_UNAVAILABLE'];
   const blockers = [];
@@ -456,6 +466,8 @@ async function realExecutionArmStatus(expectedMasterDeviceId = '') {
   const record = parseStoredJson(raw);
   if (!record || record.version !== 1) return { armed:false, reason:'REAL_EXECUTION_NOT_ARMED', record:null };
   if (!REAL_TRADING_ENABLED) return { armed:false, reason:'REAL_TRADING_DISABLED', record };
+  const adminSecretBlockers = adminSecretPolicyBlockers();
+  if (adminSecretBlockers.length) return { armed:false, reason:adminSecretBlockers[0], blockers:adminSecretBlockers, record };
   if (!BINANCE_WRITE_ENABLED) return { armed:false, reason:'BINANCE_WRITE_DISABLED', record };
   if (!VERCEL_PRODUCTION_WRITE_ALLOWED) return { armed:false, reason:'NON_PRODUCTION_DEPLOYMENT', record };
   if (!DEPLOYMENT_SHA) return { armed:false, reason:'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING', record };
@@ -1488,7 +1500,7 @@ export default async function handler(req, res) {
         redis(['LLEN', KEY_PROCESSING]),
         redis(['GET', KEY_STATE]),
       ]);
-      const blockers = [];
+      const blockers = [...adminSecretPolicyBlockers()];
       if (!currentMaster || !registeredMaster || String(currentMaster) !== String(registeredMaster)) blockers.push('MASTER_LEASE_REQUIRED');
       if (device.role === 'master' && String(currentMaster) !== String(device.deviceId)) blockers.push('NOT_MASTER');
       if (currentMode !== 'PAUSED') blockers.push('MASTER_MUST_BE_PAUSED');
@@ -1540,6 +1552,7 @@ export default async function handler(req, res) {
         reconciliationObservedAt:Number(reconciliation?.report?.observedAt || 0),
         binanceApiPermissionsVerifiedAt:Date.now(),
         binanceApiIpRestricted:apiPermissions?.ipRestrict === true,
+        adminSecretPolicyVersion:1,
       };
       await redis(['SET', KEY_REAL_EXECUTION_ARMED, JSON.stringify(record)]);
       await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
@@ -2691,6 +2704,6 @@ export default async function handler(req, res) {
   }
 }
 
-export { binanceApiPermissionBlockers };
+export { binanceApiPermissionBlockers, adminSecretPolicyBlockers };
 
 export { clientIp };
