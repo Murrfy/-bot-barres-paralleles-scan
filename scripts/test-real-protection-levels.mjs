@@ -116,3 +116,50 @@ test('SHORT progressive protection also preserves at least the requested floor',
   assert.equal(level.triggerPrice,level.limitPrice);
   assert.ok(level.actualProtectedProfitUsd>=39.8);
 });
+
+
+test('requested +40 target can round to +40.02 but never below +40',()=>{
+  const levels=buildRealProtectionLevels({
+    position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.3',entryPrice:'100'},
+    targetProfitUsd:40,
+    maxLossUsd:10,
+    priceFilter:filter,
+  });
+  assert.equal(levels.targetPrice,233.4);
+  assert.ok(Math.abs(levels.actualTargetProfitUsd-40.02)<1e-8);
+  assert.ok(levels.actualTargetProfitUsd>=40);
+});
+
+test('SHORT requested +40 target also rounds to at least +40, never below',()=>{
+  const levels=buildRealProtectionLevels({
+    position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'-0.3',entryPrice:'200'},
+    targetProfitUsd:40,
+    maxLossUsd:10,
+    priceFilter:filter,
+  });
+  assert.equal(levels.targetPrice,66.6);
+  assert.ok(Math.abs(levels.actualTargetProfitUsd-40.02)<1e-8);
+  assert.ok(levels.actualTargetProfitUsd>=40);
+});
+
+test('requested +7.80 protected floor rounds upward in protected PnL, never below +7.80',()=>{
+  const level=buildProgressiveProtectionLevel({
+    position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.7',entryPrice:'100'},
+    armProfitUsd:8,
+    protectedProfitUsd:7.8,
+    priceFilter:filter,
+  });
+  assert.equal(level.triggerPrice,level.limitPrice);
+  assert.ok(level.actualProtectedProfitUsd>=7.8);
+  assert.ok(level.actualProtectedProfitUsd<7.9);
+});
+
+test('MAX-LOSS tick rounding never exceeds requested loss even between ticks',()=>{
+  const levels=buildRealProtectionLevels({
+    position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.7',entryPrice:'100'},
+    targetProfitUsd:8,
+    maxLossUsd:7.8,
+    priceFilter:filter,
+  });
+  assert.ok(levels.actualMaxLossUsd<=7.8+1e-8);
+});
