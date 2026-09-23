@@ -138,6 +138,39 @@ if (!userStreamState.includes('needsReconciliation = true') ||
   fail('Binance user-stream state machine must fail closed on reconnect/discontinuity');
 }
 
+const binanceOrderWriter = fs.readFileSync('lib/binance-order-writer.mjs','utf8');
+for (const required of [
+  "queryOrderByClientId",
+  "origClientOrderId",
+  "disposition: 'WRITE_LOCKED'",
+  "RECOVERED_AFTER_AMBIGUOUS_POST",
+  "ORDER_RESULT_AMBIGUOUS"
+]) {
+  if (!binanceOrderWriter.includes(required)) fail(`Binance idempotent writer invariant missing: ${required}`);
+}
+if ((binanceOrderWriter.match(/method: 'POST'/g)||[]).length !== 1) {
+  fail('Binance order writer must have exactly one standard-order POST path');
+}
+
+const protectiveExecute = fs.readFileSync('api/binance-protective-execute.js','utf8');
+for (const required of [
+  "ZENITH_REAL_TRADING_ENABLED",
+  "ZENITH_BINANCE_WRITE_ENABLED",
+  "ZENITH_PAIRING_DISABLED",
+  "'EXEC_CLOSE_POSITION'",
+  "'BINANCE_WRITE_LOCKED'",
+  "'CLOSE_QUANTITY_EXCEEDS_POSITION'",
+  "'HEDGE_MODE_UNSUPPORTED'",
+  "report.status!=='CLEAN_REAL'",
+  "runtimeDataHash",
+  "placeStandardOrderIdempotent"
+]) {
+  if (!protectiveExecute.includes(required)) fail(`protective execution gate missing: ${required}`);
+}
+if (protectiveExecute.includes('EXEC_OPEN_POSITION')) {
+  fail('protective execution API must never open a new position');
+}
+
 const orderIntent = fs.readFileSync('lib/order-intent.mjs', 'utf8');
 for (const required of ['deterministicClientOrderId','CLIENT_ORDER_ID_MAX_LENGTH = 36',"writeAllowed: false","reduceOnly: 'true'","priceMatch = 'OPPONENT'"]) {
   if (!orderIntent.includes(required)) fail(`order planning safety invariant missing: ${required}`);

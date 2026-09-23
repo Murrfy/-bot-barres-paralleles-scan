@@ -27,6 +27,8 @@ jobs:
         run: node --check api/binance-reconcile.js
       - name: Check Binance entry preflight API syntax
         run: node --check api/binance-entry-preflight.js
+      - name: Check protective execution API syntax
+        run: node --check api/binance-protective-execute.js
       - name: Check Binance user-stream session API syntax
         run: node --check api/binance-user-stream-session.js
       - name: Check Zenith sync API syntax
@@ -45,6 +47,8 @@ jobs:
         run: node --test scripts/test-device-session.mjs
       - name: Test deterministic order planning
         run: node --test scripts/test-order-intent.mjs
+      - name: Test idempotent Binance order writer
+        run: node --test scripts/test-binance-order-writer.mjs
       - name: Test Binance user-stream state machine
         run: node --test scripts/test-user-stream-state.mjs
       - name: Test MASTER stream inventory projection
