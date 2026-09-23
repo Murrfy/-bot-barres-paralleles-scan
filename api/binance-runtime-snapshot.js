@@ -236,7 +236,7 @@ export default async function handler(req,res){
     return send(res,502,{
       ok:false,
       code:'BINANCE_RUNTIME_SNAPSHOT_FAILED',
-      error:e?.message||'Binance runtime snapshot unavailable.',
+      error:'Binance runtime snapshot unavailable.',
       binanceCode:e?.binanceCode??null,
       writeAttempted:false,
     });
