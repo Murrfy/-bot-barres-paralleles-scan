@@ -1065,5 +1065,30 @@ if (!timingBlock.includes("createHash('sha256')") ||
   fail('authentication secrets must be compared as fixed-length SHA-256 digests');
 }
 
+const masterRevokeSync = fs.readFileSync('api/zenith-sync.js','utf8');
+const masterRevokeIndex = fs.readFileSync('index.html','utf8');
+for (const required of [
+  "action === 'master-revoke'",
+  "requireDevice(req, res, ['controller'])",
+  'fetchLiveBinanceActivity()',
+  "signedFuturesGet('/fapi/v3/positionRisk'",
+  "signedFuturesGet('/fapi/v1/openOrders'",
+  "signedFuturesGet('/fapi/v1/openAlgoOrders'",
+  "'BINANCE_ACTIVITY_CHECK_FAILED'",
+  "'MASTER_REVOKE_DRAIN_REQUIRED'",
+  "'MASTER_REVOKED'",
+  'KEY_REAL_EXECUTION_ARMED',
+  'KEY_USER_STREAM_SESSION',
+  'KEY_PENDING',
+  'KEY_PROCESSING',
+  "roleAssignmentKey(PREFIX, 'master')"
+]) {
+  if (!masterRevokeSync.includes(required)) fail(`MASTER emergency revoke must remain fail-closed: ${required}`);
+}
+if (!masterRevokeIndex.includes('masterRevokeBtn') ||
+    !masterRevokeIndex.includes('controllerRevokeMaster') ||
+    !masterRevokeIndex.includes('action=master-revoke')) {
+  fail('iPhone controller must keep the protected MASTER revoke control');
+}
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
