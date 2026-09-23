@@ -197,6 +197,12 @@ if (binanceOrderTest.includes("TEST_ORDER_PATH='/fapi/v1/order'") ||
     binanceOrderTest.includes('/fapi/v1/algoOrder')) {
   fail('protective order validation endpoint must never target a live standard or conditional order path');
 }
+if (!binanceOrderTest.includes('BINANCE_ORDER_TEST_RATE_LIMIT_PER_MINUTE=6') ||
+    !binanceOrderTest.includes('orderTestRateAllowed') ||
+    !binanceOrderTest.includes("'BINANCE_ORDER_TEST_RATE_LIMIT'") ||
+    !binanceOrderTest.includes("res.setHeader('Retry-After'")) {
+  fail('protective Binance test-order endpoint must rate-limit leased MASTER requests before contacting Binance');
+}
 
 const userStreamSession = fs.readFileSync('api/binance-user-stream-session.js', 'utf8');
 for (const required of [
