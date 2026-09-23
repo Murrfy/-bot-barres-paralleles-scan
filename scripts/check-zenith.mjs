@@ -82,6 +82,9 @@ if (deviceSession.includes('if (bearerToken(req)) return true;')) {
 if (deviceSession.includes("header(req, 'x-forwarded-host')")) {
   fail('same-origin security must not trust x-forwarded-host');
 }
+if (!deviceSession.includes("return [...new Set([cookieToken(req)].filter(Boolean))];")) {
+  fail('normal device authentication must be cookie-only');
+}
 for (const file of ['pair-controller.html','pair-master.html','replace-controller.html']) {
   const html=fs.readFileSync(file,'utf8');
   if (html.includes('localStorage.setItem(DEVICE_TOKEN_KEY')) fail(`${file} must not store device credentials in localStorage`);
@@ -91,6 +94,19 @@ for (const file of ['pair-controller.html','pair-master.html','replace-controlle
 for (const file of ['index.html','master-admin.html','master-standby.html','controller-status.html']) {
   const html=fs.readFileSync(file,'utf8');
   if (!html.includes('localStorage.removeItem(')) fail(`${file} must purge migrated legacy credentials after authenticated session bootstrap`);
+}
+const zenithSync=fs.readFileSync('api/zenith-sync.js','utf8');
+if (!zenithSync.includes("action === 'session-migrate'") ||
+    !zenithSync.includes('migrateLegacyBearerSession') ||
+    !zenithSync.includes("redis.call('DEL', KEYS[1])")) {
+  fail('legacy Bearer support must be isolated to one-time rotating session migration');
+}
+for (const file of ['index.html','master-admin.html','master-standby.html','controller-status.html']) {
+  const html=fs.readFileSync(file,'utf8');
+  if (!html.includes("action=session-migrate")) fail(`${file} must migrate legacy Bearer before normal cookie-only authentication`);
+}
+if (index.includes("...(token?{}:{})")) {
+  fail('index.html must not reference removed browser token during Binance reads');
 }
 
 if (!index.includes('simulation uniquement')) {
