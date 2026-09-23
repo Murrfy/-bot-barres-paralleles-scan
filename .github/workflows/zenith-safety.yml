@@ -49,6 +49,8 @@ jobs:
         run: node --test scripts/test-master-admin.mjs
       - name: Test MASTER configuration synchronization
         run: node --test scripts/test-master-sync.mjs
+      - name: Test deferred config protective continuity
+        run: node --test scripts/test-deferred-config-protection.mjs
       - name: Test iPad MASTER screen wake lock
         run: node --test scripts/test-master-wakelock.mjs
       - name: Test controller-to-MASTER cloud synchronization
