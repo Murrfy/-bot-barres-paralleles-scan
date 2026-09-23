@@ -867,6 +867,7 @@ function scheduleMasterStreamReconnect(delay=1500){
 async function publishMasterStreamState(){
   masterRuntimeState.userStreamReady=masterStreamProjection().userStream?.ready===true;
   renderControllerIdentity();
+  if(controllerIdentity.role==='master')syncRealtime();
   if(controllerIdentity.role==='master'&&masterRuntimeState.leaseActive){
     try{await postMasterRuntimeState()}catch(_){}
   }
@@ -1712,7 +1713,22 @@ function exactProfitFor(buy,sale,c){buy=n(buy);sale=n(sale);return buy>0&&sale>0
 function tokenExactBuy(symbol){const t=tokenSettings[symbol]||{};return t.exactBuyEnabled&&n(t.exactBuyPrice)>0?n(t.exactBuyPrice):0}
 function tokenExactSale(symbol){const t=tokenSettings[symbol]||{};return t.exactSaleEnabled&&n(t.exactSalePrice)>0?n(t.exactSalePrice):0}
 function openBySymbol(symbol){return openPositions.find(p=>p.symbol===symbol)||null}
-function trackedSymbols(){return new Set([...Object.keys(validated),...openPositions.map(p=>p.symbol)])}
+function masterRealPositionBySymbol(symbol){
+  if(controllerIdentity.role!=='master')return null;
+  const wanted=String(symbol||'').toUpperCase();
+  const rows=masterStreamProjection().binancePositions||[];
+  return rows.find(p=>String(p?.symbol||'').toUpperCase()===wanted&&Math.abs(n(p?.positionAmt??p?.quantity,0))>0)||null;
+}
+function trackedSymbols(){
+  const out=new Set([...Object.keys(validated),...openPositions.map(p=>p.symbol)]);
+  if(controllerIdentity.role==='master'){
+    for(const p of masterStreamProjection().binancePositions||[]){
+      const symbol=String(p?.symbol||'').toUpperCase();
+      if(symbol&&Math.abs(n(p?.positionAmt??p?.quantity,0))>0)out.add(symbol);
+    }
+  }
+  return out;
+}
 function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify({settings,tokenSettings,manualTokens,validated,revalidateBlock,missedSignals,openPositions,history,dismissed,selectedSymbol}));scheduleControllerCloudStateSync()}
 function load(){try{const x=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');if(!x)return;settings={...clone(DEFAULTS),...x.settings};if(n(x.settings?.margin)===100)settings.margin=1000;if(n(x.settings?.targetProfit)===40)settings.targetProfit=3000;if(n(x.settings?.maxLoss)===40)settings.maxLoss=400;settings.marginType='ISOLATED';settings.protectionStages=normalizeProtections(settings.protectionStages,settings.targetProfit);tokenSettings=x.tokenSettings||{};for(const t of Object.values(tokenSettings)){if(n(t?.targetProfit)===40&&n(t?.manualTargetProfit,40)===40){t.targetProfit=3000;t.manualTargetProfit=3000}if(n(t?.maxLoss)===40)t.maxLoss=400;if(Array.isArray(t?.protectionStages)&&t.protectionStages.length===9)t.protectionStages=normalizeProtections(t.protectionStages,n(t.manualTargetProfit,n(t.targetProfit,settings.targetProfit)))};manualTokens=x.manualTokens||{};validated=x.validated||{};revalidateBlock=x.revalidateBlock||{};missedSignals=x.missedSignals||{};openPositions=x.openPositions||[];history=x.history||[];dismissed=x.dismissed||{};selectedSymbol=x.selectedSymbol||'';for(const [s,r] of Object.entries(manualTokens))if(n(r?.last)>0)lastPrices.set(s,n(r.last));for(const p of openPositions){if(!(n(p.openedAt)>0))p.openedAt=n(p.startedAt,n(p.createdAt,Date.now()));if(!(n(p.baseTargetProfit)>0))p.baseTargetProfit=Math.max(1,n(tokenSettings[p.symbol]?.manualTargetProfit,n(tokenSettings[p.symbol]?.targetProfit,settings.targetProfit)));if(n(p.entryPrice)>0)lastPrices.set(p.symbol,n(p.entryPrice));if(Number.isFinite(+p.lastAggId))lastAggIds.set(p.symbol,+p.lastAggId);if(Number.isFinite(+p.lastAggTime))lastAggTimes.set(p.symbol,+p.lastAggTime);p.marginType='ISOLATED';p.protectionStages=normalizeProtections(p.protectionStages,n(p.baseTargetProfit,n(p.targetProfit,settings.targetProfit)));p.protectionFloorActive=0;for(const st of p.protectionStages)if(st.enabled&&n(p.maxProfit)>=st.arm)p.protectionFloorActive=Math.max(n(p.protectionFloorActive),st.floor);if(!history.some(h=>h.symbol===p.symbol&&(h.status==='OPEN'||h.closedAt==null)&&n(h.openedAt)===n(p.openedAt)))history.push({symbol:p.symbol,entryPrice:p.entryPrice,exitPrice:null,pnl:null,reason:'ACHAT',openedAt:p.openedAt,closedAt:null,status:'OPEN'})}for(const [s,v] of Object.entries(validated)){if(Number.isFinite(+v?.lastAggId))lastAggIds.set(s,+v.lastAggId);if(Number.isFinite(+v?.lastAggTime))lastAggTimes.set(s,+v.lastAggTime)}expireWaitingSignals()}catch(_){}}
 async function jf(path){const r=await fetch(API+path,{cache:'no-store'});if(!r.ok)throw new Error(`Binance ${r.status}`);return r.json()}
