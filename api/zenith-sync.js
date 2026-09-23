@@ -45,6 +45,7 @@ const DEPLOYMENT_SHA = String(process.env.VERCEL_GIT_COMMIT_SHA || '');
 const KEY_RECONCILE_LAST = `${PREFIX}:reconcile:last`;
 const KEY_MASTER_CONFIG_ACK = `${PREFIX}:master-config:applied`;
 const KEY_MASTER_HEARTBEAT = `${PREFIX}:master-heartbeat`;
+const KEY_USER_STREAM_SESSION = `${PREFIX}:binance-user-stream`;
 const MASTER_TTL_SECONDS = 20;
 const MASTER_HEARTBEAT_TTL_SECONDS = 60;
 const MASTER_HEARTBEAT_STALE_MS = 30 * 1000;
@@ -1594,6 +1595,139 @@ export default async function handler(req, res) {
       return send(res, 200, { ok: true, currentMaster: await masterDeviceId() });
     }
 
+    if (action === 'master-revoke' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+      if (!(await verifyMasterAdminCode(req, res, device))) return;
+
+      const [registeredMaster, currentMaster] = await Promise.all([
+        roleDeviceId('master'),
+        masterDeviceId(),
+      ]);
+
+      // Compromise response is fail-closed immediately.
+      await redis(['SET', KEY_EMERGENCY_STOP, '1']);
+
+      if (!registeredMaster) {
+        await setMasterMode('PAUSED');
+        await redis(['DEL', KEY_REAL_EXECUTION_ARMED]);
+        await redis(['DEL', KEY_MASTER]);
+        return send(res, 200, {
+          ok: true,
+          masterRevoked: true,
+          alreadyRevoked: true,
+          emergencyStopActive: true,
+          masterMode: 'PAUSED',
+        });
+      }
+
+      if (currentMaster && String(currentMaster) !== String(registeredMaster)) {
+        await setMasterMode('PAUSE_PENDING');
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_LEASE_CONFLICT',
+          emergencyStopActive: true,
+          currentMaster,
+          registeredMaster,
+        });
+      }
+
+      let transition = {
+        transitioned: false,
+        masterMode: 'PAUSED',
+        blockers: [],
+        activity: { activePositions: 0, openOrders: 0 },
+        pendingCommands: 0,
+        processingCommands: 0,
+      };
+
+      if (currentMaster) {
+        await setMasterMode('PAUSE_PENDING');
+        transition = await tryFinalizePendingPause(currentMaster, 'PAUSE_PENDING');
+        if (transition.masterMode !== 'PAUSED') {
+          return send(res, 409, {
+            ok: false,
+            code: 'MASTER_REVOKE_DRAIN_REQUIRED',
+            emergencyStopActive: true,
+            masterMode: transition.masterMode,
+            blockers: transition.blockers || [],
+            activity: transition.activity || { activePositions: 0, openOrders: 0 },
+            pendingCommands: Number(transition.pendingCommands || 0),
+            processingCommands: Number(transition.processingCommands || 0),
+          });
+        }
+      } else {
+        // No active lease means the old MASTER cannot reacquire without controller authorization.
+        await setMasterMode('PAUSED');
+      }
+
+      const revokedAt = Date.now();
+      const revokeScript = [
+        "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if registered == '' then return 2 end",
+        "if registered ~= ARGV[1] then return -1 end",
+        "redis.call('SET', KEYS[2], '1')",
+        "redis.call('SET', KEYS[3], 'PAUSED')",
+        "redis.call('DEL', KEYS[4])",
+        "redis.call('DEL', KEYS[5])",
+        "redis.call('DEL', KEYS[6])",
+        "redis.call('DEL', KEYS[7])",
+        "redis.call('DEL', KEYS[8])",
+        "redis.call('DEL', KEYS[9])",
+        "redis.call('DEL', KEYS[10])",
+        "redis.call('DEL', KEYS[11])",
+        "redis.call('DEL', KEYS[12])",
+        "redis.call('SET', KEYS[13], ARGV[2])",
+        "redis.call('DEL', KEYS[1])",
+        "return 1"
+      ].join('\n');
+
+      const result = Number(await redis([
+        'EVAL', revokeScript, '13',
+        KEY_MASTER_DEVICE,
+        KEY_EMERGENCY_STOP,
+        KEY_MASTER_MODE,
+        KEY_REAL_EXECUTION_ARMED,
+        KEY_MASTER,
+        KEY_MASTER_HEARTBEAT,
+        KEY_MASTER_CONFIG_ACK,
+        KEY_RECONCILE_LAST,
+        KEY_STATE,
+        KEY_USER_STREAM_SESSION,
+        masterActivationKey(registeredMaster),
+        `${PREFIX}:master-admin-fail:${sha256(registeredMaster)}`,
+        roleAssignmentKey(PREFIX, 'master'),
+        String(registeredMaster),
+        String(revokedAt),
+      ]));
+
+      if (result === -1) {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_ROLE_CHANGED_DURING_REVOKE',
+          emergencyStopActive: true,
+        });
+      }
+
+      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+        at: revokedAt,
+        kind: 'MASTER_REVOKED',
+        requestedByDeviceId: device.deviceId,
+        previousMasterDeviceId: registeredMaster,
+        previousLeaseActive: Boolean(currentMaster),
+      })]);
+      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+
+      return send(res, 200, {
+        ok: true,
+        masterRevoked: true,
+        alreadyRevoked: result === 2,
+        previousMasterDeviceId: registeredMaster,
+        emergencyStopActive: true,
+        masterMode: 'PAUSED',
+        requiresPairingReopen: PAIRING_DISABLED,
+      });
+    }
     if (action === 'master-pause' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller', 'master']);
       if (!device) return;
