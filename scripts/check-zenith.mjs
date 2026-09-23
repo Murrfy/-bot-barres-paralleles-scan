@@ -1065,5 +1065,23 @@ if (!timingBlock.includes("createHash('sha256')") ||
   fail('authentication secrets must be compared as fixed-length SHA-256 digests');
 }
 
+const masterRevokeSync = fs.readFileSync('api/zenith-sync.js','utf8');
+const masterRevokeIndex = fs.readFileSync('index.html','utf8');
+for (const required of [
+  "action === 'master-revoke'",
+  "requireDevice(req, res, ['controller'])",
+  "'MASTER_REVOKE_DRAIN_REQUIRED'",
+  "'MASTER_REVOKED'",
+  'KEY_REAL_EXECUTION_ARMED',
+  'KEY_USER_STREAM_SESSION',
+  "roleAssignmentKey(PREFIX, 'master')"
+]) {
+  if (!masterRevokeSync.includes(required)) fail(`MASTER emergency revoke must remain fail-closed: ${required}`);
+}
+if (!masterRevokeIndex.includes('masterRevokeBtn') ||
+    !masterRevokeIndex.includes('controllerRevokeMaster') ||
+    !masterRevokeIndex.includes('action=master-revoke')) {
+  fail('iPhone controller must keep the protected MASTER revoke control');
+}
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
