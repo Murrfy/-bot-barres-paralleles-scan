@@ -5,7 +5,7 @@ import test from 'node:test';
 process.env.UPSTASH_REDIS_REST_URL='https://redis.test';
 process.env.UPSTASH_REDIS_REST_TOKEN='test-only';
 process.env.BINANCE_TRADING_API_KEY='api-key-test';
-process.env.BINANCE_TRADING_API_SECRET='secret-test';
+process.env.BINANCE_TRADING_API_SECRET='secret';
 process.env.VERCEL_GIT_COMMIT_SHA='sha-prod';
 
 const {default:handler}=await import('../api/binance-entry-execute.js?permission-revalidation-test='+Date.now());
