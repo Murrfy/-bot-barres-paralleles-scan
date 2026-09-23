@@ -969,5 +969,23 @@ for (const required of [
   if (!syncAdminSecretPolicy.includes(required)) fail(`MASTER admin secret policy invariant missing: ${required}`);
 }
 
+const boundedRequestBody = fs.readFileSync('lib/request-body-limit.mjs','utf8');
+for (const required of ['requestBodyStatus','content-length','serializedBodyBytes']) {
+  if (!boundedRequestBody.includes(required)) fail(`request body guard missing invariant: ${required}`);
+}
+for (const file of [
+  'api/zenith-sync.js',
+  'api/binance-entry-execute.js',
+  'api/binance-order-test.js',
+  'api/binance-protective-execute.js',
+  'api/binance-protective-update-execute.js',
+  'api/binance-user-stream-session.js',
+]) {
+  const body = fs.readFileSync(file,'utf8');
+  if (!body.includes('requestBodyStatus') || !body.includes("'REQUEST_BODY_TOO_LARGE'")) {
+    fail(`${file} must reject oversized request bodies before sensitive processing`);
+  }
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
