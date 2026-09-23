@@ -1698,16 +1698,18 @@ export default async function handler(req, res) {
       await redis(['SET', KEY_EMERGENCY_STOP, '1']);
       await setMasterMode('PAUSE_PENDING');
 
+      const revokedAt = Date.now();
+
       if (!registeredMaster) {
-        await setMasterMode('PAUSED');
         await redis(['DEL', KEY_REAL_EXECUTION_ARMED]);
         await redis(['DEL', KEY_MASTER]);
+        await redis(['SET', roleAssignmentKey(PREFIX, 'master'), String(revokedAt)]);
         return send(res, 200, {
           ok: true,
           masterRevoked: true,
           alreadyRevoked: true,
           emergencyStopActive: true,
-          masterMode: 'PAUSED',
+          masterMode: 'PAUSE_PENDING',
         });
       }
 
@@ -1722,10 +1724,25 @@ export default async function handler(req, res) {
         });
       }
 
+      const pauseTransition = await tryFinalizePendingPause(registeredMaster, 'PAUSE_PENDING');
+      if (pauseTransition.masterMode !== 'PAUSED') {
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_REVOKE_DRAIN_REQUIRED',
+          emergencyStopActive: true,
+          masterMode: 'PAUSE_PENDING',
+          blockers: pauseTransition.blockers || [],
+          activity: pauseTransition.activity || { activePositions: 0, openOrders: 0 },
+          pendingCommands: Number(pauseTransition.pendingCommands || 0),
+          processingCommands: Number(pauseTransition.processingCommands || 0),
+        });
+      }
+
       let liveActivity = null;
       try {
         liveActivity = await fetchLiveBinanceActivity();
       } catch (e) {
+        await setMasterMode('PAUSE_PENDING');
         return send(res, 503, {
           ok: false,
           code: e?.code || 'BINANCE_ACTIVITY_CHECK_FAILED',
@@ -1735,25 +1752,52 @@ export default async function handler(req, res) {
       }
 
       if (liveActivity.activePositions > 0 || liveActivity.openOrders > 0) {
+        await setMasterMode('PAUSE_PENDING');
         return send(res, 409, {
           ok: false,
           code: 'MASTER_REVOKE_DRAIN_REQUIRED',
           emergencyStopActive: true,
           masterMode: 'PAUSE_PENDING',
+          blockers: [
+            ...(liveActivity.activePositions > 0 ? ['ACTIVE_POSITION'] : []),
+            ...(liveActivity.openOrders > 0 ? ['OPEN_ORDER'] : []),
+          ],
           activity: liveActivity,
         });
       }
 
-      const [pendingCommands, processingCommands] = await Promise.all([
+      const [pendingCommands, processingCommands, reconciliation] = await Promise.all([
         redis(['LLEN', KEY_PENDING]),
         redis(['LLEN', KEY_PROCESSING]),
+        freshCleanReconciliation(),
       ]);
 
-      const revokedAt = Date.now();
+      const finalBlockers = [];
+      if (Number(pendingCommands || 0) > 0) finalBlockers.push('PENDING_COMMAND');
+      if (Number(processingCommands || 0) > 0) finalBlockers.push('PROCESSING_COMMAND');
+      if (!reconciliation.ok) finalBlockers.push(reconciliation.reason);
+
+      if (finalBlockers.length) {
+        await setMasterMode('PAUSE_PENDING');
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_REVOKE_DRAIN_REQUIRED',
+          emergencyStopActive: true,
+          masterMode: 'PAUSE_PENDING',
+          blockers: finalBlockers,
+          activity: liveActivity,
+          pendingCommands: Number(pendingCommands || 0),
+          processingCommands: Number(processingCommands || 0),
+        });
+      }
+
       const revokeScript = [
         "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
         "if registered == '' then return 2 end",
         "if registered ~= ARGV[1] then return -1 end",
+        "if tostring(redis.call('GET', KEYS[3]) or '') ~= 'PAUSED' then return -2 end",
+        "if redis.call('LLEN', KEYS[13]) > 0 then return -3 end",
+        "if redis.call('LLEN', KEYS[14]) > 0 then return -4 end",
         "redis.call('SET', KEYS[2], '1')",
         "redis.call('SET', KEYS[3], 'PAUSED')",
         "redis.call('DEL', KEYS[4])",
@@ -1765,8 +1809,6 @@ export default async function handler(req, res) {
         "redis.call('DEL', KEYS[10])",
         "redis.call('DEL', KEYS[11])",
         "redis.call('DEL', KEYS[12])",
-        "redis.call('DEL', KEYS[13])",
-        "redis.call('DEL', KEYS[14])",
         "redis.call('SET', KEYS[15], ARGV[2])",
         "redis.call('DEL', KEYS[1])",
         "return 1"
@@ -1801,6 +1843,22 @@ export default async function handler(req, res) {
         });
       }
 
+      if (result <= -2) {
+        await setMasterMode('PAUSE_PENDING');
+        const blocker = result === -2
+          ? 'MASTER_MUST_BE_PAUSED'
+          : result === -3
+            ? 'PENDING_COMMAND'
+            : 'PROCESSING_COMMAND';
+        return send(res, 409, {
+          ok: false,
+          code: 'MASTER_REVOKE_DRAIN_REQUIRED',
+          emergencyStopActive: true,
+          masterMode: 'PAUSE_PENDING',
+          blockers: [blocker],
+        });
+      }
+
       await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
         at: revokedAt,
         kind: 'MASTER_REVOKED',
@@ -1808,8 +1866,9 @@ export default async function handler(req, res) {
         previousMasterDeviceId: registeredMaster,
         previousLeaseActive: Boolean(currentMaster),
         liveActivity,
-        droppedPendingCommands: Number(pendingCommands || 0),
-        droppedProcessingCommands: Number(processingCommands || 0),
+        pendingCommands: 0,
+        processingCommands: 0,
+        masterRoleEpochAdvancedAt: revokedAt,
       })]);
       await redis(['LTRIM', KEY_AUDIT, '0', '199']);
 
@@ -1821,8 +1880,8 @@ export default async function handler(req, res) {
         emergencyStopActive: true,
         masterMode: 'PAUSED',
         liveActivity,
-        droppedPendingCommands: Number(pendingCommands || 0),
-        droppedProcessingCommands: Number(processingCommands || 0),
+        pendingCommands: 0,
+        processingCommands: 0,
         requiresPairingReopen: PAIRING_DISABLED,
       });
     }
