@@ -25,7 +25,7 @@ function request() {
   };
 }
 
-function harness({ role = 'master', registered = 'master-1', lease = 'master-1' } = {}) {
+function harness({ role = 'master', registered = 'master-1', lease = 'master-1', rateCount = 1 } = {}) {
   const original = globalThis.fetch;
   let externalCalls = 0;
 
@@ -39,6 +39,8 @@ function harness({ role = 'master', registered = 'master-1', lease = 'master-1' 
         result = registered;
       } else if (command[0] === 'GET' && command[1] === 'zenith:v1:master') {
         result = lease;
+      } else if (command[0] === 'EVAL') {
+        result = rateCount;
       }
       return new Response(JSON.stringify({ result }));
     }
@@ -92,6 +94,18 @@ test('current leased MASTER reaches preflight request validation', async () => {
     await handler(request(), res);
     assert.equal(res.code, 400);
     assert.equal(res.body.code, 'PREFLIGHT_REQUEST_INVALID');
+    assert.equal(h.externalCalls, 0);
+  } finally { h.restore(); }
+});
+
+test('entry preflight HTTP rate limit blocks before any Binance request', async () => {
+  const h = harness({ rateCount: 7 });
+  try {
+    const res = response();
+    await handler(request(), res);
+    assert.equal(res.code, 429);
+    assert.equal(res.body.code, 'ENTRY_PREFLIGHT_HTTP_RATE_LIMIT');
+    assert.ok(Number(res.headers['Retry-After']) >= 1);
     assert.equal(h.externalCalls, 0);
   } finally { h.restore(); }
 });
