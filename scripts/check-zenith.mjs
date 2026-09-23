@@ -942,5 +942,29 @@ if (!safetyWorkflowRunner.includes('runs-on: ubuntu-24.04') ||
   fail('Zenith safety CI runner must stay pinned to Ubuntu 24.04');
 }
 
+const cookieOnlyApiFiles = [
+  'api/binance-read.js',
+  'api/binance-reconcile.js',
+  'api/binance-entry-preflight.js',
+  'api/binance-entry-execute.js',
+  'api/binance-order-test.js',
+  'api/binance-protective-execute.js',
+  'api/binance-protective-update-execute.js',
+  'api/binance-runtime-snapshot.js',
+  'api/binance-user-stream-session.js',
+];
+for (const file of cookieOnlyApiFiles) {
+  const source = fs.readFileSync(file,'utf8');
+  if (!source.includes('cookieDeviceTokenCandidates') || source.includes('deviceTokenCandidates(req)')) {
+    fail(file + ' must require HttpOnly cookie authentication and reject Bearer-only sessions');
+  }
+}
+const syncCookieAuth = fs.readFileSync('api/zenith-sync.js','utf8');
+if (!syncCookieAuth.includes('allowLegacyBearer = false') ||
+    !syncCookieAuth.includes("action === 'whoami'") ||
+    !syncCookieAuth.includes('requireDevice(req, res, undefined, true)')) {
+  fail('legacy Bearer authentication must be restricted to one-time whoami cookie migration');
+}
+
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
