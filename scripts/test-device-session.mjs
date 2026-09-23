@@ -14,16 +14,18 @@ import {
   DEVICE_SESSION_MAX_AGE_SECONDS,
 } from '../lib/device-session.mjs';
 
-test('Bearer migration token has precedence and cookie is fallback', () => {
+test('Bearer is excluded by default and allowed only for explicit migration', () => {
   const req={headers:{authorization:'Bearer legacy-token',cookie:`${DEVICE_SESSION_COOKIE}=cookie-token`}};
   assert.equal(bearerToken(req),'legacy-token');
   assert.equal(cookieToken(req),'cookie-token');
-  assert.deepEqual(deviceTokenCandidates(req),['legacy-token','cookie-token']);
+  assert.deepEqual(deviceTokenCandidates(req),['cookie-token']);
+  assert.deepEqual(deviceTokenCandidates(req,{allowBearer:true}),['cookie-token','legacy-token']);
 });
 
-test('blank Bearer falls back to secure cookie', () => {
+test('blank Bearer still leaves the secure cookie as the only candidate', () => {
   const req={headers:{authorization:'Bearer ',cookie:`${DEVICE_SESSION_COOKIE}=cookie-token`}};
   assert.deepEqual(deviceTokenCandidates(req),['cookie-token']);
+  assert.deepEqual(deviceTokenCandidates(req,{allowBearer:true}),['cookie-token']);
 });
 
 test('__Host cookie is HttpOnly Secure Strict and host-only', () => {
