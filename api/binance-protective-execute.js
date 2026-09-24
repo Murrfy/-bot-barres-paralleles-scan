@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, serverMasterLeaseKey, serverMasterInstanceActive } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
 import { protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
@@ -70,6 +70,10 @@ async function requireCurrentMaster(req){
     if(String(registered||'')!==String(device.deviceId))continue;
     const issuedAt=await redis(['GET',roleAssignmentKey(PREFIX,'master')]);
     if(!deviceRoleAssignmentActive(device,issuedAt))continue;
+    const serverInstance=String(device?.deviceKind||'')==='server-master'
+      ? await redis(['GET',serverMasterLeaseKey(PREFIX)])
+      : '';
+    if(!serverMasterInstanceActive(device,serverInstance))continue;
     if(String(lease||'')!==String(device.deviceId)){
       const e=new Error('MASTER_LEASE_REQUIRED');e.code='MASTER_LEASE_REQUIRED';throw e;
     }
