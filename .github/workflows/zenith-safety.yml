@@ -70,6 +70,8 @@ jobs:
         run: node --test scripts/test-master-resume-paused-gate.mjs
       - name: Test ADMIN-protected MASTER activation
         run: node --test scripts/test-master-activation.mjs
+      - name: Test MASTER activation heartbeat revoke fence
+        run: node --test scripts/test-master-activation-heartbeat-revoke-fence.mjs
       - name: Test MASTER emergency revoke
         run: node --test scripts/test-master-revoke.mjs
       - name: Test MASTER admin secret policy
