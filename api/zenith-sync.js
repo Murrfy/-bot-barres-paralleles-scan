@@ -2453,15 +2453,58 @@ export default async function handler(req, res) {
         appliedAt: Date.now(),
         masterDeviceId: device.deviceId,
       };
-      await redis(['SET', KEY_MASTER_CONFIG_ACK, JSON.stringify(applied)]);
-      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+      const appliedAudit = {
         at: applied.appliedAt,
         kind: 'MASTER_CONFIG_APPLIED',
         deviceId: device.deviceId,
         revision,
         stateHash,
-      })]);
-      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      };
+      const ackScript = [
+        "local registered = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if registered ~= ARGV[3] then return -1 end",
+        "local lease = tostring(redis.call('GET', KEYS[4]) or '')",
+        "if lease ~= ARGV[3] then return -2 end",
+        "local roleIssuedAt = tonumber(redis.call('GET', KEYS[5]) or '0') or 0",
+        "local sessionCreatedAt = tonumber(ARGV[4]) or 0",
+        "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end",
+        "local controllerRaw = redis.call('GET', KEYS[6])",
+        "if not controllerRaw then return -4 end",
+        "local ok, controller = pcall(cjson.decode, controllerRaw)",
+        "if not ok then return -4 end",
+        "if tonumber(controller['revision'] or 0) ~= tonumber(ARGV[5]) then return -5 end",
+        "if tostring(controller['stateHash'] or '') ~= ARGV[6] then return -5 end",
+        "redis.call('SET', KEYS[1], ARGV[1])",
+        "redis.call('LPUSH', KEYS[2], ARGV[2])",
+        "redis.call('LTRIM', KEYS[2], 0, 199)",
+        "return 1"
+      ].join('\n');
+      const ackCommit = Number(await redis([
+        'EVAL', ackScript, '6',
+        KEY_MASTER_CONFIG_ACK,
+        KEY_AUDIT,
+        KEY_MASTER_DEVICE,
+        KEY_MASTER,
+        roleAssignmentKey(PREFIX, 'master'),
+        KEY_CONTROLLER_STATE,
+        JSON.stringify(applied),
+        JSON.stringify(appliedAudit),
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
+        String(revision),
+        stateHash,
+      ]));
+      if (ackCommit !== 1) {
+        if (ackCommit === -1 || ackCommit === -3) clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: ackCommit === -2 ? 'MASTER_LEASE_REQUIRED'
+            : ackCommit === -3 ? 'MASTER_SESSION_REVOKED'
+            : ackCommit === -4 ? 'NO_CONTROLLER_STATE'
+            : ackCommit === -5 ? 'MASTER_CONFIG_REVISION_CHANGED'
+            : 'MASTER_ROLE_CHANGED',
+        });
+      }
 
       return send(res, 200, {
         ok: true,
@@ -2565,6 +2608,11 @@ export default async function handler(req, res) {
       };
 
       const script = [
+        "local currentController = tostring(redis.call('GET', KEYS[4]) or '')",
+        "if currentController ~= ARGV[4] then return {-2, currentController, ''} end",
+        "local roleIssuedAt = tonumber(redis.call('GET', KEYS[5]) or '0') or 0",
+        "local sessionCreatedAt = tonumber(ARGV[5]) or 0",
+        "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return {-3, tostring(roleIssuedAt), ''} end",
         "local currentRaw = redis.call('GET', KEYS[1])",
         "local currentRev = 0",
         "if currentRaw then",
@@ -2590,16 +2638,28 @@ export default async function handler(req, res) {
       ].join('\n');
 
       const result = await redis([
-        'EVAL', script, '3',
+        'EVAL', script, '5',
         KEY_CONTROLLER_STATE, KEY_CONTROLLER_REV, KEY_AUDIT,
+        KEY_CONTROLLER_DEVICE, roleAssignmentKey(PREFIX, 'controller'),
         String(expectedRevision),
         JSON.stringify(snapshotTemplate),
         JSON.stringify(auditTemplate),
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
       ]);
 
-      const applied = Number(Array.isArray(result) ? result[0] : 0) === 1;
+      const resultCode = Number(Array.isArray(result) ? result[0] : 0);
+      const applied = resultCode === 1;
       const currentRevision = Number(Array.isArray(result) ? result[1] : 0) || 0;
       const rawState = String(Array.isArray(result) ? result[2] || '' : '');
+
+      if (resultCode === -2 || resultCode === -3) {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: resultCode === -2 ? 'CONTROLLER_ROLE_CHANGED' : 'CONTROLLER_SESSION_REVOKED',
+        });
+      }
 
       let state = null;
       try { state = rawState ? JSON.parse(rawState) : null; } catch {}
@@ -2659,7 +2719,36 @@ export default async function handler(req, res) {
         appliedRevision: Math.max(0, Number(req.body?.appliedRevision || 0)),
         data,
       };
-      await redis(['SET', KEY_STATE, JSON.stringify(snapshot)]);
+      const stateCommitScript = [
+        "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if registered ~= ARGV[2] then return -1 end",
+        "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if lease ~= ARGV[2] then return -2 end",
+        "local roleIssuedAt = tonumber(redis.call('GET', KEYS[4]) or '0') or 0",
+        "local sessionCreatedAt = tonumber(ARGV[3]) or 0",
+        "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end",
+        "redis.call('SET', KEYS[1], ARGV[1])",
+        "return 1"
+      ].join('\n');
+      const stateCommit = Number(await redis([
+        'EVAL', stateCommitScript, '4',
+        KEY_STATE,
+        KEY_MASTER_DEVICE,
+        KEY_MASTER,
+        roleAssignmentKey(PREFIX, 'master'),
+        JSON.stringify(snapshot),
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
+      ]));
+      if (stateCommit !== 1) {
+        if (stateCommit === -1 || stateCommit === -3) clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: stateCommit === -2 ? 'MASTER_LEASE_REQUIRED'
+            : stateCommit === -3 ? 'MASTER_SESSION_REVOKED'
+            : 'MASTER_ROLE_CHANGED',
+        });
+      }
       return send(res, 200, { ok: true, state: snapshot });
     }
 

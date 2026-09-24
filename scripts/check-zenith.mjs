@@ -1305,6 +1305,20 @@ for (const required of [
 ]) {
   if (!controllerStateRateSource.includes(required)) fail(`controller state writes must remain rate-limited: ${required}`);
 }
+for (const required of [
+  "if currentController ~= ARGV[4] then return {-2, currentController, ''} end",
+  "roleAssignmentKey(PREFIX, 'controller')",
+  'const stateCommitScript = [',
+  "if registered ~= ARGV[2] then return -1 end",
+  "if lease ~= ARGV[2] then return -2 end",
+  'const ackScript = [',
+  "if registered ~= ARGV[3] then return -1 end",
+  "if lease ~= ARGV[3] then return -2 end",
+  "if tonumber(controller['revision'] or 0) ~= tonumber(ARGV[5]) then return -5 end",
+  "if tostring(controller['stateHash'] or '') ~= ARGV[6] then return -5 end"
+]) {
+  if (!sync.includes(required)) fail(`central state mutations must be atomically fenced against role/lease/config changes: ${required}`);
+}
 const sharedStateSource = fs.readFileSync('api/zenith-sync.js','utf8');
 const jsonStructureSource = fs.readFileSync('lib/json-structure.mjs','utf8');
 for (const required of [
