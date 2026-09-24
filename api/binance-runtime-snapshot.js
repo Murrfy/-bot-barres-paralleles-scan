@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -57,6 +57,13 @@ async function requireCurrentMaster(req){
     if(String(registered||'')!==String(device.deviceId))continue;
     const issuedAt=await redis(['GET',roleAssignmentKey(PREFIX,'master')]);
     if(!deviceRoleAssignmentActive(device,issuedAt))continue;
+    if(String(device?.principal||'')==='engine'){
+      const suppliedInstance=engineInstanceHeader(req);
+      const currentInstance=String(await redis(['GET',`${PREFIX}:engine-instance`])||'');
+      if(!enginePrincipalInstanceActive(device,suppliedInstance,currentInstance)){
+        const e=new Error('ENGINE_INSTANCE_FENCED');e.code='ENGINE_INSTANCE_FENCED';throw e;
+      }
+    }
     if(String(lease||'')!==String(device.deviceId)){
       const e=new Error('MASTER_LEASE_REQUIRED');e.code='MASTER_LEASE_REQUIRED';throw e;
     }
@@ -179,7 +186,7 @@ export default async function handler(req,res){
   let master=null;
   try{master=await requireCurrentMaster(req)}
   catch(e){
-    if(e?.code==='MASTER_LEASE_REQUIRED')return send(res,409,{ok:false,code:'MASTER_LEASE_REQUIRED'});
+    if(e?.code==='MASTER_LEASE_REQUIRED'||e?.code==='ENGINE_INSTANCE_FENCED')return send(res,409,{ok:false,code:e.code});
     return send(res,503,{ok:false,code:e?.code||'AUTH_BACKEND_ERROR'});
   }
   if(!master)return send(res,401,{ok:false,code:'MASTER_REQUIRED'});

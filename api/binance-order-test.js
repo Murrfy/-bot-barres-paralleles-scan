@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
 
@@ -45,6 +45,13 @@ async function requireMaster(req){
     if(String(registered||'')!==String(device.deviceId))continue;
     const issuedAt=await redis(['GET',roleAssignmentKey(PREFIX,'master')]);
     if(!deviceRoleAssignmentActive(device,issuedAt))continue;
+    if(String(device?.principal||'')==='engine'){
+      const suppliedInstance=engineInstanceHeader(req);
+      const currentInstance=String(await redis(['GET',`${PREFIX}:engine-instance`])||'');
+      if(!enginePrincipalInstanceActive(device,suppliedInstance,currentInstance)){
+        throw Object.assign(new Error('ENGINE_INSTANCE_FENCED'),{code:'ENGINE_INSTANCE_FENCED'});
+      }
+    }
     if(String(lease||'')!==String(device.deviceId)) throw Object.assign(new Error('MASTER_LEASE_REQUIRED'),{code:'MASTER_LEASE_REQUIRED'});
     return device;
   }
@@ -121,7 +128,7 @@ export default async function handler(req,res){
   const bodyStatus=requestBodyStatus(req,64*1024);
   if(!bodyStatus.ok)return send(res,413,{ok:false,code:'REQUEST_BODY_TOO_LARGE',maxBytes:bodyStatus.maxBytes,matchingEngineSubmitted:false,tradingWriteAttempted:false});
   let master=null;
-  try{master=await requireMaster(req)}catch(e){return send(res,e?.code==='MASTER_LEASE_REQUIRED'?409:503,{ok:false,code:e?.code||'AUTH_BACKEND_ERROR'})}
+  try{master=await requireMaster(req)}catch(e){return send(res,(e?.code==='MASTER_LEASE_REQUIRED'||e?.code==='ENGINE_INSTANCE_FENCED')?409:503,{ok:false,code:e?.code||'AUTH_BACKEND_ERROR'})}
   if(!master)return send(res,401,{ok:false,code:'MASTER_REQUIRED'});
   try{
     if(!(await orderTestRateAllowed(master.deviceId))){

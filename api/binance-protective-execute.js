@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
 import { protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
@@ -70,6 +70,13 @@ async function requireCurrentMaster(req){
     if(String(registered||'')!==String(device.deviceId))continue;
     const issuedAt=await redis(['GET',roleAssignmentKey(PREFIX,'master')]);
     if(!deviceRoleAssignmentActive(device,issuedAt))continue;
+    if(String(device?.principal||'')==='engine'){
+      const suppliedInstance=engineInstanceHeader(req);
+      const currentInstance=String(await redis(['GET',`${PREFIX}:engine-instance`])||'');
+      if(!enginePrincipalInstanceActive(device,suppliedInstance,currentInstance)){
+        const e=new Error('ENGINE_INSTANCE_FENCED');e.code='ENGINE_INSTANCE_FENCED';throw e;
+      }
+    }
     if(String(lease||'')!==String(device.deviceId)){
       const e=new Error('MASTER_LEASE_REQUIRED');e.code='MASTER_LEASE_REQUIRED';throw e;
     }
@@ -182,7 +189,7 @@ export default async function handler(req,res){
 
   let master=null;
   try{master=await requireCurrentMaster(req)}
-  catch(e){return send(res,e?.code==='MASTER_LEASE_REQUIRED'?409:503,{ok:false,code:e?.code||'AUTH_BACKEND_ERROR'})}
+  catch(e){return send(res,(e?.code==='MASTER_LEASE_REQUIRED'||e?.code==='ENGINE_INSTANCE_FENCED')?409:503,{ok:false,code:e?.code||'AUTH_BACKEND_ERROR'})}
   if(!master)return send(res,401,{ok:false,code:'MASTER_REQUIRED'});
 
   const apiKey=process.env.BINANCE_TRADING_API_KEY;
