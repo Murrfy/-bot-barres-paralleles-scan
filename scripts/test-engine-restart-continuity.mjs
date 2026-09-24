@@ -83,8 +83,9 @@ test('initial server registration cannot inherit an old authorization or real ar
 test('ADMIN MASTER revoke permanently clears server restart authority and current engine instance',()=>{
   assert.ok(revoke.includes('KEY_ENGINE_AUTHORIZED'));
   assert.ok(revoke.includes('KEY_ENGINE_INSTANCE'));
+  assert.ok(revoke.includes('KEY_ENGINE_DISABLED'));
   assert.ok(revoke.includes("redis.call('DEL', KEYS[19])"));
   assert.ok(revoke.includes("redis.call('DEL', KEYS[20])"));
-  assert.ok(revoke.includes("'EVAL', revokeScript, '20'"));
+  assert.ok(revoke.includes("'EVAL', revokeScript, '21'"));
   assert.ok(revoke.includes("'EVAL', alreadyRevokedScript, '7'"));
 });
