@@ -1298,6 +1298,7 @@ async function tryFinalizePendingPause(deviceId, knownMode = '') {
     "  local status = tostring(report['status'] or '')",
     "  local reasons = report['reasons'] or {}",
     "  local actual = report['actual'] or {}",
+    "  if type(reasons) ~= 'table' or type(actual) ~= 'table' then return {-7, mode, pending, processing} end",
     "  if report['failClosed'] ~= false or (status ~= 'CLEAN_REAL' and status ~= 'CLEAN_IDLE') or #reasons > 0 then return {-7, mode, pending, processing} end",
     "  if tonumber(actual['positions'] or -1) ~= 0 or tonumber(actual['orders'] or -1) ~= 0 then return {-7, mode, pending, processing} end",
     "end",
