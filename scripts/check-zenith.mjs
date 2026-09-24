@@ -819,6 +819,18 @@ if (!sync.includes("'PAUSE_PENDING'") ||
     !sync.includes("'MASTER_PAUSE_COMPLETED'")) {
   fail('MASTER must support queued pause after active positions close');
 }
+if (!sync.includes('const finalizeScript = [') ||
+    !sync.includes("if mode ~= 'PAUSE_PENDING' then return {-1, mode, pending, processing} end") ||
+    !sync.includes("if pending > 0 then return {-2, mode, pending, processing} end") ||
+    !sync.includes("if processing > 0 then return {-3, mode, pending, processing} end") ||
+    !sync.includes("if lease ~= ARGV[1] or registered ~= ARGV[1] then return {-4, mode, pending, processing} end") ||
+    !sync.includes("if roleEpoch == '' or roleEpoch ~= ARGV[2] then return {-5, mode, pending, processing} end") ||
+    !sync.includes("if runtimeRaw ~= ARGV[4] then return {-6, mode, pending, processing} end") ||
+    !sync.includes("if not reconcileRaw then return {-7, mode, pending, processing} end") ||
+    !sync.includes("redis.call('SET', KEYS[1], 'PAUSED')") ||
+    !sync.includes("'EVAL', finalizeScript, '9'")) {
+  fail('PAUSE_PENDING finalization must atomically revalidate queues, MASTER authority, runtime and reconciliation before PAUSED');
+}
 const masterResumeStart = sync.indexOf("if (action === 'master-resume' && req.method === 'POST')");
 const masterResumeEnd = masterResumeStart >= 0
   ? sync.indexOf("if (action === 'safety' && req.method === 'GET')", masterResumeStart)
