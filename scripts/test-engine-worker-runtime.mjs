@@ -99,7 +99,7 @@ test('command execution stays fail-closed on ambiguity and requires stream readi
   assert.ok(worker.includes('PROTECTIVE_CLOSE_ATTEMPTS'));
 });
 
-test('automatic progressive protection is deliberately not claimed as migrated yet',()=>{
-  assert.equal(worker.includes("../lib/master-auto-protection.mjs"),false);
-  assert.ok(worker.includes('autoProtectionMoved:false'));
+test('automatic progressive protection is now owned by the server worker',()=>{
+  assert.ok(worker.includes("../lib/master-auto-protection.mjs"));
+  assert.ok(worker.includes('autoProtectionMoved:true'));
 });
