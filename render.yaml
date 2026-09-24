@@ -16,4 +16,4 @@ services:
       - key: ZENITH_ENGINE_BOOTSTRAP_SECRET
         sync: false
       - key: ZENITH_ENGINE_WORKER_ENABLED
-        value: "0"
+        value: "1"
