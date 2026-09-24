@@ -81,7 +81,9 @@ async function requireZenithDevice(req) {
         }
       }
       return device;
-    } catch {}
+    } catch (e) {
+      if (e?.code === 'ENGINE_INSTANCE_FENCED' || e?.code === 'MASTER_LEASE_REQUIRED') throw e;
+    }
   }
   return null;
 }
