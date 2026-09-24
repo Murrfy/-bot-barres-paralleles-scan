@@ -65,6 +65,13 @@ test('failure cannot overwrite a newer reconciliation attempt',()=>{
   assert.ok(handler.includes('attemptId'));
 });
 
+test('authority-race rejection still degrades the owned attempt to fail-closed UNAVAILABLE',()=>{
+  assert.ok(handler.includes('const committed = await commitReconciliationAttempt'));
+  assert.ok(handler.includes('error.code = error.message'));
+  assert.ok(handler.indexOf('failReconciliationAttempt({') > handler.indexOf('commitReconciliationAttempt'));
+  assert.ok(fail.includes("redis.call('SET', KEYS[1], ARGV[2], 'EX', '30')"));
+});
+
 test('legacy direct persistReport path is removed',()=>{
   assert.equal(source.includes('async function persistReport('),false);
 });
