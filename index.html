@@ -211,8 +211,9 @@ function fullCurrentPrice(v,symbol=''){
   const value=n(v,0);
   if(!(value>0))return '—';
   const rules=symbolRules(String(symbol||'').toUpperCase());
+  const rawTick=rules?.filters?.PRICE_FILTER?.tickSize;
   const tick=ruleNum(rules?.filters?.PRICE_FILTER,'tickSize');
-  const decimals=tick>0?stepDecimals(tick):Math.min(12,Math.max(2,n(rules?.pricePrecision,8)));
+  const decimals=tick>0?stepDecimals(rawTick):Math.min(12,Math.max(2,n(rules?.pricePrecision,8)));
   return value.toFixed(decimals);
 }
 function renderSelectedCurrentPrice(){
