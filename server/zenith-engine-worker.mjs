@@ -25,6 +25,7 @@ import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-prot
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
 const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
+const BINANCE_PUBLIC_BASE='https://fapi.binance.com';
 const BOOTSTRAP_SECRET=String(process.env.ZENITH_ENGINE_BOOTSTRAP_SECRET||'');
 const WORKER_ENABLED=process.env.ZENITH_ENGINE_WORKER_ENABLED==='1';
 const HEARTBEAT_MS=8000;
@@ -32,6 +33,7 @@ const COMMAND_POLL_MS=750;
 const RECONCILE_MS=15000;
 const KEEPALIVE_MS=45*60*1000;
 const STREAM_RESTART_MS=23*60*60*1000;
+const MARK_FALLBACK_MS=6000;
 const BOOTSTRAP_RETRY_MS=15000;
 
 const instanceId='engine-instance-'+crypto.randomUUID();
@@ -92,6 +94,14 @@ const markStream={
   generation:0,
   reconnectTimer:null,
   restartTimer:null,
+  fallbackTimer:null,
+  subscribed:new Set(),
+  requestId:1,
+  lastEventAt:0,
+  lastAggIds:new Map(),
+  lastAggTimes:new Map(),
+  recovering:new Set(),
+  pendingAggTrades:new Map(),
   lastError:'',
 };
 
@@ -221,6 +231,22 @@ async function userStreamApi(action,method='GET'){
 }
 async function binanceApi(path,{method='GET',body}={}){
   return http(path,{method,body});
+}
+
+async function publicBinanceJson(path){
+  const response=await fetch(BINANCE_PUBLIC_BASE+path,{
+    cache:'no-store',
+    signal:AbortSignal.timeout(8000),
+  });
+  const text=await response.text();
+  let data={};
+  try{data=text?JSON.parse(text):{}}catch{data={}}
+  if(!response.ok){
+    const error=new Error(data?.msg||('BINANCE_PUBLIC_HTTP_'+response.status));
+    error.code='BINANCE_PUBLIC_HTTP_'+response.status;
+    throw error;
+  }
+  return data;
 }
 
 function fatalAuthorityCode(code){
@@ -688,6 +714,131 @@ async function runAutoProtection(symbol,mark){
   finally{autoProtection.busySymbols.delete(wanted)}
 }
 
+function activeProtectionSymbols(){
+  return new Set(
+    (streamProjection().binancePositions||[])
+      .filter(position=>Math.abs(n(position?.positionAmt??position?.quantity,0))>0)
+      .map(position=>String(position?.symbol||'').toUpperCase())
+      .filter(Boolean)
+  );
+}
+
+function markStreamName(symbol){
+  return String(symbol||'').toLowerCase()+'@aggTrade';
+}
+
+function activePositionForSymbol(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  return (streamProjection().binancePositions||[])
+    .find(position=>String(position?.symbol||'').toUpperCase()===wanted&&
+      Math.abs(n(position?.positionAmt??position?.quantity,0))>0)||null;
+}
+
+function trackingStartTime(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  const position=activePositionForSymbol(wanted);
+  return Math.max(
+    0,
+    n(markStream.lastAggTimes.get(wanted),
+      n(position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,Date.now()-2000))
+  );
+}
+
+function rememberAggCursor(symbol,id,time){
+  const wanted=String(symbol||'').toUpperCase();
+  if(Number.isFinite(Number(id)))markStream.lastAggIds.set(wanted,Number(id));
+  if(Number.isFinite(Number(time)))markStream.lastAggTimes.set(wanted,Number(time));
+}
+
+async function processAggTradeRow(symbol,row){
+  if(!row)return false;
+  const wanted=String(symbol||row?.s||'').toUpperCase();
+  if(!activeProtectionSymbols().has(wanted))return false;
+  const id=n(row?.a,-1);
+  const eventTime=n(row?.T,n(row?.E,Date.now()));
+  const previousId=markStream.lastAggIds.get(wanted);
+  if(Number.isFinite(previousId)&&id>=0&&id<=previousId)return false;
+  const price=n(row?.p,0);
+  if(!(price>0))return false;
+  markStream.lastEventAt=Date.now();
+  await runAutoProtection(wanted,price);
+  rememberAggCursor(wanted,id,eventTime);
+  return true;
+}
+
+async function recoverMissedAggTrades(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  if(!activeProtectionSymbols().has(wanted)||markStream.recovering.has(wanted))return false;
+  markStream.recovering.add(wanted);
+  markStream.pendingAggTrades.set(wanted,[]);
+  try{
+    let start=Math.max(Date.now()-48*60*60*1000,trackingStartTime(wanted)-250);
+    let fromId=null;
+    let pages=0;
+    while(activeProtectionSymbols().has(wanted)&&pages<25){
+      const path=fromId==null
+        ?`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&startTime=${Math.floor(start)}&limit=1000`
+        :`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&fromId=${fromId}&limit=1000`;
+      const rows=await publicBinanceJson(path);
+      if(!Array.isArray(rows)||!rows.length)break;
+      for(const row of rows){
+        if(!activeProtectionSymbols().has(wanted))break;
+        await processAggTradeRow(wanted,row);
+      }
+      pages++;
+      if(rows.length<1000)break;
+      fromId=n(rows[rows.length-1]?.a,-1)+1;
+      if(!(fromId>0))break;
+      await sleep(40);
+    }
+    if(pages>=25){
+      await assertAutoProtectionPanic('MARK_RECOVERY_PARTIAL_'+wanted);
+      return false;
+    }
+    return true;
+  }catch(error){
+    await assertAutoProtectionPanic(
+      'MARK_RECOVERY_FAILED_'+cleanReason(error?.message||'BINANCE_PUBLIC_RECOVERY','BINANCE_PUBLIC_RECOVERY')
+    );
+    return false;
+  }finally{
+    const queued=markStream.pendingAggTrades.get(wanted)||[];
+    markStream.recovering.delete(wanted);
+    markStream.pendingAggTrades.delete(wanted);
+    queued.sort((a,b)=>n(a?.a)-n(b?.a)||n(a?.T)-n(b?.T));
+    for(const row of queued){
+      if(activeProtectionSymbols().has(wanted))await processAggTradeRow(wanted,row);
+    }
+  }
+}
+
+function sendMarkControl(method,params){
+  if(!markStream.ws||markStream.ws.readyState!==WebSocket.OPEN||!Array.isArray(params)||!params.length)return false;
+  try{
+    markStream.ws.send(JSON.stringify({method,params,id:markStream.requestId++}));
+    return true;
+  }catch{
+    return false;
+  }
+}
+
+function syncMarkSubscriptions(){
+  if(!markStream.ws||markStream.ws.readyState!==WebSocket.OPEN)return false;
+  const desired=new Set([...activeProtectionSymbols()].map(markStreamName));
+  const add=[...desired].filter(name=>!markStream.subscribed.has(name));
+  const remove=[...markStream.subscribed].filter(name=>!desired.has(name));
+  if(add.length&&sendMarkControl('SUBSCRIBE',add)){
+    add.forEach(name=>markStream.subscribed.add(name));
+    for(const symbol of activeProtectionSymbols()){
+      if(add.includes(markStreamName(symbol))){
+        void recoverMissedAggTrades(symbol).catch(error=>logError('MARK_RECOVERY_FAILED',error,{symbol}));
+      }
+    }
+  }
+  if(remove.length&&sendMarkControl('UNSUBSCRIBE',remove))remove.forEach(name=>markStream.subscribed.delete(name));
+  return true;
+}
+
 function scheduleMarkReconnect(delay=3000){
   if(stopping||!runtime.leaseActive)return;
   if(markStream.reconnectTimer)clearTimeout(markStream.reconnectTimer);
@@ -700,6 +851,7 @@ function scheduleMarkReconnect(delay=3000){
 function closeMarkPriceStream(reason='MARK_STREAM_DISCONNECTED',reconnect=true){
   const ws=markStream.ws;
   markStream.ws=null;
+  markStream.subscribed.clear();
   markStream.lastError=String(reason||'MARK_STREAM_DISCONNECTED');
   if(markStream.restartTimer){clearTimeout(markStream.restartTimer);markStream.restartTimer=null}
   if(ws&&ws.readyState<2){
@@ -709,36 +861,68 @@ function closeMarkPriceStream(reason='MARK_STREAM_DISCONNECTED',reconnect=true){
 }
 
 async function processMarkPayload(payload){
-  const rows=Array.isArray(payload)
-    ?payload
-    :Array.isArray(payload?.data)
-      ?payload.data
-      :[payload?.data||payload];
-  const active=new Set(
-    (streamProjection().binancePositions||[])
-      .filter(position=>Math.abs(n(position?.positionAmt??position?.quantity,0))>0)
-      .map(position=>String(position?.symbol||'').toUpperCase())
-  );
-  const tasks=[];
-  for(const row of rows){
-    const symbol=String(row?.s||row?.symbol||'').toUpperCase();
-    const mark=n(row?.p??row?.markPrice,0);
-    if(!active.has(symbol)||!(mark>0))continue;
-    tasks.push(runAutoProtection(symbol,mark));
+  const row=payload?.data&&typeof payload.data==='object'?payload.data:payload;
+  if(!row||String(row?.e||'')!=='aggTrade')return false;
+  const symbol=String(row?.s||'').toUpperCase();
+  if(markStream.recovering.has(symbol)){
+    const queued=markStream.pendingAggTrades.get(symbol)||[];
+    if(queued.length>=1000){
+      await assertAutoProtectionPanic('MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol);
+      return false;
+    }
+    queued.push(row);
+    markStream.pendingAggTrades.set(symbol,queued);
+    return true;
   }
-  if(tasks.length)await Promise.allSettled(tasks);
+  return processAggTradeRow(symbol,row);
+}
+
+async function fallbackMarkPrices(){
+  if(stopping||!runtime.leaseActive)return false;
+  if(markStream.ws&&markStream.ws.readyState===WebSocket.OPEN)return false;
+  if(!activeProtectionSymbols().size)return false;
+  try{
+    const result=await binanceApi('/api/binance-read');
+    if(result.response.status===429)return false;
+    if(!result.response.ok||result.data?.ok!==true){
+      const code=String(result.data?.code||('HTTP_'+result.response.status));
+      if(fatalAuthorityCode(code)){
+        const error=new Error(code);error.code=code;throw error;
+      }
+      markStream.lastError='MARK_FALLBACK_'+code;
+      return false;
+    }
+    const tasks=[];
+    for(const position of Array.isArray(result.data?.positions)?result.data.positions:[]){
+      const symbol=String(position?.symbol||'').toUpperCase();
+      const mark=n(position?.markPrice,0);
+      if(activeProtectionSymbols().has(symbol)&&mark>0)tasks.push(runAutoProtection(symbol,mark));
+    }
+    if(tasks.length)await Promise.allSettled(tasks);
+    return true;
+  }catch(error){
+    const code=String(error?.code||error?.message||'MARK_FALLBACK_FAILED');
+    markStream.lastError=code;
+    if(fatalAuthorityCode(code))throw error;
+    return false;
+  }
 }
 
 async function ensureMarkPriceStream(){
   if(stopping||!runtime.leaseActive)return false;
-  if(markStream.ws&&(markStream.ws.readyState===WebSocket.OPEN||markStream.ws.readyState===WebSocket.CONNECTING))return true;
+  if(markStream.ws&&(markStream.ws.readyState===WebSocket.OPEN||markStream.ws.readyState===WebSocket.CONNECTING)){
+    syncMarkSubscriptions();
+    return true;
+  }
   const generation=++markStream.generation;
-  const socket=new WebSocket('wss://fstream.binance.com/market/ws/!markPrice@arr@1s');
+  const socket=new WebSocket('wss://fstream.binance.com/market/ws');
   markStream.ws=socket;
 
   socket.addEventListener('open',()=>{
     if(markStream.ws!==socket||generation!==markStream.generation)return;
     markStream.lastError='';
+    markStream.subscribed.clear();
+    syncMarkSubscriptions();
     if(markStream.restartTimer)clearTimeout(markStream.restartTimer);
     markStream.restartTimer=setTimeout(
       ()=>closeMarkPriceStream('SCHEDULED_23H_MARK_RECONNECT',true),
@@ -761,6 +945,8 @@ async function ensureMarkPriceStream(){
   socket.addEventListener('close',()=>{
     if(markStream.ws!==socket)return;
     markStream.ws=null;
+    markStream.subscribed.clear();
+    void fallbackMarkPrices();
     scheduleMarkReconnect();
   });
   return true;
@@ -797,6 +983,7 @@ async function publishRuntime(){
     },
   });
   if(!response.ok||data?.ok!==true)throw new Error(data?.code||('HTTP_'+response.status));
+  syncMarkSubscriptions();
   return true;
 }
 
@@ -1487,6 +1674,7 @@ async function runtimeCycle(){
     await ensureUserStream();
     await loadAutoHighWater().catch(error=>logError('AUTO_HIGH_WATER_LOAD_FAILED',error));
     await ensureMarkPriceStream();
+    syncMarkSubscriptions();
     return true;
   }catch(error){
     const code=String(error?.code||error?.message||'RUNTIME_CYCLE_FAILED');
@@ -1515,6 +1703,7 @@ async function shutdown(code=0){
   if(stream.reconnectTimer)clearTimeout(stream.reconnectTimer);
   if(markStream.reconnectTimer)clearTimeout(markStream.reconnectTimer);
   if(markStream.restartTimer)clearTimeout(markStream.restartTimer);
+  if(markStream.fallbackTimer)clearInterval(markStream.fallbackTimer);
   if(autoProtection.highWaterSaveTimer)clearTimeout(autoProtection.highWaterSaveTimer);
   clearStreamTimers();
   await persistAutoHighWaterNow().catch(()=>{});
@@ -1544,6 +1733,10 @@ async function main(){
   await runtimeCycle();
   heartbeatTimer=setInterval(()=>runtimeCycle(),HEARTBEAT_MS);
   execution.timer=setInterval(()=>commandCycle(),COMMAND_POLL_MS);
+  markStream.fallbackTimer=setInterval(
+    ()=>fallbackMarkPrices().catch(error=>logError('MARK_FALLBACK_FAILED',error)),
+    MARK_FALLBACK_MS
+  );
 
   log('RUNNING',{
     baseOrigin:new URL(BASE_URL).origin,
