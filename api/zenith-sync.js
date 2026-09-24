@@ -59,6 +59,7 @@ const KEY_USER_STREAM_MUTATION_LOCK = `${PREFIX}:binance-user-stream:mutation-lo
 const KEY_ENGINE_INSTANCE = `${PREFIX}:engine-instance`;
 const KEY_ENGINE_AUTHORIZED = `${PREFIX}:engine-authorized`;
 const KEY_ENGINE_DISABLED = `${PREFIX}:engine-disabled`;
+const KEY_ENGINE_PROTECTION_HIGH_WATER = `${PREFIX}:engine-protection-high-water`;
 const MASTER_TTL_SECONDS = 20;
 const ENGINE_INSTANCE_TTL_SECONDS = 45;
 const MASTER_HEARTBEAT_TTL_SECONDS = 60;
@@ -3442,6 +3443,167 @@ export default async function handler(req, res) {
         pendingCommands: Number(pending || 0),
         processingCommands: Number(processing || 0),
         reasons,
+      });
+    }
+
+    if (action === 'engine-protection-high-water' && req.method === 'GET') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+      if (device.principal !== 'engine') {
+        return send(res, 403, { ok:false, code:'ENGINE_PRINCIPAL_REQUIRED' });
+      }
+
+      const readScript = [
+        "local currentInstance = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if currentInstance ~= ARGV[1] then return {-1, '', ''} end",
+        "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if registered ~= ARGV[2] then return {-2, '', ''} end",
+        "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if lease ~= ARGV[2] then return {-3, '', ''} end",
+        "local epoch = tostring(redis.call('GET', KEYS[4]) or '')",
+        "if epoch ~= ARGV[3] then return {-4, '', ''} end",
+        "local authorization = tostring(redis.call('GET', KEYS[5]) or '')",
+        "if authorization == '' then return {-5, '', ''} end",
+        "local highWater = tostring(redis.call('GET', KEYS[6]) or '')",
+        "return {1, authorization, highWater}"
+      ].join('\n');
+
+      const result = await redis([
+        'EVAL', readScript, '6',
+        KEY_ENGINE_INSTANCE,
+        KEY_MASTER_DEVICE,
+        KEY_MASTER,
+        roleAssignmentKey(PREFIX, 'master'),
+        KEY_ENGINE_AUTHORIZED,
+        KEY_ENGINE_PROTECTION_HIGH_WATER,
+        String(device.engineInstanceId || ''),
+        String(device.deviceId || ''),
+        String(Number(device.createdAt || 0)),
+      ]);
+      const code = Number(Array.isArray(result) ? result[0] : 0);
+      if (code !== 1) {
+        return send(res, 409, {
+          ok:false,
+          code: code === -1 ? 'ENGINE_INSTANCE_FENCED'
+            : code === -2 ? 'MASTER_ROLE_CHANGED'
+            : code === -3 ? 'MASTER_LEASE_REQUIRED'
+            : code === -4 ? 'MASTER_SESSION_REVOKED'
+            : code === -5 ? 'ENGINE_RESTART_AUTHORIZATION_REQUIRED'
+            : 'ENGINE_HIGH_WATER_READ_FAILED',
+        });
+      }
+
+      const authorization = parseStoredJson(Array.isArray(result) ? result[1] : '');
+      const authorizationAt = Number(authorization?.authorizedAt || 0);
+      if (authorization?.version !== 1 ||
+          String(authorization?.masterDeviceId || '') !== String(device.deviceId || '') ||
+          !Number.isFinite(authorizationAt) || authorizationAt <= 0) {
+        return send(res, 409, { ok:false, code:'ENGINE_RESTART_AUTHORIZATION_INVALID' });
+      }
+
+      const stored = parseStoredJson(Array.isArray(result) ? result[2] : '');
+      const sameScope = Boolean(
+        stored?.version === 1 &&
+        Number(stored?.authorizationAt || 0) === authorizationAt &&
+        plainJsonObject(stored?.entries)
+      );
+      return send(res, 200, {
+        ok:true,
+        authorizationAt,
+        entries:sameScope ? stored.entries : {},
+        staleScope:Boolean(stored && !sameScope),
+        updatedAt:sameScope ? Number(stored.updatedAt || 0) : 0,
+      });
+    }
+
+    if (action === 'engine-protection-high-water' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+      if (device.principal !== 'engine') {
+        return send(res, 403, { ok:false, code:'ENGINE_PRINCIPAL_REQUIRED' });
+      }
+
+      const authorizationAt = Number(req.body?.authorizationAt);
+      const entries = req.body?.entries;
+      if (!Number.isSafeInteger(authorizationAt) || authorizationAt <= 0 || !plainJsonObject(entries)) {
+        return send(res, 400, { ok:false, code:'ENGINE_HIGH_WATER_INVALID' });
+      }
+      const keys = Object.keys(entries);
+      if (keys.length > 20) {
+        return send(res, 413, { ok:false, code:'ENGINE_HIGH_WATER_TOO_MANY_ENTRIES', maxEntries:20 });
+      }
+      const cleanEntries = {};
+      for (const key of keys) {
+        if (!/^[A-Za-z0-9._:+-]{8,200}$/.test(key)) {
+          return send(res, 400, { ok:false, code:'ENGINE_HIGH_WATER_KEY_INVALID' });
+        }
+        const value = Number(entries[key]);
+        if (!Number.isFinite(value) || Math.abs(value) > 1e9) {
+          return send(res, 400, { ok:false, code:'ENGINE_HIGH_WATER_VALUE_INVALID' });
+        }
+        cleanEntries[key] = value;
+      }
+      const record = {
+        version:1,
+        authorizationAt,
+        updatedAt:Date.now(),
+        entries:cleanEntries,
+      };
+      const recordRaw = JSON.stringify(record);
+      if (Buffer.byteLength(recordRaw, 'utf8') > 16 * 1024) {
+        return send(res, 413, { ok:false, code:'ENGINE_HIGH_WATER_TOO_LARGE' });
+      }
+
+      const writeScript = [
+        "local currentInstance = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if currentInstance ~= ARGV[1] then return -1 end",
+        "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if registered ~= ARGV[2] then return -2 end",
+        "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if lease ~= ARGV[2] then return -3 end",
+        "local epoch = tostring(redis.call('GET', KEYS[4]) or '')",
+        "if epoch ~= ARGV[3] then return -4 end",
+        "local authorizationRaw = redis.call('GET', KEYS[5])",
+        "if not authorizationRaw then return -5 end",
+        "local ok, authorization = pcall(cjson.decode, authorizationRaw)",
+        "if not ok or tonumber(authorization['version'] or 0) ~= 1 then return -6 end",
+        "if tostring(authorization['masterDeviceId'] or '') ~= ARGV[2] then return -6 end",
+        "if tonumber(authorization['authorizedAt'] or 0) ~= tonumber(ARGV[4]) then return -7 end",
+        "redis.call('SET', KEYS[6], ARGV[5])",
+        "return 1"
+      ].join('\n');
+
+      const result = Number(await redis([
+        'EVAL', writeScript, '6',
+        KEY_ENGINE_INSTANCE,
+        KEY_MASTER_DEVICE,
+        KEY_MASTER,
+        roleAssignmentKey(PREFIX, 'master'),
+        KEY_ENGINE_AUTHORIZED,
+        KEY_ENGINE_PROTECTION_HIGH_WATER,
+        String(device.engineInstanceId || ''),
+        String(device.deviceId || ''),
+        String(Number(device.createdAt || 0)),
+        String(authorizationAt),
+        recordRaw,
+      ]));
+      if (result !== 1) {
+        return send(res, 409, {
+          ok:false,
+          code: result === -1 ? 'ENGINE_INSTANCE_FENCED'
+            : result === -2 ? 'MASTER_ROLE_CHANGED'
+            : result === -3 ? 'MASTER_LEASE_REQUIRED'
+            : result === -4 ? 'MASTER_SESSION_REVOKED'
+            : result === -5 ? 'ENGINE_RESTART_AUTHORIZATION_REQUIRED'
+            : result === -7 ? 'ENGINE_HIGH_WATER_AUTHORIZATION_CHANGED'
+            : 'ENGINE_RESTART_AUTHORIZATION_INVALID',
+        });
+      }
+      return send(res, 200, {
+        ok:true,
+        authorizationAt,
+        updatedAt:record.updatedAt,
+        entryCount:keys.length,
       });
     }
 

@@ -211,14 +211,32 @@ export default async function handler(req,res){
     const serverTime=n(time?.serverTime,NaN);
     if(!Number.isFinite(serverTime))throw new Error('BINANCE_TIME_INVALID');
 
-    const [positionsRaw,standardRaw,algoRaw]=await Promise.all([
+    const [positionsRaw,standardRaw,algoRaw,exchangeInfoRaw]=await Promise.all([
       signedGet('/fapi/v3/positionRisk',apiKey,secret,serverTime),
       signedGet('/fapi/v1/openOrders',apiKey,secret,serverTime),
       signedGet('/fapi/v1/openAlgoOrders',apiKey,secret,serverTime,{algoType:'CONDITIONAL'}),
+      jsonFetch(`${BASE}/fapi/v1/exchangeInfo`),
     ]);
-    if(![positionsRaw,standardRaw,algoRaw].every(Array.isArray))throw new Error('BINANCE_RESPONSE_INVALID');
+    if(![positionsRaw,standardRaw,algoRaw].every(Array.isArray)||!Array.isArray(exchangeInfoRaw?.symbols)){
+      throw new Error('BINANCE_RESPONSE_INVALID');
+    }
 
     const positions=positionsRaw.filter(p=>Math.abs(n(p?.positionAmt))>0).map(normalizePosition);
+    const activeSymbols=new Set(positions.map(p=>String(p.symbol||'').toUpperCase()));
+    const priceFilters={};
+    for(const row of exchangeInfoRaw.symbols){
+      const symbol=String(row?.symbol||'').toUpperCase();
+      if(!activeSymbols.has(symbol))continue;
+      const priceFilter=(Array.isArray(row?.filters)?row.filters:[])
+        .find(filter=>String(filter?.filterType||'').toUpperCase()==='PRICE_FILTER');
+      if(!priceFilter||!(n(priceFilter?.tickSize)>0))continue;
+      priceFilters[symbol]={
+        filterType:'PRICE_FILTER',
+        minPrice:String(priceFilter.minPrice??''),
+        maxPrice:String(priceFilter.maxPrice??''),
+        tickSize:String(priceFilter.tickSize??''),
+      };
+    }
     const standardOrders=standardRaw.map(normalizeStandardOrder);
     const algoOrders=algoRaw.map(normalizeAlgoOrder);
     const orders=[...standardOrders,...algoOrders];
@@ -232,6 +250,7 @@ export default async function handler(req,res){
       standardOrders,
       algoOrders,
       orders,
+      priceFilters,
     };
     const snapshotHash=sha256(JSON.stringify(snapshot));
 

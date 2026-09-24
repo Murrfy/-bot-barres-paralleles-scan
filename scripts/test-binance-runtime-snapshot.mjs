@@ -38,6 +38,15 @@ function harness({role='master',registered='master-1',lease='master-1',rateCount
     if(u.pathname==='/fapi/v1/openAlgoOrders')return new Response(JSON.stringify([
       {symbol:'BTCUSDT',algoId:2,clientAlgoId:'zth-stop',side:'SELL',positionSide:'BOTH',orderType:'STOP_MARKET',algoStatus:'NEW',quantity:'0.02',triggerPrice:'49000',reduceOnly:true,closePosition:false}
     ]));
+    if(u.pathname==='/fapi/v1/exchangeInfo')return new Response(JSON.stringify({symbols:[
+      {symbol:'BTCUSDT',filters:[
+        {filterType:'PRICE_FILTER',minPrice:'0.10',maxPrice:'1000000',tickSize:'0.10'},
+        {filterType:'LOT_SIZE',minQty:'0.001',maxQty:'1000',stepSize:'0.001'}
+      ]},
+      {symbol:'ETHUSDT',filters:[
+        {filterType:'PRICE_FILTER',minPrice:'0.01',maxPrice:'100000',tickSize:'0.01'}
+      ]}
+    ]}));
     return new Response('{}',{status:404});
   };
   return {calls,restore(){globalThis.fetch=original}};
@@ -69,6 +78,13 @@ test('snapshot returns normalized full inventory without trading writes',async()
     assert.equal(res.body.snapshot.orders.length,2);
     assert.equal(res.body.snapshot.standardOrders[0].reduceOnly,true);
     assert.equal(res.body.snapshot.algoOrders[0].type,'STOP_MARKET');
+    assert.deepEqual(res.body.snapshot.priceFilters.BTCUSDT,{
+      filterType:'PRICE_FILTER',
+      minPrice:'0.10',
+      maxPrice:'1000000',
+      tickSize:'0.10',
+    });
+    assert.equal(res.body.snapshot.priceFilters.ETHUSDT,undefined);
     assert.ok(res.body.snapshot.snapshotHash);
   }finally{h.restore()}
 });
