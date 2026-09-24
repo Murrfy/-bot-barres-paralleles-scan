@@ -191,7 +191,7 @@ function extractSessionCookie(response){
   return '';
 }
 
-function baseHeaders({json=false,auth=true}={}){
+function baseHeaders({json=false,auth=true,bearer=''}={}){
   const base=required('ZENITH_BASE_URL',BASE_URL);
   const headers={
     Accept:'application/json',
@@ -199,15 +199,16 @@ function baseHeaders({json=false,auth=true}={}){
     'X-Zenith-Engine-Instance':instanceId,
   };
   if(json)headers['Content-Type']='application/json';
+  if(bearer)headers.Authorization='Bearer '+bearer;
   if(auth&&sessionCookie)headers.Cookie=sessionCookie;
   return headers;
 }
 
-async function http(path,{method='GET',body,auth=true,timeoutMs=15000}={}){
+async function http(path,{method='GET',body,auth=true,bearer='',timeoutMs=15000}={}){
   const url=required('ZENITH_BASE_URL',BASE_URL)+path;
   const response=await fetch(url,{
     method,
-    headers:baseHeaders({json:body!==undefined,auth}),
+    headers:baseHeaders({json:body!==undefined,auth,bearer}),
     ...(body!==undefined?{body:JSON.stringify(body)}:{}),
     signal:AbortSignal.timeout(timeoutMs),
     cache:'no-store',
@@ -220,8 +221,8 @@ async function http(path,{method='GET',body,auth=true,timeoutMs=15000}={}){
   return {response,data};
 }
 
-async function syncApi(action,{method='GET',body,auth=true}={}){
-  return http('/api/zenith-sync?action='+encodeURIComponent(action),{method,body,auth});
+async function syncApi(action,{method='GET',body,auth=true,bearer=''}={}){
+  return http('/api/zenith-sync?action='+encodeURIComponent(action),{method,body,auth,bearer});
 }
 async function userStreamApi(action,method='GET'){
   return http('/api/binance-user-stream-session?action='+encodeURIComponent(action),{
@@ -263,7 +264,8 @@ async function bootstrapOnce(){
   const {response,data}=await syncApi('engine-bootstrap',{
     method:'POST',
     auth:false,
-    body:{bootstrapSecret:BOOTSTRAP_SECRET,instanceId},
+    bearer:BOOTSTRAP_SECRET,
+    body:{instanceId},
   });
   if(response.ok&&data?.ok===true&&data?.sessionReady===true){
     if(!sessionCookie)throw new Error('ENGINE_SESSION_COOKIE_MISSING');

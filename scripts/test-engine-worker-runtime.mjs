@@ -37,6 +37,7 @@ test('worker owns no Binance or Redis credentials',()=>{
 
 test('every authenticated server request carries the engine instance fence and session cookie',()=>{
   assert.ok(worker.includes("'X-Zenith-Engine-Instance':instanceId"));
+  assert.ok(worker.includes("if(bearer)headers.Authorization='Bearer '+bearer"));
   assert.ok(worker.includes('if(auth&&sessionCookie)headers.Cookie=sessionCookie'));
   assert.ok(worker.includes("__Host-zenith_device"));
   assert.ok(worker.includes("Origin:new URL(base).origin"));
@@ -44,7 +45,9 @@ test('every authenticated server request carries the engine instance fence and s
 
 test('worker bootstraps only through the existing engine principal API',()=>{
   assert.ok(worker.includes("syncApi('engine-bootstrap'"));
-  assert.ok(worker.includes('body:{bootstrapSecret:BOOTSTRAP_SECRET,instanceId}'));
+  assert.ok(worker.includes('bearer:BOOTSTRAP_SECRET'));
+  assert.ok(worker.includes('body:{instanceId}'));
+  assert.equal(worker.includes('body:{bootstrapSecret:BOOTSTRAP_SECRET,instanceId}'),false);
   assert.ok(worker.includes('ZENITH_ENGINE_BOOTSTRAP_SECRET'));
   assert.equal(worker.includes('ZENITH_MASTER_PAIRING_CODE'),false);
   assert.equal(worker.includes('ZENITH_MASTER_ADMIN_CODE'),false);
