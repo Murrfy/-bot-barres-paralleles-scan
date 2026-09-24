@@ -130,6 +130,8 @@ jobs:
         run: node --test scripts/test-engine-revocation-latch.mjs
       - name: Test engine instance fencing across Binance APIs
         run: node --test scripts/test-engine-binance-instance-fence.mjs
+      - name: Test engine fence on Binance read fallback
+        run: node --test scripts/test-engine-binance-read-fence.mjs
       - name: Test provider-neutral 24/7 engine worker runtime
         run: node --test scripts/test-engine-worker-runtime.mjs
       - name: Test persistent engine protection high-water
