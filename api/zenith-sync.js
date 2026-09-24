@@ -58,6 +58,7 @@ const KEY_USER_STREAM_SESSION = `${PREFIX}:binance-user-stream`;
 const KEY_USER_STREAM_MUTATION_LOCK = `${PREFIX}:binance-user-stream:mutation-lock`;
 const KEY_ENGINE_INSTANCE = `${PREFIX}:engine-instance`;
 const KEY_ENGINE_AUTHORIZED = `${PREFIX}:engine-authorized`;
+const KEY_ENGINE_DISABLED = `${PREFIX}:engine-disabled`;
 const MASTER_TTL_SECONDS = 20;
 const ENGINE_INSTANCE_TTL_SECONDS = 45;
 const MASTER_HEARTBEAT_TTL_SECONDS = 60;
@@ -1901,6 +1902,80 @@ export default async function handler(req, res) {
 
   try {
 
+    if (action === 'engine-reenable' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+      if (!(await verifyMasterAdminCode(req, res, device))) return;
+
+      const at = Date.now();
+      const audit = JSON.stringify({
+        at,
+        kind:'ENGINE_ADMIN_REENABLED',
+        requestedByDeviceId:device.deviceId,
+      });
+      const script = [
+        "local controller = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if controller ~= ARGV[1] then return -1 end",
+        "local controllerEpoch = tonumber(redis.call('GET', KEYS[2]) or '0') or 0",
+        "local createdAt = tonumber(ARGV[2]) or 0",
+        "if controllerEpoch > 0 and createdAt < controllerEpoch then return -2 end",
+        "if tostring(redis.call('GET', KEYS[3]) or '') ~= '' then return -3 end",
+        "if tostring(redis.call('GET', KEYS[4]) or '') ~= '' then return -4 end",
+        "if tostring(redis.call('GET', KEYS[5]) or 'PAUSED') ~= 'PAUSED' then return -5 end",
+        "if tostring(redis.call('GET', KEYS[6]) or '') ~= '1' then return -6 end",
+        "if redis.call('LLEN', KEYS[7]) > 0 then return -7 end",
+        "if redis.call('LLEN', KEYS[8]) > 0 then return -8 end",
+        "if redis.call('GET', KEYS[9]) then return -9 end",
+        "local disabled = tostring(redis.call('GET', KEYS[10]) or '')",
+        "if disabled ~= '1' then return 2 end",
+        "redis.call('DEL', KEYS[10])",
+        "redis.call('LPUSH', KEYS[11], ARGV[3])",
+        "redis.call('LTRIM', KEYS[11], 0, 199)",
+        "return 1"
+      ].join('\n');
+      const result = Number(await redis([
+        'EVAL', script, '11',
+        KEY_CONTROLLER_DEVICE,
+        roleAssignmentKey(PREFIX, 'controller'),
+        KEY_MASTER_DEVICE,
+        KEY_MASTER,
+        KEY_MASTER_MODE,
+        KEY_EMERGENCY_STOP,
+        KEY_PENDING,
+        KEY_PROCESSING,
+        KEY_USER_STREAM_MUTATION_LOCK,
+        KEY_ENGINE_DISABLED,
+        KEY_AUDIT,
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
+        audit,
+      ]));
+      if (result === -1 || result === -2) {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok:false,
+          code:result === -2 ? 'CONTROLLER_SESSION_REVOKED' : 'CONTROLLER_ROLE_CHANGED',
+        });
+      }
+      if (result < 0) {
+        const blocker = result === -3 ? 'MASTER_STILL_REGISTERED'
+          : result === -4 ? 'MASTER_LEASE_ACTIVE'
+          : result === -5 ? 'MASTER_MUST_BE_PAUSED'
+          : result === -6 ? 'EMERGENCY_STOP_MUST_BE_ACTIVE'
+          : result === -7 ? 'PENDING_COMMAND'
+          : result === -8 ? 'PROCESSING_COMMAND'
+          : 'USER_STREAM_MUTATION_IN_FLIGHT';
+        return send(res, 409, { ok:false, code:'ENGINE_REENABLE_BLOCKED', blocker });
+      }
+      return send(res, 200, {
+        ok:true,
+        engineReenabled:true,
+        alreadyEnabled:result === 2,
+        masterMode:'PAUSED',
+        emergencyStopActive:true,
+      });
+    }
+
     if (action === 'engine-bootstrap' && req.method === 'POST') {
       if (!(await engineBootstrapRateAllowed(req))) {
         return send(res, 429, { ok:false, code:'ENGINE_BOOTSTRAP_RATE_LIMIT' });
@@ -1932,6 +2007,8 @@ export default async function handler(req, res) {
       };
 
       const bootstrapScript = [
+        "local disabled = tostring(redis.call('GET', KEYS[17]) or '')",
+        "if disabled == '1' then return {-7, '', 0, 0, 0} end",
         "local registeredMaster = tostring(redis.call('GET', KEYS[1]) or '')",
         "if registeredMaster ~= '' and registeredMaster ~= ARGV[1] then return {-1, registeredMaster, 0, 0, 0} end",
         "local currentInstance = tostring(redis.call('GET', KEYS[4]) or '')",
@@ -1993,7 +2070,7 @@ export default async function handler(req, res) {
       ].join('\n');
 
       const result = await redis([
-        'EVAL', bootstrapScript, '16',
+        'EVAL', bootstrapScript, '17',
         KEY_MASTER_DEVICE,
         roleAssignmentKey(PREFIX, 'master'),
         `${PREFIX}:device:${tokenHash}`,
@@ -2010,6 +2087,7 @@ export default async function handler(req, res) {
         KEY_STATE,
         KEY_USER_STREAM_SESSION,
         KEY_USER_STREAM_MUTATION_LOCK,
+        KEY_ENGINE_DISABLED,
         ENGINE_MASTER_DEVICE_ID,
         String(createdAt),
         JSON.stringify(record),
@@ -2046,6 +2124,9 @@ export default async function handler(req, res) {
       }
       if (code === -6) {
         return send(res, 409, { ok:false, code:'ENGINE_RESTART_MUTATION_IN_FLIGHT' });
+      }
+      if (code === -7) {
+        return send(res, 423, { ok:false, code:'ENGINE_ADMIN_REENABLE_REQUIRED' });
       }
       if (![1,2].includes(code)) {
         return send(res, 500, { ok:false, code:'ENGINE_BOOTSTRAP_FAILED' });
@@ -2793,12 +2874,13 @@ export default async function handler(req, res) {
         "redis.call('SET', KEYS[15], ARGV[2])",
         "redis.call('DEL', KEYS[19])",
         "redis.call('DEL', KEYS[20])",
+        "if registered == ARGV[5] then redis.call('SET', KEYS[21], '1') end",
         "redis.call('DEL', KEYS[1])",
         "return 1"
       ].join('\n');
 
       const result = Number(await redis([
-        'EVAL', revokeScript, '20',
+        'EVAL', revokeScript, '21',
         KEY_MASTER_DEVICE,
         KEY_EMERGENCY_STOP,
         KEY_MASTER_MODE,
@@ -2819,10 +2901,12 @@ export default async function handler(req, res) {
         roleAssignmentKey(PREFIX, 'controller'),
         KEY_ENGINE_AUTHORIZED,
         KEY_ENGINE_INSTANCE,
+        KEY_ENGINE_DISABLED,
         String(registeredMaster),
         String(revokedAt),
         String(device.deviceId),
         String(Number(device.createdAt || 0)),
+        ENGINE_MASTER_DEVICE_ID,
       ]));
 
       if (result === -1) {

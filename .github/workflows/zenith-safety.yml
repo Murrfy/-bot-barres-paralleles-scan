@@ -122,6 +122,8 @@ jobs:
         run: node --test scripts/test-engine-bootstrap.mjs
       - name: Test safe 24/7 engine restart continuity
         run: node --test scripts/test-engine-restart-continuity.mjs
+      - name: Test persistent engine revocation latch
+        run: node --test scripts/test-engine-revocation-latch.mjs
       - name: Test engine instance fencing across Binance APIs
         run: node --test scripts/test-engine-binance-instance-fence.mjs
       - name: Test atomic pairing role/session claim

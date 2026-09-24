@@ -1430,7 +1430,7 @@ for (const required of [
   "if controller ~= ARGV[3] then return -6 end",
   "local controllerEpoch = tonumber(redis.call('GET', KEYS[18]) or '0') or 0",
   "if controllerEpoch > 0 and controllerCreatedAt < controllerEpoch then return -7 end",
-  "'EVAL', revokeScript, '20'",
+  "'EVAL', revokeScript, '21'",
   'KEY_CONTROLLER_DEVICE',
   "roleAssignmentKey(PREFIX, 'controller')",
   "'CONTROLLER_ROLE_CHANGED_DURING_REVOKE'",
@@ -1439,6 +1439,7 @@ for (const required of [
   "'EVAL', alreadyRevokedScript, '7'",
   'KEY_ENGINE_AUTHORIZED',
   'KEY_ENGINE_INSTANCE',
+  'KEY_ENGINE_DISABLED',
   "redis.call('DEL', KEYS[19])",
   "redis.call('DEL', KEYS[20])",
   "masterRoleEpochAdvancedAt: revokedAt"
