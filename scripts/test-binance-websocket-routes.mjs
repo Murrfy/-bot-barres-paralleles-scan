@@ -15,9 +15,11 @@ test('Binance USD-M user data uses the routed private WebSocket endpoint',()=>{
   assert.equal(worker.includes("new WebSocket('wss://fstream.binance.com/ws/'+encodeURIComponent(listenKey))"),false);
 });
 
-test('browser aggregate-trade market data uses the routed market endpoint',()=>{
+test('browser and server aggregate-trade market data use the routed market endpoint',()=>{
   assert.ok(index.includes("new WebSocket('wss://fstream.binance.com/market/ws')"));
+  assert.ok(worker.includes("new WebSocket('wss://fstream.binance.com/market/ws')"));
   assert.equal(index.includes("new WebSocket('wss://fstream.binance.com/ws')"),false);
+  assert.equal(worker.includes('market/ws/!markPrice@arr@1s'),false);
 });
 
 test('CSP still permits the Binance WebSocket host without broadening to other hosts',()=>{
