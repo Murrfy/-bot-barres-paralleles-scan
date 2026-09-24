@@ -14,6 +14,7 @@ const protectedApis=[
   'api/binance-entry-execute.js',
   'api/binance-protective-execute.js',
   'api/binance-protective-update-execute.js',
+  'api/binance-order-test.js',
 ];
 
 test('engine instance helper accepts ordinary paired devices without adding a new requirement',()=>{
