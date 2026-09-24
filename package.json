@@ -4,5 +4,8 @@
   "version": "0.0.0",
   "engines": {
     "node": "24.x"
+  },
+  "scripts": {
+    "engine": "node server/zenith-engine-worker.mjs"
   }
 }

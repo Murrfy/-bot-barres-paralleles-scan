@@ -10,7 +10,8 @@ test('worker is provider-neutral and explicitly disabled until enabled',()=>{
   const gate=main.indexOf('if(!WORKER_ENABLED)');
   const bootstrap=main.indexOf('await bootstrapUntilReady()');
   assert.ok(gate>=0&&bootstrap>gate);
-  assert.ok(worker.includes("log('DISABLED'"));
+  assert.ok(worker.includes("log('DISABLED_STANDBY'"));
+  assert.ok(worker.includes('standbyTimer=setInterval(()=>{},60*60*1000)'));
   assert.equal(worker.includes('render.com'),false);
   assert.equal(worker.includes('railway.app'),false);
   assert.equal(worker.includes('fly.io'),false);
