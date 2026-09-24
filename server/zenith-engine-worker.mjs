@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import http from 'node:http';
 import {
   createUserStreamState,
   markUserStreamConnected,
@@ -27,6 +28,9 @@ import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
 const BOOTSTRAP_SECRET=String(process.env.ZENITH_ENGINE_BOOTSTRAP_SECRET||'');
 const WORKER_ENABLED=process.env.ZENITH_ENGINE_WORKER_ENABLED==='1';
+const HEALTH_HOST='127.0.0.1';
+const HEALTH_PORT_RAW=Number(process.env.ZENITH_ENGINE_HEALTH_PORT||8787);
+const HEALTH_PORT=Number.isInteger(HEALTH_PORT_RAW)&&HEALTH_PORT_RAW>=1&&HEALTH_PORT_RAW<=65535?HEALTH_PORT_RAW:8787;
 const HEARTBEAT_MS=8000;
 const COMMAND_POLL_MS=750;
 const RECONCILE_MS=15000;
@@ -35,8 +39,12 @@ const STREAM_RESTART_MS=23*60*60*1000;
 const BOOTSTRAP_RETRY_MS=15000;
 
 const instanceId='engine-instance-'+crypto.randomUUID();
+const processStartedAt=Date.now();
 let sessionCookie='';
 let stopping=false;
+let workerPhase='STARTING';
+let lastRuntimeCycleAt=0;
+let healthServer=null;
 
 const runtime={
   leaseActive:false,
@@ -167,6 +175,67 @@ function log(kind,details={}){
 }
 function logError(kind,error,details={}){
   log(kind,{...details,error:String(error?.message||error||'UNKNOWN')});
+}
+
+
+function healthPayload(){
+  const streamReady=userStreamReady(stream.state);
+  const ready=Boolean(
+    WORKER_ENABLED &&
+    workerPhase==='RUNNING' &&
+    runtime.leaseActive &&
+    runtime.heartbeatFresh &&
+    runtime.synchronized &&
+    streamReady
+  );
+  return {
+    ok:true,
+    enabled:WORKER_ENABLED,
+    phase:workerPhase,
+    ready,
+    uptimeSeconds:Math.max(0,Math.floor((Date.now()-processStartedAt)/1000)),
+    lastRuntimeCycleAt,
+    masterMode:String(runtime.mode||'PAUSED'),
+    leaseActive:runtime.leaseActive===true,
+    heartbeatFresh:runtime.heartbeatFresh===true,
+    synchronized:runtime.synchronized===true,
+    userStreamReady:streamReady,
+    realExecutionArmed:runtime.realExecutionArmed===true,
+    runtimeError:String(runtime.error||'').slice(0,120),
+    streamError:String(stream.lastError||'').slice(0,120),
+  };
+}
+
+async function startHealthServer(){
+  if(healthServer)return;
+  healthServer=http.createServer((req,res)=>{
+    const path=String(req.url||'').split('?')[0];
+    if(path!=='/healthz'&&path!=='/readyz'){
+      res.writeHead(404,{'Content-Type':'application/json','Cache-Control':'no-store'});
+      res.end(JSON.stringify({ok:false,code:'NOT_FOUND'}));
+      return;
+    }
+    const payload=healthPayload();
+    const status=path==='/readyz'&&!payload.ready?503:200;
+    res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});
+    if(String(req.method||'GET').toUpperCase()==='HEAD')res.end();
+    else res.end(JSON.stringify(payload));
+  });
+  await new Promise((resolve,reject)=>{
+    const onError=error=>{healthServer?.off('listening',onListening);reject(error)};
+    const onListening=()=>{healthServer?.off('error',onError);resolve()};
+    healthServer.once('error',onError);
+    healthServer.once('listening',onListening);
+    healthServer.listen(HEALTH_PORT,HEALTH_HOST);
+  });
+  log('HEALTH_LISTENING',{host:HEALTH_HOST,port:HEALTH_PORT});
+}
+
+async function stopHealthServer(){
+  const server=healthServer;
+  healthServer=null;
+  if(!server)return;
+  await new Promise(resolve=>server.close(()=>resolve()));
 }
 
 function extractSessionCookie(response){
@@ -1478,6 +1547,7 @@ async function commandCycle(){
 
 async function runtimeCycle(){
   if(stopping)return false;
+  lastRuntimeCycleAt=Date.now();
   try{
     const alive=await heartbeat();
     if(!alive)return false;
@@ -1508,6 +1578,7 @@ async function closeRemoteUserStream(){
 async function shutdown(code=0){
   if(stopping)return;
   stopping=true;
+  workerPhase='STOPPING';
   if(heartbeatTimer)clearInterval(heartbeatTimer);
   if(execution.timer)clearInterval(execution.timer);
   if(stream.reconnectTimer)clearTimeout(stream.reconnectTimer);
@@ -1523,6 +1594,7 @@ async function shutdown(code=0){
   if(ws&&ws.readyState<2){
     try{ws.close(1000,'zenith-shutdown')}catch{}
   }
+  await stopHealthServer().catch(()=>{});
   process.exitCode=code;
 }
 
@@ -1535,10 +1607,13 @@ async function main(){
   if(BOOTSTRAP_SECRET.length<32)throw new Error('ZENITH_ENGINE_BOOTSTRAP_SECRET_TOO_WEAK');
   if(typeof WebSocket!=='function')throw new Error('NODE_WEBSOCKET_UNAVAILABLE');
 
+  await startHealthServer();
+  workerPhase='BOOTSTRAP_WAIT';
   await bootstrapUntilReady();
   if(stopping)return;
 
   await runtimeCycle();
+  workerPhase='RUNNING';
   heartbeatTimer=setInterval(()=>runtimeCycle(),HEARTBEAT_MS);
   execution.timer=setInterval(()=>commandCycle(),COMMAND_POLL_MS);
 
