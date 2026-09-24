@@ -959,6 +959,17 @@ if (!index.includes("role==='master'") ||
     !index.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
   fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
 }
+
+if (!index.includes('function realExecutionActiveForLocalSimulation()') ||
+    !index.includes('function localSimulationEntryAllowed()') ||
+    !index.includes("masterRuntimeState.realExecutionArmed===true") ||
+    !index.includes("masterControlState.realExecutionArmed===true") ||
+    !index.includes("simulationPositions=executionMode==='REAL'?[]:clone(openPositions)") ||
+    !index.includes("const activePositions=executionMode==='REAL'") ||
+    !index.includes("if(!localSimulationEntryAllowed())") ||
+    !index.includes('Zenith ne créera jamais une position locale fictive')) {
+  fail('armed REAL execution must never create or publish simulated positions as if they were Binance positions');
+}
 if (!index.includes('masterExecutionCycle') ||
     !index.includes("masterRuntimeApi('command-next','POST'") ||
     !index.includes("masterCommandDisposition('command-ack'") ||
