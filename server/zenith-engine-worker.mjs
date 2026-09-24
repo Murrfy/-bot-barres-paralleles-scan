@@ -246,7 +246,9 @@ async function assertRuntimeOnlyPanic(){
     });
   }
   masterMode=String(data.masterMode||'PAUSE_PENDING').toUpperCase();
-  realExecutionArmed=false;
+  // PANIC blocks new entries but does not erase the real-execution arm record.
+  // Keep publishing REAL inventory so open Binance positions can never be
+  // mistaken for simulation state while this runtime-only worker is active.
   setStatus('RUNTIME_ONLY_FORCED_PANIC',{masterMode});
   return true;
 }
@@ -497,7 +499,8 @@ function scheduleReconcile(delay=RECONCILE_DEBOUNCE_MS){
   },Math.max(50,n(delay,RECONCILE_DEBOUNCE_MS)));
 }
 
-async function processStreamPayload(payload){
+async function processStreamPayload(payload,expectedGeneration=streamGeneration){
+  if(expectedGeneration!==streamGeneration)return {applied:false,reason:'STALE_STREAM_GENERATION'};
   const result=applyUserDataEvent(streamState,payload);
   streamState=result.state;
   if([
@@ -530,7 +533,7 @@ async function seedUserStream(connectionId,connectedAt){
   for(const payload of buffered){
     const eventTime=n(payload?.E,n(payload?.T,0));
     if(cutoff>0&&eventTime>0&&eventTime<cutoff)continue;
-    await processStreamPayload(payload);
+    await processStreamPayload(payload,streamGeneration);
   }
   streamSeeding=false;
   await postRuntimeState();
@@ -616,7 +619,8 @@ async function ensureUserStream(){
       bufferedEvents.push(payload);
       return;
     }
-    messageChain=messageChain.then(()=>processStreamPayload(payload)).catch(async error=>{
+    const eventGeneration=generation;
+    messageChain=messageChain.then(()=>processStreamPayload(payload,eventGeneration)).catch(async error=>{
       const code=errorCode(error);
       setStatus(code);
       await closeStream(code,{reconnect:true});
