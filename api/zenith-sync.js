@@ -89,6 +89,16 @@ const COMMAND_RAW_MAX_BYTES = 64 * 1024;
 const DEAD_LETTER_MAX = 500;
 
 function send(res, status, body) {
+  if (status === 400) {
+    console.warn(JSON.stringify({
+      component: 'zenith-sync',
+      kind: 'API_REJECT_400',
+      action: String(res.__zenithAction || ''),
+      code: String(body?.code || ''),
+      field: String(body?.field || ''),
+      reason: String(body?.reason || ''),
+    }));
+  }
   res.setHeader('Cache-Control', 'no-store, max-age=0');
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   return res.status(status).json(body);
@@ -1878,6 +1888,7 @@ async function deferClaimedCommand(raw, command, reason, device, delayMs = 1500)
 
 export default async function handler(req, res) {
   const action = String(req.query?.action || 'health');
+  res.__zenithAction = action;
   const engineBootstrapRequest = action === 'engine-bootstrap' && req.method === 'POST';
 
   if (!sameOriginMutation(req) && !engineBootstrapRequest) {
