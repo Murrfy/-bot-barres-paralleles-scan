@@ -132,6 +132,10 @@ jobs:
         run: node --test scripts/test-engine-binance-instance-fence.mjs
       - name: Test provider-neutral 24/7 engine worker runtime
         run: node --test scripts/test-engine-worker-runtime.mjs
+      - name: Test persistent engine protection high-water
+        run: node --test scripts/test-engine-protection-high-water.mjs
+      - name: Test server progressive auto-protection
+        run: node --test scripts/test-engine-worker-auto-protection.mjs
       - name: Test current Binance routed WebSocket endpoints
         run: node --test scripts/test-binance-websocket-routes.mjs
       - name: Test atomic pairing role/session claim
