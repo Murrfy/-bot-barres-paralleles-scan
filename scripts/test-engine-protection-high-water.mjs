@@ -48,13 +48,23 @@ test('high-water write has bounded input and atomically rechecks authority plus 
   for(const required of [
     'keys.length > 20','ENGINE_HIGH_WATER_TOO_MANY_ENTRIES',
     'A-Za-z0-9._:+-','Math.abs(value) > 1e9',
-    "Buffer.byteLength(recordRaw, 'utf8') > 16 * 1024",
+    "Buffer.byteLength(entriesRaw, 'utf8') > 16 * 1024",
     'currentInstance ~= ARGV[1]','registered ~= ARGV[2]',
     'lease ~= ARGV[2]','epoch ~= ARGV[3]',
     "authorization['masterDeviceId']","authorization['authorizedAt']",
     'ENGINE_HIGH_WATER_AUTHORIZATION_CHANGED'
   ]) assert.ok(writeBlock.includes(required),required);
-  assert.ok(writeBlock.indexOf("authorization['authorizedAt']") < writeBlock.indexOf("redis.call('SET', KEYS[6], ARGV[5])"));
+  assert.ok(writeBlock.indexOf("authorization['authorizedAt']") < writeBlock.indexOf("redis.call('SET', KEYS[6], encoded)"));
+});
+
+test('server-side high-water merge is monotonic for active position keys and prunes absent keys',()=>{
+  assert.ok(writeBlock.includes("local previousRaw = redis.call('GET', KEYS[6])"));
+  assert.ok(writeBlock.includes("local oldValue = tonumber(previous[key])"));
+  assert.ok(writeBlock.includes("if oldValue and oldValue > nextValue then nextValue = oldValue end"));
+  assert.ok(writeBlock.includes("local merged = {}"));
+  assert.ok(writeBlock.includes("for key, value in pairs(incoming) do"));
+  assert.ok(writeBlock.includes("entries=merged"));
+  assert.equal(writeBlock.includes("for key, value in pairs(previous) do"),false);
 });
 
 test('high-water API never accepts ADMIN or pairing secrets',()=>{
