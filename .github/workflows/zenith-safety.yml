@@ -68,6 +68,8 @@ jobs:
         run: node --test scripts/test-master-admin.mjs
       - name: Test strict PAUSED-only MASTER resume
         run: node --test scripts/test-master-resume-paused-gate.mjs
+      - name: Test privileged requester role fences
+        run: node --test scripts/test-privileged-requester-role-fence.mjs
       - name: Test atomic PAUSE_PENDING finalization
         run: node --test scripts/test-atomic-pause-finalize.mjs
       - name: Test ADMIN-protected MASTER activation
