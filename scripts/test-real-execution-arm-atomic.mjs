@@ -33,8 +33,10 @@ test('real arm commit atomically revalidates MASTER state after slow external ch
     "if panic ~= '1' then return -4 end",
     "redis.call('LLEN', KEYS[5]) > 0 or redis.call('LLEN', KEYS[6]) > 0",
     "if roleEpoch ~= ARGV[2] then return -6 end",
+    "if requester ~= ARGV[4] then return -7 end",
+    "if requesterEpoch > 0 and requesterCreatedAt < requesterEpoch then return -8 end",
     "redis.call('SET', KEYS[8], ARGV[3])",
-    "'EVAL', armCommitScript, '8'",
+    "'EVAL', armCommitScript, '10'",
     'KEY_MASTER_DEVICE',
     'KEY_MASTER',
     'KEY_MASTER_MODE',
@@ -43,12 +45,29 @@ test('real arm commit atomically revalidates MASTER state after slow external ch
     'KEY_PROCESSING',
     "roleAssignmentKey(PREFIX, 'master')",
     'KEY_REAL_EXECUTION_ARMED',
+    'roleDeviceKey(device.role)',
+    'roleAssignmentKey(PREFIX, device.role)',
+    "'CONTROLLER_ROLE_CHANGED'",
+    "'CONTROLLER_SESSION_REVOKED'",
+    "'MASTER_SESSION_REVOKED'",
     "'REAL_EXECUTION_ARM_RACE_BLOCKED'",
   ]) assert.ok(armBlock.includes(required),required);
 
   assert.equal(armBlock.includes("await redis(['SET', KEY_REAL_EXECUTION_ARMED"),false);
   assert.ok(
     armBlock.indexOf("if roleEpoch ~= ARGV[2] then return -6 end") <
+    armBlock.indexOf("redis.call('SET', KEYS[8], ARGV[3])")
+  );
+});
+
+test('real arm commit atomically revalidates the privileged requester after slow external checks',()=>{
+  assert.ok(armBlock.includes("if requester ~= ARGV[4] then return -7 end"));
+  assert.ok(armBlock.includes("if requesterEpoch > 0 and requesterCreatedAt < requesterEpoch then return -8 end"));
+  assert.ok(armBlock.includes('roleDeviceKey(device.role)'));
+  assert.ok(armBlock.includes('roleAssignmentKey(PREFIX, device.role)'));
+  assert.ok(armBlock.includes('clearDeviceSessionCookie(res)'));
+  assert.ok(
+    armBlock.indexOf("if requester ~= ARGV[4] then return -7 end") <
     armBlock.indexOf("redis.call('SET', KEYS[8], ARGV[3])")
   );
 });
