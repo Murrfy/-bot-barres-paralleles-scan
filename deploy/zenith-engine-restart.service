@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart Zenith engine after failed liveness check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart zenith-engine.service
