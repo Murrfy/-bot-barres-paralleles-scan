@@ -42,7 +42,8 @@ test('resume cannot act as an implicit PAUSE_PENDING cancellation path',()=>{
 
 
 test('RUNNING transitions are atomically fenced against real-trading PANIC',()=>{
-  assert.ok(sync.includes("async function trySetMasterRunningFrom(expectedMode, expectedMasterDeviceId, expectedMasterRoleEpochRaw = '0')"));
+  assert.ok(sync.includes('async function trySetMasterRunningFrom('));
+  assert.ok(sync.includes('requesterDevice = null'));
   assert.ok(sync.includes("if ARGV[2] == '1' and panic ~= '0' then return {-1, mode} end"));
   assert.ok(sync.includes("if mode ~= ARGV[1] then return {-2, mode} end"));
   assert.ok(sync.includes("redis.call('SET', KEYS[2], 'RUNNING')"));
@@ -83,4 +84,6 @@ test('resume and PAUSE_PENDING cancel capture MASTER role epoch before their fin
   assert.ok(resume.includes("redis(['GET', roleAssignmentKey(PREFIX, 'master')])"));
   assert.ok(cancel.includes("String(masterRoleEpochRaw || '0')"));
   assert.ok(resume.includes("String(masterRoleEpochRaw || '0')"));
+  assert.ok(cancel.includes("String(masterRoleEpochRaw || '0'),\n        device"));
+  assert.ok(resume.includes("String(masterRoleEpochRaw || '0'),\n        device"));
 });
