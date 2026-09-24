@@ -14,7 +14,8 @@ test('determined buy settings show a red bordered live Binance price reference',
 test('selected current price preserves Binance tick decimals for zero checking',()=>{
   assert.match(html,/function fullCurrentPrice\(v,symbol=''/);
   assert.match(html,/PRICE_FILTER/);
-  assert.match(html,/stepDecimals\(tick\)/);
+  assert.match(html,/const rawTick=rules\?\.filters\?\.PRICE_FILTER\?\.tickSize/);
+  assert.match(html,/tick>0\?stepDecimals\(rawTick\)/);
   assert.match(html,/value\.toFixed\(decimals\)/);
 });
 
