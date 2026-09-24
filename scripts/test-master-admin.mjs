@@ -10,7 +10,7 @@ function page(role, mode = 'RUNNING') {
     value: '', hidden: false, disabled: true, textContent: '', addEventListener() {},
   }]));
   const posts = [];
-  const state = { role, mode, offline: false, lease: true };
+  const state = { role, mode, offline: false, lease: true, engineDisabled: false };
   const context = vm.createContext({
     document: { hidden: false, getElementById: id => elements[id], addEventListener() {} },
     localStorage: {
@@ -26,11 +26,12 @@ function page(role, mode = 'RUNNING') {
         posts.push({ action, body: JSON.parse(init.body) });
         if (action === 'master-pause') state.mode = 'PAUSE_PENDING';
         if (action === 'master-pause-cancel') state.mode = 'RUNNING';
-        return { ok: true, json: async () => ({ ok: true, masterMode: state.mode }) };
+        if (action === 'engine-reenable') state.engineDisabled = false;
+        return { ok: true, json: async () => ({ ok: true, masterMode: state.mode, engineReenabled: action === 'engine-reenable' }) };
       }
       return { ok: true, json: async () => action === 'whoami'
         ? { ok: true, device: { role: state.role } }
-        : { ok: true, masterMode: state.mode, masterLeaseActive: state.lease } };
+        : { ok: true, masterMode: state.mode, masterLeaseActive: state.lease, masterRegistered: state.lease, engineDisabled: state.engineDisabled, emergencyStopActive: true, pendingCommands: 0, processingCommands: 0 } };
     },
   });
   vm.runInContext(script, context);
@@ -90,4 +91,29 @@ test('MASTER without an active lease cannot authorize controller replacement', a
   p.elements.adminCode.value = 'test-admin';
   await p.run('authorizeReplacement()');
   assert.equal(p.posts.length, 0);
+});
+
+
+test('controller can explicitly re-enable Render only from safe paused state', async () => {
+  const p = page('controller', 'PAUSED');
+  p.state.lease = false;
+  p.state.engineDisabled = true;
+  await p.run('verifyMaster()');
+  assert.equal(p.elements.engineReenableBtn.hidden, false);
+  assert.equal(p.elements.engineReenableBtn.disabled, false);
+  p.elements.adminCode.value = 'test-admin';
+  await p.run('reenableEngine()');
+  assert.equal(p.posts.at(-1).action, 'engine-reenable');
+  assert.equal(p.posts.at(-1).body.adminCode, 'test-admin');
+  assert.equal(p.elements.adminCode.value, '');
+  assert.equal(p.state.engineDisabled, false);
+});
+
+test('Render re-enable button stays unavailable when MASTER lease is active', async () => {
+  const p = page('controller', 'PAUSED');
+  p.state.lease = true;
+  p.state.engineDisabled = true;
+  await p.run('verifyMaster()');
+  assert.equal(p.elements.engineReenableBtn.hidden, false);
+  assert.equal(p.elements.engineReenableBtn.disabled, true);
 });
