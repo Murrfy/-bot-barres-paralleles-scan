@@ -1430,13 +1430,17 @@ for (const required of [
   "if controller ~= ARGV[3] then return -6 end",
   "local controllerEpoch = tonumber(redis.call('GET', KEYS[18]) or '0') or 0",
   "if controllerEpoch > 0 and controllerCreatedAt < controllerEpoch then return -7 end",
-  "'EVAL', revokeScript, '18'",
+  "'EVAL', revokeScript, '20'",
   'KEY_CONTROLLER_DEVICE',
   "roleAssignmentKey(PREFIX, 'controller')",
   "'CONTROLLER_ROLE_CHANGED_DURING_REVOKE'",
   "'CONTROLLER_SESSION_REVOKED_DURING_REVOKE'",
   'const alreadyRevokedScript = [',
-  "'EVAL', alreadyRevokedScript, '5'",
+  "'EVAL', alreadyRevokedScript, '7'",
+  'KEY_ENGINE_AUTHORIZED',
+  'KEY_ENGINE_INSTANCE',
+  "redis.call('DEL', KEYS[19])",
+  "redis.call('DEL', KEYS[20])",
   "masterRoleEpochAdvancedAt: revokedAt"
 ]) {
   if (!masterRevokeSync.includes(required)) fail(`MASTER emergency revoke must remain fail-closed: ${required}`);
