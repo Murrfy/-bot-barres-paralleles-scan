@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, sameOriginMutation } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, sameOriginMutation, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 
@@ -95,6 +95,13 @@ async function requireCurrentMaster(req) {
     if (!registered || String(registered) !== String(device.deviceId)) continue;
     const issuedAt=await redis(['GET',roleAssignmentKey(PREFIX,'master')]);
     if(!deviceRoleAssignmentActive(device,issuedAt))continue;
+    if(String(device?.principal||'')==='engine'){
+      const suppliedInstance=engineInstanceHeader(req);
+      const currentInstance=String(await redis(['GET',`${PREFIX}:engine-instance`])||'');
+      if(!enginePrincipalInstanceActive(device,suppliedInstance,currentInstance)){
+        const e=new Error('ENGINE_INSTANCE_FENCED');e.code='ENGINE_INSTANCE_FENCED';throw e;
+      }
+    }
     if (String(lease || '') !== String(device.deviceId)) {
       const e = new Error('MASTER_LEASE_REQUIRED');
       e.code = 'MASTER_LEASE_REQUIRED';
