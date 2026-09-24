@@ -1096,10 +1096,16 @@ if (!sync.includes('const armCommitScript = [') ||
     !sync.includes("if mode ~= 'PAUSED' then return -3 end") ||
     !sync.includes("if panic ~= '1' then return -4 end") ||
     !sync.includes("if roleEpoch ~= ARGV[2] then return -6 end") ||
-    !sync.includes("'EVAL', armCommitScript, '8'") ||
+    !sync.includes("if requester ~= ARGV[4] then return -7 end") ||
+    !sync.includes("if requesterEpoch > 0 and requesterCreatedAt < requesterEpoch then return -8 end") ||
+    !sync.includes('roleDeviceKey(device.role)') ||
+    !sync.includes('roleAssignmentKey(PREFIX, device.role)') ||
+    !sync.includes("'EVAL', armCommitScript, '10'") ||
     !sync.includes("'REAL_EXECUTION_ARM_RACE_BLOCKED'") ||
-    !sync.includes("'REAL_EXECUTION_ARM_ROLE_EPOCH_CHANGED'")) {
-  fail('real execution arm must atomically fence MASTER role, lease, mode, PANIC, queues and role epoch');
+    !sync.includes("'REAL_EXECUTION_ARM_ROLE_EPOCH_CHANGED'") ||
+    !sync.includes("'CONTROLLER_SESSION_REVOKED'") ||
+    !sync.includes("'MASTER_SESSION_REVOKED'")) {
+  fail('real execution arm must atomically fence MASTER state and the privileged requester role/epoch before arming');
 }
 if (!sync.includes("BINANCE_API_RESTRICTIONS_PATH = '/sapi/v1/account/apiRestrictions'") ||
     !sync.includes('fetchBinanceApiPermissions') ||
