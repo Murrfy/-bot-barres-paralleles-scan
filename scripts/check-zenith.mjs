@@ -1096,10 +1096,16 @@ if (!sync.includes('const armCommitScript = [') ||
     !sync.includes("if mode ~= 'PAUSED' then return -3 end") ||
     !sync.includes("if panic ~= '1' then return -4 end") ||
     !sync.includes("if roleEpoch ~= ARGV[2] then return -6 end") ||
-    !sync.includes("'EVAL', armCommitScript, '8'") ||
+    !sync.includes("if requester ~= ARGV[4] then return -7 end") ||
+    !sync.includes("if requesterEpoch > 0 and requesterCreatedAt < requesterEpoch then return -8 end") ||
+    !sync.includes('roleDeviceKey(requesterRole)') ||
+    !sync.includes('roleAssignmentKey(PREFIX, requesterRole)') ||
+    !sync.includes("'EVAL', armCommitScript, '10'") ||
     !sync.includes("'REAL_EXECUTION_ARM_RACE_BLOCKED'") ||
-    !sync.includes("'REAL_EXECUTION_ARM_ROLE_EPOCH_CHANGED'")) {
-  fail('real execution arm must atomically fence MASTER role, lease, mode, PANIC, queues and role epoch');
+    !sync.includes("'REAL_EXECUTION_ARM_ROLE_EPOCH_CHANGED'") ||
+    !sync.includes("'REQUESTER_ROLE_CHANGED_DURING_ARM'") ||
+    !sync.includes("'REQUESTER_SESSION_REVOKED_DURING_ARM'")) {
+  fail('real execution arm must atomically fence MASTER state and the privileged requester role/epoch');
 }
 if (!sync.includes("BINANCE_API_RESTRICTIONS_PATH = '/sapi/v1/account/apiRestrictions'") ||
     !sync.includes('fetchBinanceApiPermissions') ||
@@ -1345,6 +1351,17 @@ for (const required of [
   "redis.call('GET', KEYS[16])",
   'KEY_USER_STREAM_MUTATION_LOCK',
   "'USER_STREAM_MUTATION_IN_FLIGHT'",
+  "local controller = tostring(redis.call('GET', KEYS[17]) or '')",
+  "if controller ~= ARGV[3] then return -6 end",
+  "local controllerEpoch = tonumber(redis.call('GET', KEYS[18]) or '0') or 0",
+  "if controllerEpoch > 0 and controllerCreatedAt < controllerEpoch then return -7 end",
+  "'EVAL', revokeScript, '18'",
+  'KEY_CONTROLLER_DEVICE',
+  "roleAssignmentKey(PREFIX, 'controller')",
+  "'CONTROLLER_ROLE_CHANGED_DURING_REVOKE'",
+  "'CONTROLLER_SESSION_REVOKED_DURING_REVOKE'",
+  'const alreadyRevokedScript = [',
+  "'EVAL', alreadyRevokedScript, '5'",
   "masterRoleEpochAdvancedAt: revokedAt"
 ]) {
   if (!masterRevokeSync.includes(required)) fail(`MASTER emergency revoke must remain fail-closed: ${required}`);

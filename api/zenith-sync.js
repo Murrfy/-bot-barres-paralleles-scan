@@ -2026,9 +2026,39 @@ export default async function handler(req, res) {
       const revokedAt = Date.now();
 
       if (!registeredMaster) {
-        await redis(['DEL', KEY_REAL_EXECUTION_ARMED]);
-        await redis(['DEL', KEY_MASTER]);
-        await redis(['SET', roleAssignmentKey(PREFIX, 'master'), String(revokedAt)]);
+        const alreadyRevokedScript = [
+          "local controller = tostring(redis.call('GET', KEYS[1]) or '')",
+          "if controller ~= ARGV[1] then return -1 end",
+          "local controllerEpoch = tonumber(redis.call('GET', KEYS[2]) or '0') or 0",
+          "local sessionCreatedAt = tonumber(ARGV[2]) or 0",
+          "if controllerEpoch > 0 and sessionCreatedAt < controllerEpoch then return -2 end",
+          "redis.call('DEL', KEYS[3])",
+          "redis.call('DEL', KEYS[4])",
+          "redis.call('SET', KEYS[5], ARGV[3])",
+          "return 1"
+        ].join('\n');
+        const alreadyRevokedResult = Number(await redis([
+          'EVAL', alreadyRevokedScript, '5',
+          KEY_CONTROLLER_DEVICE,
+          roleAssignmentKey(PREFIX, 'controller'),
+          KEY_REAL_EXECUTION_ARMED,
+          KEY_MASTER,
+          roleAssignmentKey(PREFIX, 'master'),
+          String(device.deviceId),
+          String(Number(device.createdAt || 0)),
+          String(revokedAt),
+        ]));
+        if (alreadyRevokedResult !== 1) {
+          clearDeviceSessionCookie(res);
+          return send(res, 409, {
+            ok: false,
+            code: alreadyRevokedResult === -2
+              ? 'CONTROLLER_SESSION_REVOKED'
+              : 'CONTROLLER_ROLE_CHANGED',
+            emergencyStopActive: true,
+            masterMode: 'PAUSE_PENDING',
+          });
+        }
         return send(res, 200, {
           ok: true,
           masterRevoked: true,
@@ -2117,6 +2147,11 @@ export default async function handler(req, res) {
       }
 
       const revokeScript = [
+        "local controller = tostring(redis.call('GET', KEYS[17]) or '')",
+        "if controller ~= ARGV[3] then return -6 end",
+        "local controllerEpoch = tonumber(redis.call('GET', KEYS[18]) or '0') or 0",
+        "local controllerCreatedAt = tonumber(ARGV[4]) or 0",
+        "if controllerEpoch > 0 and controllerCreatedAt < controllerEpoch then return -7 end",
         "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
         "if registered == '' then return 2 end",
         "if registered ~= ARGV[1] then return -1 end",
@@ -2141,7 +2176,7 @@ export default async function handler(req, res) {
       ].join('\n');
 
       const result = Number(await redis([
-        'EVAL', revokeScript, '16',
+        'EVAL', revokeScript, '18',
         KEY_MASTER_DEVICE,
         KEY_EMERGENCY_STOP,
         KEY_MASTER_MODE,
@@ -2158,8 +2193,12 @@ export default async function handler(req, res) {
         KEY_PROCESSING,
         roleAssignmentKey(PREFIX, 'master'),
         KEY_USER_STREAM_MUTATION_LOCK,
+        KEY_CONTROLLER_DEVICE,
+        roleAssignmentKey(PREFIX, 'controller'),
         String(registeredMaster),
         String(revokedAt),
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
       ]));
 
       if (result === -1) {
@@ -2167,6 +2206,18 @@ export default async function handler(req, res) {
           ok: false,
           code: 'MASTER_ROLE_CHANGED_DURING_REVOKE',
           emergencyStopActive: true,
+        });
+      }
+
+      if (result === -6 || result === -7) {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: result === -7
+            ? 'CONTROLLER_SESSION_REVOKED_DURING_REVOKE'
+            : 'CONTROLLER_ROLE_CHANGED_DURING_REVOKE',
+          emergencyStopActive: true,
+          masterMode: 'PAUSED',
         });
       }
 
@@ -2390,6 +2441,7 @@ export default async function handler(req, res) {
         return send(res, 409, { ok:false, code:'REAL_EXECUTION_ARM_BLOCKED', blockers });
       }
 
+      const requesterRole = String(device.role || '').toLowerCase();
       const record = {
         version:1,
         armedAt:Date.now(),
@@ -2414,11 +2466,16 @@ export default async function handler(req, res) {
         "if redis.call('LLEN', KEYS[5]) > 0 or redis.call('LLEN', KEYS[6]) > 0 then return -5 end",
         "local roleEpoch = tostring(redis.call('GET', KEYS[7]) or '')",
         "if roleEpoch ~= ARGV[2] then return -6 end",
+        "local requester = tostring(redis.call('GET', KEYS[9]) or '')",
+        "if requester ~= ARGV[4] then return -7 end",
+        "local requesterEpoch = tonumber(redis.call('GET', KEYS[10]) or '0') or 0",
+        "local requesterCreatedAt = tonumber(ARGV[5]) or 0",
+        "if requesterEpoch > 0 and requesterCreatedAt < requesterEpoch then return -8 end",
         "redis.call('SET', KEYS[8], ARGV[3])",
         "return 1"
       ].join('\n');
       const armCommitResult = Number(await redis([
-        'EVAL', armCommitScript, '8',
+        'EVAL', armCommitScript, '10',
         KEY_MASTER_DEVICE,
         KEY_MASTER,
         KEY_MASTER_MODE,
@@ -2427,9 +2484,13 @@ export default async function handler(req, res) {
         KEY_PROCESSING,
         roleAssignmentKey(PREFIX, 'master'),
         KEY_REAL_EXECUTION_ARMED,
+        roleDeviceKey(requesterRole),
+        roleAssignmentKey(PREFIX, requesterRole),
         String(currentMaster),
         String(masterRoleEpoch),
         JSON.stringify(record),
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
       ]));
       if (armCommitResult !== 1) {
         const reason = armCommitResult === -1
@@ -2444,7 +2505,12 @@ export default async function handler(req, res) {
                   ? 'COMMAND_QUEUE_CHANGED_DURING_ARM'
                   : armCommitResult === -6
                     ? 'MASTER_ROLE_EPOCH_CHANGED_DURING_ARM'
-                    : 'REAL_EXECUTION_ARM_COMMIT_FAILED';
+                    : armCommitResult === -7
+                      ? 'REQUESTER_ROLE_CHANGED_DURING_ARM'
+                      : armCommitResult === -8
+                        ? 'REQUESTER_SESSION_REVOKED_DURING_ARM'
+                        : 'REAL_EXECUTION_ARM_COMMIT_FAILED';
+        if (armCommitResult === -7 || armCommitResult === -8) clearDeviceSessionCookie(res);
         return send(res, 409, { ok:false, code:'REAL_EXECUTION_ARM_RACE_BLOCKED', blockers:[reason] });
       }
       await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
