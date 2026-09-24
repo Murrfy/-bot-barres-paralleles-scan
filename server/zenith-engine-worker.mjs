@@ -96,6 +96,7 @@ const markStream={
 };
 
 let heartbeatTimer=null;
+let standbyTimer=null;
 
 function required(name,value){
   if(!value)throw new Error(name+'_REQUIRED');
@@ -1509,6 +1510,7 @@ async function shutdown(code=0){
   if(stopping)return;
   stopping=true;
   if(heartbeatTimer)clearInterval(heartbeatTimer);
+  if(standbyTimer)clearInterval(standbyTimer);
   if(execution.timer)clearInterval(execution.timer);
   if(stream.reconnectTimer)clearTimeout(stream.reconnectTimer);
   if(markStream.reconnectTimer)clearTimeout(markStream.reconnectTimer);
@@ -1528,7 +1530,8 @@ async function shutdown(code=0){
 
 async function main(){
   if(!WORKER_ENABLED){
-    log('DISABLED',{reason:'ZENITH_ENGINE_WORKER_ENABLED_NOT_SET'});
+    log('DISABLED_STANDBY',{reason:'ZENITH_ENGINE_WORKER_ENABLED_NOT_SET'});
+    standbyTimer=setInterval(()=>{},60*60*1000);
     return;
   }
   required('ZENITH_BASE_URL',BASE_URL);
