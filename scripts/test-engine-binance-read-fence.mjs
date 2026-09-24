@@ -8,14 +8,16 @@ test('read-only Binance API fences stale engine worker sessions',()=>{
   assert.ok(source.includes('engineInstanceHeader'));
   assert.ok(source.includes('enginePrincipalInstanceActive'));
   assert.ok(source.includes("redis(['GET',`${PREFIX}:engine-instance`])"));
+  assert.ok(source.includes("redis(['GET',`${PREFIX}:master`])"));
   assert.ok(source.includes("const e=new Error('ENGINE_INSTANCE_FENCED')"));
+  assert.ok(source.includes("const e=new Error('MASTER_LEASE_REQUIRED')"));
   assert.ok(source.includes("e.code='ENGINE_INSTANCE_FENCED'"));
 });
 
-test('stale engine fence is returned as conflict, not hidden as backend failure',()=>{
-  assert.ok(source.includes("if (e?.code === 'ENGINE_INSTANCE_FENCED')"));
+test('stale engine or lost MASTER lease is returned as conflict, not hidden as backend failure',()=>{
+  assert.ok(source.includes("e?.code === 'ENGINE_INSTANCE_FENCED' || e?.code === 'MASTER_LEASE_REQUIRED'"));
   assert.ok(source.includes("return send(res, 409"));
-  assert.ok(source.includes("code: 'ENGINE_INSTANCE_FENCED'"));
+  assert.ok(source.includes("code: e.code"));
 });
 
 test('controller and ordinary paired MASTER reads remain compatible',()=>{
