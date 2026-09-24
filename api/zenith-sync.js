@@ -1392,8 +1392,9 @@ async function recoverStaleProcessing(device) {
   for (const raw of Array.isArray(rows) ? rows : []) {
     let command = null;
     try { command = JSON.parse(raw); } catch {
-      const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
-      if (removed > 0) {
+      const removed = await removeProcessingAtomic(raw, device);
+      if (removed < 0) return { requeued, removedDone, dead, authorityLost:true, authorityCode:removed };
+      if (removed === 1) {
         await pushDeadLetter({ raw, rejectedAt: now, rejectedReason: 'COMMAND_CORRUPT' });
         dead += 1;
       }
@@ -1401,8 +1402,9 @@ async function recoverStaleProcessing(device) {
     }
 
     if (!commandTypeAllowed(command?.type) || commandExpired(command, now)) {
-      const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
-      if (removed > 0) {
+      const removed = await removeProcessingAtomic(raw, device);
+      if (removed < 0) return { requeued, removedDone, dead, authorityLost:true, authorityCode:removed };
+      if (removed === 1) {
         await pushDeadLetter({
           raw,
           rejectedAt: now,
@@ -1417,7 +1419,9 @@ async function recoverStaleProcessing(device) {
     if (commandId) {
       const done = await redis(['GET', `${PREFIX}:command:done:${commandId}`]);
       if (done) {
-        removedDone += Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+        const removed = await removeProcessingAtomic(raw, device);
+        if (removed < 0) return { requeued, removedDone, dead, authorityLost:true, authorityCode:removed };
+        if (removed === 1) removedDone += 1;
         continue;
       }
     }
@@ -1429,8 +1433,9 @@ async function recoverStaleProcessing(device) {
       const halted = await emergencyStopActive();
       const gate = executionGate(command.type, halted);
       if (!gate.allowed) {
-        const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
-        if (removed > 0) {
+        const removed = await removeProcessingAtomic(raw, device);
+        if (removed < 0) return { requeued, removedDone, dead, authorityLost:true, authorityCode:removed };
+        if (removed === 1) {
           await pushDeadLetter({ raw, rejectedAt: now, rejectedReason: 'EXECUTION_LOCKED_' + gate.reason });
           dead += 1;
         }
@@ -1449,14 +1454,24 @@ async function recoverStaleProcessing(device) {
       device,
       'RPUSH'
     );
+    if (moved < 0) return { requeued, removedDone, dead, authorityLost:true, authorityCode:moved };
     if (moved === 1) requeued += 1;
   }
 
-  return { requeued, removedDone, dead };
+  return { requeued, removedDone, dead, authorityLost:false, authorityCode:0 };
 }
 
-async function claimNextCommand(deviceId) {
+async function claimNextCommand(device) {
+  const deviceId = String(device?.deviceId || '');
+  const sessionCreatedAt = String(Number(device?.createdAt || 0));
   const script = [
+    "local registered = tostring(redis.call('GET', KEYS[4]) or '')",
+    "if registered ~= ARGV[2] then return '__MASTER_ROLE_CHANGED__' end",
+    "local lease = tostring(redis.call('GET', KEYS[5]) or '')",
+    "if lease ~= ARGV[2] then return '__MASTER_LEASE_LOST__' end",
+    "local roleIssuedAt = tonumber(redis.call('GET', KEYS[6]) or '0') or 0",
+    "local sessionCreatedAt = tonumber(ARGV[4]) or 0",
+    "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return '__MASTER_SESSION_REVOKED__' end",
     "local raw = redis.call('RPOP', KEYS[1])",
     "if not raw then return nil end",
     "local ok, obj = pcall(cjson.decode, raw)",
@@ -1478,20 +1493,91 @@ async function claimNextCommand(deviceId) {
   ].join('\n');
 
   return await redis([
-    'EVAL', script, '3',
-    KEY_PENDING, KEY_PROCESSING, KEY_DEAD,
-    String(Date.now()), String(deviceId), String(DEAD_LETTER_MAX)
+    'EVAL', script, '6',
+    KEY_PENDING,
+    KEY_PROCESSING,
+    KEY_DEAD,
+    KEY_MASTER_DEVICE,
+    KEY_MASTER,
+    roleAssignmentKey(PREFIX, 'master'),
+    String(Date.now()),
+    deviceId,
+    String(DEAD_LETTER_MAX),
+    sessionCreatedAt,
   ]);
 }
 
-async function rejectClaimedCommand(raw, reason, extra = {}) {
-  await redis(['LREM', KEY_PROCESSING, '1', raw]);
+async function removeProcessingAtomic(raw, device) {
+  const script = [
+    "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if registered ~= ARGV[2] then return -1 end",
+    "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if lease ~= ARGV[2] then return -2 end",
+    "local roleIssuedAt = tonumber(redis.call('GET', KEYS[4]) or '0') or 0",
+    "local sessionCreatedAt = tonumber(ARGV[3]) or 0",
+    "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end",
+    "return redis.call('LREM', KEYS[1], 1, ARGV[1])"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL', script, '4',
+    KEY_PROCESSING,
+    KEY_MASTER_DEVICE,
+    KEY_MASTER,
+    roleAssignmentKey(PREFIX, 'master'),
+    raw,
+    String(device?.deviceId || ''),
+    String(Number(device?.createdAt || 0)),
+  ]));
+}
+
+async function completeProcessingCommandAtomic(raw, commandId, device) {
+  const doneKey = `${PREFIX}:command:done:${commandId || '__none__'}`;
+  const script = [
+    "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if registered ~= ARGV[2] then return -1 end",
+    "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if lease ~= ARGV[2] then return -2 end",
+    "local roleIssuedAt = tonumber(redis.call('GET', KEYS[4]) or '0') or 0",
+    "local sessionCreatedAt = tonumber(ARGV[3]) or 0",
+    "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end",
+    "local removed = redis.call('LREM', KEYS[1], 1, ARGV[1])",
+    "if removed <= 0 then return 0 end",
+    "if ARGV[4] == '1' then redis.call('SET', KEYS[5], ARGV[5], 'EX', ARGV[6]) end",
+    "return 1"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL', script, '5',
+    KEY_PROCESSING,
+    KEY_MASTER_DEVICE,
+    KEY_MASTER,
+    roleAssignmentKey(PREFIX, 'master'),
+    doneKey,
+    raw,
+    String(device?.deviceId || ''),
+    String(Number(device?.createdAt || 0)),
+    commandId ? '1' : '0',
+    String(Date.now()),
+    String(60 * 60 * 24 * 30),
+  ]));
+}
+
+function masterAuthorityMutationCode(code, suffix = '') {
+  if (code === -1) return 'MASTER_ROLE_CHANGED' + suffix;
+  if (code === -2) return 'MASTER_LEASE_LOST' + suffix;
+  if (code === -3) return 'MASTER_SESSION_REVOKED' + suffix;
+  return 'MASTER_AUTHORITY_CHANGED' + suffix;
+}
+
+async function rejectClaimedCommand(raw, reason, extra = {}, device) {
+  const removed = await removeProcessingAtomic(raw, device);
+  if (removed !== 1) return removed;
   await pushDeadLetter({
     raw,
     rejectedAt: Date.now(),
     rejectedReason: String(reason || 'COMMAND_REJECTED'),
     ...extra,
   });
+  return 1;
 }
 
 async function moveProcessingToPendingAtomic(raw, nextRaw, device, pushMode = 'LPUSH') {
@@ -3259,8 +3345,28 @@ export default async function handler(req, res) {
       }
 
       const recovery = await recoverStaleProcessing(device);
-      const raw = await claimNextCommand(device.deviceId);
+      if (recovery.authorityLost) {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok:false,
+          code:masterAuthorityMutationCode(recovery.authorityCode, '_DURING_RECOVERY'),
+          recovery,
+        });
+      }
+      const raw = await claimNextCommand(device);
       if (!raw) return send(res, 200, { ok: true, command: null, recovery });
+      if (raw === '__MASTER_ROLE_CHANGED__' || raw === '__MASTER_LEASE_LOST__' || raw === '__MASTER_SESSION_REVOKED__') {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok:false,
+          code: raw === '__MASTER_ROLE_CHANGED__'
+            ? 'MASTER_ROLE_CHANGED_DURING_CLAIM'
+            : raw === '__MASTER_LEASE_LOST__'
+              ? 'MASTER_LEASE_LOST_DURING_CLAIM'
+              : 'MASTER_SESSION_REVOKED_DURING_CLAIM',
+          recovery,
+        });
+      }
       if (raw === '__DEAD__') {
         return send(res, 500, { ok: false, code: 'COMMAND_CORRUPT', recovery });
       }
@@ -3279,13 +3385,13 @@ export default async function handler(req, res) {
       try { command = JSON.parse(raw); } catch {}
 
       if (!command || !commandTypeAllowed(command.type)) {
-        await rejectClaimedCommand(raw, 'COMMAND_TYPE_NOT_ALLOWED');
+        await rejectClaimedCommand(raw, 'COMMAND_TYPE_NOT_ALLOWED', {}, device);
         return send(res, 200, { ok: true, command: null, typeRejected: true, recovery });
       }
       if (String(command.type || '').toUpperCase() === 'EXEC_CLOSE_POSITION') {
         const payloadStatus = execClosePayloadStatus(command.payload);
         if (!payloadStatus.ok) {
-          await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason });
+          await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason }, device);
           return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
         }
       }
@@ -3294,17 +3400,17 @@ export default async function handler(req, res) {
         await rejectClaimedCommand(raw, 'COMMAND_EXPIRED', {
           createdAt: Number(command.createdAt || 0),
           expiresAt: Number(command.expiresAt || 0),
-        });
+        }, device);
         return send(res, 200, { ok: true, command: null, expiredRejected: true, recovery });
       }
 
       const modeNow = await masterMode();
       if (modeNow === 'PAUSED') {
-        await rejectClaimedCommand(raw, 'MASTER_PAUSED_AFTER_CLAIM');
+        await rejectClaimedCommand(raw, 'MASTER_PAUSED_AFTER_CLAIM', {}, device);
         return send(res, 200, { ok: true, command: null, pausedRejected: true, recovery });
       }
       if (modeNow === 'PAUSE_PENDING' && !commandAllowedDuringPausePending(command.type)) {
-        await rejectClaimedCommand(raw, 'MASTER_PAUSE_PENDING_UNSAFE_COMMAND');
+        await rejectClaimedCommand(raw, 'MASTER_PAUSE_PENDING_UNSAFE_COMMAND', {}, device);
         return send(res, 200, { ok: true, command: null, pausePendingRejected: true, recovery });
       }
 
@@ -3312,7 +3418,7 @@ export default async function handler(req, res) {
       if (String(command.deviceId || '') !== String(currentController || '')) {
         await rejectClaimedCommand(raw, 'STALE_CONTROLLER_COMMAND', {
           currentControllerDeviceId: currentController,
-        });
+        }, device);
         return send(res, 200, { ok: true, command: null, staleRejected: true, recovery });
       }
 
@@ -3321,7 +3427,7 @@ export default async function handler(req, res) {
         await rejectClaimedCommand(raw, 'MASTER_CONFIG_OUT_OF_SYNC', {
           controllerRevision: configSync.status.controllerRevision,
           appliedRevision: configSync.status.appliedRevision,
-        });
+        }, device);
         return send(res, 200, {
           ok: true,
           command: null,
@@ -3339,7 +3445,7 @@ export default async function handler(req, res) {
             emergencyStopActive: halted,
             realTradingEnabled: REAL_TRADING_ENABLED,
             pairingDisabled: PAIRING_DISABLED,
-          });
+          }, device);
           return send(res, 200, {
             ok: true,
             command: null,
@@ -3385,6 +3491,14 @@ export default async function handler(req, res) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
       const recovery = await recoverStaleProcessing(device);
+      if (recovery.authorityLost) {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok:false,
+          code:masterAuthorityMutationCode(recovery.authorityCode, '_DURING_RECOVERY'),
+          recovery,
+        });
+      }
       return send(res, 200, { ok: true, recovery });
     }
 
@@ -3574,10 +3688,18 @@ export default async function handler(req, res) {
         await redis(['LTRIM', KEY_AUDIT, '0', '199']);
       }
 
-      if (commandId) {
-        await redis(['SET', `${PREFIX}:command:done:${commandId}`, String(Date.now()), 'EX', String(60 * 60 * 24 * 30)]);
+      const completed = await completeProcessingCommandAtomic(raw, commandId, device);
+      if (completed < 0) {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok:false,
+          code:masterAuthorityMutationCode(completed, '_DURING_ACK'),
+          commandId,
+        });
       }
-      await redis(['LREM', KEY_PROCESSING, '1', raw]);
+      if (completed !== 1) {
+        return send(res, 409, { ok:false, code:'COMMAND_ACK_NOT_PROCESSING', commandId });
+      }
       return send(res, 200, { ok:true, commandId });
     }
 
@@ -3598,7 +3720,14 @@ export default async function handler(req, res) {
       const raw = rawStatus.value;
       let command = null;
       try { command = JSON.parse(raw); } catch {}
-      const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
+      const removed = await removeProcessingAtomic(raw, device);
+      if (removed < 0) {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok:false,
+          code:masterAuthorityMutationCode(removed, '_DURING_FAIL'),
+        });
+      }
       if (removed > 0) {
         await pushDeadLetter({raw,rejectedAt:Date.now(),rejectedReason:reason,failedBy:device.deviceId});
         await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
@@ -3634,11 +3763,11 @@ export default async function handler(req, res) {
       let command = null;
       try { command = JSON.parse(raw); } catch {}
       if (!command || !commandTypeAllowed(command.type)) {
-        await rejectClaimedCommand(raw, 'COMMAND_TYPE_NOT_ALLOWED');
+        await rejectClaimedCommand(raw, 'COMMAND_TYPE_NOT_ALLOWED', {}, device);
         return send(res, 200, { ok: true, requeued: false, rejected: true });
       }
       if (commandExpired(command)) {
-        await rejectClaimedCommand(raw, 'COMMAND_EXPIRED');
+        await rejectClaimedCommand(raw, 'COMMAND_EXPIRED', {}, device);
         return send(res, 200, { ok: true, requeued: false, expired: true });
       }
 
@@ -3646,7 +3775,14 @@ export default async function handler(req, res) {
       if (commandId) {
         const done = await redis(['GET', `${PREFIX}:command:done:${commandId}`]);
         if (done) {
-          await redis(['LREM', KEY_PROCESSING, '1', raw]);
+          const removed = await removeProcessingAtomic(raw, device);
+          if (removed < 0) {
+            clearDeviceSessionCookie(res);
+            return send(res, 409, {
+              ok:false,
+              code:masterAuthorityMutationCode(removed, '_DURING_REQUEUE'),
+            });
+          }
           return send(res, 200, { ok: true, requeued: false, alreadyDone: true });
         }
       }
@@ -3654,7 +3790,7 @@ export default async function handler(req, res) {
       const modeNow = await masterMode();
       if (modeNow === 'PAUSED' ||
           (modeNow === 'PAUSE_PENDING' && !commandAllowedDuringPausePending(command.type))) {
-        await rejectClaimedCommand(raw, modeNow === 'PAUSED' ? 'MASTER_PAUSED' : 'MASTER_PAUSE_PENDING_UNSAFE_COMMAND');
+        await rejectClaimedCommand(raw, modeNow === 'PAUSED' ? 'MASTER_PAUSED' : 'MASTER_PAUSE_PENDING_UNSAFE_COMMAND', {}, device);
         return send(res, 200, { ok: true, requeued: false, paused: true, masterMode: modeNow });
       }
 
@@ -3662,7 +3798,7 @@ export default async function handler(req, res) {
         const halted = await emergencyStopActive();
         const gate = executionGate(command.type, halted);
         if (!gate.allowed) {
-          await rejectClaimedCommand(raw, 'EXECUTION_LOCKED_' + gate.reason);
+          await rejectClaimedCommand(raw, 'EXECUTION_LOCKED_' + gate.reason, {}, device);
           return send(res, 200, { ok: true, requeued: false, executionRejected: true, executionReason: gate.reason });
         }
         const readiness = await realExecutionReadiness(device.deviceId);
