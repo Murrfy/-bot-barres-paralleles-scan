@@ -60,6 +60,8 @@ jobs:
         run: node --check api/zenith-sync.js
       - name: Check 24/7 engine worker syntax
         run: node --check server/zenith-engine-worker.mjs
+      - name: Check VPS liveness probe syntax
+        run: node --check deploy/check-engine-liveness.mjs
       - name: Check Node 24 WebSocket runtime
         run: node -e "if (typeof WebSocket !== 'function') process.exit(1)"
       - name: Test reconciliation failure scenarios
@@ -132,6 +134,8 @@ jobs:
         run: node --test scripts/test-engine-binance-instance-fence.mjs
       - name: Test provider-neutral 24/7 engine worker runtime
         run: node --test scripts/test-engine-worker-runtime.mjs
+      - name: Test VPS engine operations hardening
+        run: node --test scripts/test-vps-engine-operations.mjs
       - name: Test persistent engine protection high-water
         run: node --test scripts/test-engine-protection-high-water.mjs
       - name: Test server progressive auto-protection
