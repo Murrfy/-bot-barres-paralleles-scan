@@ -177,10 +177,84 @@ async function readSession() {
   try { return JSON.parse(raw); } catch { return null; }
 }
 
-async function saveSession(record) {
-  await redis(['SET', KEY_STREAM_SESSION, JSON.stringify(record), 'EX', String(SESSION_TTL_SECONDS)]);
-  return record;
+async function renewUserStreamMutationLock(master, token) {
+  const script = [
+    "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
+    "local lease = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if registered ~= ARGV[1] or lease ~= ARGV[1] then return -1 end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[3]) or '0')",
+    "if roleEpoch ~= ARGV[2] then return -2 end",
+    "local lockToken = tostring(redis.call('GET', KEYS[4]) or '')",
+    "if lockToken ~= ARGV[3] then return -3 end",
+    "redis.call('EXPIRE', KEYS[4], ARGV[4])",
+    "return 1"
+  ].join('\n');
+  const result = Number(await redis([
+    'EVAL', script, '4',
+    KEY_MASTER_DEVICE,
+    KEY_MASTER,
+    roleAssignmentKey(PREFIX, 'master'),
+    KEY_STREAM_MUTATION_LOCK,
+    String(master?.deviceId || ''),
+    String(master?.roleIssuedAt || '0'),
+    String(token || ''),
+    String(USER_STREAM_MUTATION_LOCK_TTL_SECONDS),
+  ]));
+  return {
+    ok: result === 1,
+    reason: result === -1
+      ? 'MASTER_LEASE_REQUIRED'
+      : result === -2
+        ? 'MASTER_ROLE_CHANGED'
+        : result === -3
+          ? 'USER_STREAM_MUTATION_LOCK_LOST'
+          : 'USER_STREAM_MUTATION_FENCE_FAILED',
+  };
 }
+
+async function commitUserStreamSession(master, token, record = null, mode = 'SET') {
+  const operation = String(mode || '').toUpperCase();
+  const script = [
+    "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
+    "local lease = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if registered ~= ARGV[1] or lease ~= ARGV[1] then return -1 end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[3]) or '0')",
+    "if roleEpoch ~= ARGV[2] then return -2 end",
+    "local lockToken = tostring(redis.call('GET', KEYS[4]) or '')",
+    "if lockToken ~= ARGV[3] then return -3 end",
+    "if ARGV[4] == 'DEL' then",
+    "  redis.call('DEL', KEYS[5])",
+    "else",
+    "  redis.call('SET', KEYS[5], ARGV[5], 'EX', ARGV[6])",
+    "end",
+    "return 1"
+  ].join('\n');
+  const result = Number(await redis([
+    'EVAL', script, '5',
+    KEY_MASTER_DEVICE,
+    KEY_MASTER,
+    roleAssignmentKey(PREFIX, 'master'),
+    KEY_STREAM_MUTATION_LOCK,
+    KEY_STREAM_SESSION,
+    String(master?.deviceId || ''),
+    String(master?.roleIssuedAt || '0'),
+    String(token || ''),
+    operation,
+    operation === 'DEL' ? '' : JSON.stringify(record),
+    String(SESSION_TTL_SECONDS),
+  ]));
+  return {
+    ok: result === 1,
+    reason: result === -1
+      ? 'MASTER_LEASE_REQUIRED'
+      : result === -2
+        ? 'MASTER_ROLE_CHANGED'
+        : result === -3
+          ? 'USER_STREAM_MUTATION_LOCK_LOST'
+          : 'USER_STREAM_SESSION_COMMIT_FAILED',
+  };
+}
+
 
 async function userStreamMutationRateAllowed(masterDeviceId) {
   const bucket = Math.floor(Date.now() / 60000);
@@ -290,13 +364,17 @@ export default async function handler(req, res) {
     }
 
     if (action === 'start' && req.method === 'POST') {
+      const dispatchFence = await renewUserStreamMutationLock(master, mutationLockToken);
+      if (!dispatchFence.ok) {
+        return send(res, 409, { ok:false, code:dispatchFence.reason, tradingWriteAttempted:false });
+      }
       const data = await binanceListenKey('POST');
       const listenKey = String(data?.listenKey || '');
       if (!listenKey) {
         return send(res, 502, { ok: false, code: 'BINANCE_LISTEN_KEY_MISSING' });
       }
       const now = Date.now();
-      const record = await saveSession({
+      const record = {
         version: 1,
         listenKey,
         masterDeviceId: master.deviceId,
@@ -304,7 +382,11 @@ export default async function handler(req, res) {
         keepaliveAt: now,
         keepaliveDueAt: now + KEEPALIVE_AFTER_MS,
         expiresAt: now + 60 * 60 * 1000,
-      });
+      };
+      const committed = await commitUserStreamSession(master, mutationLockToken, record, 'SET');
+      if (!committed.ok) {
+        return send(res, 409, { ok:false, code:committed.reason, tradingWriteAttempted:false });
+      }
       return send(res, 200, {
         ok: true,
         listenKey,
@@ -319,16 +401,24 @@ export default async function handler(req, res) {
       if (!existing?.listenKey || String(existing.masterDeviceId || '') !== String(master.deviceId)) {
         return send(res, 409, { ok: false, code: 'USER_STREAM_SESSION_REQUIRED' });
       }
+      const dispatchFence = await renewUserStreamMutationLock(master, mutationLockToken);
+      if (!dispatchFence.ok) {
+        return send(res, 409, { ok:false, code:dispatchFence.reason, tradingWriteAttempted:false });
+      }
       const data = await binanceListenKey('PUT');
       const refreshedListenKey = String(data?.listenKey || existing.listenKey);
       const now = Date.now();
-      const record = await saveSession({
+      const record = {
         ...existing,
         listenKey: refreshedListenKey,
         keepaliveAt: now,
         keepaliveDueAt: now + KEEPALIVE_AFTER_MS,
         expiresAt: now + 60 * 60 * 1000,
-      });
+      };
+      const committed = await commitUserStreamSession(master, mutationLockToken, record, 'SET');
+      if (!committed.ok) {
+        return send(res, 409, { ok:false, code:committed.reason, tradingWriteAttempted:false });
+      }
       return send(res, 200, {
         ok: true,
         listenKeyChanged: refreshedListenKey !== existing.listenKey,
@@ -339,10 +429,17 @@ export default async function handler(req, res) {
 
     if (action === 'close' && req.method === 'POST') {
       const existing = await readSession();
+      const dispatchFence = await renewUserStreamMutationLock(master, mutationLockToken);
+      if (!dispatchFence.ok) {
+        return send(res, 409, { ok:false, code:dispatchFence.reason, tradingWriteAttempted:false });
+      }
       if (existing?.listenKey && String(existing.masterDeviceId || '') === String(master.deviceId)) {
         await binanceListenKey('DELETE');
       }
-      await redis(['DEL', KEY_STREAM_SESSION]);
+      const committed = await commitUserStreamSession(master, mutationLockToken, null, 'DEL');
+      if (!committed.ok) {
+        return send(res, 409, { ok:false, code:committed.reason, tradingWriteAttempted:false });
+      }
       return send(res, 200, {
         ok: true,
         closed: true,
