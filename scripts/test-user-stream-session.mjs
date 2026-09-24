@@ -21,10 +21,12 @@ function response() {
 
 function harness({
   role='master',registered='master-1',lease='master-1',storedSession=null,rateCount=1,
-  roleEpoch=Date.now()-1000,gateRoleEpoch=null,mutationLocked=false
+  roleEpoch=Date.now()-1000,gateRoleEpoch=null,mutationLocked=false,
+  roleEpochAfterBinance=null,dropLockAfterBinance=false,replaceSessionAfterBinance=null
 }={}) {
   const original = globalThis.fetch;
   let session = storedSession;
+  let currentRoleEpoch = roleEpoch;
   let lockToken = mutationLocked ? 'other-mutation' : '';
   const binanceCalls = [];
   globalThis.fetch = async (url, init={}) => {
@@ -38,7 +40,7 @@ function harness({
       } else if (c[0] === 'GET' && c[1] === 'zenith:v1:master') {
         result = lease;
       } else if (c[0] === 'GET' && c[1] === 'zenith:v1:role-issued-at:master') {
-        result = String(roleEpoch);
+        result = String(currentRoleEpoch);
       } else if (c[0] === 'GET' && c[1] === sessionKey) {
         result = session ? JSON.stringify(session) : null;
       } else if (c[0] === 'SET' && c[1] === sessionKey) {
@@ -53,7 +55,7 @@ function harness({
                  c[3] === 'zenith:v1:role-device:master' &&
                  c[4] === 'zenith:v1:master' &&
                  c[6] === 'zenith:v1:binance-user-stream:mutation-lock') {
-        const observedEpoch = gateRoleEpoch == null ? String(roleEpoch) : String(gateRoleEpoch);
+        const observedEpoch = gateRoleEpoch == null ? String(currentRoleEpoch) : String(gateRoleEpoch);
         if (String(registered || '') !== String(c[7] || '') || String(lease || '') !== String(c[7] || '')) {
           result = -1;
         } else if (observedEpoch !== String(c[8] || '')) {
@@ -63,6 +65,40 @@ function harness({
         } else {
           lockToken = String(c[9] || '');
           result = 1;
+        }
+      } else if (c[0] === 'EVAL' && c[2] === '5' &&
+                 c[3] === sessionKey &&
+                 c[4] === 'zenith:v1:role-device:master' &&
+                 c[5] === 'zenith:v1:master' &&
+                 c[7] === 'zenith:v1:binance-user-stream:mutation-lock') {
+        if (String(registered || '') !== String(c[8] || '')) {
+          result = -1;
+        } else if (String(lease || '') !== String(c[8] || '')) {
+          result = -2;
+        } else if (String(currentRoleEpoch) !== String(c[9] || '')) {
+          result = -3;
+        } else if (!lockToken || lockToken !== String(c[10] || '')) {
+          result = -4;
+        } else {
+          const currentRaw = session ? JSON.stringify(session) : '';
+          const scriptText = String(c[1] || '');
+          if (scriptText.includes("redis.call('SET', KEYS[1], ARGV[4]")) {
+            if (String(c[13] || '') === '1' && currentRaw !== String(c[14] || '')) {
+              result = -5;
+            } else {
+              session = JSON.parse(c[11]);
+              result = 1;
+            }
+          } else if (scriptText.includes("redis.call('DEL', KEYS[1])")) {
+            if (currentRaw !== String(c[11] || '')) {
+              result = -5;
+            } else {
+              session = null;
+              result = 1;
+            }
+          } else {
+            result = -99;
+          }
         }
       } else if (c[0] === 'EVAL' && c[2] === '1' &&
                  c[3] === 'zenith:v1:binance-user-stream:mutation-lock') {
@@ -80,6 +116,9 @@ function harness({
     assert.equal(u.pathname, '/fapi/v1/listenKey');
     assert.equal(init.headers['X-MBX-APIKEY'], 'api-key-test');
     binanceCalls.push(init.method);
+    if (roleEpochAfterBinance != null) currentRoleEpoch = roleEpochAfterBinance;
+    if (dropLockAfterBinance) lockToken = '';
+    if (replaceSessionAfterBinance != null) session = structuredClone(replaceSessionAfterBinance);
     if (init.method === 'POST') return new Response(JSON.stringify({listenKey:'listen-abc'}));
     if (init.method === 'PUT') return new Response(JSON.stringify({listenKey:'listen-abc'}));
     if (init.method === 'DELETE') return new Response('{}');
@@ -225,5 +264,45 @@ test('user-stream mutation lock is released after a successful Binance mutation'
     await handler(req('POST','start'),res);
     assert.equal(res.code,200);
     assert.equal(h.mutationLocked,false);
+  }finally{h.restore();}
+});
+
+
+test('start cannot commit a listenKey after MASTER role epoch changes during Binance call',async()=>{
+  const baseEpoch=Date.now()-1000;
+  const h=harness({roleEpoch:baseEpoch,roleEpochAfterBinance:baseEpoch+1});
+  try{
+    const res=response();
+    await handler(req('POST','start'),res);
+    assert.equal(res.code,409);
+    assert.equal(res.body.code,'MASTER_ROLE_EPOCH_CHANGED');
+    assert.deepEqual(h.binanceCalls,['POST']);
+    assert.equal(h.session,null);
+  }finally{h.restore();}
+});
+
+test('start cannot commit if the user-stream mutation lock expires before Redis commit',async()=>{
+  const h=harness({dropLockAfterBinance:true});
+  try{
+    const res=response();
+    await handler(req('POST','start'),res);
+    assert.equal(res.code,409);
+    assert.equal(res.body.code,'USER_STREAM_MUTATION_LOCK_LOST');
+    assert.deepEqual(h.binanceCalls,['POST']);
+    assert.equal(h.session,null);
+  }finally{h.restore();}
+});
+
+test('close never deletes a replacement session that appeared after the Binance call',async()=>{
+  const oldSession={version:1,listenKey:'listen-old',masterDeviceId:'master-1'};
+  const replacement={version:1,listenKey:'listen-new',masterDeviceId:'master-1'};
+  const h=harness({storedSession:oldSession,replaceSessionAfterBinance:replacement});
+  try{
+    const res=response();
+    await handler(req('POST','close'),res);
+    assert.equal(res.code,409);
+    assert.equal(res.body.code,'USER_STREAM_SESSION_CHANGED');
+    assert.deepEqual(h.binanceCalls,['DELETE']);
+    assert.equal(h.session.listenKey,'listen-new');
   }finally{h.restore();}
 });
