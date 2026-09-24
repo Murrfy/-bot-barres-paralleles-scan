@@ -126,6 +126,14 @@ test('already-revoked cleanup is also fenced by the current controller session',
 });
 
 
+test('already-revoked MASTER finalizes PAUSE_PENDING when safe',()=>{
+  assert.ok(block.includes("const pauseCompletion = await tryFinalizePendingPause('', 'PAUSE_PENDING')"));
+  assert.ok(block.includes("masterMode: pauseCompletion.masterMode"));
+  assert.ok(block.includes("pauseQueued: pauseCompletion.masterMode === 'PAUSE_PENDING'"));
+  assert.ok(block.includes("blockers: pauseCompletion.blockers || []"));
+});
+
+
 test('MASTER revoke also removes persistent 24/7 engine restart authority',()=>{
   assert.ok(block.includes('KEY_ENGINE_AUTHORIZED'));
   assert.ok(block.includes('KEY_ENGINE_INSTANCE'));
