@@ -239,6 +239,16 @@ async function heartbeat(){
 
 async function assertRuntimeOnlyPanic(){
   if(!RUNTIME_ONLY||realExecutionArmed!==true)return false;
+
+  const safety=await syncApi('safety');
+  if(!safety.response.ok||safety.data?.ok!==true){
+    throw Object.assign(new Error(safety.data?.code||'RUNTIME_ONLY_SAFETY_STATUS_FAILED'),{
+      code:String(safety.data?.code||'RUNTIME_ONLY_SAFETY_STATUS_FAILED'),
+    });
+  }
+  masterMode=String(safety.data.masterMode||masterMode||'PAUSED').toUpperCase();
+  if(safety.data.emergencyStopActive===true)return false;
+
   const {response,data}=await syncApi('emergency-stop',{method:'POST',body:{}});
   if(!response.ok||data?.ok!==true){
     throw Object.assign(new Error(data?.code||'RUNTIME_ONLY_PANIC_FAILED'),{
