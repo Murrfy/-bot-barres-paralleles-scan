@@ -1755,23 +1755,49 @@ export default async function handler(req, res) {
         return send(res, 409, { ok: false, code: 'MASTER_NOT_REGISTERED' });
       }
 
-      await redis([
-        'SET',
-        masterActivationKey(masterDevice),
-        '1',
-        'EX',
-        String(MASTER_ACTIVATION_TTL_SECONDS)
-      ]);
-
       const at = Date.now();
-      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+      const activationAudit = {
         at,
         kind: 'MASTER_ACTIVATION_AUTHORIZED',
         deviceId: device.deviceId,
         masterDeviceId: masterDevice,
         ttlSeconds: MASTER_ACTIVATION_TTL_SECONDS,
-      })]);
-      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      };
+      const activationScript = [
+        "local registeredMaster = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if registeredMaster ~= ARGV[1] then return -1 end",
+        "local currentController = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if currentController ~= ARGV[2] then return -2 end",
+        "local controllerEpoch = tonumber(redis.call('GET', KEYS[4]) or '0') or 0",
+        "local sessionCreatedAt = tonumber(ARGV[3]) or 0",
+        "if controllerEpoch > 0 and sessionCreatedAt < controllerEpoch then return -3 end",
+        "redis.call('SET', KEYS[1], '1', 'EX', ARGV[4])",
+        "redis.call('LPUSH', KEYS[5], ARGV[5])",
+        "redis.call('LTRIM', KEYS[5], 0, 199)",
+        "return 1"
+      ].join('\n');
+      const activationResult = Number(await redis([
+        'EVAL', activationScript, '5',
+        masterActivationKey(masterDevice),
+        KEY_MASTER_DEVICE,
+        KEY_CONTROLLER_DEVICE,
+        roleAssignmentKey(PREFIX, 'controller'),
+        KEY_AUDIT,
+        String(masterDevice),
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
+        String(MASTER_ACTIVATION_TTL_SECONDS),
+        JSON.stringify(activationAudit),
+      ]));
+      if (activationResult !== 1) {
+        if (activationResult === -2 || activationResult === -3) clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: activationResult === -1 ? 'MASTER_ROLE_CHANGED'
+            : activationResult === -3 ? 'CONTROLLER_SESSION_REVOKED'
+            : 'CONTROLLER_ROLE_CHANGED',
+        });
+      }
 
       return send(res, 200, {
         ok: true,
