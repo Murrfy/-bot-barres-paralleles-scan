@@ -596,11 +596,13 @@ export default async function handler(req, res) {
   try {
     device = await requireCurrentMaster(req);
   } catch (e) {
-    if (e?.code === 'MASTER_LEASE_REQUIRED') {
+    if (e?.code === 'MASTER_LEASE_REQUIRED' || e?.code === 'ENGINE_INSTANCE_FENCED') {
       return send(res, 409, {
         ok: false,
-        code: 'MASTER_LEASE_REQUIRED',
-        error: 'Le MASTER Zenith ne détient pas le lease actif.',
+        code: e.code,
+        error: e.code === 'ENGINE_INSTANCE_FENCED'
+          ? 'Instance moteur Zenith remplacée ou expirée.'
+          : 'Le MASTER Zenith ne détient pas le lease actif.',
       });
     }
     return send(res, 503, {
