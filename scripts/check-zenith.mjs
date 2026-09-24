@@ -544,13 +544,22 @@ if (!binanceReconcile.includes('async function beginReconciliationAttempt') ||
     !binanceReconcile.includes('async function commitReconciliationAttempt') ||
     !binanceReconcile.includes("tostring(value.attemptId or '') ~= ARGV[1]") ||
     !binanceReconcile.includes("(redis.call('GET', KEYS[2]) or '') ~= ARGV[2]") ||
+    !binanceReconcile.includes("if registered ~= ARGV[3] then return -1 end") ||
+    !binanceReconcile.includes("if lease ~= ARGV[3] then return -2 end") ||
+    !binanceReconcile.includes("if roleEpoch ~= ARGV[4] then return -3 end") ||
+    !binanceReconcile.includes("if registered ~= ARGV[4] then return -2 end") ||
+    !binanceReconcile.includes("if lease ~= ARGV[4] then return -3 end") ||
+    !binanceReconcile.includes("if roleEpoch ~= ARGV[5] then return -4 end") ||
+    !binanceReconcile.includes("'MASTER_ROLE_CHANGED_DURING_RECONCILE'") ||
+    !binanceReconcile.includes("'MASTER_LEASE_CHANGED_DURING_RECONCILE'") ||
+    !binanceReconcile.includes("'MASTER_ROLE_EPOCH_CHANGED_DURING_RECONCILE'") ||
     !binanceReconcile.includes('async function failReconciliationAttempt') ||
     !binanceReconcile.includes("'BINANCE_RECONCILIATION_SUPERSEDED'")) {
-  fail('Binance reconciliation must invalidate stale CLEAN state before remote reads and fence success/failure by attempt id');
+  fail('Binance reconciliation must invalidate stale CLEAN state before remote reads and fence begin/final commit by current MASTER authority, attempt id and runtime state');
 }
 const reconciliationHandlerStart = binanceReconcile.indexOf('export default async function handler');
 const reconciliationHandler = reconciliationHandlerStart >= 0 ? binanceReconcile.slice(reconciliationHandlerStart) : '';
-const reconcileBeginCall = reconciliationHandler.indexOf('beginReconciliationAttempt(attemptMarker)');
+const reconcileBeginCall = reconciliationHandler.indexOf('beginReconciliationAttempt(attemptMarker, device)');
 const reconcileFirstBinanceCall = reconciliationHandler.indexOf('jsonFetch(');
 if (reconcileBeginCall < 0 || reconcileFirstBinanceCall < 0 || reconcileBeginCall > reconcileFirstBinanceCall) {
   fail('Binance reconciliation must publish fail-closed IN_PROGRESS before its first Binance request');
