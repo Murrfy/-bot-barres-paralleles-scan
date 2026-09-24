@@ -98,7 +98,7 @@ test('iPhone controller exposes explicit confirmed MASTER revoke control',()=>{
 
 test('MASTER revoke refuses definitive revocation while a user-stream mutation is in flight',()=>{
   assert.ok(block.includes("redis.call('GET', KEYS[16])"));
-  assert.ok(block.includes("'EVAL', revokeScript, '18'"));
+  assert.ok(block.includes("'EVAL', revokeScript, '20'"));
   assert.ok(block.includes('KEY_USER_STREAM_MUTATION_LOCK'));
   assert.ok(block.includes("'USER_STREAM_MUTATION_IN_FLIGHT'"));
   assert.ok(block.indexOf("redis.call('GET', KEYS[16])") < block.indexOf("redis.call('DEL', KEYS[5])"));
@@ -121,6 +121,14 @@ test('already-revoked cleanup is also fenced by the current controller session',
   assert.ok(block.includes('const alreadyRevokedScript = ['));
   assert.ok(block.includes("if controller ~= ARGV[1] then return -1 end"));
   assert.ok(block.includes("if controllerEpoch > 0 and sessionCreatedAt < controllerEpoch then return -2 end"));
-  assert.ok(block.includes("'EVAL', alreadyRevokedScript, '5'"));
+  assert.ok(block.includes("'EVAL', alreadyRevokedScript, '7'"));
   assert.ok(block.includes('clearDeviceSessionCookie(res)'));
+});
+
+
+test('MASTER revoke also removes persistent 24/7 engine restart authority',()=>{
+  assert.ok(block.includes('KEY_ENGINE_AUTHORIZED'));
+  assert.ok(block.includes('KEY_ENGINE_INSTANCE'));
+  assert.ok(block.includes("redis.call('DEL', KEYS[19])"));
+  assert.ok(block.includes("redis.call('DEL', KEYS[20])"));
 });
