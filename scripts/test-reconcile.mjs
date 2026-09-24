@@ -136,7 +136,7 @@ test('HTTP reconciliation requires bounded same-origin POST', async () => {
 test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance reads', async () => {
   const original = globalThis.fetch;
   try {
-    for (const scenario of ['controller', 'replaced', 'missing-owner', 'lease-mismatch', 'rate-limited', 'invalid', 'unavailable', 'clean', 'runtime-race']) {
+    for (const scenario of ['controller', 'replaced', 'missing-owner', 'lease-mismatch', 'rate-limited', 'invalid', 'unavailable', 'clean', 'runtime-race', 'role-race', 'lease-race', 'epoch-race']) {
       const state = JSON.stringify(runtime([], [], 'SIMULATION'));
       let stored;
       let binanceCalls = 0;
@@ -166,14 +166,17 @@ test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance
             const firstKey = String(c[3] || '');
             if (firstKey.includes(':rate:binance-reconcile:')) {
               result = scenario === 'rate-limited' ? 31 : 1;
-            } else if (firstKey === 'zenith:v1:reconcile:last' && c[2] === '1' &&
+            } else if (firstKey === 'zenith:v1:reconcile:last' && c[2] === '4' &&
                        script.includes('tonumber(value.observedAt or 0)')) {
-              const marker = JSON.parse(c[5]);
+              const marker = JSON.parse(c[8]);
               stored = marker;
               result = 1;
-            } else if (firstKey === 'zenith:v1:reconcile:last' && c[2] === '2') {
-              const report = JSON.parse(c[7]);
-              result = scenario === 'runtime-race' && !report.failClosed ? -1 : 1;
+            } else if (firstKey === 'zenith:v1:reconcile:last' && c[2] === '5') {
+              const report = JSON.parse(c[10]);
+              result = scenario === 'runtime-race' && !report.failClosed ? -1 :
+                scenario === 'role-race' && !report.failClosed ? -2 :
+                scenario === 'lease-race' && !report.failClosed ? -3 :
+                scenario === 'epoch-race' && !report.failClosed ? -4 : 1;
               if (result === 1) stored = report;
             } else if (firstKey === 'zenith:v1:reconcile:last' && c[2] === '1' &&
                        script.includes("value.attemptId")) {
@@ -204,6 +207,17 @@ test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance
         assert.equal(res.code, 200); assert.equal(stored.failClosed, false);
         assert.equal(stored.deviceRole, 'master');
         assert.equal(stored.runtimeHash, crypto.createHash('sha256').update(state).digest('hex'));
+      } else if (['runtime-race', 'role-race', 'lease-race', 'epoch-race'].includes(scenario)) {
+        assert.equal(res.code, 409);
+        assert.equal(stored.failClosed, true);
+        const expectedCode = scenario === 'runtime-race'
+          ? 'RECONCILIATION_RUNTIME_CHANGED'
+          : scenario === 'role-race'
+            ? 'MASTER_ROLE_CHANGED_DURING_RECONCILE'
+            : scenario === 'lease-race'
+              ? 'MASTER_LEASE_CHANGED_DURING_RECONCILE'
+              : 'MASTER_ROLE_EPOCH_CHANGED_DURING_RECONCILE';
+        assert.equal(res.body.code, expectedCode);
       } else {
         assert.equal(res.code, 502); assert.equal(stored.failClosed, true);
       }
