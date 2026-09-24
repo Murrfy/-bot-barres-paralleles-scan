@@ -132,6 +132,8 @@ jobs:
         run: node --test scripts/test-engine-binance-instance-fence.mjs
       - name: Test provider-neutral 24/7 engine worker runtime
         run: node --test scripts/test-engine-worker-runtime.mjs
+      - name: Test current Binance routed WebSocket endpoints
+        run: node --test scripts/test-binance-websocket-routes.mjs
       - name: Test atomic pairing role/session claim
         run: node --test scripts/test-pairing-atomic-session.mjs
       - name: Test one-shot legacy Bearer migration

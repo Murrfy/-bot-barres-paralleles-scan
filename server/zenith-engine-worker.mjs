@@ -600,7 +600,7 @@ async function ensureUserStream(){
     }
     const listenKey=String(data.listenKey);
     const generation=++stream.generation;
-    const socket=new WebSocket('wss://fstream.binance.com/ws/'+encodeURIComponent(listenKey));
+    const socket=new WebSocket('wss://fstream.binance.com/private/ws?listenKey='+encodeURIComponent(listenKey)+'&events=ORDER_TRADE_UPDATE/ACCOUNT_UPDATE/ALGO_UPDATE/listenKeyExpired');
     stream.ws=socket;
 
     socket.addEventListener('open',async()=>{
