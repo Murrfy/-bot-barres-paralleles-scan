@@ -56,7 +56,7 @@
     <span id="masterModeBadge" class="live" hidden>MASTER —</span>
     <span id="masterWakeBadge" class="live" hidden>ÉCRAN MASTER —</span>
     <a class="btn" href="/master-admin.html">Administration MASTER</a>
-    <button id="masterAuthorizeBtn" class="btn good" hidden>Autoriser MASTER</button>
+    <button id="masterAuthorizeBtn" class="btn good" hidden>Autoriser serveur 24/7</button>
     <button id="masterPauseBtn" class="btn danger" hidden>Pause MASTER</button>
     <button id="masterCancelPauseBtn" class="btn" hidden>Annuler pause en attente</button>
     <button id="masterResumeBtn" class="btn good" hidden>Reprendre MASTER</button>
@@ -829,7 +829,7 @@ async function controllerAuthorizeMaster(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
   if(masterControlState.masterRegistered!==true)return setStatus('Aucun MASTER enregistré à autoriser.',true);
   if(masterControlState.masterLeaseActive===true)return setStatus('MASTER déjà actif.');
-  const adminCode=await requestAdminCode('Code ADMIN MASTER pour autoriser l’iPad MASTER :');
+  const adminCode=await requestAdminCode('Code ADMIN MASTER pour autoriser le serveur 24/7 :');
   if(adminCode===null)return;
   const btn=$('masterAuthorizeBtn');if(btn)btn.disabled=true;
   try{
@@ -840,7 +840,7 @@ async function controllerAuthorizeMaster(){
     });
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
-    setStatus('MASTER autorisé temporairement pendant '+String(q.expiresInSeconds||120)+' secondes. L’iPad peut reprendre son lease.');
+    setStatus('Serveur 24/7 autorisé temporairement pendant '+String(q.expiresInSeconds||120)+' secondes. Le moteur Render peut prendre son lease.');
     await refreshMasterControls();
   }catch(e){
     setStatus('Autorisation MASTER refusée : '+String(e?.message||'erreur')+'.',true);
