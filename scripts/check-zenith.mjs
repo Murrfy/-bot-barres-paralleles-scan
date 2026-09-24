@@ -845,15 +845,22 @@ if (!masterResumeBlock ||
     !masterResumeBlock.includes("String(masterRoleEpochRaw || '0')")) {
   fail('MASTER resume must only transition from a fully PAUSED state; PAUSE_PENDING uses the explicit cancel path');
 }
-if (!sync.includes("async function trySetMasterRunningFrom(expectedMode, expectedMasterDeviceId, expectedMasterRoleEpochRaw = '0')") ||
+if (!sync.includes('async function trySetMasterRunningFrom(') ||
+    !sync.includes('requesterDevice = null') ||
     !sync.includes("if ARGV[2] == '1' and panic ~= '0' then return {-1, mode} end") ||
     !sync.includes("if mode ~= ARGV[1] then return {-2, mode} end") ||
     !sync.includes("if lease ~= ARGV[3] or registered ~= ARGV[3] then return {-3, mode} end") ||
     !sync.includes("if roleEpoch ~= ARGV[4] then return {-4, mode} end") ||
+    !sync.includes("if requester ~= ARGV[5] then return {-5, mode} end") ||
+    !sync.includes("if requesterEpoch > 0 and requesterCreatedAt < requesterEpoch then return {-6, mode} end") ||
+    !sync.includes('roleDeviceKey(requesterRole)') ||
+    !sync.includes('roleAssignmentKey(PREFIX, requesterRole)') ||
     !sync.includes("redis.call('SET', KEYS[2], 'RUNNING')") ||
     !sync.includes("'MASTER_LEASE_REQUIRED'") ||
-    !sync.includes("'MASTER_ROLE_CHANGED'")) {
-  fail('RUNNING transitions must be atomic and fail closed against PANIC, MASTER lease loss and MASTER role-epoch changes');
+    !sync.includes("'MASTER_ROLE_CHANGED'") ||
+    !sync.includes("'REQUESTER_ROLE_CHANGED'") ||
+    !sync.includes("'REQUESTER_SESSION_REVOKED'")) {
+  fail('RUNNING transitions must atomically fence PANIC, MASTER authority and the privileged requester role/epoch');
 }
 if (!sync.includes('PAUSE_PENDING_ALLOWED_COMMANDS') ||
     !sync.includes("'MASTER_PAUSE_PENDING_UNSAFE_COMMAND'")) {
@@ -1006,8 +1013,12 @@ if (!sync.includes('KEY_EMERGENCY_STOP_EPOCH') ||
     !sync.includes("'EMERGENCY_STOP_CHANGED_DURING_CLEAR'") ||
     !sync.includes("if epoch ~= ARGV[1] then return -1 end") ||
     !sync.includes("if mode ~= 'PAUSED' then return -3 end") ||
-    !sync.includes("if lease ~= ARGV[2] or registered ~= ARGV[2] then return -4 end")) {
-  fail('PANIC clear must be atomically fenced against a newer PANIC assertion and MASTER state changes');
+    !sync.includes("if lease ~= ARGV[2] or registered ~= ARGV[2] then return -4 end") ||
+    !sync.includes("if requester ~= ARGV[3] then return -5 end") ||
+    !sync.includes("if requesterEpoch > 0 and requesterCreatedAt < requesterEpoch then return -6 end") ||
+    !sync.includes('roleDeviceKey(device.role)') ||
+    !sync.includes('roleAssignmentKey(PREFIX, device.role)')) {
+  fail('PANIC clear must atomically fence PANIC epoch, MASTER state and the privileged requester role/epoch');
 }
 if (!index.includes('panicStopBtn') || !index.includes('panicClearBtn') ||
     !index.includes('controllerPanicStop') || !index.includes('controllerClearPanic')) {
