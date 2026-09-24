@@ -1248,7 +1248,8 @@ async function tryFinalizePendingPause(deviceId, knownMode = '') {
   };
 }
 
-async function recoverStaleProcessing(deviceId) {
+async function recoverStaleProcessing(device) {
+  const deviceId = String(device?.deviceId || '');
   const rows = await redis(['LRANGE', KEY_PROCESSING, '0', '-1']);
   const now = Date.now();
   let requeued = 0;
@@ -1304,16 +1305,18 @@ async function recoverStaleProcessing(deviceId) {
       }
     }
 
-    const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
-    if (removed > 0) {
-      const clean = { ...command };
-      delete clean.claimedAt;
-      delete clean.claimedBy;
-      clean.recoveredAt = now;
-      clean.recoveredBy = deviceId;
-      await redis(['RPUSH', KEY_PENDING, JSON.stringify(clean)]);
-      requeued += 1;
-    }
+    const clean = { ...command };
+    delete clean.claimedAt;
+    delete clean.claimedBy;
+    clean.recoveredAt = now;
+    clean.recoveredBy = deviceId;
+    const moved = await moveProcessingToPendingAtomic(
+      raw,
+      JSON.stringify(clean),
+      device,
+      'RPUSH'
+    );
+    if (moved === 1) requeued += 1;
   }
 
   return { requeued, removedDone, dead };
@@ -1358,6 +1361,39 @@ async function rejectClaimedCommand(raw, reason, extra = {}) {
   });
 }
 
+async function moveProcessingToPendingAtomic(raw, nextRaw, device, pushMode = 'LPUSH') {
+  const script = [
+    "local registered = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if registered ~= ARGV[3] then return -1 end",
+    "local lease = tostring(redis.call('GET', KEYS[4]) or '')",
+    "if lease ~= ARGV[3] then return -2 end",
+    "local roleIssuedAt = tonumber(redis.call('GET', KEYS[5]) or '0') or 0",
+    "local sessionCreatedAt = tonumber(ARGV[4]) or 0",
+    "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end",
+    "local removed = redis.call('LREM', KEYS[1], 1, ARGV[1])",
+    "if removed <= 0 then return 0 end",
+    "if ARGV[5] == 'RPUSH' then",
+    "  redis.call('RPUSH', KEYS[2], ARGV[2])",
+    "else",
+    "  redis.call('LPUSH', KEYS[2], ARGV[2])",
+    "end",
+    "return 1"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL', script, '5',
+    KEY_PROCESSING,
+    KEY_PENDING,
+    KEY_MASTER_DEVICE,
+    KEY_MASTER,
+    roleAssignmentKey(PREFIX, 'master'),
+    raw,
+    nextRaw,
+    String(device?.deviceId || ''),
+    String(Number(device?.createdAt || 0)),
+    pushMode === 'RPUSH' ? 'RPUSH' : 'LPUSH',
+  ]));
+}
+
 function deferredCommandPayload(command, reason, deviceId, now = Date.now(), delayMs = 1500) {
   const clean = { ...(command || {}) };
   delete clean.claimedAt;
@@ -1371,12 +1407,16 @@ function deferredCommandPayload(command, reason, deviceId, now = Date.now(), del
   return clean;
 }
 
-async function deferClaimedCommand(raw, command, reason, deviceId, delayMs = 1500) {
-  const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
-  if (removed <= 0) return false;
+async function deferClaimedCommand(raw, command, reason, device, delayMs = 1500) {
+  const deviceId = String(device?.deviceId || '');
   const clean = deferredCommandPayload(command, reason, deviceId, Date.now(), delayMs);
-  await redis(['LPUSH', KEY_PENDING, JSON.stringify(clean)]);
-  return true;
+  const moved = await moveProcessingToPendingAtomic(
+    raw,
+    JSON.stringify(clean),
+    device,
+    'LPUSH'
+  );
+  return moved === 1;
 }
 
 export default async function handler(req, res) {
@@ -2918,7 +2958,7 @@ export default async function handler(req, res) {
         return send(res, 423, { ok: false, code: 'MASTER_PAUSED', masterMode: modeBeforeClaim });
       }
 
-      const recovery = await recoverStaleProcessing(device.deviceId);
+      const recovery = await recoverStaleProcessing(device);
       const raw = await claimNextCommand(device.deviceId);
       if (!raw) return send(res, 200, { ok: true, command: null, recovery });
       if (raw === '__DEAD__') {
@@ -3015,7 +3055,7 @@ export default async function handler(req, res) {
             raw,
             command,
             'EXECUTION_NOT_READY_' + readiness.reason,
-            device.deviceId
+            device
           );
           return send(res, 200, {
             ok: true,
@@ -3044,7 +3084,7 @@ export default async function handler(req, res) {
       if (!(await hasMasterLease(device.deviceId))) {
         return send(res, 409, { ok: false, code: 'NOT_MASTER' });
       }
-      const recovery = await recoverStaleProcessing(device.deviceId);
+      const recovery = await recoverStaleProcessing(device);
       return send(res, 200, { ok: true, recovery });
     }
 
@@ -3331,7 +3371,7 @@ export default async function handler(req, res) {
             raw,
             command,
             'EXECUTION_NOT_READY_' + readiness.reason,
-            device.deviceId
+            device
           );
           return send(res, 200, {
             ok: true,
@@ -3346,7 +3386,7 @@ export default async function handler(req, res) {
       const requestedDelayMs = Math.max(0, Math.min(30000, Number(req.body?.deferMs || 0)));
       if (requestedDelayMs > 0) {
         const reason = String(req.body?.deferReason || 'MASTER_EXECUTION_RETRY').slice(0, 120);
-        const deferred = await deferClaimedCommand(raw, command, reason, device.deviceId, requestedDelayMs);
+        const deferred = await deferClaimedCommand(raw, command, reason, device, requestedDelayMs);
         return send(res, 200, {
           ok: true,
           requeued: deferred,
@@ -3355,16 +3395,18 @@ export default async function handler(req, res) {
         });
       }
 
-      const removed = Number(await redis(['LREM', KEY_PROCESSING, '1', raw])) || 0;
-      if (removed > 0) {
-        const clean = { ...command };
-        delete clean.claimedAt;
-        delete clean.claimedBy;
-        clean.requeuedAt = Date.now();
-        clean.requeuedBy = device.deviceId;
-        await redis(['LPUSH', KEY_PENDING, JSON.stringify(clean)]);
-      }
-      return send(res, 200, { ok: true, requeued: removed > 0 });
+      const clean = { ...command };
+      delete clean.claimedAt;
+      delete clean.claimedBy;
+      clean.requeuedAt = Date.now();
+      clean.requeuedBy = device.deviceId;
+      const moved = await moveProcessingToPendingAtomic(
+        raw,
+        JSON.stringify(clean),
+        device,
+        'LPUSH'
+      );
+      return send(res, 200, { ok: true, requeued: moved === 1 });
     }
 
     if (action === 'emergency-stop' && req.method === 'POST') {
