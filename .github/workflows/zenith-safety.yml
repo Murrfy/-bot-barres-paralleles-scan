@@ -118,6 +118,8 @@ jobs:
         run: node --test scripts/test-controller-replacement-authorize-fence.mjs
       - name: Test direct ADMIN recovery for lost iPhone
         run: node --test scripts/test-controller-admin-recovery.mjs
+      - name: Test fenced 24/7 server engine bootstrap
+        run: node --test scripts/test-engine-bootstrap.mjs
       - name: Test atomic pairing role/session claim
         run: node --test scripts/test-pairing-atomic-session.mjs
       - name: Test one-shot legacy Bearer migration

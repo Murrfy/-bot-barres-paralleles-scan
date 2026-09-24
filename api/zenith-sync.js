@@ -19,6 +19,8 @@ const REDIS_TOKEN =
 const PAIRING_CODE = process.env.ZENITH_PAIRING_CODE || '';
 const MASTER_PAIRING_CODE = process.env.ZENITH_MASTER_PAIRING_CODE || '';
 const MASTER_ADMIN_CODE = process.env.ZENITH_MASTER_ADMIN_CODE || '';
+const ENGINE_BOOTSTRAP_SECRET = process.env.ZENITH_ENGINE_BOOTSTRAP_SECRET || '';
+const ENGINE_MASTER_DEVICE_ID = 'zenith-server-engine-v1';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
@@ -54,7 +56,9 @@ const KEY_MASTER_CONFIG_ACK = `${PREFIX}:master-config:applied`;
 const KEY_MASTER_HEARTBEAT = `${PREFIX}:master-heartbeat`;
 const KEY_USER_STREAM_SESSION = `${PREFIX}:binance-user-stream`;
 const KEY_USER_STREAM_MUTATION_LOCK = `${PREFIX}:binance-user-stream:mutation-lock`;
+const KEY_ENGINE_INSTANCE = `${PREFIX}:engine-instance`;
 const MASTER_TTL_SECONDS = 20;
+const ENGINE_INSTANCE_TTL_SECONDS = 45;
 const MASTER_HEARTBEAT_TTL_SECONDS = 60;
 const MASTER_HEARTBEAT_STALE_MS = 30 * 1000;
 const MASTER_ACTIVATION_TTL_SECONDS = 120;
@@ -67,6 +71,8 @@ const CONTROLLER_REPLACEMENT_RATE_LIMIT = 5;
 const CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT = 30;
 const CONTROLLER_ADMIN_RECOVERY_RATE_LIMIT = 5;
 const CONTROLLER_ADMIN_RECOVERY_GLOBAL_RATE_LIMIT = 30;
+const ENGINE_BOOTSTRAP_RATE_LIMIT = 5;
+const ENGINE_BOOTSTRAP_GLOBAL_RATE_LIMIT = 30;
 const CONTROLLER_STATE_WRITE_RATE_LIMIT_PER_MINUTE = 120;
 const MASTER_ADMIN_FAILURE_LIMIT = 5;
 const MASTER_ADMIN_LOCK_SECONDS = 15 * 60;
@@ -105,6 +111,21 @@ function adminSecretPolicyBlockers({
   if (admin.length < 16) blockers.push('MASTER_ADMIN_CODE_TOO_WEAK');
   if (admin && (timingSafeEqualText(admin, pairingCode) || timingSafeEqualText(admin, masterPairingCode))) {
     blockers.push('MASTER_ADMIN_CODE_REUSED');
+  }
+  return blockers;
+}
+
+function engineBootstrapSecretPolicyBlockers({
+  engineSecret = ENGINE_BOOTSTRAP_SECRET,
+  adminCode = MASTER_ADMIN_CODE,
+  pairingCode = PAIRING_CODE,
+  masterPairingCode = MASTER_PAIRING_CODE,
+} = {}) {
+  const secret = String(engineSecret || '');
+  const blockers = [];
+  if (secret.length < 32) blockers.push('ENGINE_BOOTSTRAP_SECRET_TOO_WEAK');
+  if (secret && [adminCode, pairingCode, masterPairingCode].some(value => value && timingSafeEqualText(secret, value))) {
+    blockers.push('ENGINE_BOOTSTRAP_SECRET_REUSED');
   }
   return blockers;
 }
@@ -379,6 +400,15 @@ async function controllerAdminRecoveryRateAllowed(req) {
     counts.globalCount <= CONTROLLER_ADMIN_RECOVERY_GLOBAL_RATE_LIMIT;
 }
 
+async function engineBootstrapRateAllowed(req) {
+  const bucket = Math.floor(Date.now() / 60000);
+  const localKey = `${PREFIX}:engine-bootstrap-rate:${sha256(clientIp(req))}:${bucket}`;
+  const globalKey = `${PREFIX}:engine-bootstrap-rate:global:${bucket}`;
+  const counts = await incrementWithGlobalExpiry(localKey, globalKey, 120);
+  return counts.localCount <= ENGINE_BOOTSTRAP_RATE_LIMIT &&
+    counts.globalCount <= ENGINE_BOOTSTRAP_GLOBAL_RATE_LIMIT;
+}
+
 async function controllerStateWriteRateAllowed(deviceId) {
   const bucket = Math.floor(Date.now() / 60000);
   const key = `${PREFIX}:rate:controller-state-write:${sha256(deviceId)}:${bucket}`;
@@ -426,6 +456,39 @@ async function verifyMasterAdminCode(req, res, device) {
   }
 
   await redis(['DEL', key]);
+  return true;
+}
+
+function engineInstanceHeader(req) {
+  const raw = req?.headers?.['x-zenith-engine-instance'] ?? req?.headers?.['X-Zenith-Engine-Instance'];
+  return Array.isArray(raw) ? String(raw[0] || '').trim() : String(raw || '').trim();
+}
+
+function validEngineInstanceId(value) {
+  return /^engine-instance-[A-Za-z0-9._:-]{16,96}$/.test(String(value || ''));
+}
+
+async function verifyEngineBootstrapSecret(req, res) {
+  if (!ENGINE_BOOTSTRAP_SECRET) {
+    send(res, 503, { ok:false, code:'ENGINE_BOOTSTRAP_NOT_CONFIGURED' });
+    return false;
+  }
+
+  const blockers = engineBootstrapSecretPolicyBlockers();
+  if (blockers.length) {
+    send(res, 503, { ok:false, code:'ENGINE_BOOTSTRAP_SECURITY_POLICY_BLOCKED', blockers });
+    return false;
+  }
+
+  const supplied = bearerToken(req);
+  if (supplied.length > AUTH_SECRET_INPUT_MAX_CHARS) {
+    send(res, 400, { ok:false, code:'ENGINE_BOOTSTRAP_SECRET_INPUT_TOO_LARGE' });
+    return false;
+  }
+  if (!timingSafeEqualText(supplied, ENGINE_BOOTSTRAP_SECRET)) {
+    send(res, 401, { ok:false, code:'ENGINE_BOOTSTRAP_UNAUTHORIZED' });
+    return false;
+  }
   return true;
 }
 
@@ -655,6 +718,21 @@ async function requireDevice(req, res, roles, { allowBearer = false, rotateBeare
     return null;
   }
 
+  if (device.principal === 'engine') {
+    const suppliedInstance = engineInstanceHeader(req);
+    const expectedInstance = String(device.engineInstanceId || '');
+    const currentInstance = String(await redis(['GET', KEY_ENGINE_INSTANCE]) || '');
+    if (!validEngineInstanceId(suppliedInstance) ||
+        !expectedInstance ||
+        !timingSafeEqualText(suppliedInstance, expectedInstance) ||
+        !currentInstance ||
+        !timingSafeEqualText(suppliedInstance, currentInstance)) {
+      clearDeviceSessionCookie(res);
+      send(res, 409, { ok:false, code:'ENGINE_INSTANCE_FENCED' });
+      return null;
+    }
+  }
+
   if (rotateBearer && device.credentialSource === 'bearer') {
     const migration = await rotateLegacyBearerSession(device);
     if (!migration.ok) {
@@ -683,6 +761,39 @@ async function requireDevice(req, res, roles, { allowBearer = false, rotateBeare
   delete safeDevice.sessionToken;
   delete safeDevice.credentialSource;
   return safeDevice;
+}
+
+async function renewEngineInstance(device) {
+  if (device?.principal !== 'engine') return { ok:true, reason:'' };
+  const instanceId = String(device.engineInstanceId || '');
+  if (!validEngineInstanceId(instanceId)) return { ok:false, reason:'ENGINE_INSTANCE_INVALID' };
+  const script = [
+    "local currentInstance = tostring(redis.call('GET', KEYS[1]) or '')",
+    "if currentInstance ~= ARGV[1] then return -1 end",
+    "local registeredMaster = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if registeredMaster ~= ARGV[2] then return -2 end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if roleEpoch ~= ARGV[3] then return -3 end",
+    "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[4])",
+    "return 1"
+  ].join('\n');
+  const result = Number(await redis([
+    'EVAL', script, '3',
+    KEY_ENGINE_INSTANCE,
+    KEY_MASTER_DEVICE,
+    roleAssignmentKey(PREFIX, 'master'),
+    instanceId,
+    String(device.deviceId || ''),
+    String(Number(device.createdAt || 0)),
+    String(ENGINE_INSTANCE_TTL_SECONDS),
+  ]));
+  return {
+    ok: result === 1,
+    reason: result === -1 ? 'ENGINE_INSTANCE_FENCED'
+      : result === -2 ? 'MASTER_ROLE_CHANGED'
+        : result === -3 ? 'MASTER_SESSION_REVOKED'
+          : result === 1 ? '' : 'ENGINE_INSTANCE_RENEW_FAILED',
+  };
 }
 
 async function masterDeviceId() {
@@ -1699,8 +1810,9 @@ async function deferClaimedCommand(raw, command, reason, device, delayMs = 1500)
 
 export default async function handler(req, res) {
   const action = String(req.query?.action || 'health');
+  const engineBootstrapRequest = action === 'engine-bootstrap' && req.method === 'POST';
 
-  if (!sameOriginMutation(req)) {
+  if (!sameOriginMutation(req) && !engineBootstrapRequest) {
     return send(res, 403, { ok: false, code: 'ORIGIN_FORBIDDEN' });
   }
 
@@ -1722,6 +1834,114 @@ export default async function handler(req, res) {
   }
 
   try {
+
+    if (action === 'engine-bootstrap' && req.method === 'POST') {
+      if (!(await engineBootstrapRateAllowed(req))) {
+        return send(res, 429, { ok:false, code:'ENGINE_BOOTSTRAP_RATE_LIMIT' });
+      }
+      if (!(await verifyEngineBootstrapSecret(req, res))) return;
+
+      const instanceId = String(req.body?.instanceId || '').trim();
+      if (!validEngineInstanceId(instanceId)) {
+        return send(res, 400, { ok:false, code:'ENGINE_INSTANCE_ID_INVALID' });
+      }
+
+      const token = crypto.randomBytes(32).toString('base64url');
+      const tokenHash = sha256(token);
+      const createdAt = Date.now();
+      const record = {
+        deviceId: ENGINE_MASTER_DEVICE_ID,
+        role: 'master',
+        principal: 'engine',
+        engineInstanceId: instanceId,
+        deviceName: 'Zenith 24/7 Server Engine',
+        createdAt,
+        lastSeenAt: createdAt,
+      };
+      const audit = {
+        at: createdAt,
+        kind: 'ENGINE_MASTER_BOOTSTRAPPED',
+        masterDeviceId: ENGINE_MASTER_DEVICE_ID,
+        engineInstanceHash: sha256(instanceId).slice(0, 16),
+      };
+
+      const bootstrapScript = [
+        "local registeredMaster = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if registeredMaster ~= '' and registeredMaster ~= ARGV[1] then return {-1, registeredMaster} end",
+        "local currentInstance = tostring(redis.call('GET', KEYS[4]) or '')",
+        "if currentInstance ~= '' and currentInstance ~= ARGV[5] then return {-2, currentInstance} end",
+        "local currentLease = tostring(redis.call('GET', KEYS[5]) or '')",
+        "if currentLease ~= '' and currentLease ~= ARGV[1] then return {-3, currentLease} end",
+        "local mode = tostring(redis.call('GET', KEYS[6]) or 'PAUSED')",
+        "local panic = tostring(redis.call('GET', KEYS[7]) or '')",
+        "if registeredMaster == '' and mode ~= 'PAUSED' then return {-4, mode} end",
+        "if registeredMaster == '' and panic ~= '1' then return {-5, panic} end",
+        "redis.call('SET', KEYS[4], ARGV[5], 'EX', ARGV[6])",
+        "redis.call('SET', KEYS[1], ARGV[1])",
+        "redis.call('SET', KEYS[2], ARGV[2])",
+        "redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[4])",
+        "redis.call('LPUSH', KEYS[8], ARGV[7])",
+        "redis.call('LTRIM', KEYS[8], 0, 199)",
+        "if registeredMaster == '' then return {1, ARGV[1]} end",
+        "return {2, ARGV[1]}"
+      ].join('\n');
+
+      const result = await redis([
+        'EVAL', bootstrapScript, '8',
+        KEY_MASTER_DEVICE,
+        roleAssignmentKey(PREFIX, 'master'),
+        `${PREFIX}:device:${tokenHash}`,
+        KEY_ENGINE_INSTANCE,
+        KEY_MASTER,
+        KEY_MASTER_MODE,
+        KEY_EMERGENCY_STOP,
+        KEY_AUDIT,
+        ENGINE_MASTER_DEVICE_ID,
+        String(createdAt),
+        JSON.stringify(record),
+        String(DEVICE_SESSION_MAX_AGE_SECONDS),
+        instanceId,
+        String(ENGINE_INSTANCE_TTL_SECONDS),
+        JSON.stringify(audit),
+      ]);
+      const code = Number(Array.isArray(result) ? result[0] : 0);
+      if (code === -1) {
+        return send(res, 409, {
+          ok:false,
+          code:'ENGINE_CUTOVER_REQUIRED',
+          registeredMaster:String(result?.[1] || ''),
+        });
+      }
+      if (code === -2) {
+        return send(res, 409, { ok:false, code:'ENGINE_INSTANCE_ACTIVE' });
+      }
+      if (code === -3) {
+        return send(res, 409, { ok:false, code:'MASTER_LEASE_CONFLICT' });
+      }
+      if (code === -4 || code === -5) {
+        return send(res, 423, {
+          ok:false,
+          code:'ENGINE_INITIAL_CUTOVER_NOT_SAFE',
+          blocker:code === -4 ? 'MASTER_MUST_BE_PAUSED' : 'EMERGENCY_STOP_MUST_BE_ACTIVE',
+        });
+      }
+      if (![1,2].includes(code)) {
+        return send(res, 500, { ok:false, code:'ENGINE_BOOTSTRAP_FAILED' });
+      }
+
+      setDeviceSessionCookie(res, token);
+      return send(res, 200, {
+        ok:true,
+        sessionReady:true,
+        engine:true,
+        initialRegistration:code === 1,
+        masterDeviceId:ENGINE_MASTER_DEVICE_ID,
+        engineInstanceId:instanceId,
+        roleEpoch:createdAt,
+        instanceTtlSeconds:ENGINE_INSTANCE_TTL_SECONDS,
+      });
+    }
+
     if (action === 'pair' && req.method === 'POST') {
       if (PAIRING_DISABLED) return send(res, 403, { ok: false, code: 'PAIRING_DISABLED' });
       if (!(await pairRateAllowed(req))) return send(res, 429, { ok: false, code: 'PAIRING_RATE_LIMIT' });
@@ -2231,6 +2451,18 @@ export default async function handler(req, res) {
             : heartbeatCommit === -3 ? 'MASTER_SESSION_REVOKED'
             : 'MASTER_ROLE_CHANGED',
         });
+      }
+
+      if (device.principal === 'engine') {
+        const instanceRenewal = await renewEngineInstance(device);
+        if (!instanceRenewal.ok) {
+          clearDeviceSessionCookie(res);
+          return send(res, 409, {
+            ok:false,
+            code:instanceRenewal.reason,
+            masterMode:currentMode,
+          });
+        }
       }
 
       const armStatus = await realExecutionArmStatus(device.deviceId);
