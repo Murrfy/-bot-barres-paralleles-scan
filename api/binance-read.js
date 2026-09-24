@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -67,6 +67,13 @@ async function requireZenithDevice(req) {
       if (!owner || String(owner) !== String(device.deviceId)) continue;
       const issuedAt=await redis(['GET',roleAssignmentKey(PREFIX,device.role)]);
       if(!deviceRoleAssignmentActive(device,issuedAt))continue;
+      if(String(device?.principal||'')==='engine'){
+        const suppliedInstance=engineInstanceHeader(req);
+        const currentInstance=String(await redis(['GET',`${PREFIX}:engine-instance`])||'');
+        if(!enginePrincipalInstanceActive(device,suppliedInstance,currentInstance)){
+          const e=new Error('ENGINE_INSTANCE_FENCED');e.code='ENGINE_INSTANCE_FENCED';throw e;
+        }
+      }
       return device;
     } catch {}
   }
@@ -158,6 +165,13 @@ export default async function handler(req, res) {
   try {
     device = await requireZenithDevice(req);
   } catch (e) {
+    if (e?.code === 'ENGINE_INSTANCE_FENCED') {
+      return send(res, 409, {
+        ok: false,
+        code: 'ENGINE_INSTANCE_FENCED',
+        error: 'Instance moteur Zenith révoquée.',
+      });
+    }
     return send(res, 503, {
       ok: false,
       code: e?.code || 'AUTH_BACKEND_ERROR',
