@@ -46,8 +46,11 @@ test('every separate Binance MASTER API enforces current engine-instance fencing
 test('engine instance fencing occurs before the MASTER lease is accepted',()=>{
   for(const file of protectedApis){
     const source=fs.readFileSync(file,'utf8');
-    const start=source.indexOf('async function requireCurrentMaster');
-    assert.ok(start>=0,file+' missing requireCurrentMaster');
+    const authMarker=file==='api/binance-order-test.js'
+      ? 'async function requireMaster'
+      : 'async function requireCurrentMaster';
+    const start=source.indexOf(authMarker);
+    assert.ok(start>=0,file+' missing MASTER auth function');
     const end=source.indexOf('\n}',start);
     const block=source.slice(start,end+2);
     const fence=block.indexOf('enginePrincipalInstanceActive');
