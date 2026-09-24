@@ -2245,6 +2245,144 @@ export default async function handler(req, res) {
       });
     }
 
+    if (action === 'master-migrate-to-server' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+      if (!(await verifyMasterAdminCode(req, res, device))) return;
+      if (!validDeviceId(SERVER_MASTER_DEVICE_ID)) {
+        return send(res, 503, { ok:false, code:'SERVER_MASTER_DEVICE_ID_INVALID' });
+      }
+
+      const [activeInstance, currentMode, halted, pending, processing, oldMaster, mutationLock] = await Promise.all([
+        redis(['GET', KEY_SERVER_MASTER_INSTANCE]),
+        masterMode(),
+        emergencyStopActive(),
+        redis(['LLEN', KEY_PENDING]),
+        redis(['LLEN', KEY_PROCESSING]),
+        roleDeviceId('master'),
+        redis(['GET', KEY_USER_STREAM_MUTATION_LOCK]),
+      ]);
+      const blockers = [];
+      if (!activeInstance) blockers.push('SERVER_MASTER_INSTANCE_OFFLINE');
+      if (currentMode !== 'PAUSED') blockers.push('MASTER_MUST_BE_PAUSED');
+      if (!halted) blockers.push('EMERGENCY_STOP_MUST_BE_ACTIVE');
+      if (Number(pending || 0) > 0) blockers.push('PENDING_COMMAND');
+      if (Number(processing || 0) > 0) blockers.push('PROCESSING_COMMAND');
+      if (mutationLock) blockers.push('USER_STREAM_MUTATION_IN_FLIGHT');
+
+      let liveActivity = null;
+      if (!blockers.length) {
+        try {
+          liveActivity = await fetchLiveBinanceActivity();
+          if (liveActivity.activePositions > 0) blockers.push('ACTIVE_POSITION');
+          if (liveActivity.openOrders > 0) blockers.push('OPEN_ORDER');
+        } catch (e) {
+          blockers.push(e?.code || 'BINANCE_ACTIVITY_CHECK_FAILED');
+        }
+      }
+      if (blockers.length) {
+        return send(res, 409, {
+          ok:false,
+          code:'SERVER_MASTER_MIGRATION_BLOCKED',
+          blockers,
+          liveActivity,
+        });
+      }
+
+      const migratedAt = Date.now();
+      const audit = {
+        at:migratedAt,
+        kind:'MASTER_MIGRATED_TO_SERVER',
+        requestedByDeviceId:device.deviceId,
+        previousMasterDeviceId:String(oldMaster || ''),
+        serverMasterDeviceId:SERVER_MASTER_DEVICE_ID,
+        workerInstanceId:String(activeInstance),
+      };
+      const script = [
+        "local controller = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if controller ~= ARGV[1] then return -1 end",
+        "local controllerEpoch = tonumber(redis.call('GET', KEYS[2]) or '0') or 0",
+        "local requesterCreatedAt = tonumber(ARGV[2]) or 0",
+        "if controllerEpoch > 0 and requesterCreatedAt < controllerEpoch then return -2 end",
+        "local instance = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if instance == '' or instance ~= ARGV[3] then return -3 end",
+        "local mode = tostring(redis.call('GET', KEYS[4]) or 'PAUSED')",
+        "if mode ~= 'PAUSED' then return -4 end",
+        "local panic = tostring(redis.call('GET', KEYS[5]) or '')",
+        "if panic ~= '1' then return -5 end",
+        "if redis.call('LLEN', KEYS[6]) > 0 then return -6 end",
+        "if redis.call('LLEN', KEYS[7]) > 0 then return -7 end",
+        "if redis.call('GET', KEYS[8]) then return -8 end",
+        "local previousMaster = tostring(redis.call('GET', KEYS[9]) or '')",
+        "redis.call('SET', KEYS[9], ARGV[4])",
+        "redis.call('SET', KEYS[10], ARGV[5])",
+        "redis.call('DEL', KEYS[11])",
+        "redis.call('DEL', KEYS[12])",
+        "redis.call('DEL', KEYS[13])",
+        "redis.call('DEL', KEYS[14])",
+        "redis.call('DEL', KEYS[15])",
+        "redis.call('DEL', KEYS[16])",
+        "redis.call('DEL', KEYS[17])",
+        "if previousMaster ~= '' then redis.call('DEL', KEYS[18] .. previousMaster) end",
+        "redis.call('SET', KEYS[18] .. ARGV[4], '1', 'EX', ARGV[6])",
+        "redis.call('LPUSH', KEYS[19], ARGV[7])",
+        "redis.call('LTRIM', KEYS[19], 0, 199)",
+        "return 1"
+      ].join('\n');
+      const activationPrefix = `${PREFIX}:master-activation:`;
+      const result = Number(await redis([
+        'EVAL', script, '19',
+        KEY_CONTROLLER_DEVICE,
+        roleAssignmentKey(PREFIX, 'controller'),
+        KEY_SERVER_MASTER_INSTANCE,
+        KEY_MASTER_MODE,
+        KEY_EMERGENCY_STOP,
+        KEY_PENDING,
+        KEY_PROCESSING,
+        KEY_USER_STREAM_MUTATION_LOCK,
+        KEY_MASTER_DEVICE,
+        roleAssignmentKey(PREFIX, 'master'),
+        KEY_MASTER,
+        KEY_MASTER_HEARTBEAT,
+        KEY_MASTER_CONFIG_ACK,
+        KEY_RECONCILE_LAST,
+        KEY_STATE,
+        KEY_USER_STREAM_SESSION,
+        KEY_REAL_EXECUTION_ARMED,
+        activationPrefix,
+        KEY_AUDIT,
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
+        String(activeInstance),
+        SERVER_MASTER_DEVICE_ID,
+        String(migratedAt),
+        String(MASTER_ACTIVATION_TTL_SECONDS),
+        JSON.stringify(audit),
+      ]));
+      if (result !== 1) {
+        if (result === -1 || result === -2) clearDeviceSessionCookie(res);
+        const reason = result === -1 ? 'CONTROLLER_ROLE_CHANGED'
+          : result === -2 ? 'CONTROLLER_SESSION_REVOKED'
+          : result === -3 ? 'SERVER_MASTER_INSTANCE_CHANGED'
+          : result === -4 ? 'MASTER_MUST_BE_PAUSED'
+          : result === -5 ? 'EMERGENCY_STOP_MUST_BE_ACTIVE'
+          : result === -6 ? 'PENDING_COMMAND'
+          : result === -7 ? 'PROCESSING_COMMAND'
+          : 'USER_STREAM_MUTATION_IN_FLIGHT';
+        return send(res, 409, { ok:false, code:'SERVER_MASTER_MIGRATION_RACE', reason });
+      }
+
+      return send(res, 200, {
+        ok:true,
+        migrated:true,
+        previousMasterDeviceId:String(oldMaster || ''),
+        serverMasterDeviceId:SERVER_MASTER_DEVICE_ID,
+        workerInstanceId:String(activeInstance),
+        emergencyStopActive:true,
+        masterMode:'PAUSED',
+      });
+    }
+
     if (action === 'master-authorize' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller']);
       if (!device) return;
