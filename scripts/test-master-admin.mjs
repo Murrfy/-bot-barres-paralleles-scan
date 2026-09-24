@@ -19,6 +19,7 @@ function page(role, mode = 'RUNNING') {
       removeItem() {},
     },
     setInterval() {},
+    confirm: () => true,
     fetch: async (url, init) => {
       if (state.offline) throw new Error('offline');
       const action = new URL(url, 'https://zenith.test').searchParams.get('action');
@@ -93,6 +94,29 @@ test('MASTER without an active lease cannot authorize controller replacement', a
   assert.equal(p.posts.length, 0);
 });
 
+
+test('controller revoke control lives in MASTER administration and remains ADMIN protected', async () => {
+  const p = page('controller', 'PAUSED');
+  await p.run('verifyMaster()');
+  assert.equal(p.elements.revokeBtn.hidden, false);
+  p.elements.adminCode.value = '';
+  await p.run('revokeMaster()');
+  assert.equal(p.posts.length, 0, 'ADMIN code required');
+  p.elements.adminCode.value = 'test-admin';
+  await p.run('revokeMaster()');
+  assert.equal(p.posts.at(-1).action, 'master-revoke');
+  assert.equal(p.posts.at(-1).body.adminCode, 'test-admin');
+  assert.equal(p.elements.adminCode.value, '');
+});
+
+test('MASTER role cannot use controller-only revoke control', async () => {
+  const p = page('master', 'PAUSED');
+  await p.run('verifyMaster()');
+  assert.equal(p.elements.revokeBtn.hidden, true);
+  p.elements.adminCode.value = 'test-admin';
+  await p.run('revokeMaster()');
+  assert.equal(p.posts.length, 0);
+});
 
 test('controller can explicitly re-enable Render only from safe paused state', async () => {
   const p = page('controller', 'PAUSED');
