@@ -58,6 +58,8 @@ jobs:
         run: node --check api/binance-order-test.js
       - name: Check Zenith sync API syntax
         run: node --check api/zenith-sync.js
+      - name: Check server MASTER worker syntax
+        run: node --check server/zenith-master-worker.mjs
       - name: Test reconciliation failure scenarios
         run: node --test scripts/test-reconcile.mjs
       - name: Test fail-closed reconciliation attempt fence
@@ -118,6 +120,8 @@ jobs:
         run: node --test scripts/test-controller-replacement-authorize-fence.mjs
       - name: Test direct ADMIN recovery for lost iPhone
         run: node --test scripts/test-controller-admin-recovery.mjs
+      - name: Test server MASTER worker foundation
+        run: node --test scripts/test-server-master-foundation.mjs
       - name: Test atomic pairing role/session claim
         run: node --test scripts/test-pairing-atomic-session.mjs
       - name: Test one-shot legacy Bearer migration
