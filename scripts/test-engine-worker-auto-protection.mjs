@@ -29,10 +29,32 @@ test('worker consumes configured protectionStages instead of embedding trading t
   assert.equal(block.includes('floor:39.8'),false);
 });
 
-test('worker uses routed all-market markPrice stream at one-second cadence',()=>{
-  assert.ok(worker.includes('wss://fstream.binance.com/market/ws/!markPrice@arr@1s'));
-  assert.ok(worker.includes('row?.p??row?.markPrice'));
+test('worker uses routed aggregate-trade market subscriptions for active real positions',()=>{
+  assert.ok(worker.includes("new WebSocket('wss://fstream.binance.com/market/ws')"));
+  assert.ok(worker.includes("return String(symbol||'').toLowerCase()+'@aggTrade'"));
+  assert.ok(worker.includes("sendMarkControl('SUBSCRIBE',add)"));
+  assert.ok(worker.includes("sendMarkControl('UNSUBSCRIBE',remove)"));
+  assert.ok(worker.includes("String(row?.e||'')!=='aggTrade'"));
   assert.ok(worker.includes('SCHEDULED_23H_MARK_RECONNECT'));
+  assert.equal(worker.includes('market/ws/!markPrice@arr@1s'),false);
+});
+
+test('market gaps are replayed from public aggTrades and ambiguity fails closed',()=>{
+  assert.ok(worker.includes("const BINANCE_PUBLIC_BASE='https://fapi.binance.com';"));
+  assert.ok(worker.includes('/fapi/v1/aggTrades?symbol='));
+  assert.ok(worker.includes('recoverMissedAggTrades'));
+  assert.ok(worker.includes('markStream.pendingAggTrades'));
+  assert.ok(worker.includes('pages<25'));
+  assert.ok(worker.includes("assertAutoProtectionPanic('MARK_RECOVERY_PARTIAL_'"));
+  assert.ok(worker.includes("'MARK_RECOVERY_FAILED_'+cleanReason"));
+  assert.ok(worker.includes("'MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol"));
+});
+
+test('market websocket outage has a fenced read-only markPrice fallback',()=>{
+  assert.ok(worker.includes("binanceApi('/api/binance-read')"));
+  assert.ok(worker.includes('const MARK_FALLBACK_MS=6000;'));
+  assert.ok(worker.includes('position?.markPrice'));
+  assert.ok(worker.includes('markStream.fallbackTimer=setInterval'));
 });
 
 test('high-water is persisted before autonomous protective mutation',()=>{
