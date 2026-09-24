@@ -1,0 +1,37 @@
+[Unit]
+Description=Zenith 24x7 Trading Engine
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=zenith
+Group=zenith
+WorkingDirectory=/opt/zenith/current
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/zenith/engine.env
+ExecStart=/usr/bin/node /opt/zenith/current/server/zenith-engine-worker.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
