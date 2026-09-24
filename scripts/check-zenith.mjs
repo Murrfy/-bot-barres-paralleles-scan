@@ -761,6 +761,14 @@ if (!replacementAuthBlock ||
     !replacementAuthBlock.includes("'MASTER_LEASE_REQUIRED'")) {
   fail('controller replacement authorization must require the currently leased MASTER');
 }
+if (!replacementAuthBlock.includes('const replacementAuthorizeScript = [') ||
+    !replacementAuthBlock.includes("if registeredMaster ~= ARGV[1] then return -1 end") ||
+    !replacementAuthBlock.includes("if lease ~= ARGV[1] then return -2 end") ||
+    !replacementAuthBlock.includes("if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end") ||
+    !replacementAuthBlock.includes("if currentController ~= ARGV[3] then return -4 end") ||
+    !replacementAuthBlock.includes("roleAssignmentKey(PREFIX, 'master')")) {
+  fail('controller replacement authorization must atomically revalidate MASTER role, lease, epoch and controller identity before minting a code');
+}
 if (!sync.includes('CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60') ||
     !sync.includes("redis.call('DEL', KEYS[1])")) {
   fail('controller replacement code must remain short-lived and one-time use');
