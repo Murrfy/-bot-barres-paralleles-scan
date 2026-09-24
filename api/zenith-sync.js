@@ -936,10 +936,18 @@ async function setMasterMode(mode) {
   return normalized;
 }
 
-async function trySetMasterRunningFrom(expectedMode, expectedMasterDeviceId, expectedMasterRoleEpochRaw = '0') {
+async function trySetMasterRunningFrom(
+  expectedMode,
+  expectedMasterDeviceId,
+  expectedMasterRoleEpochRaw = '0',
+  requesterDevice = null
+) {
   const expected = normalizeMasterMode(expectedMode);
   const expectedMaster = String(expectedMasterDeviceId || '');
   const expectedRoleEpoch = String(expectedMasterRoleEpochRaw || '0');
+  const requesterRole = String(requesterDevice?.role || '').toLowerCase();
+  const requesterId = String(requesterDevice?.deviceId || '');
+  const requesterCreatedAt = String(Number(requesterDevice?.createdAt || 0));
   const script = [
     "local panic = tostring(redis.call('GET', KEYS[1]) or '')",
     "local mode = tostring(redis.call('GET', KEYS[2]) or 'PAUSED')",
@@ -950,20 +958,29 @@ async function trySetMasterRunningFrom(expectedMode, expectedMasterDeviceId, exp
     "if lease ~= ARGV[3] or registered ~= ARGV[3] then return {-3, mode} end",
     "local roleEpoch = tostring(redis.call('GET', KEYS[5]) or '0')",
     "if roleEpoch ~= ARGV[4] then return {-4, mode} end",
+    "local requester = tostring(redis.call('GET', KEYS[6]) or '')",
+    "if requester ~= ARGV[5] then return {-5, mode} end",
+    "local requesterEpoch = tonumber(redis.call('GET', KEYS[7]) or '0') or 0",
+    "local requesterCreatedAt = tonumber(ARGV[6]) or 0",
+    "if requesterEpoch > 0 and requesterCreatedAt < requesterEpoch then return {-6, mode} end",
     "redis.call('SET', KEYS[2], 'RUNNING')",
     "return {1, 'RUNNING'}"
   ].join('\n');
   const result = await redis([
-    'EVAL', script, '5',
+    'EVAL', script, '7',
     KEY_EMERGENCY_STOP,
     KEY_MASTER_MODE,
     KEY_MASTER,
     KEY_MASTER_DEVICE,
     roleAssignmentKey(PREFIX, 'master'),
+    roleDeviceKey(requesterRole),
+    roleAssignmentKey(PREFIX, requesterRole),
     expected,
     REAL_TRADING_ENABLED ? '1' : '0',
     expectedMaster,
     expectedRoleEpoch,
+    requesterId,
+    requesterCreatedAt,
   ]);
   const code = Number(Array.isArray(result) ? result[0] : 0);
   const mode = normalizeMasterMode(Array.isArray(result) ? result[1] : '');
@@ -977,9 +994,13 @@ async function trySetMasterRunningFrom(expectedMode, expectedMasterDeviceId, exp
           ? 'MASTER_LEASE_REQUIRED'
           : code === -4
             ? 'MASTER_ROLE_CHANGED'
-            : code === 1
-              ? ''
-              : 'MASTER_MODE_TRANSITION_FAILED',
+            : code === -5
+              ? 'REQUESTER_ROLE_CHANGED'
+              : code === -6
+                ? 'REQUESTER_SESSION_REVOKED'
+                : code === 1
+                  ? ''
+                  : 'MASTER_MODE_TRANSITION_FAILED',
     masterMode: mode,
   };
 }
@@ -2257,16 +2278,31 @@ export default async function handler(req, res) {
       const runningTransition = await trySetMasterRunningFrom(
         'PAUSE_PENDING',
         currentMaster,
-        String(masterRoleEpochRaw || '0')
+        String(masterRoleEpochRaw || '0'),
+        device
       );
       if (!runningTransition.ok) {
+        if (runningTransition.reason === 'REQUESTER_ROLE_CHANGED' ||
+            runningTransition.reason === 'REQUESTER_SESSION_REVOKED') {
+          clearDeviceSessionCookie(res);
+        }
+        const requesterCode = device.role === 'controller'
+          ? (runningTransition.reason === 'REQUESTER_SESSION_REVOKED'
+              ? 'CONTROLLER_SESSION_REVOKED'
+              : 'CONTROLLER_ROLE_CHANGED')
+          : (runningTransition.reason === 'REQUESTER_SESSION_REVOKED'
+              ? 'MASTER_SESSION_REVOKED'
+              : 'MASTER_ROLE_CHANGED');
         const code = runningTransition.reason === 'EMERGENCY_STOP_ACTIVE'
           ? 'EMERGENCY_STOP_ACTIVE'
           : runningTransition.reason === 'MASTER_LEASE_REQUIRED'
             ? 'MASTER_LEASE_REQUIRED'
             : runningTransition.reason === 'MASTER_ROLE_CHANGED'
               ? 'MASTER_ROLE_CHANGED'
-              : 'MASTER_PAUSE_NOT_PENDING';
+              : runningTransition.reason === 'REQUESTER_ROLE_CHANGED' ||
+                runningTransition.reason === 'REQUESTER_SESSION_REVOKED'
+                ? requesterCode
+                : 'MASTER_PAUSE_NOT_PENDING';
         return send(res, code === 'EMERGENCY_STOP_ACTIVE' ? 423 : 409, {
           ok: false,
           code,
@@ -2486,13 +2522,30 @@ export default async function handler(req, res) {
       const runningTransition = await trySetMasterRunningFrom(
         'PAUSED',
         currentMaster,
-        String(masterRoleEpochRaw || '0')
+        String(masterRoleEpochRaw || '0'),
+        device
       );
       if (!runningTransition.ok) {
+        if (runningTransition.reason === 'REQUESTER_ROLE_CHANGED' ||
+            runningTransition.reason === 'REQUESTER_SESSION_REVOKED') {
+          clearDeviceSessionCookie(res);
+        }
+        const requesterReason = device.role === 'controller'
+          ? (runningTransition.reason === 'REQUESTER_SESSION_REVOKED'
+              ? 'CONTROLLER_SESSION_REVOKED'
+              : 'CONTROLLER_ROLE_CHANGED')
+          : (runningTransition.reason === 'REQUESTER_SESSION_REVOKED'
+              ? 'MASTER_SESSION_REVOKED'
+              : 'MASTER_ROLE_CHANGED');
         return send(res, 409, {
           ok: false,
           code: 'MASTER_RESUME_BLOCKED',
-          blockers: [runningTransition.reason],
+          blockers: [
+            runningTransition.reason === 'REQUESTER_ROLE_CHANGED' ||
+            runningTransition.reason === 'REQUESTER_SESSION_REVOKED'
+              ? requesterReason
+              : runningTransition.reason
+          ],
           pendingCommands: Number(pending || 0),
           processingCommands: Number(processing || 0),
         });
@@ -3723,27 +3776,42 @@ export default async function handler(req, res) {
         "local lease = tostring(redis.call('GET', KEYS[4]) or '')",
         "local registered = tostring(redis.call('GET', KEYS[5]) or '')",
         "if lease ~= ARGV[2] or registered ~= ARGV[2] then return -4 end",
+        "local requester = tostring(redis.call('GET', KEYS[6]) or '')",
+        "if requester ~= ARGV[3] then return -5 end",
+        "local requesterEpoch = tonumber(redis.call('GET', KEYS[7]) or '0') or 0",
+        "local requesterCreatedAt = tonumber(ARGV[4]) or 0",
+        "if requesterEpoch > 0 and requesterCreatedAt < requesterEpoch then return -6 end",
         "redis.call('SET', KEYS[1], '0')",
         "return 1"
       ].join('\n');
       const clearResult = Number(await redis([
-        'EVAL', clearScript, '5',
+        'EVAL', clearScript, '7',
         KEY_EMERGENCY_STOP,
         KEY_EMERGENCY_STOP_EPOCH,
         KEY_MASTER_MODE,
         KEY_MASTER,
         KEY_MASTER_DEVICE,
+        roleDeviceKey(device.role),
+        roleAssignmentKey(PREFIX, device.role),
         panicEpoch,
         String(currentMaster),
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
       ]));
       if (clearResult !== 1) {
+        if (clearResult === -5 || clearResult === -6) clearDeviceSessionCookie(res);
+        const requesterCode = device.role === 'controller'
+          ? (clearResult === -6 ? 'CONTROLLER_SESSION_REVOKED' : 'CONTROLLER_ROLE_CHANGED')
+          : (clearResult === -6 ? 'MASTER_SESSION_REVOKED' : 'MASTER_ROLE_CHANGED');
         const code = clearResult === -1
           ? 'EMERGENCY_STOP_CHANGED_DURING_CLEAR'
           : clearResult === -2
             ? 'EMERGENCY_STOP_NOT_ACTIVE'
             : clearResult === -3
               ? 'MASTER_MUST_BE_PAUSED'
-              : 'MASTER_LEASE_REQUIRED';
+              : clearResult === -4
+                ? 'MASTER_LEASE_REQUIRED'
+                : requesterCode;
         return send(res, 409, {
           ok: false,
           code,
