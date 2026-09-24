@@ -30,7 +30,8 @@ test('MASTER activation remains short-lived and one-shot',()=>{
 test('iPhone controller exposes explicit ADMIN-protected MASTER activation control',()=>{
   assert.ok(index.includes('id="masterAuthorizeBtn"'));
   assert.ok(index.includes('async function controllerAuthorizeMaster()'));
-  assert.ok(index.includes("await requestAdminCode('Code ADMIN MASTER pour autoriser l’iPad MASTER :')"));
+  assert.ok(index.includes("await requestAdminCode('Code ADMIN MASTER pour autoriser le serveur 24/7 :')"));
+  assert.ok(index.includes('id="masterAuthorizeBtn" class="btn good" hidden>Autoriser serveur 24/7</button>'));
   assert.ok(index.includes('id="adminCodeInput" type="password"'));
   assert.ok(index.includes('autocomplete="off"'));
   assert.ok(index.includes("action=master-authorize"));
