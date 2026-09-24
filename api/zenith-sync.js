@@ -3543,37 +3543,51 @@ export default async function handler(req, res) {
         }
         cleanEntries[key] = value;
       }
-      const record = {
-        version:1,
-        authorizationAt,
-        updatedAt:Date.now(),
-        entries:cleanEntries,
-      };
-      const recordRaw = JSON.stringify(record);
-      if (Buffer.byteLength(recordRaw, 'utf8') > 16 * 1024) {
+      const entriesRaw = JSON.stringify(cleanEntries);
+      if (Buffer.byteLength(entriesRaw, 'utf8') > 16 * 1024) {
         return send(res, 413, { ok:false, code:'ENGINE_HIGH_WATER_TOO_LARGE' });
       }
+      const updatedAt = Date.now();
 
       const writeScript = [
         "local currentInstance = tostring(redis.call('GET', KEYS[1]) or '')",
-        "if currentInstance ~= ARGV[1] then return -1 end",
+        "if currentInstance ~= ARGV[1] then return {-1, ''} end",
         "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
-        "if registered ~= ARGV[2] then return -2 end",
+        "if registered ~= ARGV[2] then return {-2, ''} end",
         "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
-        "if lease ~= ARGV[2] then return -3 end",
+        "if lease ~= ARGV[2] then return {-3, ''} end",
         "local epoch = tostring(redis.call('GET', KEYS[4]) or '')",
-        "if epoch ~= ARGV[3] then return -4 end",
+        "if epoch ~= ARGV[3] then return {-4, ''} end",
         "local authorizationRaw = redis.call('GET', KEYS[5])",
-        "if not authorizationRaw then return -5 end",
+        "if not authorizationRaw then return {-5, ''} end",
         "local ok, authorization = pcall(cjson.decode, authorizationRaw)",
-        "if not ok or tonumber(authorization['version'] or 0) ~= 1 then return -6 end",
-        "if tostring(authorization['masterDeviceId'] or '') ~= ARGV[2] then return -6 end",
-        "if tonumber(authorization['authorizedAt'] or 0) ~= tonumber(ARGV[4]) then return -7 end",
-        "redis.call('SET', KEYS[6], ARGV[5])",
-        "return 1"
+        "if not ok or tonumber(authorization['version'] or 0) ~= 1 then return {-6, ''} end",
+        "if tostring(authorization['masterDeviceId'] or '') ~= ARGV[2] then return {-6, ''} end",
+        "if tonumber(authorization['authorizedAt'] or 0) ~= tonumber(ARGV[4]) then return {-7, ''} end",
+        "local incomingOk, incoming = pcall(cjson.decode, ARGV[5])",
+        "if not incomingOk or type(incoming) ~= 'table' then return {-8, ''} end",
+        "local previous = {}",
+        "local previousRaw = redis.call('GET', KEYS[6])",
+        "if previousRaw then",
+        "  local previousOk, decoded = pcall(cjson.decode, previousRaw)",
+        "  if previousOk and tonumber(decoded['version'] or 0) == 1 and tonumber(decoded['authorizationAt'] or 0) == tonumber(ARGV[4]) and type(decoded['entries']) == 'table' then",
+        "    previous = decoded['entries']",
+        "  end",
+        "end",
+        "local merged = {}",
+        "for key, value in pairs(incoming) do",
+        "  local nextValue = tonumber(value)",
+        "  local oldValue = tonumber(previous[key])",
+        "  if oldValue and oldValue > nextValue then nextValue = oldValue end",
+        "  merged[key] = nextValue",
+        "end",
+        "local record = {version=1, authorizationAt=tonumber(ARGV[4]), updatedAt=tonumber(ARGV[6]), entries=merged}",
+        "local encoded = cjson.encode(record)",
+        "redis.call('SET', KEYS[6], encoded)",
+        "return {1, encoded}"
       ].join('\n');
 
-      const result = Number(await redis([
+      const result = await redis([
         'EVAL', writeScript, '6',
         KEY_ENGINE_INSTANCE,
         KEY_MASTER_DEVICE,
@@ -3585,25 +3599,29 @@ export default async function handler(req, res) {
         String(device.deviceId || ''),
         String(Number(device.createdAt || 0)),
         String(authorizationAt),
-        recordRaw,
-      ]));
-      if (result !== 1) {
+        entriesRaw,
+        String(updatedAt),
+      ]);
+      const resultCode = Number(Array.isArray(result) ? result[0] : 0);
+      if (resultCode !== 1) {
         return send(res, 409, {
           ok:false,
-          code: result === -1 ? 'ENGINE_INSTANCE_FENCED'
-            : result === -2 ? 'MASTER_ROLE_CHANGED'
-            : result === -3 ? 'MASTER_LEASE_REQUIRED'
-            : result === -4 ? 'MASTER_SESSION_REVOKED'
-            : result === -5 ? 'ENGINE_RESTART_AUTHORIZATION_REQUIRED'
-            : result === -7 ? 'ENGINE_HIGH_WATER_AUTHORIZATION_CHANGED'
+          code: resultCode === -1 ? 'ENGINE_INSTANCE_FENCED'
+            : resultCode === -2 ? 'MASTER_ROLE_CHANGED'
+            : resultCode === -3 ? 'MASTER_LEASE_REQUIRED'
+            : resultCode === -4 ? 'MASTER_SESSION_REVOKED'
+            : resultCode === -5 ? 'ENGINE_RESTART_AUTHORIZATION_REQUIRED'
+            : resultCode === -7 ? 'ENGINE_HIGH_WATER_AUTHORIZATION_CHANGED'
+            : resultCode === -8 ? 'ENGINE_HIGH_WATER_INVALID'
             : 'ENGINE_RESTART_AUTHORIZATION_INVALID',
         });
       }
+      const storedRecord = parseStoredJson(Array.isArray(result) ? result[1] : '');
       return send(res, 200, {
         ok:true,
         authorizationAt,
-        updatedAt:record.updatedAt,
-        entryCount:keys.length,
+        updatedAt:Number(storedRecord?.updatedAt || updatedAt),
+        entryCount:plainJsonObject(storedRecord?.entries) ? Object.keys(storedRecord.entries).length : keys.length,
       });
     }
 
