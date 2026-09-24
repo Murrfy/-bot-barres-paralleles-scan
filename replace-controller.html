@@ -24,16 +24,16 @@ button:disabled{opacity:.5}
 <div class="wrap">
   <div class="card">
     <h1>Zenith — nouvel iPhone</h1>
-    <div class="sub">Cette procédure remplace l’ancien iPhone contrôleur sans toucher au MASTER ni aux positions Binance.</div>
+    <div class="sub">Cette procédure remplace l’ancien iPhone contrôleur directement avec le code administrateur Zenith, sans iPad et sans toucher aux positions Binance.</div>
 
-    <label for="recoveryCode">Code temporaire affiché sur l’iPad MASTER</label>
-    <input id="recoveryCode" type="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX">
+    <label for="adminCode">Code administrateur Zenith</label>
+    <input id="adminCode" type="password" maxlength="256" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Code administrateur">
 
-    <button id="replaceBtn">Remplacer l’ancien iPhone</button>
+    <button id="replaceBtn">Reprendre le contrôle sur cet iPhone</button>
 
     <div id="status" class="status">Prêt.</div>
     <a id="openBot" class="link" href="/" hidden>Ouvrir Zenith</a>
-    <div class="small">Après validation, l’ancien iPhone est automatiquement refusé par le serveur. Les réglages centraux sont récupérés avant l’ouverture du bot.</div>
+    <div class="small">Après validation, l’ancien iPhone est automatiquement refusé par le serveur. Le code administrateur n’est ni stocké ni renvoyé. Les réglages centraux sont récupérés avant l’ouverture du bot.</div>
   </div>
 </div>
 <script>
@@ -84,9 +84,9 @@ function restoreCentralState(state){
 }
 
 async function replaceController(){
-  const recoveryCode=$('recoveryCode').value.trim();
-  if(!recoveryCode){
-    setStatus('Entre le code temporaire affiché sur l’iPad.','err');
+  const adminCode=$('adminCode').value;
+  if(!adminCode){
+    setStatus('Entre le code administrateur Zenith.','err');
     return;
   }
 
@@ -95,11 +95,11 @@ async function replaceController(){
 
   try{
     const newDeviceId=replacementDeviceId();
-    const r=await fetch('/api/zenith-sync?action=controller-replacement-redeem',{
+    const r=await fetch('/api/zenith-sync?action=controller-recovery-admin',{
       method:'POST',
       headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify({
-        recoveryCode,
+        adminCode,
         deviceId:newDeviceId,
         deviceName:'iPhone contrôleur Zenith'
       })
@@ -117,7 +117,7 @@ async function replaceController(){
     localStorage.removeItem(REPLACEMENT_DEVICE_ID_KEY);
 
     const restored=restoreCentralState(q.state);
-    $('recoveryCode').value='';
+    $('adminCode').value='';
 
     setStatus(
       'Nouvel iPhone activé. Ancien iPhone révoqué.'+
@@ -133,7 +133,7 @@ async function replaceController(){
 }
 
 $('replaceBtn').addEventListener('click',replaceController);
-$('recoveryCode').addEventListener('keydown',e=>{if(e.key==='Enter')replaceController()});
+$('adminCode').addEventListener('keydown',e=>{if(e.key==='Enter')replaceController()});
 </script>
 </body>
 </html>

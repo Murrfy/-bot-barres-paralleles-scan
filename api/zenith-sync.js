@@ -65,6 +65,8 @@ const PAIR_GLOBAL_RATE_LIMIT = 30;
 const CONTROLLER_REPLACEMENT_TTL_SECONDS = 10 * 60;
 const CONTROLLER_REPLACEMENT_RATE_LIMIT = 5;
 const CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT = 30;
+const CONTROLLER_ADMIN_RECOVERY_RATE_LIMIT = 5;
+const CONTROLLER_ADMIN_RECOVERY_GLOBAL_RATE_LIMIT = 30;
 const CONTROLLER_STATE_WRITE_RATE_LIMIT_PER_MINUTE = 120;
 const MASTER_ADMIN_FAILURE_LIMIT = 5;
 const MASTER_ADMIN_LOCK_SECONDS = 15 * 60;
@@ -368,6 +370,15 @@ async function controllerReplacementRateAllowed(req) {
     counts.globalCount <= CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT;
 }
 
+async function controllerAdminRecoveryRateAllowed(req) {
+  const bucket = Math.floor(Date.now() / 60000);
+  const localKey = `${PREFIX}:controller-admin-recovery-rate:${sha256(clientIp(req))}:${bucket}`;
+  const globalKey = `${PREFIX}:controller-admin-recovery-rate:global:${bucket}`;
+  const counts = await incrementWithGlobalExpiry(localKey, globalKey, 120);
+  return counts.localCount <= CONTROLLER_ADMIN_RECOVERY_RATE_LIMIT &&
+    counts.globalCount <= CONTROLLER_ADMIN_RECOVERY_GLOBAL_RATE_LIMIT;
+}
+
 async function controllerStateWriteRateAllowed(deviceId) {
   const bucket = Math.floor(Date.now() / 60000);
   const key = `${PREFIX}:rate:controller-state-write:${sha256(deviceId)}:${bucket}`;
@@ -410,6 +421,54 @@ async function verifyMasterAdminCode(req, res, device) {
       send(res, 429, { ok: false, code: 'MASTER_ADMIN_LOCKED', retryAfterSeconds: MASTER_ADMIN_LOCK_SECONDS });
     } else {
       send(res, 401, { ok: false, code: 'MASTER_ADMIN_CODE_INVALID', attemptsRemaining: Math.max(0, MASTER_ADMIN_FAILURE_LIMIT - failures) });
+    }
+    return false;
+  }
+
+  await redis(['DEL', key]);
+  return true;
+}
+
+function controllerAdminRecoveryFailureKey(req) {
+  return `${PREFIX}:controller-admin-recovery-fail:${sha256(clientIp(req))}`;
+}
+
+async function verifyControllerRecoveryAdminCode(req, res) {
+  if (!MASTER_ADMIN_CODE) {
+    send(res, 503, { ok: false, code: 'MASTER_ADMIN_NOT_CONFIGURED' });
+    return false;
+  }
+
+  const policyBlockers = adminSecretPolicyBlockers();
+  if (policyBlockers.length) {
+    send(res, 503, { ok: false, code: policyBlockers[0] });
+    return false;
+  }
+
+  const supplied = String(req.body?.adminCode || '');
+  if (supplied.length > AUTH_SECRET_INPUT_MAX_CHARS) {
+    send(res, 400, { ok: false, code: 'MASTER_ADMIN_CODE_INPUT_TOO_LARGE' });
+    return false;
+  }
+
+  const key = controllerAdminRecoveryFailureKey(req);
+  const existing = Number(await redis(['GET', key])) || 0;
+  if (existing >= MASTER_ADMIN_FAILURE_LIMIT) {
+    const ttl = Number(await redis(['TTL', key])) || MASTER_ADMIN_LOCK_SECONDS;
+    send(res, 429, { ok: false, code: 'MASTER_ADMIN_LOCKED', retryAfterSeconds: Math.max(1, ttl) });
+    return false;
+  }
+
+  if (!timingSafeEqualText(supplied, MASTER_ADMIN_CODE)) {
+    const failures = await incrementWithExpiry(key, MASTER_ADMIN_LOCK_SECONDS);
+    if (failures >= MASTER_ADMIN_FAILURE_LIMIT) {
+      send(res, 429, { ok: false, code: 'MASTER_ADMIN_LOCKED', retryAfterSeconds: MASTER_ADMIN_LOCK_SECONDS });
+    } else {
+      send(res, 401, {
+        ok: false,
+        code: 'MASTER_ADMIN_CODE_INVALID',
+        attemptsRemaining: Math.max(0, MASTER_ADMIN_FAILURE_LIMIT - failures),
+      });
     }
     return false;
   }
@@ -1935,6 +1994,108 @@ export default async function handler(req, res) {
         state,
         previousControllerDeviceId: oldControllerDeviceId,
         quarantined,
+      });
+    }
+
+
+    if (action === 'controller-recovery-admin' && req.method === 'POST') {
+      if (!(await controllerAdminRecoveryRateAllowed(req))) {
+        return send(res, 429, { ok: false, code: 'CONTROLLER_ADMIN_RECOVERY_RATE_LIMIT' });
+      }
+      if (!(await verifyControllerRecoveryAdminCode(req, res))) return;
+
+      const newDeviceId = String(req.body?.deviceId || '').trim();
+      const deviceName = String(req.body?.deviceName || 'iPhone contrôleur Zenith').trim().slice(0, 80);
+      if (!validDeviceId(newDeviceId)) {
+        return send(res, 400, { ok: false, code: 'CONTROLLER_RECOVERY_REQUEST_INVALID' });
+      }
+
+      const oldControllerDeviceId = await roleDeviceId('controller');
+      if (!oldControllerDeviceId) {
+        return send(res, 409, { ok: false, code: 'CONTROLLER_NOT_REGISTERED' });
+      }
+      if (String(oldControllerDeviceId) === newDeviceId) {
+        return send(res, 409, { ok: false, code: 'CONTROLLER_RECOVERY_DEVICE_UNCHANGED' });
+      }
+
+      const token = crypto.randomBytes(32).toString('base64url');
+      const tokenHash = sha256(token);
+      const createdAt = Date.now();
+      const deviceRecord = {
+        deviceId: newDeviceId,
+        role: 'controller',
+        deviceName,
+        createdAt,
+        lastSeenAt: createdAt,
+      };
+      const audit = {
+        at: createdAt,
+        kind: 'CONTROLLER_RECOVERED_BY_ADMIN',
+        oldControllerDeviceId,
+        newControllerDeviceId: newDeviceId,
+      };
+
+      const recoveryScript = [
+        "local currentController = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if currentController ~= ARGV[1] then return {-1, currentController, 0, 0} end",
+        "local pendingCount = tonumber(redis.call('LLEN', KEYS[4]) or '0') or 0",
+        "local processingCount = tonumber(redis.call('LLEN', KEYS[5]) or '0') or 0",
+        "if pendingCount > 0 or processingCount > 0 then",
+        "  return {-3, currentController, pendingCount, processingCount}",
+        "end",
+        "redis.call('SET', KEYS[1], ARGV[2])",
+        "redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[4])",
+        "redis.call('SET', KEYS[3], ARGV[5])",
+        "redis.call('LPUSH', KEYS[6], ARGV[6])",
+        "redis.call('LTRIM', KEYS[6], 0, 199)",
+        "return {1, currentController, 0, 0}"
+      ].join('\n');
+
+      const result = await redis([
+        'EVAL', recoveryScript, '6',
+        KEY_CONTROLLER_DEVICE,
+        `${PREFIX}:device:${tokenHash}`,
+        roleAssignmentKey(PREFIX, 'controller'),
+        KEY_PENDING,
+        KEY_PROCESSING,
+        KEY_AUDIT,
+        String(oldControllerDeviceId),
+        newDeviceId,
+        JSON.stringify(deviceRecord),
+        String(DEVICE_SESSION_MAX_AGE_SECONDS),
+        String(createdAt),
+        JSON.stringify(audit),
+      ]);
+
+      const code = Number(Array.isArray(result) ? result[0] : 0);
+      if (code === -1) {
+        return send(res, 409, { ok: false, code: 'CONTROLLER_RECOVERY_CONFLICT' });
+      }
+      if (code === -3) {
+        return send(res, 409, {
+          ok: false,
+          code: 'CONTROLLER_RECOVERY_DRAIN_REQUIRED',
+          pendingCommands: Number(Array.isArray(result) ? result[2] : 0) || 0,
+          processingCommands: Number(Array.isArray(result) ? result[3] : 0) || 0,
+        });
+      }
+      if (code !== 1) {
+        return send(res, 500, { ok: false, code: 'CONTROLLER_RECOVERY_FAILED' });
+      }
+
+      let state = null;
+      try {
+        const controllerRaw = await redis(['GET', KEY_CONTROLLER_STATE]);
+        state = controllerRaw ? JSON.parse(controllerRaw) : null;
+      } catch {}
+
+      setDeviceSessionCookie(res, token);
+      return send(res, 200, {
+        ok: true,
+        sessionReady: true,
+        device: deviceRecord,
+        state,
+        previousControllerDeviceId: String(result[1] || oldControllerDeviceId),
       });
     }
 
