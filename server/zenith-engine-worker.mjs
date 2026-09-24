@@ -21,6 +21,8 @@ import {
   evaluateFullProtectiveClose,
   PROTECTIVE_CLOSE_ATTEMPTS,
 } from '../lib/protective-close-state.mjs';
+import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
+import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
 const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
 const BOOTSTRAP_SECRET=String(process.env.ZENITH_ENGINE_BOOTSTRAP_SECRET||'');
@@ -71,6 +73,28 @@ const execution={
   lastCommandId:'',
 };
 
+const autoProtection={
+  highWater:new Map(),
+  authorizationAt:0,
+  highWaterLoaded:false,
+  highWaterLoadPromise:null,
+  highWaterSaveTimer:null,
+  highWaterSaveBusy:false,
+  priceFilters:new Map(),
+  metadataFetchAt:0,
+  busySymbols:new Set(),
+  lastError:'',
+  lastActionAt:0,
+};
+
+const markStream={
+  ws:null,
+  generation:0,
+  reconnectTimer:null,
+  restartTimer:null,
+  lastError:'',
+};
+
 let heartbeatTimer=null;
 
 function required(name,value){
@@ -96,6 +120,43 @@ function stableStringify(value){
 }
 function sha256Hex(value){
   return crypto.createHash('sha256').update(String(value),'utf8').digest('hex');
+}
+function realNumberMatches(a,b){
+  const x=Number(a),y=Number(b);
+  return Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x-y)<=Math.max(1e-9,Math.abs(y)*1e-10);
+}
+function zenithManagedRealId(value){
+  const id=String(value||'');
+  return /^zth-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
+}
+function autoPositionKey(position){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const direction=amount>=0?'LONG':'SHORT';
+  const qty=Math.abs(amount);
+  const entry=n(position?.entryPrice,0);
+  const lifecycle=Math.max(0,Math.floor(n(
+    position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,0
+  )));
+  return `${symbol}:${direction}:${qty}:${entry}:${lifecycle}`;
+}
+function observedLinearPnl(position,mark){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const qty=Math.abs(amount),entry=n(position?.entryPrice,0),px=n(mark,0);
+  if(!(qty>0)||!(entry>0)||!(px>0))return NaN;
+  return (amount>=0?1:-1)*(px-entry)*qty;
+}
+function observeAutoHighWater(position,mark){
+  const observed=observedLinearPnl(position,mark);
+  if(!Number.isFinite(observed))return NaN;
+  const key=autoPositionKey(position);
+  const previous=n(autoProtection.highWater.get(key),NaN);
+  const next=Number.isFinite(previous)?Math.max(previous,observed):observed;
+  if(!Number.isFinite(previous)||next>previous+1e-8){
+    autoProtection.highWater.set(key,next);
+    scheduleAutoHighWaterSave();
+  }
+  return next;
 }
 function log(kind,details={}){
   const safe={at:new Date().toISOString(),component:'zenith-engine-worker',kind,instanceId,...details};
@@ -321,6 +382,389 @@ async function syncControllerConfig(){
   return true;
 }
 
+async function loadAutoHighWater(force=false){
+  if(autoProtection.highWaterLoaded&&!force)return true;
+  if(autoProtection.highWaterLoadPromise&&!force)return autoProtection.highWaterLoadPromise;
+  const task=(async()=>{
+    const result=await syncApi('engine-protection-high-water');
+    if(!result.response.ok||result.data?.ok!==true){
+      const code=String(result.data?.code||('HTTP_'+result.response.status));
+      autoProtection.lastError=code;
+      return false;
+    }
+    autoProtection.authorizationAt=n(result.data.authorizationAt,0);
+    autoProtection.highWater.clear();
+    const entries=result.data.entries&&typeof result.data.entries==='object'?result.data.entries:{};
+    for(const [key,value] of Object.entries(entries)){
+      const amount=Number(value);
+      if(Number.isFinite(amount))autoProtection.highWater.set(key,amount);
+    }
+    autoProtection.highWaterLoaded=autoProtection.authorizationAt>0;
+    return autoProtection.highWaterLoaded;
+  })();
+  autoProtection.highWaterLoadPromise=task;
+  try{return await task}
+  finally{autoProtection.highWaterLoadPromise=null}
+}
+
+async function persistAutoHighWaterNow(){
+  if(autoProtection.highWaterSaveBusy)return false;
+  if(!autoProtection.highWaterLoaded||!(autoProtection.authorizationAt>0))return false;
+  autoProtection.highWaterSaveBusy=true;
+  try{
+    const entries={};
+    for(const [key,value] of autoProtection.highWater.entries()){
+      if(Number.isFinite(Number(value)))entries[key]=Number(value);
+    }
+    const result=await syncApi('engine-protection-high-water',{
+      method:'POST',
+      body:{authorizationAt:autoProtection.authorizationAt,entries},
+    });
+    if(!result.response.ok||result.data?.ok!==true){
+      const code=String(result.data?.code||('HTTP_'+result.response.status));
+      autoProtection.lastError=code;
+      if(code==='ENGINE_HIGH_WATER_AUTHORIZATION_CHANGED'||code==='ENGINE_RESTART_AUTHORIZATION_REQUIRED'){
+        autoProtection.highWaterLoaded=false;
+        autoProtection.authorizationAt=0;
+        autoProtection.highWater.clear();
+      }
+      return false;
+    }
+    return true;
+  }catch(error){
+    autoProtection.lastError=String(error?.message||'ENGINE_HIGH_WATER_SAVE_FAILED');
+    return false;
+  }finally{
+    autoProtection.highWaterSaveBusy=false;
+  }
+}
+
+function scheduleAutoHighWaterSave(delay=5000){
+  if(autoProtection.highWaterSaveTimer)clearTimeout(autoProtection.highWaterSaveTimer);
+  autoProtection.highWaterSaveTimer=setTimeout(()=>{
+    autoProtection.highWaterSaveTimer=null;
+    persistAutoHighWaterNow().catch(error=>logError('AUTO_HIGH_WATER_SAVE_FAILED',error));
+  },Math.max(250,delay));
+}
+
+async function pruneAutoHighWater(){
+  if(!autoProtection.highWaterLoaded||userStreamReady(stream.state)!==true)return false;
+  const active=new Set(
+    (streamProjection().binancePositions||[])
+      .filter(position=>Math.abs(n(position?.positionAmt??position?.quantity,0))>0)
+      .map(autoPositionKey)
+  );
+  let changed=false;
+  for(const key of [...autoProtection.highWater.keys()]){
+    if(!active.has(key)){
+      autoProtection.highWater.delete(key);
+      changed=true;
+    }
+  }
+  if(changed)await persistAutoHighWaterNow();
+  return changed;
+}
+
+function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.maxLossUsd){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const direction=amount>=0?'LONG':'SHORT';
+  const quantity=Math.abs(amount);
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const side=direction==='LONG'?'SELL':'BUY';
+  const entry=n(position?.entryPrice,0);
+  const cap=n(hardMaxLossUsd,0);
+  if(!(quantity>0)||!(entry>0)||!(cap>0))return false;
+  const rows=(Array.isArray(orders)?orders:[]).filter(order=>{
+    if(String(order?.orderClass||'').toUpperCase()!=='ALGO')return false;
+    if(String(order?.symbol||'').toUpperCase()!==symbol)return false;
+    if(String(order?.side||'').toUpperCase()!==side)return false;
+    if(String(order?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
+    if(String(order?.type||'').toUpperCase()!=='STOP_MARKET')return false;
+    if(!(order?.closePosition===true||order?.closePosition==='true'))return false;
+    if(!zenithManagedRealId(order?.clientAlgoId))return false;
+    const trigger=n(order?.triggerPrice??order?.stopPrice,0);
+    if(!(trigger>0))return false;
+    const lossSide=direction==='LONG'?trigger<entry:trigger>entry;
+    if(!lossSide)return false;
+    const impliedLossUsd=direction==='LONG'
+      ?(entry-trigger)*quantity
+      :(trigger-entry)*quantity;
+    return impliedLossUsd<=cap+1e-8;
+  });
+  return rows.length===1;
+}
+
+function rememberPriceFilters(snapshot){
+  const rows=snapshot?.priceFilters;
+  if(!rows||typeof rows!=='object'||Array.isArray(rows))return;
+  for(const [symbol,filter] of Object.entries(rows)){
+    if(n(filter?.tickSize,0)>0){
+      autoProtection.priceFilters.set(String(symbol).toUpperCase(),clone(filter));
+    }
+  }
+}
+
+async function ensurePriceFilter(symbol){
+  const key=String(symbol||'').toUpperCase();
+  const cached=autoProtection.priceFilters.get(key);
+  if(cached&&n(cached.tickSize,0)>0)return cached;
+  if(Date.now()-autoProtection.metadataFetchAt<5000)return null;
+  autoProtection.metadataFetchAt=Date.now();
+  const result=await binanceApi('/api/binance-runtime-snapshot');
+  if(!result.response.ok||result.data?.ok!==true||!result.data?.snapshot)return null;
+  rememberPriceFilters(result.data.snapshot);
+  return autoProtection.priceFilters.get(key)||null;
+}
+
+async function assertAutoProtectionPanic(reason){
+  autoProtection.lastError=String(reason||'AUTO_PROTECTION_FAIL_CLOSED');
+  try{
+    await syncApi('emergency-stop',{method:'POST',body:{}});
+  }catch{}
+  await invalidateStream(autoProtection.lastError).catch(()=>{});
+}
+
+async function executeAutoProgressive(plan){
+  const live=plan.live,level=plan.level;
+  const body={
+    type:'EXEC_UPDATE_PROTECTION',
+    commandId:`auto-protect-${live.symbol}-${live.direction}-${Math.round(plan.stage.armProfitUsd*10)}-${Math.round(plan.stage.protectedProfitUsd*10)}-${live.lifecycleAt||live.updateTime||0}`,
+    symbol:live.symbol,
+    direction:live.direction,
+    quantity:live.quantity,
+    triggerPrice:level.triggerPrice,
+    limitPrice:level.limitPrice,
+    protectionKind:'PROGRESSIVE',
+    ...(plan.previousClientAlgoId?{previousClientAlgoId:plan.previousClientAlgoId}:{})
+  };
+
+  if(!(await persistAutoHighWaterNow())){
+    autoProtection.lastError='AUTO_HIGH_WATER_NOT_PERSISTED';
+    return false;
+  }
+
+  const placed=await callProtectiveUpdateExecute({...body,phase:'PLACE_NEW'});
+  if(!placed.response.ok||placed.data?.ok!==true){
+    const reason='AUTO_PLACE_'+String(placed.data?.code||placed.data?.reason||('HTTP_'+placed.response.status));
+    if(placed.data?.writeAttempted===true||placed.data?.ambiguous===true||placed.data?.result?.ambiguous===true){
+      await assertAutoProtectionPanic(reason+'_AMBIGUOUS');
+    }else{
+      autoProtection.lastError=reason;
+    }
+    return false;
+  }
+
+  const clientId=String(placed.data?.plan?.params?.clientAlgoId||'');
+  if(!clientId){
+    await assertAutoProtectionPanic('AUTO_NEW_PROTECTION_ID_MISSING');
+    return false;
+  }
+  const order=await waitForStreamOrder({kind:'ALGO',clientId,terminal:false},3500);
+  if(!order){
+    await assertAutoProtectionPanic('AUTO_NEW_PROTECTION_NOT_STREAM_CONFIRMED');
+    return false;
+  }
+  if(String(order?.type||'').toUpperCase()!=='STOP'||
+     String(order?.timeInForce||'').toUpperCase()!=='GTC'||
+     !(order?.reduceOnly===true||order?.reduceOnly==='true')||
+     !realNumberMatches(order?.triggerPrice,level.triggerPrice)||
+     !realNumberMatches(order?.price,level.limitPrice)||
+     (order?.priceMatch&&String(order.priceMatch).toUpperCase()!=='NONE')){
+    await assertAutoProtectionPanic('AUTO_NEW_PROTECTION_IDENTITY_MISMATCH');
+    return false;
+  }
+
+  await publishRuntime();
+  if(await awaitReconciliation()!==true){
+    await assertAutoProtectionPanic('AUTO_POST_PLACE_RECONCILIATION_FAILED');
+    return false;
+  }
+
+  if(plan.previousClientAlgoId){
+    const canceled=await callProtectiveUpdateExecute({
+      ...body,phase:'CANCEL_OLD',newClientAlgoId:clientId
+    });
+    if(!canceled.response.ok||canceled.data?.ok!==true){
+      await assertAutoProtectionPanic(
+        'AUTO_CANCEL_'+String(canceled.data?.code||canceled.data?.reason||('HTTP_'+canceled.response.status))
+      );
+      return false;
+    }
+    const terminal=await waitForStreamOrder({
+      kind:'ALGO',clientId:plan.previousClientAlgoId,terminal:true
+    },3000);
+    const terminalStatus=String(
+      terminal?.status||canceled.data?.result?.algoOrder?.algoStatus||''
+    ).toUpperCase();
+    if(!['CANCELED','EXPIRED','REJECTED'].includes(terminalStatus)){
+      await assertAutoProtectionPanic('AUTO_OLD_PROTECTION_CANCEL_NOT_CONFIRMED');
+      return false;
+    }
+    if(await awaitReconciliation()!==true){
+      await assertAutoProtectionPanic('AUTO_POST_CANCEL_RECONCILIATION_FAILED');
+      return false;
+    }
+  }
+
+  autoProtection.lastError='';
+  autoProtection.lastActionAt=Date.now();
+  return true;
+}
+
+async function runAutoProtection(symbol,mark){
+  const wanted=String(symbol||'').toUpperCase();
+  const projection=streamProjection();
+  const position=(projection.binancePositions||[])
+    .find(row=>String(row?.symbol||'').toUpperCase()===wanted&&Math.abs(n(row?.positionAmt??row?.quantity,0))>0);
+  if(!position)return false;
+
+  if(!autoProtection.highWaterLoaded){
+    const loaded=await loadAutoHighWater();
+    if(!loaded)return false;
+  }
+  const highWater=observeAutoHighWater(position,mark);
+  if(autoProtection.busySymbols.has(wanted))return false;
+
+  if(!runtime.synchronized||!runtime.heartbeatFresh)return false;
+  if(!masterExecutionEligible({
+    role:'master',
+    hidden:false,
+    leaseActive:runtime.leaseActive,
+    realExecutionArmed:runtime.realExecutionArmed,
+    userStreamReady:userStreamReady(stream.state),
+    mode:runtime.mode,
+  }))return false;
+
+  const tokenSettings=runtime.config?.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const globalSettings=runtime.config?.settings&&typeof runtime.config.settings==='object'
+    ?runtime.config.settings:{};
+  const tokenCfg=tokenSettings[wanted]&&typeof tokenSettings[wanted]==='object'?tokenSettings[wanted]:{};
+  const protectionStages=Array.isArray(tokenCfg.protectionStages)
+    ?tokenCfg.protectionStages
+    :Array.isArray(globalSettings.protectionStages)
+      ?globalSettings.protectionStages
+      :null;
+  if(!protectionStages)return false;
+
+  const orders=Array.isArray(projection.binanceOrders)?projection.binanceOrders:[];
+  if(!uniqueManagedMaxLoss(position,orders)){
+    autoProtection.lastError='AUTO_MAX_LOSS_NOT_UNIQUE';
+    return false;
+  }
+  const priceFilter=await ensurePriceFilter(wanted);
+  if(!priceFilter){
+    autoProtection.lastError='AUTO_PRICE_FILTER_UNAVAILABLE';
+    return false;
+  }
+
+  let plan;
+  try{
+    plan=evaluateMasterAutoProgressiveProtection({
+      position,
+      markPrice:mark,
+      protectionStages,
+      currentOrders:orders,
+      priceFilter,
+      previousHighWaterProfitUsd:highWater,
+    });
+  }catch(error){
+    autoProtection.lastError=String(error?.message||'AUTO_PROTECTION_PLAN_FAILED');
+    return false;
+  }
+
+  if(plan.action==='BLOCK'){
+    autoProtection.lastError=String(plan.reason||'AUTO_PROTECTION_BLOCKED');
+    return false;
+  }
+  if(plan.action!=='REPLACE'){
+    autoProtection.lastError='';
+    return false;
+  }
+
+  autoProtection.busySymbols.add(wanted);
+  try{return await executeAutoProgressive(plan)}
+  finally{autoProtection.busySymbols.delete(wanted)}
+}
+
+function scheduleMarkReconnect(delay=3000){
+  if(stopping||!runtime.leaseActive)return;
+  if(markStream.reconnectTimer)clearTimeout(markStream.reconnectTimer);
+  markStream.reconnectTimer=setTimeout(()=>{
+    markStream.reconnectTimer=null;
+    ensureMarkPriceStream().catch(error=>logError('MARK_STREAM_RECONNECT_FAILED',error));
+  },Math.max(500,delay));
+}
+
+function closeMarkPriceStream(reason='MARK_STREAM_DISCONNECTED',reconnect=true){
+  const ws=markStream.ws;
+  markStream.ws=null;
+  markStream.lastError=String(reason||'MARK_STREAM_DISCONNECTED');
+  if(markStream.restartTimer){clearTimeout(markStream.restartTimer);markStream.restartTimer=null}
+  if(ws&&ws.readyState<2){
+    try{ws.close(1000,'zenith-mark-reconnect')}catch{}
+  }
+  if(reconnect)scheduleMarkReconnect();
+}
+
+async function processMarkPayload(payload){
+  const rows=Array.isArray(payload)
+    ?payload
+    :Array.isArray(payload?.data)
+      ?payload.data
+      :[payload?.data||payload];
+  const active=new Set(
+    (streamProjection().binancePositions||[])
+      .filter(position=>Math.abs(n(position?.positionAmt??position?.quantity,0))>0)
+      .map(position=>String(position?.symbol||'').toUpperCase())
+  );
+  const tasks=[];
+  for(const row of rows){
+    const symbol=String(row?.s||row?.symbol||'').toUpperCase();
+    const mark=n(row?.p??row?.markPrice,0);
+    if(!active.has(symbol)||!(mark>0))continue;
+    tasks.push(runAutoProtection(symbol,mark));
+  }
+  if(tasks.length)await Promise.allSettled(tasks);
+}
+
+async function ensureMarkPriceStream(){
+  if(stopping||!runtime.leaseActive)return false;
+  if(markStream.ws&&(markStream.ws.readyState===WebSocket.OPEN||markStream.ws.readyState===WebSocket.CONNECTING))return true;
+  const generation=++markStream.generation;
+  const socket=new WebSocket('wss://fstream.binance.com/market/ws/!markPrice@arr@1s');
+  markStream.ws=socket;
+
+  socket.addEventListener('open',()=>{
+    if(markStream.ws!==socket||generation!==markStream.generation)return;
+    markStream.lastError='';
+    if(markStream.restartTimer)clearTimeout(markStream.restartTimer);
+    markStream.restartTimer=setTimeout(
+      ()=>closeMarkPriceStream('SCHEDULED_23H_MARK_RECONNECT',true),
+      STREAM_RESTART_MS
+    );
+  });
+  socket.addEventListener('message',async event=>{
+    if(markStream.ws!==socket||generation!==markStream.generation)return;
+    try{
+      let raw=event.data;
+      if(raw instanceof ArrayBuffer)raw=Buffer.from(raw).toString('utf8');
+      else if(ArrayBuffer.isView(raw))raw=Buffer.from(raw.buffer,raw.byteOffset,raw.byteLength).toString('utf8');
+      else raw=String(raw);
+      await processMarkPayload(JSON.parse(raw));
+    }catch(error){
+      markStream.lastError=String(error?.message||'MARK_STREAM_EVENT_INVALID');
+    }
+  });
+  socket.addEventListener('error',()=>{markStream.lastError='MARK_STREAM_SOCKET_ERROR'});
+  socket.addEventListener('close',()=>{
+    if(markStream.ws!==socket)return;
+    markStream.ws=null;
+    scheduleMarkReconnect();
+  });
+  return true;
+}
+
 function streamProjection(){
   return runtimeInventoryFromUserStream(stream.state,runtime.realExecutionArmed?'REAL':'SIMULATION');
 }
@@ -508,6 +952,7 @@ async function reconcile(secondPass=false){
       }
     }
     runtime.error=repairTarget?'PROTECTION_REPAIR_REQUIRED':'';
+    await pruneAutoHighWater().catch(()=>{});
     return userStreamReady(stream.state);
   }catch(error){
     stream.lastError=String(error?.message||'BINANCE_RECONCILIATION_FAILED');
@@ -561,6 +1006,7 @@ async function seedStream(connectionId,connectedAt){
     throw new Error(data?.code||('HTTP_'+response.status));
   }
   const snapshot=data.snapshot;
+  rememberPriceFilters(snapshot);
   stream.state=seedUserStreamStateFromRuntimeSnapshot(snapshot,{connectionId,connectedAt});
   const cutoff=n(snapshot.serverTime,0);
   const buffered=stream.bufferedEvents.splice(0)
@@ -1038,6 +1484,8 @@ async function runtimeCycle(){
     await syncControllerConfig();
     await publishRuntime().catch(error=>logError('RUNTIME_PUBLISH_FAILED',error));
     await ensureUserStream();
+    await loadAutoHighWater().catch(error=>logError('AUTO_HIGH_WATER_LOAD_FAILED',error));
+    await ensureMarkPriceStream();
     return true;
   }catch(error){
     const code=String(error?.code||error?.message||'RUNTIME_CYCLE_FAILED');
@@ -1063,7 +1511,12 @@ async function shutdown(code=0){
   if(heartbeatTimer)clearInterval(heartbeatTimer);
   if(execution.timer)clearInterval(execution.timer);
   if(stream.reconnectTimer)clearTimeout(stream.reconnectTimer);
+  if(markStream.reconnectTimer)clearTimeout(markStream.reconnectTimer);
+  if(markStream.restartTimer)clearTimeout(markStream.restartTimer);
+  if(autoProtection.highWaterSaveTimer)clearTimeout(autoProtection.highWaterSaveTimer);
   clearStreamTimers();
+  await persistAutoHighWaterNow().catch(()=>{});
+  closeMarkPriceStream('ENGINE_SHUTDOWN',false);
   await closeRemoteUserStream();
   const ws=stream.ws;
   stream.ws=null;
@@ -1093,7 +1546,7 @@ async function main(){
     baseOrigin:new URL(BASE_URL).origin,
     commandPollMs:COMMAND_POLL_MS,
     heartbeatMs:HEARTBEAT_MS,
-    autoProtectionMoved:false,
+    autoProtectionMoved:true,
   });
 }
 
