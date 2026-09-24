@@ -640,8 +640,15 @@ function masterActivationKey(deviceId) {
   return `${PREFIX}:master-activation:${deviceId}`;
 }
 
-async function acquireOrRenewMaster(deviceId) {
+async function acquireOrRenewMaster(device) {
+  const deviceId = String(device?.deviceId || '');
+  const sessionCreatedAt = String(Number(device?.createdAt || 0));
   const script = [
+    "local registered = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if registered ~= ARGV[1] then return -2 end",
+    "local roleIssuedAt = tonumber(redis.call('GET', KEYS[4]) or '0') or 0",
+    "local sessionCreatedAt = tonumber(ARGV[3]) or 0",
+    "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end",
     "local current = redis.call('GET', KEYS[1])",
     "if current and current == ARGV[1] then",
     "  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])",
@@ -656,17 +663,49 @@ async function acquireOrRenewMaster(deviceId) {
   ].join('\n');
 
   const result = Number(await redis([
-    'EVAL', script, '2',
-    KEY_MASTER, masterActivationKey(deviceId),
-    String(deviceId), String(MASTER_TTL_SECONDS)
+    'EVAL', script, '4',
+    KEY_MASTER,
+    masterActivationKey(deviceId),
+    KEY_MASTER_DEVICE,
+    roleAssignmentKey(PREFIX, 'master'),
+    deviceId,
+    String(MASTER_TTL_SECONDS),
+    sessionCreatedAt,
   ]));
 
   return {
     acquired: result === 1,
     renewed: result === 2,
     conflict: result === -1,
-    authorized: result !== 0,
+    roleChanged: result === -2,
+    sessionRevoked: result === -3,
+    authorized: result === 1 || result === 2,
   };
+}
+
+async function commitMasterHeartbeat(heartbeat, device) {
+  const script = [
+    "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if registered ~= ARGV[2] then return -1 end",
+    "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if lease ~= ARGV[2] then return -2 end",
+    "local roleIssuedAt = tonumber(redis.call('GET', KEYS[4]) or '0') or 0",
+    "local sessionCreatedAt = tonumber(ARGV[3]) or 0",
+    "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end",
+    "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[4])",
+    "return 1"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL', script, '4',
+    KEY_MASTER_HEARTBEAT,
+    KEY_MASTER_DEVICE,
+    KEY_MASTER,
+    roleAssignmentKey(PREFIX, 'master'),
+    JSON.stringify(heartbeat),
+    String(device?.deviceId || ''),
+    String(Number(device?.createdAt || 0)),
+    String(MASTER_HEARTBEAT_TTL_SECONDS),
+  ]));
 }
 
 async function emergencyStopActive() {
@@ -1745,7 +1784,14 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res, ['master']);
       if (!device) return;
 
-      const lease = await acquireOrRenewMaster(device.deviceId);
+      const lease = await acquireOrRenewMaster(device);
+      if (lease.roleChanged || lease.sessionRevoked) {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: lease.sessionRevoked ? 'MASTER_SESSION_REVOKED' : 'MASTER_ROLE_CHANGED',
+        });
+      }
       if (lease.conflict) {
         return send(res, 409, {
           ok: false,
@@ -1779,10 +1825,16 @@ export default async function handler(req, res) {
         synchronized: configSync.status.synchronized,
         syncReason: configSync.status.reason,
       };
-      await redis([
-        'SET', KEY_MASTER_HEARTBEAT, JSON.stringify(heartbeat),
-        'EX', String(MASTER_HEARTBEAT_TTL_SECONDS)
-      ]);
+      const heartbeatCommit = await commitMasterHeartbeat(heartbeat, device);
+      if (heartbeatCommit !== 1) {
+        if (heartbeatCommit === -1 || heartbeatCommit === -3) clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: heartbeatCommit === -2 ? 'MASTER_LEASE_REQUIRED'
+            : heartbeatCommit === -3 ? 'MASTER_SESSION_REVOKED'
+            : 'MASTER_ROLE_CHANGED',
+        });
+      }
 
       const armStatus = await realExecutionArmStatus(device.deviceId);
       return send(res, 200, {
