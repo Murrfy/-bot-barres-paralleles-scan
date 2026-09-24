@@ -268,6 +268,18 @@ if (!userStreamSession.includes('KEY_STREAM_MUTATION_LOCK') ||
   fail('Binance user-stream mutations must be serialized and fenced by current MASTER lease and role epoch');
 }
 
+if (!userStreamSession.includes('async function renewUserStreamMutationLock') ||
+    !userStreamSession.includes('async function commitUserStreamSession') ||
+    !userStreamSession.includes("if lockToken ~= ARGV[3] then return -3 end") ||
+    !userStreamSession.includes("redis.call('EXPIRE', KEYS[4], ARGV[4])") ||
+    !userStreamSession.includes("'USER_STREAM_MUTATION_LOCK_LOST'") ||
+    (userStreamSession.match(/renewUserStreamMutationLock\(master, mutationLockToken\)/g) || []).length !== 3 ||
+    (userStreamSession.match(/commitUserStreamSession\(master, mutationLockToken/g) || []).length !== 3 ||
+    userStreamSession.includes("redis(['SET', KEY_STREAM_SESSION") ||
+    userStreamSession.includes("redis(['DEL', KEY_STREAM_SESSION")) {
+  fail('user-stream remote mutations and Redis session commits must remain fenced by the live MASTER authority and mutation lock');
+}
+
 const userStreamStartIndex = userStreamSession.indexOf("if (action === 'start' && req.method === 'POST')");
 const userStreamKeepaliveIndex = userStreamSession.indexOf("if (action === 'keepalive' && req.method === 'POST')");
 const userStreamCloseIndex = userStreamSession.indexOf("if (action === 'close' && req.method === 'POST')");
@@ -277,7 +289,7 @@ if (userStreamStartIndex < 0 || userStreamKeepaliveIndex < 0 || userStreamCloseI
   const startBlock = userStreamSession.slice(userStreamStartIndex, userStreamKeepaliveIndex);
   const keepaliveBlock = userStreamSession.slice(userStreamKeepaliveIndex, userStreamCloseIndex);
   const startSuccess = /return send\(res, 200, \{([\s\S]*?)\}\);/.exec(startBlock)?.[1] || '';
-  const keepaliveSuccess = /const record = await saveSession\([\s\S]*?return send\(res, 200, \{([\s\S]*?)\}\);/.exec(keepaliveBlock)?.[1] || '';
+  const keepaliveSuccess = /return send\(res, 200, \{([\s\S]*?)\}\);/.exec(keepaliveBlock)?.[1] || '';
   if (!/\blistenKey\b/.test(startSuccess)) {
     fail('user-stream start must expose listenKey only to the leased MASTER that opens the WebSocket');
   }
