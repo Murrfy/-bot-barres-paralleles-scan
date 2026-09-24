@@ -2724,21 +2724,51 @@ export default async function handler(req, res) {
       const revokedAt = Date.now();
 
       if (!registeredMaster) {
+        let liveActivity = null;
+        try {
+          liveActivity = await fetchLiveBinanceActivity();
+        } catch (e) {
+          return send(res, 503, {
+            ok: false,
+            code: e?.code || 'BINANCE_ACTIVITY_CHECK_FAILED',
+            emergencyStopActive: true,
+            masterMode: 'PAUSE_PENDING',
+          });
+        }
+        if (liveActivity.activePositions > 0 || liveActivity.openOrders > 0) {
+          return send(res, 409, {
+            ok: false,
+            code: 'MASTER_REVOKE_DRAIN_REQUIRED',
+            emergencyStopActive: true,
+            masterMode: 'PAUSE_PENDING',
+            blockers: [
+              ...(liveActivity.activePositions > 0 ? ['ACTIVE_POSITION'] : []),
+              ...(liveActivity.openOrders > 0 ? ['OPEN_ORDER'] : []),
+            ],
+            activity: liveActivity,
+          });
+        }
+
         const alreadyRevokedScript = [
           "local controller = tostring(redis.call('GET', KEYS[1]) or '')",
           "if controller ~= ARGV[1] then return -1 end",
           "local controllerEpoch = tonumber(redis.call('GET', KEYS[2]) or '0') or 0",
           "local sessionCreatedAt = tonumber(ARGV[2]) or 0",
           "if controllerEpoch > 0 and sessionCreatedAt < controllerEpoch then return -2 end",
+          "if tostring(redis.call('GET', KEYS[8]) or '') ~= '' then return -3 end",
+          "if redis.call('LLEN', KEYS[9]) > 0 then return -4 end",
+          "if redis.call('LLEN', KEYS[10]) > 0 then return -5 end",
+          "if redis.call('GET', KEYS[11]) then return -6 end",
           "redis.call('DEL', KEYS[3])",
           "redis.call('DEL', KEYS[4])",
           "redis.call('SET', KEYS[5], ARGV[3])",
           "redis.call('DEL', KEYS[6])",
           "redis.call('DEL', KEYS[7])",
+          "redis.call('SET', KEYS[12], 'PAUSED')",
           "return 1"
         ].join('\n');
         const alreadyRevokedResult = Number(await redis([
-          'EVAL', alreadyRevokedScript, '7',
+          'EVAL', alreadyRevokedScript, '12',
           KEY_CONTROLLER_DEVICE,
           roleAssignmentKey(PREFIX, 'controller'),
           KEY_REAL_EXECUTION_ARMED,
@@ -2746,17 +2776,37 @@ export default async function handler(req, res) {
           roleAssignmentKey(PREFIX, 'master'),
           KEY_ENGINE_AUTHORIZED,
           KEY_ENGINE_INSTANCE,
+          KEY_MASTER_DEVICE,
+          KEY_PENDING,
+          KEY_PROCESSING,
+          KEY_USER_STREAM_MUTATION_LOCK,
+          KEY_MASTER_MODE,
           String(device.deviceId),
           String(Number(device.createdAt || 0)),
           String(revokedAt),
         ]));
         if (alreadyRevokedResult !== 1) {
-          clearDeviceSessionCookie(res);
+          if (alreadyRevokedResult === -1 || alreadyRevokedResult === -2) {
+            clearDeviceSessionCookie(res);
+          }
+          const blocker = alreadyRevokedResult === -3
+            ? 'MASTER_REGISTERED_DURING_REVOKE'
+            : alreadyRevokedResult === -4
+              ? 'PENDING_COMMAND'
+              : alreadyRevokedResult === -5
+                ? 'PROCESSING_COMMAND'
+                : alreadyRevokedResult === -6
+                  ? 'USER_STREAM_MUTATION_IN_FLIGHT'
+                  : '';
           return send(res, 409, {
             ok: false,
             code: alreadyRevokedResult === -2
               ? 'CONTROLLER_SESSION_REVOKED'
-              : 'CONTROLLER_ROLE_CHANGED',
+              : alreadyRevokedResult === -1
+                ? 'CONTROLLER_ROLE_CHANGED'
+                : 'MASTER_REVOKE_DRAIN_REQUIRED',
+            blocker,
+            blockers: blocker ? [blocker] : [],
             emergencyStopActive: true,
             masterMode: 'PAUSE_PENDING',
           });
@@ -2766,7 +2816,8 @@ export default async function handler(req, res) {
           masterRevoked: true,
           alreadyRevoked: true,
           emergencyStopActive: true,
-          masterMode: 'PAUSE_PENDING',
+          masterMode: 'PAUSED',
+          liveActivity,
         });
       }
 
