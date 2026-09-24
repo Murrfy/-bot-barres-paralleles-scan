@@ -58,7 +58,9 @@ test('MASTER revoke requires the normal pause drain before destructive revocatio
   assert.ok(block.includes("'PENDING_COMMAND'"));
   assert.ok(block.includes("'PROCESSING_COMMAND'"));
   assert.ok(block.includes('freshCleanReconciliation()'));
-  assert.ok(block.indexOf("tryFinalizePendingPause(registeredMaster, 'PAUSE_PENDING')") < block.indexOf('fetchLiveBinanceActivity()'));
+  const pauseDrainAt=block.indexOf("tryFinalizePendingPause(registeredMaster, 'PAUSE_PENDING')");
+  const liveCheckAfterPause=block.indexOf('fetchLiveBinanceActivity()',pauseDrainAt);
+  assert.ok(pauseDrainAt>=0&&liveCheckAfterPause>pauseDrainAt);
 });
 
 test('MASTER revoke atomically refuses new queue activity and advances the MASTER role epoch',()=>{
