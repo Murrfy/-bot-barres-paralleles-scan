@@ -359,6 +359,25 @@ if ((binanceOrderWriter.match(/method: 'POST'/g)||[]).length !== 1) {
   fail('Binance order writer must have exactly one standard-order POST path');
 }
 
+for (const required of [
+  'assertStandardOrderMatches',
+  "'STANDARD_SYMBOL_MISMATCH'",
+  "'STANDARD_CLIENT_ID_MISMATCH'",
+  "'STANDARD_SIDE_MISMATCH'",
+  "'STANDARD_POSITION_SIDE_MISMATCH'",
+  "'STANDARD_TYPE_MISMATCH'",
+  "'STANDARD_REDUCE_ONLY_MISMATCH'",
+  "'STANDARD_QUANTITY_MISMATCH'",
+  "'STANDARD_TIME_IN_FORCE_MISMATCH'",
+  "'STANDARD_PRICE_MISMATCH'",
+  "'STANDARD_PRICE_MATCH_MISMATCH'",
+]) {
+  if (!binanceOrderWriter.includes(required)) fail(`standard-order replay identity fence missing: ${required}`);
+}
+if ((binanceOrderWriter.match(/assertStandardOrderMatches\((?:existing|recovered), orderParams\)/g)||[]).length !== 2) {
+  fail('both existing-order replay and ambiguous-POST recovery must validate the full deterministic standard-order identity');
+}
+
 const protectiveExecute = fs.readFileSync('api/binance-protective-execute.js','utf8');
 for (const required of [
   "ZENITH_REAL_TRADING_ENABLED",
