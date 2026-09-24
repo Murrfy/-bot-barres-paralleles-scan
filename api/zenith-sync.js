@@ -640,8 +640,14 @@ function masterActivationKey(deviceId) {
   return `${PREFIX}:master-activation:${deviceId}`;
 }
 
-async function acquireOrRenewMaster(deviceId) {
+async function acquireOrRenewMaster(device) {
+  const deviceId = String(device?.deviceId || '');
   const script = [
+    "local registered = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if registered ~= ARGV[1] then return -2 end",
+    "local roleIssuedAt = tonumber(redis.call('GET', KEYS[4]) or '0') or 0",
+    "local sessionCreatedAt = tonumber(ARGV[3]) or 0",
+    "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end",
     "local current = redis.call('GET', KEYS[1])",
     "if current and current == ARGV[1] then",
     "  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])",
@@ -656,16 +662,24 @@ async function acquireOrRenewMaster(deviceId) {
   ].join('\n');
 
   const result = Number(await redis([
-    'EVAL', script, '2',
-    KEY_MASTER, masterActivationKey(deviceId),
-    String(deviceId), String(MASTER_TTL_SECONDS)
+    'EVAL', script, '4',
+    KEY_MASTER,
+    masterActivationKey(deviceId),
+    KEY_MASTER_DEVICE,
+    roleAssignmentKey(PREFIX, 'master'),
+    deviceId,
+    String(MASTER_TTL_SECONDS),
+    String(Number(device?.createdAt || 0)),
   ]));
 
   return {
     acquired: result === 1,
     renewed: result === 2,
     conflict: result === -1,
-    authorized: result !== 0,
+    registered: result !== -2,
+    sessionValid: result !== -3,
+    authorized: result === 1 || result === 2,
+    result,
   };
 }
 
@@ -1716,23 +1730,49 @@ export default async function handler(req, res) {
         return send(res, 409, { ok: false, code: 'MASTER_NOT_REGISTERED' });
       }
 
-      await redis([
-        'SET',
-        masterActivationKey(masterDevice),
-        '1',
-        'EX',
-        String(MASTER_ACTIVATION_TTL_SECONDS)
-      ]);
-
       const at = Date.now();
-      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+      const activationAudit = {
         at,
         kind: 'MASTER_ACTIVATION_AUTHORIZED',
         deviceId: device.deviceId,
         masterDeviceId: masterDevice,
         ttlSeconds: MASTER_ACTIVATION_TTL_SECONDS,
-      })]);
-      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      };
+      const activationScript = [
+        "local registeredMaster = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if registeredMaster ~= ARGV[1] then return -1 end",
+        "local currentController = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if currentController ~= ARGV[2] then return -2 end",
+        "local controllerEpoch = tonumber(redis.call('GET', KEYS[4]) or '0') or 0",
+        "local sessionCreatedAt = tonumber(ARGV[3]) or 0",
+        "if controllerEpoch > 0 and sessionCreatedAt < controllerEpoch then return -3 end",
+        "redis.call('SET', KEYS[1], '1', 'EX', ARGV[4])",
+        "redis.call('LPUSH', KEYS[5], ARGV[5])",
+        "redis.call('LTRIM', KEYS[5], 0, 199)",
+        "return 1"
+      ].join('\n');
+      const activationResult = Number(await redis([
+        'EVAL', activationScript, '5',
+        masterActivationKey(masterDevice),
+        KEY_MASTER_DEVICE,
+        KEY_CONTROLLER_DEVICE,
+        roleAssignmentKey(PREFIX, 'controller'),
+        KEY_AUDIT,
+        String(masterDevice),
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
+        String(MASTER_ACTIVATION_TTL_SECONDS),
+        JSON.stringify(activationAudit),
+      ]));
+      if (activationResult !== 1) {
+        if (activationResult === -2 || activationResult === -3) clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: activationResult === -1 ? 'MASTER_ROLE_CHANGED'
+            : activationResult === -3 ? 'CONTROLLER_SESSION_REVOKED'
+            : 'CONTROLLER_ROLE_CHANGED',
+        });
+      }
 
       return send(res, 200, {
         ok: true,
@@ -1745,7 +1785,14 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res, ['master']);
       if (!device) return;
 
-      const lease = await acquireOrRenewMaster(device.deviceId);
+      const lease = await acquireOrRenewMaster(device);
+      if (!lease.registered || !lease.sessionValid) {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: !lease.registered ? 'MASTER_ROLE_CHANGED' : 'MASTER_SESSION_REVOKED',
+        });
+      }
       if (lease.conflict) {
         return send(res, 409, {
           ok: false,
@@ -1779,10 +1826,37 @@ export default async function handler(req, res) {
         synchronized: configSync.status.synchronized,
         syncReason: configSync.status.reason,
       };
-      await redis([
-        'SET', KEY_MASTER_HEARTBEAT, JSON.stringify(heartbeat),
-        'EX', String(MASTER_HEARTBEAT_TTL_SECONDS)
-      ]);
+      const heartbeatScript = [
+        "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if registered ~= ARGV[2] then return -1 end",
+        "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if lease ~= ARGV[2] then return -2 end",
+        "local roleIssuedAt = tonumber(redis.call('GET', KEYS[4]) or '0') or 0",
+        "local sessionCreatedAt = tonumber(ARGV[3]) or 0",
+        "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end",
+        "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[4])",
+        "return 1"
+      ].join('\n');
+      const heartbeatCommit = Number(await redis([
+        'EVAL', heartbeatScript, '4',
+        KEY_MASTER_HEARTBEAT,
+        KEY_MASTER_DEVICE,
+        KEY_MASTER,
+        roleAssignmentKey(PREFIX, 'master'),
+        JSON.stringify(heartbeat),
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
+        String(MASTER_HEARTBEAT_TTL_SECONDS),
+      ]));
+      if (heartbeatCommit !== 1) {
+        if (heartbeatCommit === -1 || heartbeatCommit === -3) clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: heartbeatCommit === -2 ? 'MASTER_LEASE_REQUIRED'
+            : heartbeatCommit === -3 ? 'MASTER_SESSION_REVOKED'
+            : 'MASTER_ROLE_CHANGED',
+        });
+      }
 
       const armStatus = await realExecutionArmStatus(device.deviceId);
       return send(res, 200, {
