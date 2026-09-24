@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
+import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, serverMasterLeaseKey, serverMasterInstanceActive } from '../lib/device-session.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 
 const BASE = 'https://fapi.binance.com';
@@ -78,6 +78,10 @@ async function requireCurrentMaster(req) {
     if (String(registered || '') !== String(device.deviceId)) continue;
     const issuedAt=await redis(['GET',roleAssignmentKey(PREFIX,'master')]);
     if(!deviceRoleAssignmentActive(device,issuedAt))continue;
+    const serverInstance=String(device?.deviceKind||'')==='server-master'
+      ? await redis(['GET',serverMasterLeaseKey(PREFIX)])
+      : '';
+    if(!serverMasterInstanceActive(device,serverInstance))continue;
     if (String(lease || '') !== String(device.deviceId)) {
       const e = new Error('MASTER_LEASE_REQUIRED');
       e.code = 'MASTER_LEASE_REQUIRED';
