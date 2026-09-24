@@ -134,6 +134,8 @@ jobs:
         run: node --test scripts/test-engine-binance-read-fence.mjs
       - name: Test provider-neutral 24/7 engine worker runtime
         run: node --test scripts/test-engine-worker-runtime.mjs
+      - name: Test safe Render engine blueprint
+        run: node --test scripts/test-render-engine-blueprint.mjs
       - name: Test persistent engine protection high-water
         run: node --test scripts/test-engine-protection-high-water.mjs
       - name: Test server progressive auto-protection
