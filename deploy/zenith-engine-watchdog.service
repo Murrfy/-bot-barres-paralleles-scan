@@ -1,6 +1,7 @@
 [Unit]
 Description=Check Zenith engine local liveness
 After=zenith-engine.service
+OnFailure=zenith-engine-restart.service
 
 [Service]
 Type=oneshot
