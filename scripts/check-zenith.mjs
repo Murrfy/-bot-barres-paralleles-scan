@@ -986,8 +986,8 @@ if (!sync.includes('deferReason') || !sync.includes('requestedDelayMs') || !sync
   fail('MASTER command requeue must support bounded retry backoff without extending command expiry');
 }
 
-if (!index.includes("wss://fstream.binance.com/ws/") ||
-    index.includes("wss://fstream.binance.com/private/ws/") ||
+if (!index.includes("wss://fstream.binance.com/private/ws?listenKey=") ||
+    index.includes("new WebSocket('wss://fstream.binance.com/ws/'+encodeURIComponent(listenKey))") ||
     !index.includes("import('/lib/user-stream-state.mjs')") ||
     !index.includes("import('/lib/master-runtime-inventory.mjs')") ||
     !index.includes("import('/lib/user-stream-seed.mjs')") ||
