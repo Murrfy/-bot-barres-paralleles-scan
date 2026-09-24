@@ -22,7 +22,7 @@ function response() {
 function harness({
   role='master',registered='master-1',lease='master-1',storedSession=null,rateCount=1,
   roleEpoch=Date.now()-1000,gateRoleEpoch=null,mutationLocked=false,
-  leaseChangesAfterBinance=false,loseLockAfterBinance=false
+  leaseChangesAfterBinance=false,loseLockAfterBinance=false,replaceSessionAfterBinance=null
 }={}) {
   const original = globalThis.fetch;
   let session = storedSession;
@@ -74,12 +74,15 @@ function harness({
                  c[6] === 'zenith:v1:binance-user-stream:mutation-lock' &&
                  c[7] === sessionKey) {
         const observedEpoch = gateRoleEpoch == null ? String(roleEpoch) : String(gateRoleEpoch);
+        const currentRaw = session ? JSON.stringify(session) : '';
         if (String(registered || '') !== String(c[8] || '') || String(lease || '') !== String(c[8] || '')) {
           result = -1;
         } else if (observedEpoch !== String(c[9] || '')) {
           result = -2;
         } else if (!lockToken || lockToken !== String(c[10] || '')) {
           result = -3;
+        } else if (String(c[14] || '') === '1' && currentRaw !== String(c[15] || '')) {
+          result = -4;
         } else if (String(c[11] || '') === 'DEL') {
           session = null;
           result = 1;
@@ -105,6 +108,7 @@ function harness({
     binanceCalls.push(init.method);
     if (leaseChangesAfterBinance) lease = 'other-master';
     if (loseLockAfterBinance) lockToken = 'other-mutation';
+    if (replaceSessionAfterBinance != null) session = structuredClone(replaceSessionAfterBinance);
     if (init.method === 'POST') return new Response(JSON.stringify({listenKey:'listen-abc'}));
     if (init.method === 'PUT') return new Response(JSON.stringify({listenKey:'listen-abc'}));
     if (init.method === 'DELETE') return new Response('{}');
@@ -264,6 +268,20 @@ test('mutation lock loss after Binance response blocks stale user-stream session
     assert.equal(res.body.code,'USER_STREAM_MUTATION_LOCK_LOST');
     assert.deepEqual(h.binanceCalls,['POST']);
     assert.equal(h.session,null);
+  }finally{h.restore();}
+});
+
+test('close preserves a replacement session that appears after the Binance response',async()=>{
+  const oldSession={version:1,listenKey:'listen-old',masterDeviceId:'master-1'};
+  const replacement={version:1,listenKey:'listen-new',masterDeviceId:'master-1'};
+  const h=harness({storedSession:oldSession,replaceSessionAfterBinance:replacement});
+  try{
+    const res=response();
+    await handler(req('POST','close'),res);
+    assert.equal(res.code,409);
+    assert.equal(res.body.code,'USER_STREAM_SESSION_CHANGED');
+    assert.deepEqual(h.binanceCalls,['DELETE']);
+    assert.equal(h.session.listenKey,'listen-new');
   }finally{h.restore();}
 });
 
