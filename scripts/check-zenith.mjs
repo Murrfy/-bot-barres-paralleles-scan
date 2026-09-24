@@ -1082,6 +1082,30 @@ if (!sync.includes('async function moveProcessingToPendingAtomic') ||
     !sync.includes("roleAssignmentKey(PREFIX, 'master')")) {
   fail('processing-to-pending command moves must be atomic and fenced by current MASTER, lease and role epoch');
 }
+
+if (!sync.includes('async function claimNextCommand(device)') ||
+    !sync.includes("return '__MASTER_ROLE_CHANGED__'") ||
+    !sync.includes("return '__MASTER_LEASE_LOST__'") ||
+    !sync.includes("return '__MASTER_SESSION_REVOKED__'") ||
+    !sync.includes("'MASTER_ROLE_CHANGED_DURING_CLAIM'") ||
+    !sync.includes("'MASTER_LEASE_LOST_DURING_CLAIM'") ||
+    !sync.includes("'MASTER_SESSION_REVOKED_DURING_CLAIM'")) {
+  fail('command claim must atomically fence the registered MASTER, active lease and MASTER role epoch before removing pending work');
+}
+if (!sync.includes('async function removeProcessingAtomic') ||
+    !sync.includes('async function completeProcessingCommandAtomic') ||
+    !sync.includes('masterAuthorityMutationCode') ||
+    !sync.includes("masterAuthorityMutationCode(completed, '_DURING_ACK')") ||
+    !sync.includes("masterAuthorityMutationCode(removed, '_DURING_FAIL')") ||
+    !sync.includes("masterAuthorityMutationCode(removed, '_DURING_REQUEUE')") ||
+    !sync.includes("masterAuthorityMutationCode(recovery.authorityCode, '_DURING_RECOVERY')") ||
+    !sync.includes("await removeProcessingAtomic(raw, device)") ||
+    !sync.includes("await completeProcessingCommandAtomic(raw, commandId, device)")) {
+  fail('processing command ACK/fail/recovery cleanup must be fenced by current MASTER authority at mutation time');
+}
+if (sync.includes("redis(['LREM', KEY_PROCESSING")) {
+  fail('processing command removal must never bypass the atomic MASTER authority fence');
+}
 if (!sync.includes('KEY_REAL_EXECUTION_ARMED') ||
     !sync.includes("action === 'real-execution-arm'") ||
     !sync.includes("'REAL_EXECUTION_ARM_BLOCKED'") ||
