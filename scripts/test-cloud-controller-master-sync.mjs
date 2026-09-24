@@ -11,6 +11,16 @@ test('iPhone controller state is synchronized through Zenith cloud API, not LAN'
   assert.match(html,/masterRuntimeApi\('master-config-ack','POST'/);
 });
 
+test('legacy array-shaped controller records are normalized before cloud sync',()=>{
+  assert.match(html,/function normalizeRecordBlock\(value\)/);
+  assert.match(html,/tokenSettings=normalizeRecordBlock\(x\.tokenSettings\)/);
+  assert.match(html,/manualTokens=normalizeRecordBlock\(x\.manualTokens\)/);
+  assert.match(html,/validated=normalizeRecordBlock\(x\.validated\)/);
+  assert.match(html,/tokenSettings:clone\(normalizeRecordBlock\(tokenSettings\)\)/);
+  assert.match(html,/manualTokens:clone\(normalizeRecordBlock\(manualTokens\)\)/);
+  assert.match(html,/validated:clone\(normalizeRecordBlock\(validated\)\)/);
+});
+
 test('controller self-heals an internally invalid remote state hash using the authenticated iPhone payload',()=>{
   assert.match(html,/const remoteStateHash=remoteState\?await sha256Hex\(stableStringify\(remoteState\?\.data\|\|\{\}\)\):''/);
   assert.match(html,/String\(remoteState\?\.stateHash\|\|''\)!==remoteStateHash/);
