@@ -7,5 +7,6 @@
   },
   "scripts": {
     "engine": "node server/zenith-engine-worker.mjs"
-  }
+  },
+  "type": "module"
 }
