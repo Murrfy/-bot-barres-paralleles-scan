@@ -69,9 +69,15 @@ async function requireZenithDevice(req) {
       if(!deviceRoleAssignmentActive(device,issuedAt))continue;
       if(String(device?.principal||'')==='engine'){
         const suppliedInstance=engineInstanceHeader(req);
-        const currentInstance=String(await redis(['GET',`${PREFIX}:engine-instance`])||'');
-        if(!enginePrincipalInstanceActive(device,suppliedInstance,currentInstance)){
+        const [currentInstance,currentLease]=await Promise.all([
+          redis(['GET',`${PREFIX}:engine-instance`]),
+          redis(['GET',`${PREFIX}:master`]),
+        ]);
+        if(!enginePrincipalInstanceActive(device,suppliedInstance,String(currentInstance||''))){
           const e=new Error('ENGINE_INSTANCE_FENCED');e.code='ENGINE_INSTANCE_FENCED';throw e;
+        }
+        if(String(currentLease||'')!==String(device.deviceId||'')){
+          const e=new Error('MASTER_LEASE_REQUIRED');e.code='MASTER_LEASE_REQUIRED';throw e;
         }
       }
       return device;
@@ -165,11 +171,13 @@ export default async function handler(req, res) {
   try {
     device = await requireZenithDevice(req);
   } catch (e) {
-    if (e?.code === 'ENGINE_INSTANCE_FENCED') {
+    if (e?.code === 'ENGINE_INSTANCE_FENCED' || e?.code === 'MASTER_LEASE_REQUIRED') {
       return send(res, 409, {
         ok: false,
-        code: 'ENGINE_INSTANCE_FENCED',
-        error: 'Instance moteur Zenith révoquée.',
+        code: e.code,
+        error: e.code === 'ENGINE_INSTANCE_FENCED'
+          ? 'Instance moteur Zenith révoquée.'
+          : 'Bail MASTER Zenith requis.',
       });
     }
     return send(res, 503, {
