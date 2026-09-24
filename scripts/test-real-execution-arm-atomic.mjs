@@ -33,8 +33,12 @@ test('real arm commit atomically revalidates MASTER state after slow external ch
     "if panic ~= '1' then return -4 end",
     "redis.call('LLEN', KEYS[5]) > 0 or redis.call('LLEN', KEYS[6]) > 0",
     "if roleEpoch ~= ARGV[2] then return -6 end",
+    "if requester ~= ARGV[4] then return -7 end",
+    "if requesterEpoch > 0 and requesterCreatedAt < requesterEpoch then return -8 end",
+    'roleDeviceKey(requesterRole)',
+    'roleAssignmentKey(PREFIX, requesterRole)',
     "redis.call('SET', KEYS[8], ARGV[3])",
-    "'EVAL', armCommitScript, '8'",
+    "'EVAL', armCommitScript, '10'",
     'KEY_MASTER_DEVICE',
     'KEY_MASTER',
     'KEY_MASTER_MODE',
@@ -44,6 +48,8 @@ test('real arm commit atomically revalidates MASTER state after slow external ch
     "roleAssignmentKey(PREFIX, 'master')",
     'KEY_REAL_EXECUTION_ARMED',
     "'REAL_EXECUTION_ARM_RACE_BLOCKED'",
+    "'REQUESTER_ROLE_CHANGED_DURING_ARM'",
+    "'REQUESTER_SESSION_REVOKED_DURING_ARM'",
   ]) assert.ok(armBlock.includes(required),required);
 
   assert.equal(armBlock.includes("await redis(['SET', KEY_REAL_EXECUTION_ARMED"),false);
