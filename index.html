@@ -2114,6 +2114,34 @@ async function syncControllerCloudStateNow(){
 
     const remoteState=current?.state||null;
     const remoteRevision=Math.max(0,n(remoteState?.revision,0));
+    const remoteStateHash=remoteState?await sha256Hex(stableStringify(remoteState?.data||{})):'';
+    if(remoteState&&String(remoteState?.stateHash||'')!==remoteStateHash){
+      const repair=await fetch('/api/zenith-sync?action=controller-state',{
+        method:'POST',
+        cache:'no-store',
+        headers:{
+          'Content-Type':'application/json',
+          Accept:'application/json',
+        },
+        body:JSON.stringify({expectedRevision:remoteRevision,data:payload})
+      });
+      const repaired=await repair.json().catch(()=>({}));
+      if(repair.status===409&&repaired?.code==='REVISION_CONFLICT'){
+        controllerSyncState={conflict:true,lastOk:0,error:'REVISION_CONFLICT'};
+        renderControllerIdentity();
+        return false;
+      }
+      if(!repair.ok||repaired?.ok!==true||!repaired?.state){
+        controllerSyncState={...controllerSyncState,error:repaired?.code||repaired?.error||('HTTP '+repair.status)};
+        renderControllerIdentity();
+        return false;
+      }
+      localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(Math.max(0,n(repaired.state.revision,remoteRevision))));
+      controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
+      renderControllerIdentity();
+      return true;
+    }
+
     const localRevisionRaw=localStorage.getItem(ZENITH_CONTROLLER_REV_KEY);
     let localRevision=localRevisionRaw===null?null:Math.max(0,n(localRevisionRaw,0));
 
