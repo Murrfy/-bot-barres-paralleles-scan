@@ -121,8 +121,29 @@ test('already-revoked cleanup is also fenced by the current controller session',
   assert.ok(block.includes('const alreadyRevokedScript = ['));
   assert.ok(block.includes("if controller ~= ARGV[1] then return -1 end"));
   assert.ok(block.includes("if controllerEpoch > 0 and sessionCreatedAt < controllerEpoch then return -2 end"));
-  assert.ok(block.includes("'EVAL', alreadyRevokedScript, '7'"));
+  assert.ok(block.includes("'EVAL', alreadyRevokedScript, '12'"));
   assert.ok(block.includes('clearDeviceSessionCookie(res)'));
+});
+
+test('already-revoked MASTER only finalizes to PAUSED after a clean live drain',()=>{
+  const alreadyStart=block.indexOf('if (!registeredMaster) {');
+  const alreadyEnd=block.indexOf('if (currentMaster &&',alreadyStart);
+  assert.ok(alreadyStart>=0&&alreadyEnd>alreadyStart,'already-revoked branch missing');
+  const already=block.slice(alreadyStart,alreadyEnd);
+  assert.ok(already.includes('liveActivity = await fetchLiveBinanceActivity()'));
+  assert.ok(already.includes('liveActivity.activePositions > 0 || liveActivity.openOrders > 0'));
+  assert.ok(already.includes("'MASTER_REVOKE_DRAIN_REQUIRED'"));
+  assert.ok(already.includes("redis.call('LLEN', KEYS[9]) > 0"));
+  assert.ok(already.includes("redis.call('LLEN', KEYS[10]) > 0"));
+  assert.ok(already.includes("redis.call('GET', KEYS[11])"));
+  assert.ok(already.includes('KEY_MASTER_DEVICE'));
+  assert.ok(already.includes('KEY_PENDING'));
+  assert.ok(already.includes('KEY_PROCESSING'));
+  assert.ok(already.includes('KEY_USER_STREAM_MUTATION_LOCK'));
+  assert.ok(already.includes("redis.call('SET', KEYS[12], 'PAUSED')"));
+  assert.ok(already.includes('KEY_MASTER_MODE'));
+  assert.ok(already.includes("masterMode: 'PAUSED'"));
+  assert.ok(already.indexOf('fetchLiveBinanceActivity()') < already.indexOf("redis.call('SET', KEYS[12], 'PAUSED')"));
 });
 
 
