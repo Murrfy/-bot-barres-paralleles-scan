@@ -21,7 +21,8 @@ function response() {
 
 function harness({
   role='master',registered='master-1',lease='master-1',storedSession=null,rateCount=1,
-  roleEpoch=Date.now()-1000,gateRoleEpoch=null,mutationLocked=false
+  roleEpoch=Date.now()-1000,gateRoleEpoch=null,mutationLocked=false,
+  leaseChangesAfterBinance=false,loseLockAfterBinance=false
 }={}) {
   const original = globalThis.fetch;
   let session = storedSession;
@@ -54,14 +55,36 @@ function harness({
                  c[4] === 'zenith:v1:master' &&
                  c[6] === 'zenith:v1:binance-user-stream:mutation-lock') {
         const observedEpoch = gateRoleEpoch == null ? String(roleEpoch) : String(gateRoleEpoch);
+        const isRenew = String(c[1] || '').includes("redis.call('EXPIRE', KEYS[4]");
         if (String(registered || '') !== String(c[7] || '') || String(lease || '') !== String(c[7] || '')) {
           result = -1;
         } else if (observedEpoch !== String(c[8] || '')) {
           result = -2;
+        } else if (isRenew) {
+          result = lockToken && lockToken === String(c[9] || '') ? 1 : -3;
         } else if (lockToken) {
           result = 0;
         } else {
           lockToken = String(c[9] || '');
+          result = 1;
+        }
+      } else if (c[0] === 'EVAL' && c[2] === '5' &&
+                 c[3] === 'zenith:v1:role-device:master' &&
+                 c[4] === 'zenith:v1:master' &&
+                 c[6] === 'zenith:v1:binance-user-stream:mutation-lock' &&
+                 c[7] === sessionKey) {
+        const observedEpoch = gateRoleEpoch == null ? String(roleEpoch) : String(gateRoleEpoch);
+        if (String(registered || '') !== String(c[8] || '') || String(lease || '') !== String(c[8] || '')) {
+          result = -1;
+        } else if (observedEpoch !== String(c[9] || '')) {
+          result = -2;
+        } else if (!lockToken || lockToken !== String(c[10] || '')) {
+          result = -3;
+        } else if (String(c[11] || '') === 'DEL') {
+          session = null;
+          result = 1;
+        } else {
+          session = JSON.parse(c[12]);
           result = 1;
         }
       } else if (c[0] === 'EVAL' && c[2] === '1' &&
@@ -80,6 +103,8 @@ function harness({
     assert.equal(u.pathname, '/fapi/v1/listenKey');
     assert.equal(init.headers['X-MBX-APIKEY'], 'api-key-test');
     binanceCalls.push(init.method);
+    if (leaseChangesAfterBinance) lease = 'other-master';
+    if (loseLockAfterBinance) lockToken = 'other-mutation';
     if (init.method === 'POST') return new Response(JSON.stringify({listenKey:'listen-abc'}));
     if (init.method === 'PUT') return new Response(JSON.stringify({listenKey:'listen-abc'}));
     if (init.method === 'DELETE') return new Response('{}');
@@ -215,6 +240,30 @@ test('MASTER role-epoch change is fenced before Binance user-stream mutation',as
     assert.equal(res.code,409);
     assert.equal(res.body.code,'MASTER_ROLE_CHANGED');
     assert.deepEqual(h.binanceCalls,[]);
+  }finally{h.restore();}
+});
+
+test('MASTER lease loss after Binance response blocks stale user-stream session commit',async()=>{
+  const h=harness({leaseChangesAfterBinance:true});
+  try{
+    const res=response();
+    await handler(req('POST','start'),res);
+    assert.equal(res.code,409);
+    assert.equal(res.body.code,'MASTER_LEASE_REQUIRED');
+    assert.deepEqual(h.binanceCalls,['POST']);
+    assert.equal(h.session,null);
+  }finally{h.restore();}
+});
+
+test('mutation lock loss after Binance response blocks stale user-stream session commit',async()=>{
+  const h=harness({loseLockAfterBinance:true});
+  try{
+    const res=response();
+    await handler(req('POST','start'),res);
+    assert.equal(res.code,409);
+    assert.equal(res.body.code,'USER_STREAM_MUTATION_LOCK_LOST');
+    assert.deepEqual(h.binanceCalls,['POST']);
+    assert.equal(h.session,null);
   }finally{h.restore();}
 });
 
