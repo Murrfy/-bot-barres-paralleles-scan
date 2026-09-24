@@ -1231,10 +1231,11 @@ async function tryFinalizePendingPause(deviceId, knownMode = '') {
   const mode = knownMode ? normalizeMasterMode(knownMode) : await masterMode();
   if (mode !== 'PAUSE_PENDING') return { transitioned: false, masterMode: mode };
 
-  const [runtimeRaw, pending, processing] = await Promise.all([
+  const [runtimeRaw, pending, processing, masterRoleEpochRaw] = await Promise.all([
     redis(['GET', KEY_STATE]),
     redis(['LLEN', KEY_PENDING]),
     redis(['LLEN', KEY_PROCESSING]),
+    redis(['GET', roleAssignmentKey(PREFIX, 'master')]),
   ]);
 
   let runtimeState = null;
@@ -1249,6 +1250,7 @@ async function tryFinalizePendingPause(deviceId, knownMode = '') {
     const runtime = runtimeSnapshotStatus(runtimeState, deviceId);
     if (!runtime.fresh) blockers.push(runtime.reason);
     if (!deviceId) blockers.push('MASTER_LEASE_REQUIRED');
+    if (!masterRoleEpochRaw) blockers.push('MASTER_ROLE_CHANGED');
   }
 
   let reconciliation = null;
@@ -1268,14 +1270,85 @@ async function tryFinalizePendingPause(deviceId, knownMode = '') {
     };
   }
 
-  await setMasterMode('PAUSED');
   const at = Date.now();
-  await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+  const pauseAudit = JSON.stringify({
     at,
     kind: 'MASTER_PAUSE_COMPLETED',
     deviceId: String(deviceId || ''),
-  })]);
-  await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+  });
+  const finalizeScript = [
+    "local mode = tostring(redis.call('GET', KEYS[1]) or 'PAUSED')",
+    "local pending = tonumber(redis.call('LLEN', KEYS[2]) or '0') or 0",
+    "local processing = tonumber(redis.call('LLEN', KEYS[3]) or '0') or 0",
+    "if mode ~= 'PAUSE_PENDING' then return {-1, mode, pending, processing} end",
+    "if pending > 0 then return {-2, mode, pending, processing} end",
+    "if processing > 0 then return {-3, mode, pending, processing} end",
+    "if ARGV[3] == '1' then",
+    "  local lease = tostring(redis.call('GET', KEYS[5]) or '')",
+    "  local registered = tostring(redis.call('GET', KEYS[6]) or '')",
+    "  if lease ~= ARGV[1] or registered ~= ARGV[1] then return {-4, mode, pending, processing} end",
+    "  local roleEpoch = tostring(redis.call('GET', KEYS[7]) or '')",
+    "  if roleEpoch == '' or roleEpoch ~= ARGV[2] then return {-5, mode, pending, processing} end",
+    "  local runtimeRaw = tostring(redis.call('GET', KEYS[8]) or '')",
+    "  if runtimeRaw ~= ARGV[4] then return {-6, mode, pending, processing} end",
+    "  local reconcileRaw = redis.call('GET', KEYS[9])",
+    "  if not reconcileRaw then return {-7, mode, pending, processing} end",
+    "  local ok, report = pcall(cjson.decode, reconcileRaw)",
+    "  if not ok then return {-7, mode, pending, processing} end",
+    "  local status = tostring(report['status'] or '')",
+    "  local reasons = report['reasons'] or {}",
+    "  local actual = report['actual'] or {}",
+    "  if type(reasons) ~= 'table' or type(actual) ~= 'table' then return {-7, mode, pending, processing} end",
+    "  if report['failClosed'] ~= false or (status ~= 'CLEAN_REAL' and status ~= 'CLEAN_IDLE') or #reasons > 0 then return {-7, mode, pending, processing} end",
+    "  if tonumber(actual['positions'] or -1) ~= 0 or tonumber(actual['orders'] or -1) ~= 0 then return {-7, mode, pending, processing} end",
+    "end",
+    "redis.call('SET', KEYS[1], 'PAUSED')",
+    "redis.call('LPUSH', KEYS[4], ARGV[5])",
+    "redis.call('LTRIM', KEYS[4], 0, 199)",
+    "return {1, 'PAUSED', 0, 0}"
+  ].join('\n');
+
+  const result = await redis([
+    'EVAL', finalizeScript, '9',
+    KEY_MASTER_MODE,
+    KEY_PENDING,
+    KEY_PROCESSING,
+    KEY_AUDIT,
+    KEY_MASTER,
+    KEY_MASTER_DEVICE,
+    roleAssignmentKey(PREFIX, 'master'),
+    KEY_STATE,
+    KEY_RECONCILE_LAST,
+    String(deviceId || ''),
+    String(masterRoleEpochRaw || ''),
+    REAL_TRADING_ENABLED ? '1' : '0',
+    String(runtimeRaw || ''),
+    pauseAudit,
+  ]);
+
+  const resultCode = Number(Array.isArray(result) ? result[0] : 0);
+  const committedMode = normalizeMasterMode(Array.isArray(result) ? result[1] : 'PAUSE_PENDING');
+  const finalPending = Number(Array.isArray(result) ? result[2] : 0) || 0;
+  const finalProcessing = Number(Array.isArray(result) ? result[3] : 0) || 0;
+
+  if (resultCode !== 1) {
+    const raceBlockers = [];
+    if (resultCode === -2) raceBlockers.push('PENDING_COMMAND');
+    else if (resultCode === -3) raceBlockers.push('PROCESSING_COMMAND');
+    else if (resultCode === -4) raceBlockers.push('MASTER_LEASE_REQUIRED');
+    else if (resultCode === -5) raceBlockers.push('MASTER_ROLE_CHANGED');
+    else if (resultCode === -6) raceBlockers.push('MASTER_RUNTIME_CHANGED');
+    else if (resultCode === -7) raceBlockers.push('BINANCE_RECONCILIATION_CHANGED');
+
+    return {
+      transitioned: false,
+      masterMode: resultCode === -1 ? committedMode : 'PAUSE_PENDING',
+      blockers: raceBlockers,
+      activity,
+      pendingCommands: finalPending,
+      processingCommands: finalProcessing,
+    };
+  }
 
   return {
     transitioned: true,
