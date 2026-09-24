@@ -15,6 +15,16 @@ const controller=actionBlock('controller-state');
 const ack=actionBlock('master-config-ack');
 const state=actionBlock('state');
 
+test('controller-state writer preserves the exact JSON payload used for state hashing',()=>{
+  assert.ok(controller.includes("const revisionPlaceholder = '__ZENITH_REVISION__'"));
+  assert.ok(controller.includes("string.gsub(ARGV[2], revisionNeedle, revisionValue, 1)"));
+  assert.ok(controller.includes("string.gsub(ARGV[3], revisionNeedle, revisionValue, 1)"));
+  assert.equal(controller.includes("local snapshot = cjson.decode(ARGV[2])"),false);
+  assert.equal(controller.includes("local snapshotRaw = cjson.encode(snapshot)"),false);
+  assert.ok(controller.includes("const stateHash = sha256(stableStringify(safeData))"));
+  assert.ok(controller.includes("'CONTROLLER_STATE_REVISION_SERIALIZATION_FAILED'"));
+});
+
 test('controller-state commit atomically revalidates controller owner and role epoch',()=>{
   assert.ok(controller.includes("local currentController = tostring(redis.call('GET', KEYS[4]) or '')"));
   assert.ok(controller.includes("if currentController ~= ARGV[4] then return {-2, currentController, ''} end"));
