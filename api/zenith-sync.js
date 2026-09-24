@@ -1862,7 +1862,7 @@ export default async function handler(req, res) {
         at: createdAt,
         kind: 'ENGINE_MASTER_BOOTSTRAPPED',
         masterDeviceId: ENGINE_MASTER_DEVICE_ID,
-        engineInstanceId: instanceId,
+        engineInstanceHash: sha256(instanceId).slice(0, 16),
       };
 
       const bootstrapScript = [
