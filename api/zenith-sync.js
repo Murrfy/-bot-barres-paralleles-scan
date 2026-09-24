@@ -1585,23 +1585,53 @@ export default async function handler(req, res) {
         oldControllerDeviceId,
         masterDeviceId: device.deviceId,
       };
-
-      await redis([
-        'SET',
-        replacementKey(recoveryCode),
-        JSON.stringify(record),
-        'EX',
-        String(CONTROLLER_REPLACEMENT_TTL_SECONDS),
-      ]);
-
-      await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+      const audit = {
         at: createdAt,
         kind: 'CONTROLLER_REPLACEMENT_AUTHORIZED',
         masterDeviceId: device.deviceId,
         oldControllerDeviceId,
         expiresAt,
-      })]);
-      await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      };
+      const replacementAuthorizeScript = [
+        "local registeredMaster = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if registeredMaster ~= ARGV[1] then return -1 end",
+        "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if lease ~= ARGV[1] then return -2 end",
+        "local roleIssuedAt = tonumber(redis.call('GET', KEYS[4]) or '0') or 0",
+        "local sessionCreatedAt = tonumber(ARGV[2]) or 0",
+        "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end",
+        "local currentController = tostring(redis.call('GET', KEYS[5]) or '')",
+        "if currentController ~= ARGV[3] then return -4 end",
+        "redis.call('SET', KEYS[1], ARGV[4], 'EX', ARGV[5])",
+        "redis.call('LPUSH', KEYS[6], ARGV[6])",
+        "redis.call('LTRIM', KEYS[6], 0, 199)",
+        "return 1"
+      ].join('\n');
+      const replacementAuthorizeResult = Number(await redis([
+        'EVAL', replacementAuthorizeScript, '6',
+        replacementKey(recoveryCode),
+        KEY_MASTER_DEVICE,
+        KEY_MASTER,
+        roleAssignmentKey(PREFIX, 'master'),
+        KEY_CONTROLLER_DEVICE,
+        KEY_AUDIT,
+        String(device.deviceId),
+        String(Number(device.createdAt || 0)),
+        String(oldControllerDeviceId),
+        JSON.stringify(record),
+        String(CONTROLLER_REPLACEMENT_TTL_SECONDS),
+        JSON.stringify(audit),
+      ]));
+      if (replacementAuthorizeResult !== 1) {
+        if (replacementAuthorizeResult === -1 || replacementAuthorizeResult === -3) clearDeviceSessionCookie(res);
+        return send(res, 409, {
+          ok: false,
+          code: replacementAuthorizeResult === -1 ? 'MASTER_ROLE_CHANGED'
+            : replacementAuthorizeResult === -2 ? 'MASTER_LEASE_REQUIRED'
+            : replacementAuthorizeResult === -3 ? 'MASTER_SESSION_REVOKED'
+            : 'CONTROLLER_ROLE_CHANGED',
+        });
+      }
 
       return send(res, 200, {
         ok: true,
