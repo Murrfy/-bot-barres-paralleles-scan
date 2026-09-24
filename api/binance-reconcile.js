@@ -100,7 +100,7 @@ async function requireCurrentMaster(req) {
       e.code = 'MASTER_LEASE_REQUIRED';
       throw e;
     }
-    return device;
+    return { ...device, roleIssuedAt: String(issuedAt || '0') };
   }
   return null;
 }
@@ -493,8 +493,14 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
   };
 }
 
-async function beginReconciliationAttempt(marker) {
+async function beginReconciliationAttempt(marker, device) {
   const script = [
+    "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if registered ~= ARGV[3] then return -1 end",
+    "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if lease ~= ARGV[3] then return -2 end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[4]) or '0')",
+    "if roleEpoch ~= ARGV[4] then return -3 end",
     "local previous = redis.call('GET', KEYS[1])",
     "if previous then",
     "  local ok, value = pcall(cjson.decode, previous)",
@@ -504,30 +510,46 @@ async function beginReconciliationAttempt(marker) {
     "return 1"
   ].join('\n');
   return Number(await redis([
-    'EVAL', script, '1',
+    'EVAL', script, '4',
     KEY_RECONCILE_LAST,
+    `${PREFIX}:role-device:master`,
+    `${PREFIX}:master`,
+    roleAssignmentKey(PREFIX, 'master'),
     String(marker.observedAt),
     JSON.stringify(marker),
+    String(device?.deviceId || ''),
+    String(device?.roleIssuedAt || '0'),
   ]));
 }
 
-async function commitReconciliationAttempt(report, runtimeRaw, attemptId) {
+async function commitReconciliationAttempt(report, runtimeRaw, attemptId, device) {
   const script = [
     "local current = redis.call('GET', KEYS[1])",
     "if not current then return 0 end",
     "local ok, value = pcall(cjson.decode, current)",
     "if not ok or tostring(value.attemptId or '') ~= ARGV[1] then return 0 end",
+    "local registered = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if registered ~= ARGV[4] then return -2 end",
+    "local lease = tostring(redis.call('GET', KEYS[4]) or '')",
+    "if lease ~= ARGV[4] then return -3 end",
+    "local roleEpoch = tostring(redis.call('GET', KEYS[5]) or '0')",
+    "if roleEpoch ~= ARGV[5] then return -4 end",
     "if (redis.call('GET', KEYS[2]) or '') ~= ARGV[2] then return -1 end",
     "redis.call('SET', KEYS[1], ARGV[3], 'EX', '30')",
     "return 1"
   ].join('\n');
   return Number(await redis([
-    'EVAL', script, '2',
+    'EVAL', script, '5',
     KEY_RECONCILE_LAST,
     KEY_STATE,
+    `${PREFIX}:role-device:master`,
+    `${PREFIX}:master`,
+    roleAssignmentKey(PREFIX, 'master'),
     String(attemptId || ''),
     runtimeRaw || '',
     JSON.stringify(report),
+    String(device?.deviceId || ''),
+    String(device?.roleIssuedAt || '0'),
   ]));
 }
 
@@ -631,12 +653,21 @@ export default async function handler(req, res) {
   };
 
   try {
-    const begun = await beginReconciliationAttempt(attemptMarker);
+    const begun = await beginReconciliationAttempt(attemptMarker, device);
     if (begun !== 1) {
+      const code = begun === -1
+        ? 'MASTER_ROLE_CHANGED_DURING_RECONCILE'
+        : begun === -2
+          ? 'MASTER_LEASE_CHANGED_DURING_RECONCILE'
+          : begun === -3
+            ? 'MASTER_ROLE_EPOCH_CHANGED_DURING_RECONCILE'
+            : 'BINANCE_RECONCILIATION_SUPERSEDED';
       return send(res, 409, {
         ok: false,
-        code: 'BINANCE_RECONCILIATION_SUPERSEDED',
-        error: 'Une réconciliation Binance plus récente est déjà active.',
+        code,
+        error: code === 'BINANCE_RECONCILIATION_SUPERSEDED'
+          ? 'Une réconciliation Binance plus récente est déjà active.'
+          : 'Autorité MASTER modifiée pendant la réconciliation Binance.',
       });
     }
   } catch (e) {
@@ -708,8 +739,21 @@ export default async function handler(req, res) {
     const reportHash = sha256(JSON.stringify(report));
     const stored = { ...report, reportHash };
 
-    if (await commitReconciliationAttempt(stored, runtimeRaw || '', attemptId) !== 1) {
-      throw new Error('RECONCILIATION_SUPERSEDED_OR_RUNTIME_CHANGED');
+    const committed = await commitReconciliationAttempt(stored, runtimeRaw || '', attemptId, device);
+    if (committed !== 1) {
+      const error = new Error(
+        committed === -1
+          ? 'RECONCILIATION_RUNTIME_CHANGED'
+          : committed === -2
+            ? 'MASTER_ROLE_CHANGED_DURING_RECONCILE'
+            : committed === -3
+              ? 'MASTER_LEASE_CHANGED_DURING_RECONCILE'
+              : committed === -4
+                ? 'MASTER_ROLE_EPOCH_CHANGED_DURING_RECONCILE'
+                : 'RECONCILIATION_SUPERSEDED'
+      );
+      error.code = error.message;
+      throw error;
     }
     await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
       at: observedAt,
@@ -739,10 +783,19 @@ export default async function handler(req, res) {
         deviceRole: device.role,
       }, attemptId);
     } catch {}
-    return send(res, 502, {
+    const authorityChanged = [
+      'MASTER_ROLE_CHANGED_DURING_RECONCILE',
+      'MASTER_LEASE_CHANGED_DURING_RECONCILE',
+      'MASTER_ROLE_EPOCH_CHANGED_DURING_RECONCILE',
+      'RECONCILIATION_SUPERSEDED',
+      'RECONCILIATION_RUNTIME_CHANGED',
+    ].includes(String(e?.code || ''));
+    return send(res, authorityChanged ? 409 : 502, {
       ok: false,
-      code: 'BINANCE_RECONCILE_FAILED',
-      error: 'Réconciliation Binance impossible.',
+      code: authorityChanged ? String(e.code) : 'BINANCE_RECONCILE_FAILED',
+      error: authorityChanged
+        ? 'Réconciliation Binance annulée car son autorité ou son état a changé.'
+        : 'Réconciliation Binance impossible.',
       binanceCode: e?.binanceCode ?? null,
     });
   }
