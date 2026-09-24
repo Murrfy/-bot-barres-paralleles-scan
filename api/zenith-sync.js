@@ -3402,7 +3402,7 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res);
       if (!device) return;
 
-      const [currentMaster, controllerDevice, masterDevice, pending, processing, controllerRaw, emergencyStop, currentMasterMode] = await Promise.all([
+      const [currentMaster, controllerDevice, masterDevice, pending, processing, controllerRaw, emergencyStop, currentMasterMode, engineDisabledRaw] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('controller'),
         roleDeviceId('master'),
@@ -3411,6 +3411,7 @@ export default async function handler(req, res) {
         redis(['GET', KEY_CONTROLLER_STATE]),
         emergencyStopActive(),
         masterMode(),
+        redis(['GET', KEY_ENGINE_DISABLED]),
       ]);
 
       let controllerRevision = 0;
@@ -3442,6 +3443,7 @@ export default async function handler(req, res) {
         masterMode: currentMasterMode,
         controllerRegistered: Boolean(controllerDevice),
         masterRegistered: Boolean(masterDevice),
+        engineDisabled: String(engineDisabledRaw || '') === '1',
         pendingCommands: Number(pending || 0),
         processingCommands: Number(processing || 0),
         controllerRevision,
