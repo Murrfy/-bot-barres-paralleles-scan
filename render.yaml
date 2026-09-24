@@ -1,0 +1,19 @@
+services:
+  - type: worker
+    name: zenith-engine-24x7
+    runtime: node
+    region: frankfurt
+    plan: 0.5c-512mb
+    branch: main
+    numInstances: 1
+    autoDeployTrigger: checksPass
+    buildCommand: node --check server/zenith-engine-worker.mjs
+    startCommand: npm run engine
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: ZENITH_BASE_URL
+        value: https://zenithfinal3-ahle.vercel.app
+      - key: ZENITH_ENGINE_BOOTSTRAP_SECRET
+        sync: false
+      - key: ZENITH_ENGINE_WORKER_ENABLED
+        value: "0"
