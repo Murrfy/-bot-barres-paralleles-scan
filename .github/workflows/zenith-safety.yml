@@ -156,6 +156,8 @@ jobs:
         run: node --test scripts/test-public-health-minimal.mjs
       - name: Test Vercel browser security headers
         run: node --test scripts/test-vercel-security-headers.mjs
+      - name: Test Vercel native ESM runtime mode
+        run: node --test scripts/test-vercel-esm-runtime.mjs
       - name: Test Vercel function duration caps
         run: node scripts/test-vercel-function-duration-caps.mjs
       - name: Test Redis fetch timeouts
