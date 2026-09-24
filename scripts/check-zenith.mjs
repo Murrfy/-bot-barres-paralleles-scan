@@ -267,6 +267,17 @@ if (!userStreamSession.includes('KEY_STREAM_MUTATION_LOCK') ||
     !userStreamSession.includes("'MASTER_ROLE_CHANGED'")) {
   fail('Binance user-stream mutations must be serialized and fenced by current MASTER lease and role epoch');
 }
+if (!userStreamSession.includes('async function saveSessionAtomic') ||
+    !userStreamSession.includes('async function deleteSessionAtomic') ||
+    !userStreamSession.includes("if lock ~= ARGV[3] then return -4 end") ||
+    !userStreamSession.includes("if current ~= ARGV[7] then return -5 end") ||
+    !userStreamSession.includes("if current ~= ARGV[4] then return -5 end") ||
+    !userStreamSession.includes('saveSessionAtomic(record, master, mutationLockToken') ||
+    !userStreamSession.includes('deleteSessionAtomic(master, mutationLockToken') ||
+    userStreamSession.includes("redis(['SET', KEY_STREAM_SESSION") ||
+    userStreamSession.includes("redis(['DEL', KEY_STREAM_SESSION")) {
+  fail('user-stream session commit/delete must revalidate MASTER authority, role epoch and mutation-lock ownership atomically');
+}
 
 const userStreamStartIndex = userStreamSession.indexOf("if (action === 'start' && req.method === 'POST')");
 const userStreamKeepaliveIndex = userStreamSession.indexOf("if (action === 'keepalive' && req.method === 'POST')");
@@ -277,7 +288,7 @@ if (userStreamStartIndex < 0 || userStreamKeepaliveIndex < 0 || userStreamCloseI
   const startBlock = userStreamSession.slice(userStreamStartIndex, userStreamKeepaliveIndex);
   const keepaliveBlock = userStreamSession.slice(userStreamKeepaliveIndex, userStreamCloseIndex);
   const startSuccess = /return send\(res, 200, \{([\s\S]*?)\}\);/.exec(startBlock)?.[1] || '';
-  const keepaliveSuccess = /const record = await saveSession\([\s\S]*?return send\(res, 200, \{([\s\S]*?)\}\);/.exec(keepaliveBlock)?.[1] || '';
+  const keepaliveSuccess = /const committed = await saveSessionAtomic\([\s\S]*?return send\(res, 200, \{([\s\S]*?)\}\);/.exec(keepaliveBlock)?.[1] || '';
   if (!/\blistenKey\b/.test(startSuccess)) {
     fail('user-stream start must expose listenKey only to the leased MASTER that opens the WebSocket');
   }
