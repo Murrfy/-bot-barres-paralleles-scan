@@ -92,6 +92,8 @@ jobs:
         run: node --test scripts/test-current-price-reference.mjs
       - name: Test command queue safety
         run: node --test scripts/test-command-safety.mjs
+      - name: Test atomic command requeue revoke fence
+        run: node --test scripts/test-command-requeue-revoke-fence.mjs
       - name: Test real-entry risk preflight
         run: node --test scripts/test-entry-preflight.mjs
       - name: Test real entry execution rate limit

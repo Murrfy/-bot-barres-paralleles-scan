@@ -1024,6 +1024,16 @@ if (!sync.includes("'COMMAND_EXPIRED'") ||
     !sync.includes("'EXECUTION_NOT_READY'")) {
   fail('MASTER must revalidate age, mode, execution lock, private stream readiness and fresh reconciliation before any EXEC command');
 }
+if (!sync.includes('async function moveProcessingToPendingAtomic') ||
+    !sync.includes("if registered ~= ARGV[3] then return -1 end") ||
+    !sync.includes("if lease ~= ARGV[3] then return -2 end") ||
+    !sync.includes("if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end") ||
+    !sync.includes("redis.call('LREM', KEYS[1], 1, ARGV[1])") ||
+    !sync.includes("redis.call('LPUSH', KEYS[2], ARGV[2])") ||
+    !sync.includes("redis.call('RPUSH', KEYS[2], ARGV[2])") ||
+    !sync.includes("roleAssignmentKey(PREFIX, 'master')")) {
+  fail('processing-to-pending command moves must be atomic and fenced by current MASTER, lease and role epoch');
+}
 if (!sync.includes('KEY_REAL_EXECUTION_ARMED') ||
     !sync.includes("action === 'real-execution-arm'") ||
     !sync.includes("'REAL_EXECUTION_ARM_BLOCKED'") ||
