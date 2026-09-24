@@ -38,3 +38,26 @@ test('iPhone controller exposes explicit ADMIN-protected MASTER activation contr
   assert.ok(index.includes("masterControlState.masterRegistered!==true||masterControlState.masterLeaseActive===true"));
   assert.ok(index.includes("$('masterAuthorizeBtn').onclick=controllerAuthorizeMaster"));
 });
+
+
+test('MASTER activation commit is atomic with current MASTER and controller role epoch',()=>{
+  assert.ok(block.includes('const activationScript = ['));
+  assert.ok(block.includes("if registeredMaster ~= ARGV[1] then return -1 end"));
+  assert.ok(block.includes("if currentController ~= ARGV[2] then return -2 end"));
+  assert.ok(block.includes("if controllerEpoch > 0 and sessionCreatedAt < controllerEpoch then return -3 end"));
+  assert.ok(block.includes('KEY_MASTER_DEVICE'));
+  assert.ok(block.includes('KEY_CONTROLLER_DEVICE'));
+  assert.ok(block.includes("roleAssignmentKey(PREFIX, 'controller')"));
+  assert.ok(block.indexOf("registeredMaster ~= ARGV[1]") < block.indexOf("redis.call('SET', KEYS[1], '1'"));
+  assert.ok(block.includes("'MASTER_ROLE_CHANGED'"));
+  assert.ok(block.includes("'CONTROLLER_ROLE_CHANGED'"));
+  assert.ok(block.includes("'CONTROLLER_SESSION_REVOKED'"));
+  assert.ok(block.includes('clearDeviceSessionCookie(res)'));
+});
+
+test('MASTER activation audit is committed in the same Redis transaction as activation',()=>{
+  assert.ok(block.includes("redis.call('SET', KEYS[1], '1', 'EX', ARGV[4])"));
+  assert.ok(block.includes("redis.call('LPUSH', KEYS[5], ARGV[5])"));
+  assert.ok(block.includes("redis.call('LTRIM', KEYS[5], 0, 199)"));
+  assert.equal(block.includes("await redis([\n        'SET',\n        masterActivationKey(masterDevice)"),false);
+});

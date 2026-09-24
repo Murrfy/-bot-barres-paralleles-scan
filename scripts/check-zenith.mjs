@@ -719,6 +719,14 @@ if (!sync.includes("'MASTER_ACTIVATION_REQUIRED'") ||
     !index.includes('controllerAuthorizeMaster')) {
   fail('MASTER lease activation must require explicit iPhone controller ADMIN authorization');
 }
+if (!sync.includes('const activationScript = [') ||
+    !sync.includes("if registeredMaster ~= ARGV[1] then return -1 end") ||
+    !sync.includes("if currentController ~= ARGV[2] then return -2 end") ||
+    !sync.includes("if controllerEpoch > 0 and sessionCreatedAt < controllerEpoch then return -3 end") ||
+    !sync.includes("redis.call('SET', KEYS[1], '1', 'EX', ARGV[4])") ||
+    !sync.includes("redis.call('LPUSH', KEYS[5], ARGV[5])")) {
+  fail('MASTER activation authorization must be atomically fenced against MASTER revoke and controller replacement');
+}
 if (!sync.includes('async function acquireOrRenewMaster(device)') ||
     !sync.includes("if registered ~= ARGV[1] then return -2 end") ||
     !sync.includes("if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end") ||
