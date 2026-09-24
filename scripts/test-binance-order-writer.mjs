@@ -4,6 +4,19 @@ import { placeStandardOrderIdempotent, signedBinanceRequest, BinanceRequestError
 
 function jsonResponse(body,status=200){return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}})}
 const order={symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'LIMIT',timeInForce:'IOC',quantity:'0.02',reduceOnly:'true',priceMatch:'OPPONENT',newClientOrderId:'zth-EXI-0123456789abcdef01234567'};
+const existingOrder={
+  symbol:order.symbol,
+  side:order.side,
+  positionSide:order.positionSide,
+  type:order.type,
+  timeInForce:order.timeInForce,
+  origQty:order.quantity,
+  reduceOnly:true,
+  priceMatch:order.priceMatch,
+  clientOrderId:order.newClientOrderId,
+  status:'NEW',
+};
+
 
 test('write lock performs only idempotency query and never POSTs',async()=>{
   const methods=[];
@@ -21,11 +34,24 @@ test('existing client id is returned without duplicate POST',async()=>{
   const methods=[];
   const fetchImpl=async(url,init={})=>{
     methods.push(init.method);
-    return jsonResponse({symbol:'BTCUSDT',clientOrderId:order.newClientOrderId,orderId:9,status:'NEW'});
+    return jsonResponse({...existingOrder,orderId:9});
   };
   const r=await placeStandardOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',orderParams:order,writesEnabled:true,timestamp:1000});
   assert.equal(r.disposition,'EXISTING');
   assert.equal(r.writeAttempted,false);
+  assert.deepEqual(methods,['GET']);
+});
+
+test('existing deterministic client id must match the intended order identity',async()=>{
+  const methods=[];
+  const fetchImpl=async(url,init={})=>{
+    methods.push(init.method);
+    return jsonResponse({...existingOrder,side:'BUY',orderId:91});
+  };
+  await assert.rejects(
+    placeStandardOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',orderParams:order,writesEnabled:true,timestamp:1000}),
+    e=>e instanceof BinanceRequestError&&e.message==='STANDARD_SIDE_MISMATCH'&&e.ambiguous===true
+  );
   assert.deepEqual(methods,['GET']);
 });
 
@@ -50,7 +76,7 @@ test('ambiguous POST is resolved by deterministic client-id query without second
     if(init.method==='GET'){
       getCount++;
       if(getCount===1)return jsonResponse({code:-2013,msg:'Order does not exist.'},400);
-      return jsonResponse({symbol:'BTCUSDT',clientOrderId:order.newClientOrderId,orderId:11,status:'NEW'});
+      return jsonResponse({...existingOrder,orderId:11});
     }
     throw new TypeError('network reset after send');
   };
