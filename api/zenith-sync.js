@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
+import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId, roleAssignmentKey, deviceRoleAssignmentActive, serverMasterLeaseKey, serverMasterInstanceActive } from '../lib/device-session.mjs';
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
@@ -19,6 +19,8 @@ const REDIS_TOKEN =
 const PAIRING_CODE = process.env.ZENITH_PAIRING_CODE || '';
 const MASTER_PAIRING_CODE = process.env.ZENITH_MASTER_PAIRING_CODE || '';
 const MASTER_ADMIN_CODE = process.env.ZENITH_MASTER_ADMIN_CODE || '';
+const SERVER_MASTER_DEVICE_ID = String(process.env.ZENITH_SERVER_MASTER_DEVICE_ID || '');
+const SERVER_MASTER_BOOTSTRAP_SECRET = String(process.env.ZENITH_SERVER_MASTER_BOOTSTRAP_SECRET || '');
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
@@ -54,6 +56,7 @@ const KEY_MASTER_CONFIG_ACK = `${PREFIX}:master-config:applied`;
 const KEY_MASTER_HEARTBEAT = `${PREFIX}:master-heartbeat`;
 const KEY_USER_STREAM_SESSION = `${PREFIX}:binance-user-stream`;
 const KEY_USER_STREAM_MUTATION_LOCK = `${PREFIX}:binance-user-stream:mutation-lock`;
+const KEY_SERVER_MASTER_INSTANCE = serverMasterLeaseKey(PREFIX);
 const MASTER_TTL_SECONDS = 20;
 const MASTER_HEARTBEAT_TTL_SECONDS = 60;
 const MASTER_HEARTBEAT_STALE_MS = 30 * 1000;
@@ -67,6 +70,8 @@ const CONTROLLER_REPLACEMENT_RATE_LIMIT = 5;
 const CONTROLLER_REPLACEMENT_GLOBAL_RATE_LIMIT = 30;
 const CONTROLLER_ADMIN_RECOVERY_RATE_LIMIT = 5;
 const CONTROLLER_ADMIN_RECOVERY_GLOBAL_RATE_LIMIT = 30;
+const SERVER_MASTER_BOOTSTRAP_RATE_LIMIT = 5;
+const SERVER_MASTER_BOOTSTRAP_GLOBAL_RATE_LIMIT = 30;
 const CONTROLLER_STATE_WRITE_RATE_LIMIT_PER_MINUTE = 120;
 const MASTER_ADMIN_FAILURE_LIMIT = 5;
 const MASTER_ADMIN_LOCK_SECONDS = 15 * 60;
@@ -379,6 +384,15 @@ async function controllerAdminRecoveryRateAllowed(req) {
     counts.globalCount <= CONTROLLER_ADMIN_RECOVERY_GLOBAL_RATE_LIMIT;
 }
 
+async function serverMasterBootstrapRateAllowed(req) {
+  const bucket = Math.floor(Date.now() / 60000);
+  const localKey = `${PREFIX}:server-master-bootstrap-rate:${sha256(clientIp(req))}:${bucket}`;
+  const globalKey = `${PREFIX}:server-master-bootstrap-rate:global:${bucket}`;
+  const counts = await incrementWithGlobalExpiry(localKey, globalKey, 120);
+  return counts.localCount <= SERVER_MASTER_BOOTSTRAP_RATE_LIMIT &&
+    counts.globalCount <= SERVER_MASTER_BOOTSTRAP_GLOBAL_RATE_LIMIT;
+}
+
 async function controllerStateWriteRateAllowed(deviceId) {
   const bucket = Math.floor(Date.now() / 60000);
   const key = `${PREFIX}:rate:controller-state-write:${sha256(deviceId)}:${bucket}`;
@@ -553,13 +567,17 @@ function roleDeviceKey(role) {
 
 async function verifyRoleDevice(role, device) {
   const deviceId = String(device?.deviceId || '');
-  const [current, issuedAt] = await Promise.all([
+  const [current, issuedAt, serverInstance] = await Promise.all([
     redis(['GET', roleDeviceKey(role)]),
     redis(['GET', roleAssignmentKey(PREFIX, role)]),
+    role === 'master' && String(device?.deviceKind || '') === 'server-master'
+      ? redis(['GET', KEY_SERVER_MASTER_INSTANCE])
+      : Promise.resolve(''),
   ]);
   return Boolean(current) &&
     String(current) === deviceId &&
-    deviceRoleAssignmentActive(device, issuedAt);
+    deviceRoleAssignmentActive(device, issuedAt) &&
+    serverMasterInstanceActive(device, serverInstance);
 }
 
 async function roleDeviceId(role) {
@@ -1797,6 +1815,117 @@ export default async function handler(req, res) {
       }
       setDeviceSessionCookie(res, token);
       return send(res, 201, { ok: true, sessionReady: true, device: record });
+    }
+
+    if (action === 'server-master-bootstrap' && req.method === 'POST') {
+      if (!(await serverMasterBootstrapRateAllowed(req))) {
+        return send(res, 429, { ok:false, code:'SERVER_MASTER_BOOTSTRAP_RATE_LIMIT' });
+      }
+      if (!validDeviceId(SERVER_MASTER_DEVICE_ID)) {
+        return send(res, 503, { ok:false, code:'SERVER_MASTER_DEVICE_ID_INVALID' });
+      }
+      if (SERVER_MASTER_BOOTSTRAP_SECRET.length < 32) {
+        return send(res, 503, { ok:false, code:'SERVER_MASTER_BOOTSTRAP_SECRET_TOO_WEAK' });
+      }
+      const supplied = String(req.body?.bootstrapSecret || '');
+      const instanceId = String(req.body?.instanceId || '').trim();
+      if (supplied.length > AUTH_SECRET_INPUT_MAX_CHARS || instanceId.length > 128) {
+        return send(res, 400, { ok:false, code:'SERVER_MASTER_BOOTSTRAP_INPUT_TOO_LARGE' });
+      }
+      if (!timingSafeEqualText(supplied, SERVER_MASTER_BOOTSTRAP_SECRET)) {
+        return send(res, 401, { ok:false, code:'SERVER_MASTER_BOOTSTRAP_SECRET_INVALID' });
+      }
+      if (!validDeviceId(instanceId)) {
+        return send(res, 400, { ok:false, code:'SERVER_MASTER_INSTANCE_INVALID' });
+      }
+      if ((MASTER_ADMIN_CODE && timingSafeEqualText(SERVER_MASTER_BOOTSTRAP_SECRET, MASTER_ADMIN_CODE)) ||
+          (PAIRING_CODE && timingSafeEqualText(SERVER_MASTER_BOOTSTRAP_SECRET, PAIRING_CODE)) ||
+          (MASTER_PAIRING_CODE && timingSafeEqualText(SERVER_MASTER_BOOTSTRAP_SECRET, MASTER_PAIRING_CODE))) {
+        return send(res, 503, { ok:false, code:'SERVER_MASTER_BOOTSTRAP_SECRET_REUSED' });
+      }
+
+      const [registeredMaster, activeInstance, currentLease] = await Promise.all([
+        roleDeviceId('master'),
+        redis(['GET', KEY_SERVER_MASTER_INSTANCE]),
+        masterDeviceId(),
+      ]);
+      if (String(registeredMaster || '') !== SERVER_MASTER_DEVICE_ID) {
+        return send(res, 409, { ok:false, code:'SERVER_MASTER_ROLE_NOT_ASSIGNED' });
+      }
+      if (String(activeInstance || '') !== instanceId) {
+        return send(res, 409, { ok:false, code:'SERVER_MASTER_INSTANCE_LEASE_REQUIRED' });
+      }
+      if (currentLease && String(currentLease) !== SERVER_MASTER_DEVICE_ID) {
+        return send(res, 409, { ok:false, code:'MASTER_LEASE_CONFLICT' });
+      }
+
+      const token = crypto.randomBytes(32).toString('base64url');
+      const tokenHash = sha256(token);
+      const createdAt = Date.now();
+      const record = {
+        deviceId: SERVER_MASTER_DEVICE_ID,
+        role: 'master',
+        deviceName: 'Zenith Server MASTER',
+        deviceKind: 'server-master',
+        workerInstanceId: instanceId,
+        createdAt,
+        lastSeenAt: createdAt,
+      };
+      const audit = {
+        at: createdAt,
+        kind: 'SERVER_MASTER_SESSION_BOOTSTRAPPED',
+        masterDeviceId: SERVER_MASTER_DEVICE_ID,
+        workerInstanceId: instanceId,
+      };
+      const script = [
+        "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if registered ~= ARGV[1] then return -1 end",
+        "local activeInstance = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if activeInstance ~= ARGV[2] then return -2 end",
+        "local currentLease = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if currentLease ~= '' and currentLease ~= ARGV[1] then return -3 end",
+        "redis.call('SET', KEYS[4], ARGV[3], 'EX', ARGV[4])",
+        "redis.call('SET', KEYS[5], '1', 'EX', ARGV[5])",
+        "redis.call('LPUSH', KEYS[6], ARGV[6])",
+        "redis.call('LTRIM', KEYS[6], 0, 199)",
+        "return 1"
+      ].join('\n');
+      const result = Number(await redis([
+        'EVAL', script, '6',
+        KEY_MASTER_DEVICE,
+        KEY_SERVER_MASTER_INSTANCE,
+        KEY_MASTER,
+        `${PREFIX}:device:${tokenHash}`,
+        masterActivationKey(SERVER_MASTER_DEVICE_ID),
+        KEY_AUDIT,
+        SERVER_MASTER_DEVICE_ID,
+        instanceId,
+        JSON.stringify(record),
+        String(DEVICE_SESSION_MAX_AGE_SECONDS),
+        String(MASTER_ACTIVATION_TTL_SECONDS),
+        JSON.stringify(audit),
+      ]));
+      if (result !== 1) {
+        return send(res, 409, {
+          ok:false,
+          code: result === -1 ? 'SERVER_MASTER_ROLE_NOT_ASSIGNED'
+            : result === -2 ? 'SERVER_MASTER_INSTANCE_LEASE_REQUIRED'
+            : 'MASTER_LEASE_CONFLICT',
+        });
+      }
+
+      setDeviceSessionCookie(res, token);
+      return send(res, 200, {
+        ok:true,
+        sessionReady:true,
+        device:{
+          deviceId:record.deviceId,
+          role:record.role,
+          deviceName:record.deviceName,
+          deviceKind:record.deviceKind,
+          createdAt:record.createdAt,
+        },
+      });
     }
 
     if (action === 'controller-replacement-authorize' && req.method === 'POST') {
