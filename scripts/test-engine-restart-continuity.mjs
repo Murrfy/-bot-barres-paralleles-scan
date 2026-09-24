@@ -87,5 +87,5 @@ test('ADMIN MASTER revoke permanently clears server restart authority and curren
   assert.ok(revoke.includes("redis.call('DEL', KEYS[19])"));
   assert.ok(revoke.includes("redis.call('DEL', KEYS[20])"));
   assert.ok(revoke.includes("'EVAL', revokeScript, '21'"));
-  assert.ok(revoke.includes("'EVAL', alreadyRevokedScript, '7'"));
+  assert.ok(revoke.includes("'EVAL', alreadyRevokedScript, '12'"));
 });
