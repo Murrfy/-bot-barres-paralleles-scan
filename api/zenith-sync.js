@@ -57,6 +57,7 @@ const KEY_MASTER_HEARTBEAT = `${PREFIX}:master-heartbeat`;
 const KEY_USER_STREAM_SESSION = `${PREFIX}:binance-user-stream`;
 const KEY_USER_STREAM_MUTATION_LOCK = `${PREFIX}:binance-user-stream:mutation-lock`;
 const KEY_ENGINE_INSTANCE = `${PREFIX}:engine-instance`;
+const KEY_ENGINE_AUTHORIZED = `${PREFIX}:engine-authorized`;
 const MASTER_TTL_SECONDS = 20;
 const ENGINE_INSTANCE_TTL_SECONDS = 45;
 const MASTER_HEARTBEAT_TTL_SECONDS = 60;
@@ -793,6 +794,71 @@ async function renewEngineInstance(device) {
       : result === -2 ? 'MASTER_ROLE_CHANGED'
         : result === -3 ? 'MASTER_SESSION_REVOKED'
           : result === 1 ? '' : 'ENGINE_INSTANCE_RENEW_FAILED',
+  };
+}
+
+async function persistEngineRestartAuthorization(device, createAllowed = false) {
+  if (device?.principal !== 'engine') return { ok:true, authorized:false, created:false };
+  const instanceId = String(device.engineInstanceId || '');
+  const masterDeviceId = String(device.deviceId || '');
+  const roleEpoch = String(Number(device.createdAt || 0));
+  const authorizedAt = Date.now();
+  const record = {
+    version:1,
+    masterDeviceId,
+    authorizedAt,
+  };
+  const audit = {
+    at:authorizedAt,
+    kind:'ENGINE_RESTART_AUTHORIZED',
+    masterDeviceId,
+    roleEpoch,
+    engineInstanceHash:sha256(instanceId).slice(0, 16),
+  };
+  const script = [
+    "local currentInstance = tostring(redis.call('GET', KEYS[1]) or '')",
+    "if currentInstance ~= ARGV[1] then return -1 end",
+    "local registeredMaster = tostring(redis.call('GET', KEYS[2]) or '')",
+    "if registeredMaster ~= ARGV[2] then return -2 end",
+    "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+    "if lease ~= ARGV[2] then return -3 end",
+    "local currentEpoch = tostring(redis.call('GET', KEYS[4]) or '')",
+    "if currentEpoch ~= ARGV[3] then return -4 end",
+    "local existingRaw = redis.call('GET', KEYS[5])",
+    "if existingRaw then",
+    "  local ok, existing = pcall(cjson.decode, existingRaw)",
+    "  if ok and tonumber(existing['version'] or 0) == 1 and tostring(existing['masterDeviceId'] or '') == ARGV[2] then return 2 end",
+    "end",
+    "if ARGV[6] ~= '1' then return 0 end",
+    "redis.call('SET', KEYS[5], ARGV[4])",
+    "redis.call('LPUSH', KEYS[6], ARGV[5])",
+    "redis.call('LTRIM', KEYS[6], 0, 199)",
+    "return 1"
+  ].join('\n');
+  const result = Number(await redis([
+    'EVAL', script, '6',
+    KEY_ENGINE_INSTANCE,
+    KEY_MASTER_DEVICE,
+    KEY_MASTER,
+    roleAssignmentKey(PREFIX, 'master'),
+    KEY_ENGINE_AUTHORIZED,
+    KEY_AUDIT,
+    instanceId,
+    masterDeviceId,
+    roleEpoch,
+    JSON.stringify(record),
+    JSON.stringify(audit),
+    createAllowed ? '1' : '0',
+  ]));
+  return {
+    ok: result >= 0,
+    authorized: result === 1 || result === 2,
+    created: result === 1,
+    reason: result === -1 ? 'ENGINE_INSTANCE_FENCED'
+      : result === -2 ? 'MASTER_ROLE_CHANGED'
+        : result === -3 ? 'MASTER_LEASE_REQUIRED'
+          : result === -4 ? 'MASTER_SESSION_REVOKED'
+            : result < 0 ? 'ENGINE_RESTART_AUTHORIZATION_FAILED' : '',
   };
 }
 
@@ -1867,27 +1933,67 @@ export default async function handler(req, res) {
 
       const bootstrapScript = [
         "local registeredMaster = tostring(redis.call('GET', KEYS[1]) or '')",
-        "if registeredMaster ~= '' and registeredMaster ~= ARGV[1] then return {-1, registeredMaster} end",
+        "if registeredMaster ~= '' and registeredMaster ~= ARGV[1] then return {-1, registeredMaster, 0, 0, 0} end",
         "local currentInstance = tostring(redis.call('GET', KEYS[4]) or '')",
-        "if currentInstance ~= '' and currentInstance ~= ARGV[5] then return {-2, currentInstance} end",
         "local currentLease = tostring(redis.call('GET', KEYS[5]) or '')",
-        "if currentLease ~= '' and currentLease ~= ARGV[1] then return {-3, currentLease} end",
+        "if currentLease ~= '' and currentLease ~= ARGV[1] then return {-3, currentLease, 0, 0, 0} end",
+        "if currentInstance ~= '' and currentInstance ~= ARGV[5] and currentLease == ARGV[1] then return {-2, '', 0, 0, 0} end",
+        "local streamLock = tostring(redis.call('GET', KEYS[16]) or '')",
+        "if registeredMaster ~= '' and streamLock ~= '' then return {-6, '', 0, 0, 0} end",
         "local mode = tostring(redis.call('GET', KEYS[6]) or 'PAUSED')",
         "local panic = tostring(redis.call('GET', KEYS[7]) or '')",
-        "if registeredMaster == '' and mode ~= 'PAUSED' then return {-4, mode} end",
-        "if registeredMaster == '' and panic ~= '1' then return {-5, panic} end",
+        "if registeredMaster == '' and mode ~= 'PAUSED' then return {-4, mode, 0, 0, 0} end",
+        "if registeredMaster == '' and panic ~= '1' then return {-5, panic, 0, 0, 0} end",
+        "local oldRoleEpoch = tostring(redis.call('GET', KEYS[2]) or '')",
+        "local authorized = 0",
+        "if registeredMaster == ARGV[1] then",
+        "  local authorizationRaw = redis.call('GET', KEYS[9])",
+        "  if authorizationRaw then",
+        "    local authOk, authorization = pcall(cjson.decode, authorizationRaw)",
+        "    if authOk and tonumber(authorization['version'] or 0) == 1 and tostring(authorization['masterDeviceId'] or '') == ARGV[1] then authorized = 1 end",
+        "  end",
+        "end",
+        "local armCarried = 0",
+        "local failClosed = 0",
+        "if authorized == 1 then",
+        "  redis.call('SET', KEYS[5], ARGV[1], 'EX', ARGV[8])",
+        "  local armRaw = redis.call('GET', KEYS[10])",
+        "  if armRaw and ARGV[9] ~= '' and oldRoleEpoch ~= '' then",
+        "    local armOk, arm = pcall(cjson.decode, armRaw)",
+        "    if armOk and tonumber(arm['version'] or 0) == 1 and tostring(arm['masterDeviceId'] or '') == ARGV[1] and tostring(arm['masterRoleEpoch'] or '') == oldRoleEpoch and tostring(arm['deploymentSha'] or '') == ARGV[9] then",
+        "      arm['masterRoleEpoch'] = tonumber(ARGV[2])",
+        "      redis.call('SET', KEYS[10], cjson.encode(arm))",
+        "      armCarried = 1",
+        "    end",
+        "  end",
+        "  if armCarried == 0 and mode == 'RUNNING' then",
+        "    redis.call('SET', KEYS[7], '1')",
+        "    redis.call('SET', KEYS[6], 'PAUSE_PENDING')",
+        "    failClosed = 1",
+        "  end",
+        "else",
+        "  if registeredMaster == '' then",
+        "    redis.call('DEL', KEYS[9])",
+        "    redis.call('DEL', KEYS[10])",
+        "  end",
+        "end",
         "redis.call('SET', KEYS[4], ARGV[5], 'EX', ARGV[6])",
         "redis.call('SET', KEYS[1], ARGV[1])",
         "redis.call('SET', KEYS[2], ARGV[2])",
         "redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[4])",
+        "redis.call('DEL', KEYS[11])",
+        "redis.call('DEL', KEYS[12])",
+        "redis.call('DEL', KEYS[13])",
+        "redis.call('DEL', KEYS[14])",
+        "redis.call('DEL', KEYS[15])",
         "redis.call('LPUSH', KEYS[8], ARGV[7])",
         "redis.call('LTRIM', KEYS[8], 0, 199)",
-        "if registeredMaster == '' then return {1, ARGV[1]} end",
-        "return {2, ARGV[1]}"
+        "if registeredMaster == '' then return {1, ARGV[1], authorized, armCarried, failClosed} end",
+        "return {2, ARGV[1], authorized, armCarried, failClosed}"
       ].join('\n');
 
       const result = await redis([
-        'EVAL', bootstrapScript, '8',
+        'EVAL', bootstrapScript, '16',
         KEY_MASTER_DEVICE,
         roleAssignmentKey(PREFIX, 'master'),
         `${PREFIX}:device:${tokenHash}`,
@@ -1896,6 +2002,14 @@ export default async function handler(req, res) {
         KEY_MASTER_MODE,
         KEY_EMERGENCY_STOP,
         KEY_AUDIT,
+        KEY_ENGINE_AUTHORIZED,
+        KEY_REAL_EXECUTION_ARMED,
+        KEY_MASTER_HEARTBEAT,
+        KEY_MASTER_CONFIG_ACK,
+        KEY_RECONCILE_LAST,
+        KEY_STATE,
+        KEY_USER_STREAM_SESSION,
+        KEY_USER_STREAM_MUTATION_LOCK,
         ENGINE_MASTER_DEVICE_ID,
         String(createdAt),
         JSON.stringify(record),
@@ -1903,8 +2017,13 @@ export default async function handler(req, res) {
         instanceId,
         String(ENGINE_INSTANCE_TTL_SECONDS),
         JSON.stringify(audit),
+        String(MASTER_TTL_SECONDS),
+        DEPLOYMENT_SHA,
       ]);
       const code = Number(Array.isArray(result) ? result[0] : 0);
+      const restartAuthorized = Number(Array.isArray(result) ? result[2] : 0) === 1;
+      const realExecutionArmCarried = Number(Array.isArray(result) ? result[3] : 0) === 1;
+      const restartFailClosed = Number(Array.isArray(result) ? result[4] : 0) === 1;
       if (code === -1) {
         return send(res, 409, {
           ok:false,
@@ -1925,6 +2044,9 @@ export default async function handler(req, res) {
           blocker:code === -4 ? 'MASTER_MUST_BE_PAUSED' : 'EMERGENCY_STOP_MUST_BE_ACTIVE',
         });
       }
+      if (code === -6) {
+        return send(res, 409, { ok:false, code:'ENGINE_RESTART_MUTATION_IN_FLIGHT' });
+      }
       if (![1,2].includes(code)) {
         return send(res, 500, { ok:false, code:'ENGINE_BOOTSTRAP_FAILED' });
       }
@@ -1935,6 +2057,9 @@ export default async function handler(req, res) {
         sessionReady:true,
         engine:true,
         initialRegistration:code === 1,
+        restartAuthorized,
+        realExecutionArmCarried,
+        restartFailClosed,
         masterDeviceId:ENGINE_MASTER_DEVICE_ID,
         engineInstanceId:instanceId,
         roleEpoch:createdAt,
@@ -2453,6 +2578,7 @@ export default async function handler(req, res) {
         });
       }
 
+      let engineRestartAuthorization = null;
       if (device.principal === 'engine') {
         const instanceRenewal = await renewEngineInstance(device);
         if (!instanceRenewal.ok) {
@@ -2460,6 +2586,15 @@ export default async function handler(req, res) {
           return send(res, 409, {
             ok:false,
             code:instanceRenewal.reason,
+            masterMode:currentMode,
+          });
+        }
+        engineRestartAuthorization = await persistEngineRestartAuthorization(device, lease.acquired === true);
+        if (!engineRestartAuthorization.ok) {
+          clearDeviceSessionCookie(res);
+          return send(res, 409, {
+            ok:false,
+            code:engineRestartAuthorization.reason,
             masterMode:currentMode,
           });
         }
@@ -2478,6 +2613,8 @@ export default async function handler(req, res) {
         pauseTransition,
         configSync: configSync.status,
         heartbeat,
+        engineRestartAuthorized:engineRestartAuthorization?.authorized === true,
+        engineRestartAuthorizationCreated:engineRestartAuthorization?.created === true,
         ttlSeconds: MASTER_TTL_SECONDS,
       });
     }
@@ -2514,15 +2651,19 @@ export default async function handler(req, res) {
           "redis.call('DEL', KEYS[3])",
           "redis.call('DEL', KEYS[4])",
           "redis.call('SET', KEYS[5], ARGV[3])",
+          "redis.call('DEL', KEYS[6])",
+          "redis.call('DEL', KEYS[7])",
           "return 1"
         ].join('\n');
         const alreadyRevokedResult = Number(await redis([
-          'EVAL', alreadyRevokedScript, '5',
+          'EVAL', alreadyRevokedScript, '7',
           KEY_CONTROLLER_DEVICE,
           roleAssignmentKey(PREFIX, 'controller'),
           KEY_REAL_EXECUTION_ARMED,
           KEY_MASTER,
           roleAssignmentKey(PREFIX, 'master'),
+          KEY_ENGINE_AUTHORIZED,
+          KEY_ENGINE_INSTANCE,
           String(device.deviceId),
           String(Number(device.createdAt || 0)),
           String(revokedAt),
@@ -2650,12 +2791,14 @@ export default async function handler(req, res) {
         "redis.call('DEL', KEYS[11])",
         "redis.call('DEL', KEYS[12])",
         "redis.call('SET', KEYS[15], ARGV[2])",
+        "redis.call('DEL', KEYS[19])",
+        "redis.call('DEL', KEYS[20])",
         "redis.call('DEL', KEYS[1])",
         "return 1"
       ].join('\n');
 
       const result = Number(await redis([
-        'EVAL', revokeScript, '18',
+        'EVAL', revokeScript, '20',
         KEY_MASTER_DEVICE,
         KEY_EMERGENCY_STOP,
         KEY_MASTER_MODE,
@@ -2674,6 +2817,8 @@ export default async function handler(req, res) {
         KEY_USER_STREAM_MUTATION_LOCK,
         KEY_CONTROLLER_DEVICE,
         roleAssignmentKey(PREFIX, 'controller'),
+        KEY_ENGINE_AUTHORIZED,
+        KEY_ENGINE_INSTANCE,
         String(registeredMaster),
         String(revokedAt),
         String(device.deviceId),
