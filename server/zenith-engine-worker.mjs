@@ -24,6 +24,7 @@ import {
 
 const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
 const BOOTSTRAP_SECRET=String(process.env.ZENITH_ENGINE_BOOTSTRAP_SECRET||'');
+const WORKER_ENABLED=process.env.ZENITH_ENGINE_WORKER_ENABLED==='1';
 const HEARTBEAT_MS=8000;
 const COMMAND_POLL_MS=750;
 const RECONCILE_MS=15000;
@@ -1073,6 +1074,10 @@ async function shutdown(code=0){
 }
 
 async function main(){
+  if(!WORKER_ENABLED){
+    log('DISABLED',{reason:'ZENITH_ENGINE_WORKER_ENABLED_NOT_SET'});
+    return;
+  }
   required('ZENITH_BASE_URL',BASE_URL);
   if(BOOTSTRAP_SECRET.length<32)throw new Error('ZENITH_ENGINE_BOOTSTRAP_SECRET_TOO_WEAK');
   if(typeof WebSocket!=='function')throw new Error('NODE_WEBSOCKET_UNAVAILABLE');
