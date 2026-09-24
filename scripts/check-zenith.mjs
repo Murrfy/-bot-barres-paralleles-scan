@@ -719,6 +719,18 @@ if (!sync.includes("'MASTER_ACTIVATION_REQUIRED'") ||
     !index.includes('controllerAuthorizeMaster')) {
   fail('MASTER lease activation must require explicit iPhone controller ADMIN authorization');
 }
+if (!sync.includes('const activationScript = [') ||
+    !sync.includes("if registeredMaster ~= ARGV[1] then return -1 end") ||
+    !sync.includes("if currentController ~= ARGV[2] then return -2 end") ||
+    !sync.includes("if controllerEpoch > 0 and sessionCreatedAt < controllerEpoch then return -3 end") ||
+    !sync.includes('async function acquireOrRenewMaster(device)') ||
+    !sync.includes("if registered ~= ARGV[1] then return -2 end") ||
+    !sync.includes("if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end") ||
+    !sync.includes('const heartbeatScript = [') ||
+    !sync.includes("if lease ~= ARGV[2] then return -2 end") ||
+    !sync.includes("roleAssignmentKey(PREFIX, 'master')")) {
+  fail('MASTER activation, lease and heartbeat must be atomically fenced against revoke and role-epoch changes');
+}
 if (!index.includes('id="adminCodeInput" type="password"') ||
     !index.includes('autocomplete="off"') ||
     !index.includes('function requestAdminCode(message)') ||
