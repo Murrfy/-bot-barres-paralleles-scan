@@ -2761,12 +2761,18 @@ export default async function handler(req, res) {
             masterMode: 'PAUSE_PENDING',
           });
         }
+        const pauseCompletion = await tryFinalizePendingPause('', 'PAUSE_PENDING');
         return send(res, 200, {
           ok: true,
           masterRevoked: true,
           alreadyRevoked: true,
           emergencyStopActive: true,
-          masterMode: 'PAUSE_PENDING',
+          masterMode: pauseCompletion.masterMode,
+          pauseQueued: pauseCompletion.masterMode === 'PAUSE_PENDING',
+          blockers: pauseCompletion.blockers || [],
+          activity: pauseCompletion.activity || { activePositions: 0, openOrders: 0 },
+          pendingCommands: Number(pauseCompletion.pendingCommands || 0),
+          processingCommands: Number(pauseCompletion.processingCommands || 0),
         });
       }
 
