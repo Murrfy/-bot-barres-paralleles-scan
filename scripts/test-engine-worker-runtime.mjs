@@ -27,7 +27,9 @@ test('worker owns no Binance or Redis credentials',()=>{
     'KV_REST_API_TOKEN',
   ]) assert.equal(worker.includes(forbidden),false,forbidden+' must stay out of the worker');
   assert.equal(worker.includes('https://fapi.binance.com'),false);
-  assert.ok(worker.includes('wss://fstream.binance.com/ws/'));
+  assert.ok(worker.includes('wss://fstream.binance.com/private/ws?listenKey='));
+  assert.ok(worker.includes('&events=ORDER_TRADE_UPDATE/ACCOUNT_UPDATE/ALGO_UPDATE/listenKeyExpired'));
+  assert.equal(worker.includes("new WebSocket('wss://fstream.binance.com/ws/"),false);
 });
 
 test('every authenticated server request carries the engine instance fence and session cookie',()=>{
