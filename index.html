@@ -231,7 +231,7 @@ let controllerRealCommandModule=null,controllerRealProtectionModule=null,realClo
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
-let masterControlState={mode:'',masterRegistered:false,masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
+let masterControlState={mode:'',masterRegistered:false,masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,realExecutionArmed:false,error:''};
 let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,realExecutionArmed:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
 let masterWakeLock={sentinel:null,requesting:false,lastAttemptAt:0,error:''};
 let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEvents:[],reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
@@ -765,7 +765,7 @@ function renderMasterControls(){
 }
 async function refreshMasterControls(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
-    masterControlState={mode:'',masterRegistered:false,masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,error:''};
+    masterControlState={mode:'',masterRegistered:false,masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,realExecutionArmed:false,error:''};
     renderMasterControls();
     return false;
   }
@@ -786,6 +786,7 @@ async function refreshMasterControls(){
       masterHeartbeatFresh:q.masterHeartbeatFresh===true,
       emergencyStopActive:q.emergencyStopActive!==false,
       realTradingEnabled:q.realTradingEnabled===true,
+      realExecutionArmed:q.realExecutionArmed===true,
       error:''
     };
     renderMasterControls();
@@ -980,6 +981,14 @@ async function refreshControllerIdentity(){
   }
 }
 
+function realExecutionActiveForLocalSimulation(){
+  if(controllerIdentity.role==='master')return masterRuntimeState.realExecutionArmed===true;
+  if(controllerIdentity.role==='controller')return masterControlState.realExecutionArmed===true;
+  return false;
+}
+function localSimulationEntryAllowed(){
+  return !realExecutionActiveForLocalSimulation();
+}
 function masterLocalEntryAllowed(){
   if(controllerIdentity.role!=='master')return true;
   return masterRuntimeState.mode==='RUNNING'&&masterRuntimeState.synchronized===true&&masterRuntimeState.heartbeatFresh===true&&!masterRuntimeState.error;
@@ -1031,11 +1040,15 @@ function masterStreamProjection(){
 function masterRuntimeSnapshot(){
   const stream=masterStreamProjection();
   const executionMode=masterRuntimeState.realExecutionArmed===true?'REAL':'SIMULATION';
+  const simulationPositions=executionMode==='REAL'?[]:clone(openPositions);
+  const activePositions=executionMode==='REAL'
+    ?n(stream.activePositions)
+    :Math.max(openPositions.length,n(stream.activePositions));
   return {
     executionMode,
     mode:executionMode,
-    openPositions:clone(openPositions),
-    activePositions:Math.max(openPositions.length,n(stream.activePositions)),
+    openPositions:simulationPositions,
+    activePositions,
     openOrders:[],
     openOrderCount:n(stream.openOrderCount),
     binancePositions:Array.isArray(stream.binancePositions)?stream.binancePositions:[],
@@ -2376,7 +2389,7 @@ async function saveToken(){
 function devalidateSelected(){const s=selectedSymbol;if(!s)return;delete validated[s];delete missedSignals[s];delete revalidateBlock[s];delete manualTokens[s];save();syncRealtime();renderAll();setStatus(`${s} : surveillance annulée, retiré de la liste.`)}
 function tokenDefaults(){if(!selectedSymbol)return;if(openBySymbol(selectedSymbol))return setStatus(`${selectedSymbol} est actif : réinitialisation interdite. Seuls le prix déterminé de VENTE et les protections peuvent être modifiés.`,true);if(validated[selectedSymbol])return setStatus(`${selectedSymbol} est surveillé : annule d’abord l’achat surveillé.`,true);delete tokenSettings[selectedSymbol];delete validated[selectedSymbol];delete revalidateBlock[selectedSymbol];delete missedSignals[selectedSymbol];delete manualTokens[selectedSymbol];save();syncRealtime();renderAll();setStatus(`${selectedSymbol} revenu aux réglages par défaut.`)}
 function positionCfg(s){const c=cfg(s);return{margin:n(c.margin),leverage:n(c.leverage),marginType:'ISOLATED',notional:notional(c),binanceQty:n(c.binanceQty),binanceEffectiveNotional:n(c.binanceEffectiveNotional),targetProfit:n(c.targetProfit),maxLoss:n(c.maxLoss),protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit)))}}
-function createPosition(s,entry,source){if(!masterLocalEntryAllowed()){setStatus('Nouvelle entrée bloquée : '+masterEntryBlockMessage()+'. Les positions déjà ouvertes restent protégées.',true);return null}if(openBySymbol(s)||openPositions.length>=settings.maxActive)return null;const c=positionCfg(s),kind=source==='ACHAT IMMÉDIAT'?'MARKET':'LIMIT',bd=futuresDraft(s,c.margin,c.leverage,kind,entry);if(!bd.ok){setStatus(`${s} : activation bloquée par les limites Binance — ${bd.error}.`,true);return null}c.binanceQty=bd.qty;c.notional=bd.effectiveNotional||c.notional;const exact=tokenExactSale(s)>entry?tokenExactSale(s):0,targetPrice=exact||priceForPnl(entry,c.notional,c.targetProfit),targetProfit=exact?exactProfitFor(entry,exact,{margin:c.notional/c.leverage,leverage:c.leverage}):c.targetProfit,baseTargetProfit=Math.max(1,n(tokenSettings[s]?.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),p={symbol:s,entryPrice:n(entry),openedAt:Date.now(),source,margin:c.margin,leverage:c.leverage,marginType:'ISOLATED',notional:c.notional,binanceQty:c.binanceQty,targetProfit,baseTargetProfit,targetPrice,manualSaleTarget:!!exact,maxLoss:c.maxLoss,maxProfit:0,protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),protectionFloorActive:0,stopExitPrice:priceForPnl(entry,c.notional,-c.maxLoss)};openPositions.push(p);history.push({symbol:s,entryPrice:p.entryPrice,exitPrice:null,pnl:null,reason:'ACHAT',openedAt:p.openedAt,closedAt:null,status:'OPEN'});delete validated[s];delete revalidateBlock[s];delete missedSignals[s];save();syncRealtime();renderAll();tradeAlert('buy');return p}
+function createPosition(s,entry,source){if(!localSimulationEntryAllowed()){setStatus('Entrée simulée bloquée : le trading réel est armé. Zenith ne créera jamais une position locale fictive à la place d’un ordre Binance réel.',true);return null}if(!masterLocalEntryAllowed()){setStatus('Nouvelle entrée bloquée : '+masterEntryBlockMessage()+'. Les positions déjà ouvertes restent protégées.',true);return null}if(openBySymbol(s)||openPositions.length>=settings.maxActive)return null;const c=positionCfg(s),kind=source==='ACHAT IMMÉDIAT'?'MARKET':'LIMIT',bd=futuresDraft(s,c.margin,c.leverage,kind,entry);if(!bd.ok){setStatus(`${s} : activation bloquée par les limites Binance — ${bd.error}.`,true);return null}c.binanceQty=bd.qty;c.notional=bd.effectiveNotional||c.notional;const exact=tokenExactSale(s)>entry?tokenExactSale(s):0,targetPrice=exact||priceForPnl(entry,c.notional,c.targetProfit),targetProfit=exact?exactProfitFor(entry,exact,{margin:c.notional/c.leverage,leverage:c.leverage}):c.targetProfit,baseTargetProfit=Math.max(1,n(tokenSettings[s]?.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),p={symbol:s,entryPrice:n(entry),openedAt:Date.now(),source,margin:c.margin,leverage:c.leverage,marginType:'ISOLATED',notional:c.notional,binanceQty:c.binanceQty,targetProfit,baseTargetProfit,targetPrice,manualSaleTarget:!!exact,maxLoss:c.maxLoss,maxProfit:0,protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),protectionFloorActive:0,stopExitPrice:priceForPnl(entry,c.notional,-c.maxLoss)};openPositions.push(p);history.push({symbol:s,entryPrice:p.entryPrice,exitPrice:null,pnl:null,reason:'ACHAT',openedAt:p.openedAt,closedAt:null,status:'OPEN'});delete validated[s];delete revalidateBlock[s];delete missedSignals[s];save();syncRealtime();renderAll();tradeAlert('buy');return p}
 function closePosition(s,exit,reason){const i=openPositions.findIndex(p=>p.symbol===s);if(i<0)return false;const p=openPositions[i],ep=n(exit,lastPrices.get(s)||p.entryPrice),pl=pnlAt(p,ep);openPositions.splice(i,1);const closedAt=Date.now(),hi=history.findIndex(h=>h.symbol===s&&h.status==='OPEN'&&n(h.openedAt)===n(p.openedAt));if(hi>=0)history[hi]={...history[hi],entryPrice:p.entryPrice,exitPrice:ep,pnl:pl,reason,closedAt,status:'CLOSED'};else history.push({symbol:s,entryPrice:p.entryPrice,exitPrice:ep,pnl:pl,reason,openedAt:p.openedAt,closedAt,status:'CLOSED'});delete validated[s];delete revalidateBlock[s];delete missedSignals[s];delete manualTokens[s];save();processWaitingSignals();syncRealtime();renderAll();tradeAlert('sell');setStatus(`${s} fermé ${money(pl)} — ${reason}. Le jeton a été retiré de la liste.`);return true}
 async function currentMarketPrice(s){try{const d=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(s)}`),p=n(d.price);if(p)lastPrices.set(s,p);return p}catch(_){return 0}}
 async function instantBuySelected(){const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);if(openBySymbol(s))return setStatus(`${s} a déjà une position active.`,true);if(openPositions.length>=settings.maxActive)return setStatus(`Impossible : ${settings.maxActive} positions sont déjà actives.`,true);const mark=await currentMarketPrice(s);if(!(mark>0))return setStatus(`Prix Binance indisponible pour ${s}. Achat non lancé.`,true);const p=createPosition(s,mark,'ACHAT IMMÉDIAT');if(p)setStatus(`${s} acheté immédiatement à ${price(mark)}.`)}
