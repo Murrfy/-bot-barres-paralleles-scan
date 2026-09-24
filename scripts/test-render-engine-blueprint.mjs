@@ -20,11 +20,11 @@ test('Render auto-deploy waits for repository CI',()=>{
   assert.equal(blueprint.includes('autoDeployTrigger: commit'),false);
 });
 
-test('Render worker points to the verified Zenith production API and is inert by default',()=>{
+test('Render worker points to the verified Zenith production API and is explicitly enabled for the completed server cutover',()=>{
   assert.ok(blueprint.includes('value: https://zenithfinal3-ahle.vercel.app'));
   assert.ok(blueprint.includes('key: ZENITH_ENGINE_WORKER_ENABLED'));
-  assert.ok(blueprint.includes('value: "0"'));
-  assert.equal(blueprint.includes('value: "1"'),false);
+  assert.ok(blueprint.includes('value: "1"'));
+  assert.equal(blueprint.includes('value: "0"'),false);
 });
 
 test('bootstrap secret is requested outside Git and Binance/Redis secrets never enter Render blueprint',()=>{
