@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, sameOriginMutation } from '../lib/device-session.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
+import { stagedEntryProtectionMatchesRuntimeIntent } from '../lib/entry-intent-safety.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -376,10 +377,18 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
   if (untrackedOrders.length) reasons.push('UNTRACKED_BINANCE_ORDER');
   if (missingOrders.length) reasons.push('MISSING_BINANCE_ORDER');
 
+  const stagedEntryProtections = actualOrders.filter(order =>
+    Boolean(zenithManagedOrderId(order)) &&
+    order?.closePosition === true &&
+    !actualPositions.some(position => orderProtectsPosition(order, position)) &&
+    stagedEntryProtectionMatchesRuntimeIntent(order, runtimeState)
+  );
+  const stagedEntryProtectionIds = new Set(stagedEntryProtections.map(order => orderKey(order)).filter(Boolean));
   const orphanZenithProtectiveOrders = actualOrders.filter(order =>
     Boolean(zenithManagedOrderId(order)) &&
     (order?.reduceOnly === true || order?.closePosition === true) &&
-    !actualPositions.some(position => orderProtectsPosition(order, position))
+    !actualPositions.some(position => orderProtectsPosition(order, position)) &&
+    !stagedEntryProtectionIds.has(orderKey(order))
   );
   if (orphanZenithProtectiveOrders.length) reasons.push('ORPHAN_ZENITH_PROTECTIVE_ORDER');
 
@@ -485,6 +494,7 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
       missingOrders,
       orderMismatches,
       orphanZenithProtectiveOrders,
+      stagedEntryProtections,
       missingProtections,
       missingMaxLossProtections,
       ambiguousMaxLossProtections,
