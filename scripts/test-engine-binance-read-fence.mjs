@@ -12,6 +12,7 @@ test('read-only Binance API fences stale engine worker sessions',()=>{
   assert.ok(source.includes("const e=new Error('ENGINE_INSTANCE_FENCED')"));
   assert.ok(source.includes("const e=new Error('MASTER_LEASE_REQUIRED')"));
   assert.ok(source.includes("e.code='ENGINE_INSTANCE_FENCED'"));
+  assert.ok(source.includes("if (e?.code === 'ENGINE_INSTANCE_FENCED' || e?.code === 'MASTER_LEASE_REQUIRED') throw e;"));
 });
 
 test('stale engine or lost MASTER lease is returned as conflict, not hidden as backend failure',()=>{
