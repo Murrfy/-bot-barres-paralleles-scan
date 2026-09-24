@@ -3876,9 +3876,10 @@ export default async function handler(req, res) {
 
       const updatedAt = Date.now();
       const stateHash = sha256(stableStringify(safeData));
+      const revisionPlaceholder = '__ZENITH_REVISION__';
       const snapshotTemplate = {
         version: 1,
-        revision: 0,
+        revision: revisionPlaceholder,
         updatedAt,
         controllerDeviceId: device.deviceId,
         stateHash,
@@ -3887,7 +3888,7 @@ export default async function handler(req, res) {
       const auditTemplate = {
         at: updatedAt,
         kind: 'CONTROLLER_STATE_WRITE',
-        revision: 0,
+        revision: revisionPlaceholder,
         deviceId: device.deviceId,
         stateHash,
       };
@@ -3909,12 +3910,11 @@ export default async function handler(req, res) {
         "  return {0, tostring(currentRev), currentRaw or ''}",
         "end",
         "local newRev = currentRev + 1",
-        "local snapshot = cjson.decode(ARGV[2])",
-        "snapshot['revision'] = newRev",
-        "local snapshotRaw = cjson.encode(snapshot)",
-        "local audit = cjson.decode(ARGV[3])",
-        "audit['revision'] = newRev",
-        "local auditRaw = cjson.encode(audit)",
+        "local revisionNeedle = '\"revision\":\"__ZENITH_REVISION__\"'",
+        "local revisionValue = '\"revision\":' .. tostring(newRev)",
+        "local snapshotRaw, snapshotCount = string.gsub(ARGV[2], revisionNeedle, revisionValue, 1)",
+        "local auditRaw, auditCount = string.gsub(ARGV[3], revisionNeedle, revisionValue, 1)",
+        "if snapshotCount ~= 1 or auditCount ~= 1 then return {-4, tostring(currentRev), currentRaw or ''} end",
         "redis.call('SET', KEYS[1], snapshotRaw)",
         "redis.call('SET', KEYS[2], tostring(newRev))",
         "redis.call('LPUSH', KEYS[3], auditRaw)",
@@ -3944,6 +3944,9 @@ export default async function handler(req, res) {
           ok: false,
           code: resultCode === -2 ? 'CONTROLLER_ROLE_CHANGED' : 'CONTROLLER_SESSION_REVOKED',
         });
+      }
+      if (resultCode === -4) {
+        return send(res, 500, { ok: false, code: 'CONTROLLER_STATE_REVISION_SERIALIZATION_FAILED' });
       }
 
       let state = null;
