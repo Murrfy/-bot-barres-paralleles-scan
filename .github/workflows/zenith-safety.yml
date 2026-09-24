@@ -58,6 +58,8 @@ jobs:
         run: node --check api/binance-order-test.js
       - name: Check Zenith sync API syntax
         run: node --check api/zenith-sync.js
+      - name: Check 24/7 engine worker syntax
+        run: node --check server/zenith-engine-worker.mjs
       - name: Test reconciliation failure scenarios
         run: node --test scripts/test-reconcile.mjs
       - name: Test fail-closed reconciliation attempt fence
@@ -124,6 +126,8 @@ jobs:
         run: node --test scripts/test-engine-restart-continuity.mjs
       - name: Test persistent engine revocation latch
         run: node --test scripts/test-engine-revocation-latch.mjs
+      - name: Test provider-neutral 24/7 engine runtime
+        run: node --test scripts/test-engine-runtime-worker.mjs
       - name: Test engine instance fencing across Binance APIs
         run: node --test scripts/test-engine-binance-instance-fence.mjs
       - name: Test atomic pairing role/session claim
