@@ -39,6 +39,7 @@ button:disabled{opacity:.5}
     <button id="pauseBtn" disabled>Mettre le MASTER en pause</button>
     <button id="cancelPauseBtn" disabled hidden>Annuler la pause en attente</button>
     <button id="resumeBtn" disabled>Reprendre le MASTER</button>
+    <button id="engineReenableBtn" disabled hidden>Autoriser le serveur Render</button>
     <button id="armRealBtn" disabled hidden>Armer l’exécution réelle</button>
     <button id="panicBtn" disabled>PANIC STOP</button>
     <button id="clearPanicBtn" disabled hidden>Réarmer la sécurité réelle</button>
@@ -60,6 +61,8 @@ function renderActions(){
   $('cancelPauseBtn').hidden=mode!=='PAUSE_PENDING';
   $('cancelPauseBtn').disabled=!valid||mode!=='PAUSE_PENDING'||verifiedState.masterLeaseActive!==true;
   $('resumeBtn').disabled=!valid||mode!=='PAUSED'||verifiedState.masterLeaseActive!==true;
+  $('engineReenableBtn').hidden=!(adminRole==='controller'&&verifiedState?.engineDisabled===true);
+  $('engineReenableBtn').disabled=!valid||$('engineReenableBtn').hidden||mode!=='PAUSED'||verifiedState?.emergencyStopActive!==true||verifiedState.masterLeaseActive===true||verifiedState.masterRegistered===true||Number(verifiedState.pendingCommands||0)>0||Number(verifiedState.processingCommands||0)>0;
   $('armRealBtn').hidden=!(verifiedState?.realTradingEnabled===true&&verifiedState?.realExecutionArmed!==true);
   $('armRealBtn').disabled=!valid||$('armRealBtn').hidden||mode!=='PAUSED'||verifiedState?.emergencyStopActive!==true||verifiedState.masterLeaseActive!==true||verifiedState.masterSyncFailClosed||verifiedState.masterHeartbeatFresh!==true;
   $('panicBtn').disabled=!valid||verifiedState?.emergencyStopActive===true;
@@ -118,6 +121,33 @@ async function refreshMasterMode(){
     setBox('masterMode','État MASTER non vérifié : '+String(e?.message||'erreur')+'.','err');
     return false;
   }finally{renderActions()}
+}
+
+async function reenableEngine(){
+  if(busy||checking||adminRole!=='controller'||!verifiedState||verifiedState.engineDisabled!==true)return;
+  const adminCode=$('adminCode').value;
+  if(!adminCode){setBox('status','Entre le code ADMIN MASTER.','err');return;}
+  busy=true;renderActions();$('adminCode').value='';
+  setBox('status','Autorisation du serveur Render après contrôles de sécurité…','warn');
+  try{
+    const r=await fetch('/api/zenith-sync?action=engine-reenable',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify({adminCode})
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true){
+      const blocker=q?.blocker?' · '+q.blocker:'';
+      throw new Error((q?.code||q?.error||('HTTP '+r.status))+blocker);
+    }
+    setBox('status','Serveur Render autorisé. Le MASTER reste en pause et le PANIC STOP reste actif pendant la prise de relais.','ok');
+  }catch(e){
+    setBox('status','Autorisation Render refusée : '+String(e?.message||'erreur')+'.','err');
+  }finally{
+    $('adminCode').value='';
+    await verifyMaster();
+    busy=false;renderActions();
+  }
 }
 
 async function armRealExecution(){
@@ -282,6 +312,7 @@ async function authorizeReplacement(){
 $('pauseBtn').addEventListener('click',()=>setMasterMode('master-pause'));
 $('cancelPauseBtn').addEventListener('click',()=>setMasterMode('master-pause-cancel'));
 $('resumeBtn').addEventListener('click',()=>setMasterMode('master-resume'));
+$('engineReenableBtn').addEventListener('click',reenableEngine);
 $('armRealBtn').addEventListener('click',armRealExecution);
 $('panicBtn').addEventListener('click',panicStop);
 $('clearPanicBtn').addEventListener('click',clearPanic);
