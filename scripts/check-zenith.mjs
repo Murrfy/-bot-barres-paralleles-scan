@@ -280,6 +280,15 @@ if (!userStreamSession.includes('async function renewUserStreamMutationLock') ||
   fail('user-stream remote mutations and Redis session commits must remain fenced by the live MASTER authority and mutation lock');
 }
 
+if (!userStreamSession.includes('async function readSessionWithRaw') ||
+    !userStreamSession.includes("if ARGV[7] == '1' then") ||
+    !userStreamSession.includes("if current ~= ARGV[8] then return -4 end") ||
+    !userStreamSession.includes("'USER_STREAM_SESSION_CHANGED'") ||
+    !userStreamSession.includes("commitUserStreamSession(master, mutationLockToken, record, 'SET', existingState.raw)") ||
+    !userStreamSession.includes("commitUserStreamSession(master, mutationLockToken, null, 'DEL', existingState.raw)")) {
+  fail('user-stream keepalive/close commits must compare-and-swap the exact session observed before the Binance call');
+}
+
 const userStreamStartIndex = userStreamSession.indexOf("if (action === 'start' && req.method === 'POST')");
 const userStreamKeepaliveIndex = userStreamSession.indexOf("if (action === 'keepalive' && req.method === 'POST')");
 const userStreamCloseIndex = userStreamSession.indexOf("if (action === 'close' && req.method === 'POST')");
