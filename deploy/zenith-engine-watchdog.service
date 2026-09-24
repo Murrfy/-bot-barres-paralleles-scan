@@ -1,0 +1,8 @@
+[Unit]
+Description=Check Zenith engine local liveness
+After=zenith-engine.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/zenith/engine.env
+ExecStart=/usr/bin/node /opt/zenith/current/deploy/check-engine-liveness.mjs
