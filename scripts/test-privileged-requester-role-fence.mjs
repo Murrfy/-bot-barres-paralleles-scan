@@ -24,6 +24,16 @@ const clearEnd=sync.indexOf("if (action === 'audit' && req.method === 'GET')",cl
 assert.ok(clearStart>=0&&clearEnd>clearStart,'PANIC clear block missing');
 const clear=sync.slice(clearStart,clearEnd);
 
+const armStart=sync.indexOf("if (action === 'real-execution-arm' && req.method === 'POST')");
+const armEnd=sync.indexOf("if (action === 'master-resume' && req.method === 'POST')",armStart);
+assert.ok(armStart>=0&&armEnd>armStart,'real execution arm block missing');
+const arm=sync.slice(armStart,armEnd);
+
+const revokeStart=sync.indexOf("if (action === 'master-revoke' && req.method === 'POST')");
+const revokeEnd=sync.indexOf("if (action === 'master-pause' && req.method === 'POST')",revokeStart);
+assert.ok(revokeStart>=0&&revokeEnd>revokeStart,'MASTER revoke block missing');
+const revoke=sync.slice(revokeStart,revokeEnd);
+
 test('RUNNING helper atomically revalidates the privileged requester role and epoch',()=>{
   assert.ok(helper.includes('requesterDevice = null'));
   assert.ok(helper.includes("local requester = tostring(redis.call('GET', KEYS[6]) or '')"));
@@ -62,4 +72,32 @@ test('stale privileged requester session is cleared and cannot complete resume o
   assert.ok(clear.includes("'MASTER_SESSION_REVOKED'"));
   assert.ok(cancel.includes("'CONTROLLER_ROLE_CHANGED'"));
   assert.ok(resume.includes("'CONTROLLER_ROLE_CHANGED'"));
+});
+
+
+test('real execution arm revalidates requester role and epoch before arming',()=>{
+  assert.ok(arm.includes("if requester ~= ARGV[4] then return -7 end"));
+  assert.ok(arm.includes("if requesterEpoch > 0 and requesterCreatedAt < requesterEpoch then return -8 end"));
+  assert.ok(arm.includes('roleDeviceKey(requesterRole)'));
+  assert.ok(arm.includes('roleAssignmentKey(PREFIX, requesterRole)'));
+  assert.ok(arm.indexOf("requester ~= ARGV[4]") < arm.indexOf("redis.call('SET', KEYS[8], ARGV[3])"));
+  assert.ok(arm.includes('clearDeviceSessionCookie(res)'));
+});
+
+test('definitive MASTER revoke revalidates current controller before destructive writes',()=>{
+  assert.ok(revoke.includes("if controller ~= ARGV[3] then return -6 end"));
+  assert.ok(revoke.includes("if controllerEpoch > 0 and controllerCreatedAt < controllerEpoch then return -7 end"));
+  assert.ok(revoke.includes('KEY_CONTROLLER_DEVICE'));
+  assert.ok(revoke.includes("roleAssignmentKey(PREFIX, 'controller')"));
+  assert.ok(revoke.indexOf("controller ~= ARGV[3]") < revoke.indexOf("redis.call('DEL', KEYS[5])"));
+  assert.ok(revoke.includes('clearDeviceSessionCookie(res)'));
+});
+
+test('fail-safe PANIC remains available independently of requester final-commit fences',()=>{
+  const panicStart=sync.indexOf("if (action === 'emergency-stop' && req.method === 'POST')");
+  const panicEnd=sync.indexOf("if (action === 'emergency-stop-clear' && req.method === 'POST')",panicStart);
+  const panic=sync.slice(panicStart,panicEnd);
+  assert.ok(panic.includes("requireDevice(req, res, ['controller', 'master'])"));
+  assert.ok(panic.includes('const panicEpoch = await assertEmergencyStop()'));
+  assert.equal(panic.includes('verifyMasterAdminCode(req, res, device)'),false);
 });
