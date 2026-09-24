@@ -11,6 +11,13 @@ test('iPhone controller state is synchronized through Zenith cloud API, not LAN'
   assert.match(html,/masterRuntimeApi\('master-config-ack','POST'/);
 });
 
+test('controller self-heals an internally invalid remote state hash using the authenticated iPhone payload',()=>{
+  assert.match(html,/const remoteStateHash=remoteState\?await sha256Hex\(stableStringify\(remoteState\?\.data\|\|\{\}\)\):''/);
+  assert.match(html,/String\(remoteState\?\.stateHash\|\|''\)!==remoteStateHash/);
+  assert.match(html,/JSON\.stringify\(\{expectedRevision:remoteRevision,data:payload\}\)/);
+  assert.match(html,/localStorage\.setItem\(ZENITH_CONTROLLER_REV_KEY,String\(Math\.max\(0,n\(repaired\.state\.revision,remoteRevision\)\)\)\)/);
+});
+
 test('controller-to-MASTER critical sync has no same-WiFi dependency',()=>{
   const critical=['controller-state','master-config-status','master-config-ack','command','command-next','command-ack'];
   for(const action of critical) assert.ok(html.includes(action),action);
