@@ -45,7 +45,7 @@ test('market gaps are replayed from public aggTrades and ambiguity fails closed'
   assert.ok(worker.includes('recoverMissedAggTrades'));
   assert.ok(worker.includes('markStream.pendingAggTrades'));
   assert.ok(worker.includes('pages<25'));
-  assert.ok(worker.includes("assertAutoProtectionPanic('MARK_RECOVERY_PARTIAL_'"));
+  assert.ok(worker.includes("failClosedAutoProtection('MARK_RECOVERY_PARTIAL_'"));
   assert.ok(worker.includes("'MARK_RECOVERY_FAILED_'+cleanReason"));
   assert.ok(worker.includes("'MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol"));
 });
@@ -92,12 +92,13 @@ test('replacement confirms new exact LIMIT protection before canceling old',()=>
   assert.ok(block.includes('realNumberMatches(order?.price,level.limitPrice)'));
 });
 
-test('ambiguous autonomous writes fail closed into PANIC',()=>{
+test('ambiguous autonomous writes fail closed without automatic PANIC',()=>{
   const block=between('async function executeAutoProgressive','async function runAutoProtection');
   assert.ok(block.includes('placed.data?.writeAttempted===true'));
   assert.ok(block.includes('placed.data?.ambiguous===true'));
-  assert.ok(block.includes('assertAutoProtectionPanic'));
-  assert.ok(worker.includes("syncApi('emergency-stop',{method:'POST',body:{}})"));
+  assert.ok(block.includes('failClosedAutoProtection'));
+  assert.equal(worker.includes("syncApi('emergency-stop'"),false);
+  assert.equal(block.includes('EXEC_CLOSE_POSITION'),false);
 });
 
 test('worker gets active-symbol PRICE_FILTER metadata from fenced runtime snapshot',()=>{
