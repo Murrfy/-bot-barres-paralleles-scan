@@ -730,7 +730,7 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
       return {
         commandId: transition.commandId,
         symbol: transition.symbol,
-        side: transition.side,
+        entrySide: transition.side,
         direction: transition.direction,
         quantity: transition.quantity,
         limitPrice: transition.limitPrice,
