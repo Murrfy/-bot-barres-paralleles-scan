@@ -2193,7 +2193,8 @@ async function reconcile(secondPass=false){
         );
         if(expiredEntry){
           const watchState=entryWatch.states.get(expiredEntry.symbol);
-          if(watchState){
+          const watchConfig=watchedEntryConfig(expiredEntry.symbol);
+          if(watchState&&watchConfig&&autoEntryCommandId(watchConfig)===expiredEntry.commandId){
             watchState.triggeredAt=0;
             watchState.pendingUntil=0;
             watchState.blockedAt=Date.now();
