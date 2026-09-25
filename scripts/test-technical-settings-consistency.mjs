@@ -30,7 +30,7 @@ test('per-token profit target and max loss persist independently',()=>{
 });
 
 test('controller cloud state carries per-token settings to Render',()=>{
-  assert.match(html,/function controllerCloudStatePayload\(\)[\s\S]*tokenSettings:normalizeRecordBlock\(tokenSettings\)/);
+  assert.match(html,/function controllerCloudStatePayload\(\)[\s\S]*tokenSettings:clone\(normalizeRecordBlock\(tokenSettings\)\)/);
   assert.match(worker,/runtime\.config=clone\(controllerState\.data\)/);
   assert.match(worker,/runtime\.config\?\.tokenSettings/);
 });
