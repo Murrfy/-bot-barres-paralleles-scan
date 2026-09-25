@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, sameOriginMutation, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
+import { evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity } from '../lib/entry-transition.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -21,6 +22,7 @@ const PREFIX = 'zenith:v1';
 const KEY_STATE = `${PREFIX}:state`;
 const KEY_RECONCILE_LAST = `${PREFIX}:reconcile:last`;
 const KEY_AUDIT = `${PREFIX}:audit`;
+const KEY_ENTRY_TRANSITIONS = `${PREFIX}:entry-transitions`;
 const BINANCE_RECONCILE_RATE_LIMIT_PER_MINUTE = 30;
 const VERCEL_CONTROL_MUTATION_ALLOWED = !process.env.VERCEL_ENV ||
   process.env.VERCEL_ENV === 'development' ||
@@ -323,11 +325,17 @@ function orderProtectsPosition(order, position) {
   return order?.reduceOnly === true || order?.closePosition === true;
 }
 
-function reconcile(runtimeState, actualPositions, actualOrders) {
+function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions = []) {
   const runtimeMode = String(runtimeState?.data?.executionMode || runtimeState?.data?.mode || '').toUpperCase();
   const runtimeIsReal = runtimeMode === 'REAL';
   const expectedPos = runtimeIsReal ? expectedPositions(runtimeState) : [];
   const expectedOrd = runtimeIsReal ? expectedOrders(runtimeState) : [];
+  const transitionState = evaluateEntryTransitionReconciliation({
+    transitions: entryTransitions,
+    actualOrders,
+    actualPositions,
+  });
+  const transitionAllowedOrders = transitionState.allowedOrderIdentities;
 
   const actualPosMap = new Map(actualPositions.map(p => [positionKey(p), p]));
   const expectedPosMap = new Map(expectedPos.map(p => [positionKey(p), p]));
@@ -368,7 +376,7 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
   const missingOrders = [];
 
   for (const [key, actual] of actualOrderMap) {
-    if (!expectedOrderMap.has(key)) untrackedOrders.push(actual);
+    if (!expectedOrderMap.has(key) && !transitionAllowedOrders.has(key)) untrackedOrders.push(actual);
   }
   for (const [key, expected] of expectedOrderMap) {
     if (!actualOrderMap.has(key)) missingOrders.push(expected);
@@ -377,6 +385,10 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
   const reasons = [];
   if (!runtimeIsReal && actualPositions.length) reasons.push('BINANCE_POSITION_WHILE_RUNTIME_NOT_REAL');
   if (!runtimeIsReal && actualOrders.length) reasons.push('BINANCE_ORDER_WHILE_RUNTIME_NOT_REAL');
+  if (!runtimeIsReal && transitionState.active.length) reasons.push('ENTRY_TRANSITION_RUNTIME_NOT_REAL');
+  if (transitionState.invalid.length) reasons.push('ENTRY_TRANSITION_STATE_INVALID');
+  if (transitionState.missingProtections.length) reasons.push('ENTRY_TRANSITION_PROTECTION_MISSING');
+  if (transitionState.missingEntries.length) reasons.push('ENTRY_TRANSITION_ENTRY_MISSING');
   if (untrackedPositions.length) reasons.push('UNTRACKED_BINANCE_POSITION');
   if (missingPositions.length) reasons.push('MISSING_BINANCE_POSITION');
   if (quantityMismatches.length) reasons.push('BINANCE_POSITION_QUANTITY_MISMATCH');
@@ -386,6 +398,7 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
   const orphanZenithProtectiveOrders = actualOrders.filter(order =>
     Boolean(zenithManagedOrderId(order)) &&
     (order?.reduceOnly === true || order?.closePosition === true) &&
+    !transitionAllowedOrders.has(entryTransitionOrderIdentity(order)) &&
     !actualPositions.some(position => orderProtectsPosition(order, position))
   );
   if (orphanZenithProtectiveOrders.length) reasons.push('ORPHAN_ZENITH_PROTECTIVE_ORDER');
@@ -496,8 +509,52 @@ function reconcile(runtimeState, actualPositions, actualOrders) {
       missingMaxLossProtections,
       ambiguousMaxLossProtections,
       unsafeMaxLossProtections,
+      entryTransitions: {
+        active: transitionState.active.map(row => ({
+          state: row.state,
+          symbol: row.symbol,
+          direction: row.direction,
+          commandId: row.commandId,
+          expiresAt: row.expiresAt,
+        })),
+        invalidReasons: transitionState.invalid.map(row => String(row.reason || 'ENTRY_TRANSITION_INVALID')),
+        expired: transitionState.expired.length,
+        missingProtections: transitionState.missingProtections,
+        missingEntries: transitionState.missingEntries,
+      },
     },
   };
+}
+
+function parseEntryTransitionStore(raw) {
+  if (raw == null) return [];
+  const records = [];
+  if (Array.isArray(raw)) {
+    for (let i = 0; i < raw.length; i += 2) {
+      const field = String(raw[i] ?? '');
+      const value = raw[i + 1];
+      if (!field) continue;
+      try {
+        const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+        records.push(parsed && typeof parsed === 'object' ? parsed : { __invalidEntryTransition:true });
+      } catch {
+        records.push({ __invalidEntryTransition:true });
+      }
+    }
+    return records;
+  }
+  if (raw && typeof raw === 'object') {
+    for (const value of Object.values(raw)) {
+      try {
+        const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+        records.push(parsed && typeof parsed === 'object' ? parsed : { __invalidEntryTransition:true });
+      } catch {
+        records.push({ __invalidEntryTransition:true });
+      }
+    }
+    return records;
+  }
+  return [{ __invalidEntryTransition:true }];
 }
 
 async function beginReconciliationAttempt(marker, device) {
@@ -688,9 +745,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    const [time, runtimeRaw] = await Promise.all([
+    const [time, runtimeRaw, entryTransitionRaw] = await Promise.all([
       jsonFetch(`${BASE}/fapi/v1/time`),
       redis(['GET', KEY_STATE]),
+      redis(['HGETALL', KEY_ENTRY_TRANSITIONS]),
     ]);
 
     const serverTime = number(time?.serverTime, NaN);
@@ -727,7 +785,8 @@ export default async function handler(req, res) {
 
     const actualOrders = [...standardOrders, ...algoOrders];
 
-    const result = reconcile(runtimeState, actualPositions, actualOrders);
+    const entryTransitions = parseEntryTransitionStore(entryTransitionRaw);
+    const result = reconcile(runtimeState, actualPositions, actualOrders, entryTransitions);
     result.actual.standardOrders = standardOrders.length;
     result.actual.algoOrders = algoOrders.length;
     const observedAt = started;
