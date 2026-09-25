@@ -1,4 +1,5 @@
 import test from 'node:test';
+import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { conflictingProtectiveOrders, emergencyProtection } from '../api/binance-protective-update-execute.js';
