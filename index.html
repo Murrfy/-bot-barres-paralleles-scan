@@ -2824,9 +2824,6 @@ async function saveRealActiveTokenSettings(s,position,old,protections){
   const maxLossChanged=Math.abs(currentMaxLoss-requestedMaxLoss)>1e-8;
 
   if(!targetChanged&&!protectionsChanged&&!maxLossChanged)return setStatus(s+' réel : aucune modification à appliquer.');
-  if(targetChanged&&protectionsChanged){
-    return setStatus(s+' : pour garantir une confirmation atomique, modifie l’objectif de vente et le tableau des protections séparément.',true);
-  }
 
   if(maxLossChanged){
     const pendingKey=realUpdatePendingKey(position,'MAX_LOSS');
