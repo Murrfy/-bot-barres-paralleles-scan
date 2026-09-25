@@ -2569,6 +2569,7 @@ async function currentMarketPrice(s){try{const d=await jf(`/fapi/v1/ticker/price
 async function instantBuySelected(){
   const s=selectedSymbol;
   if(!s)return setStatus('Sélectionne un jeton.',true);
+  if(anyActivePositionBySymbol(s))return setStatus(`${s} a déjà une position réelle active.`,true);
   setStatus(`${s} : achat immédiat réel uniquement. Le chemin Binance MARKET n’est pas encore armé ; aucune simulation n’a été créée.`,true);
 }
 async function manualClose(){
