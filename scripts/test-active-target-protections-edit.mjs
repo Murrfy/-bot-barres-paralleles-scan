@@ -166,8 +166,10 @@ test('engine accepts only one ACKed active token safe-field drift and verifies f
   assert.match(drift,/targetProfit/);
   assert.match(drift,/protectionStages/);
   assert.match(drift,/maxLoss>margin\+1e-8/);
-  assert.doesNotMatch(drift,/safeMutable=new Set\(\[[\s\S]*margin,/);
-  assert.doesNotMatch(drift,/safeMutable=new Set\(\[[\s\S]*leverage,/);
+  const safeMutableBlock=/const safeMutable=new Set\(\[([\s\S]*?)\]\);/.exec(drift)?.[1]||'';
+  assert.ok(safeMutableBlock,'safeMutable set missing');
+  assert.doesNotMatch(safeMutableBlock,/'margin'/);
+  assert.doesNotMatch(safeMutableBlock,/'leverage'/);
 
   const ack=block(worker,'async function safeAckActiveConfigAfterReconcile','async function runActiveConfigCommand');
   assert.match(ack,/activeConfigCommitted!==true/);
