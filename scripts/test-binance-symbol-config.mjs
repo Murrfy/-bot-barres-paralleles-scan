@@ -79,3 +79,19 @@ test('Zenith hard cap prevents symbol-config leverage above 10x',async()=>{
     /BINANCE_SYMBOL_CONFIG_REQUEST_INVALID/
   );
 });
+
+
+test('verification read after a write fails closed and records that Binance was mutated',async()=>{
+  const verifyDown=new BinanceRequestError('network',{ambiguous:true});
+  await assert.rejects(
+    ensureBinanceEntrySymbolConfig({
+      apiKey:'k',secret:'s',symbol:'SOLUSDT',leverage:3,timestamp:1000,
+      requestImpl:fakeRequest([
+        [{symbol:'SOLUSDT',marginType:'ISOLATED',leverage:10}],
+        {symbol:'SOLUSDT',leverage:3,maxNotionalValue:'100000'},
+        verifyDown,
+      ],[]),
+    }),
+    e=>e?.code==='BINANCE_LEVERAGE_VERIFY_UNAVAILABLE'&&e?.writeAttempted===true&&e?.ambiguous===true
+  );
+});
