@@ -23,6 +23,9 @@ test('controller command-status endpoint is controller-authenticated and privacy
   const block=sync.slice(start,end);
   assert.match(block,/requireDevice\(req, res, \['controller'\]\)/);
   assert.match(block,/commandTerminalResultKey\(commandId\)/);
+  assert.match(block,/clientCommandId/);
+  assert.match(block,/command:client:/);
+  assert.match(block,/status:'NOT_FOUND'/);
   assert.match(block,/String\(result\.deviceId \|\| ''\) !== String\(device\.deviceId \|\| ''\)/);
   assert.match(block,/COMMAND_RESULT_NOT_FOUND/);
   assert.match(block,/status:'PENDING'/);
