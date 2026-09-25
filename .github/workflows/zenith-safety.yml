@@ -68,6 +68,8 @@ jobs:
         run: node --test scripts/test-entry-transition.mjs
       - name: Test reconciliation entry-transition fencing
         run: node --test scripts/test-entry-transition-reconcile-wiring.mjs
+      - name: Test write-ahead entry restart recovery
+        run: node --test scripts/test-entry-writeahead-recovery.mjs
       - name: Test fail-closed reconciliation attempt fence
         run: node --test scripts/test-reconciliation-attempt-fence.mjs
       - name: Test orphan protection cleanup safety
