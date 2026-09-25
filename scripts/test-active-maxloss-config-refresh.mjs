@@ -39,5 +39,7 @@ test('active MAX-LOSS ACK commits controller state and MASTER applied revision a
   assert.match(fn,/expectedStateHash/);
   assert.match(fn,/redis\.call\('SET', KEYS\[7\], ARGV\[11\]\)/);
   assert.match(fn,/redis\.call\('SET', KEYS\[9\], ARGV\[13\]\)/);
-  assert.match(fn,/await completeProcessingCommandAtomic\(raw, commandId, device\)/);
+  const ack=block(sync,"if (action === 'command-ack' && req.method === 'POST')","if (action === 'command-fail' && req.method === 'POST')");
+  assert.match(ack,/await completeProcessingCommandAtomic\(raw, commandId, device\)/);
+  assert.match(ack,/await completeProcessingCommandAtomic\(raw, commandId, device, controllerCompletion\)/);
 });
