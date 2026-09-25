@@ -43,3 +43,26 @@ test('active MAX-LOSS ACK commits controller state and MASTER applied revision a
   assert.match(ack,/await completeProcessingCommandAtomic\(raw, commandId, device\)/);
   assert.match(ack,/await completeProcessingCommandAtomic\(raw, commandId, device, controllerCompletion\)/);
 });
+
+
+test('MAX-LOSS overlap is reconciled before old stop cancellation and only for the authorized pair',()=>{
+  const overlap=block(worker,'function authorizedMaxLossOverlapReport','async function reconcile');
+  assert.match(overlap,/AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION/);
+  assert.match(overlap,/authorizedPendingMaxLossEdits/);
+  assert.match(overlap,/ambiguousMaxLossProtections/);
+  assert.match(overlap,/missingMaxLossProtections/);
+  assert.match(overlap,/unsafeMaxLossProtections/);
+  assert.match(overlap,/previousClientAlgoId/);
+  assert.match(overlap,/newClientAlgoId/);
+
+  const reconcile=block(worker,'async function reconcile(secondPass=false)','async function awaitReconciliation');
+  assert.match(reconcile,/maxLossOverlap=authorizedMaxLossOverlapReport\(data\.report\)/);
+  assert.match(reconcile,/MAX_LOSS_REPLACEMENT_IN_PROGRESS/);
+  assert.match(reconcile,/markUserStreamReconciled/);
+
+  const update=block(worker,'async function runProtectiveUpdate','async function waitForFullCloseState');
+  const place=update.indexOf('newClientId=await placeNew({deferReconcile:maxLoss})');
+  const overlapCheck=update.indexOf('const overlapReady=await awaitReconciliation()');
+  const cancel=update.indexOf('await cancelOld(newClientId)');
+  assert.ok(place>=0&&overlapCheck>place&&cancel>overlapCheck,'safe overlap must reconcile before old MAX-LOSS cancellation');
+});
