@@ -26,7 +26,7 @@ test('global protections checkbox only folds the table and never disables protec
 });
 
 test('UI-only protection visibility is excluded from the server trading-control snapshot',()=>{
-  const payload=block('function controllerCloudStatePayload()','async function syncControllerCloudStateNow()');
+  const payload=block('function controllerCloudStatePayload(','async function syncControllerCloudStateNow()');
   assert.match(payload,/\['theme','sound','vibrate','showProtections'\]/);
   assert.match(payload,/delete controlSettings\[key\]/);
   assert.match(payload,/settings:controlSettings/);
