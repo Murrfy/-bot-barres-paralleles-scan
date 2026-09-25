@@ -8,7 +8,7 @@ test('24/7 engine repairs one exact missing MAX-LOSS before accepting reconcilia
   assert.match(worker,/buildMaxLossRepairPlan/);
   assert.match(worker,/repairMissingMaxLoss\(data\.report\)/);
   assert.match(worker,/AUTO_MAX_LOSS_REPAIR_/);
-  assert.match(worker,/syncApi\('emergency-stop'/);
+  assert.doesNotMatch(worker,/syncApi\('emergency-stop'/);
   assert.match(worker,/protectionKind:'MAX_LOSS'/);
   assert.match(worker,/phase:'PLACE_NEW'/);
   assert.match(worker,/STOP_MARKET/);
@@ -16,8 +16,12 @@ test('24/7 engine repairs one exact missing MAX-LOSS before accepting reconcilia
   assert.match(worker,/return reconcile\(true\)/);
 });
 
-test('ambiguous or failed repair remains fail-closed',()=>{
+test('ambiguous or failed repair remains fail-closed without closing the position',()=>{
   assert.match(worker,/if\(plan\.action!=='REPAIR'\)/);
-  assert.match(worker,/await invalidateStream\(reason\)/);
+  assert.match(worker,/markMaxLossRepairFailure/);
   assert.match(worker,/AUTO_MAX_LOSS_REPAIR_RECONCILIATION_FAILED/);
+  const start=worker.indexOf('async function repairMissingMaxLoss');
+  const end=worker.indexOf('async function reconcile',start);
+  const repairBlock=worker.slice(start,end);
+  assert.doesNotMatch(repairBlock,/runFullClose|EXEC_CLOSE_POSITION|MARKET_LAST_RESORT|emergency-stop/);
 });
