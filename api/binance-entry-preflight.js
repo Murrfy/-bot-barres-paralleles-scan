@@ -324,6 +324,13 @@ export default async function handler(req, res) {
       latencyMs: result.latencyMs,
     });
   } catch (e) {
+    if (e?.code === 'MAX_ACTIVE_CONFIG_INVALID') {
+      return send(res, 503, {
+        ok: false,
+        code: 'MAX_ACTIVE_CONFIG_INVALID',
+        error: 'Configuration du nombre maximum de positions indisponible.',
+      });
+    }
     return send(res, 502, {
       ok: false,
       code: e?.code === 'PREFLIGHT_REQUEST_INVALID' ? e.code : 'BINANCE_PREFLIGHT_FAILED',
