@@ -17,9 +17,8 @@ function block(source,start,end){
 
 test('active target and protection settings remain unchanged locally and centrally until ACK',()=>{
   const save=block(html,'async function saveRealActiveTokenSettings','async function saveToken()');
-  assert.match(save,/if\(targetChanged&&protectionsChanged\)/);
-  assert.match(save,/modifie l’objectif de vente et le tableau des protections séparément/);
   assert.match(save,/const activeConfig=\{/);
+  assert.match(save,/protectionStages:nextProtections/);
   assert.match(save,/queueRealProtectiveUpdate\(position,'EXIT',[\s\S]*activeConfig/);
   assert.match(save,/queueRealActiveConfigUpdate\(position,activeConfig\)/);
   assert.doesNotMatch(save,/tokenSettings\[s\]\s*=/);
@@ -138,8 +137,10 @@ test('MASTER applies due new protection before committing the new table',()=>{
 
   const protective=block(worker,'async function runProtectiveUpdate','async function waitForFullCloseState');
   const targetApply=protective.indexOf('applyPendingProtectionTableBeforeConfigCommit(raw,body)');
+  const cancelOrPlace=protective.indexOf("let newClientId=''");
   const targetAck=protective.indexOf('safeAckActiveConfigAfterReconcile');
-  assert.ok(targetApply>=0&&targetAck>targetApply,'target+config path must apply due protection before ACK');
+  assert.ok(targetApply>=0&&cancelOrPlace>targetApply&&targetAck>cancelOrPlace,
+    'due protection must be applied before target replacement and ACK');
 });
 
 test('an already stronger progressive protection is never downgraded by an edited table',()=>{
