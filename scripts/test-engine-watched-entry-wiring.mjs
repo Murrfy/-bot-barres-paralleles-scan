@@ -46,6 +46,8 @@ test('entry API validates amount/leverage bracket before Binance symbol mutation
 });
 
 test('phased real entry can only be driven by the 24/7 engine principal',()=>{
-  assert.match(entryApi,/phaseProvided&&String\(master\?\.principal\|\|''\)!=='engine'/);
+  assert.match(entryApi,/if\(!phaseProvided\)[\s\S]*code:'ENTRY_PHASE_REQUIRED'/);
+  assert.match(entryApi,/String\(master\?\.principal\|\|''\)!=='engine'/);
   assert.match(entryApi,/code:'ENTRY_ENGINE_REQUIRED'/);
+  assert.doesNotMatch(entryApi,/findCoveringEntryProtection/);
 });
