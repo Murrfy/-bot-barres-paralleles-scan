@@ -150,9 +150,8 @@ test('live Binance target and protection edits keep old config until server ACK'
   assert.match(realSave,/!inv\.managedMaxLoss\|\|inv\.maxLossConflict/);
   assert.match(realSave,/inv\.progressiveConflict/);
   assert.match(realSave,/buildRealProtectionLevels\(\{[\s\S]*position,[\s\S]*targetProfitUsd:manualTarget,[\s\S]*maxLossUsd:requestedMaxLoss,[\s\S]*priceFilter[\s\S]*\}\)/);
-  assert.match(realSave,/if\(targetChanged&&protectionsChanged\)/);
-  assert.match(realSave,/modifie l’objectif de vente et le tableau des protections séparément/);
   assert.match(realSave,/const activeConfig=\{/);
+  assert.match(realSave,/protectionStages:nextProtections/);
   assert.match(realSave,/queueRealProtectiveUpdate\(position,'EXIT',[\s\S]*activeConfig/);
   assert.match(realSave,/queueRealActiveConfigUpdate\(position,activeConfig\)/);
   assert.doesNotMatch(realSave,/tokenSettings\[s\]\s*=/);
