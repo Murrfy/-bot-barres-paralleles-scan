@@ -41,3 +41,18 @@ test('ACK completion stores structured terminal result atomically with processin
   assert.match(block,/redis\.call\('LREM', KEYS\[1\], 1, ARGV\[1\]\)/);
   assert.match(block,/redis\.call\('SET', KEYS\[5\], ARGV\[5\], 'EX', ARGV\[6\]\)/);
 });
+
+
+test('terminal status carries committed active config proof back to the iPhone',()=>{
+  const start=sync.indexOf("if (action === 'command-status' && req.method === 'GET')");
+  const end=sync.indexOf("if (action === 'command' && req.method === 'POST')",start);
+  const status=sync.slice(start,end);
+  assert.match(status,/activeConfigCommitted:result\.activeConfigCommitted===true/);
+  assert.match(status,/activeConfigKind:String\(result\.activeConfigKind \|\| ''\)/);
+  assert.match(status,/activeConfig:result\.activeConfig/);
+
+  const complete=sync.slice(sync.indexOf('async function completeProcessingCommandAtomic'),sync.indexOf('function masterAuthorityMutationCode'));
+  assert.match(complete,/activeConfigCommitted:true/);
+  assert.match(complete,/controllerRevision:controllerCommit\.nextRevision/);
+  assert.match(complete,/controllerStateHash:controllerCommit\.nextStateHash/);
+});

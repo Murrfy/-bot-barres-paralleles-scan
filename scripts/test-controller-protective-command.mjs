@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildControllerUpdateExitCommand,
   buildControllerUpdateProtectionCommand,
+  buildControllerActiveConfigCommand,
 } from '../lib/controller-real-command.mjs';
 
 const longPosition={
@@ -48,4 +49,22 @@ test('protection trigger side is direction-safe',()=>{
   assert.throws(()=>buildControllerUpdateProtectionCommand(longPosition,51000,'MAX_LOSS'),/LONG_MAX_LOSS_TRIGGER_NOT_BELOW_ENTRY/);
   assert.throws(()=>buildControllerUpdateProtectionCommand(shortPosition,3100,'PROGRESSIVE'),/SHORT_PROGRESSIVE_TRIGGER_ABOVE_ENTRY/);
   assert.throws(()=>buildControllerUpdateProtectionCommand(shortPosition,2900,'MAX_LOSS'),/SHORT_MAX_LOSS_TRIGGER_NOT_ABOVE_ENTRY/);
+});
+
+
+test('iPhone binds active target settings to command identity and builds config-only protection command',()=>{
+  const activeConfig={
+    targetProfit:40,manualTargetProfit:40,
+    protectionStages:[{enabled:true,arm:105,floor:100}],
+    exactSaleEnabled:false,exactSalePrice:0,exactSaleSource:'settings'
+  };
+  const exit=buildControllerUpdateExitCommand(longPosition,51000,'zth-EXI-abcdef',activeConfig,'abc123digest');
+  assert.deepEqual(exit.payload.activeConfig,activeConfig);
+  assert.match(exit.clientCommandId,/abc123digest/);
+
+  const config=buildControllerActiveConfigCommand(longPosition,activeConfig,'configdigest123');
+  assert.equal(config.type,'EXEC_UPDATE_ACTIVE_CONFIG');
+  assert.deepEqual(config.payload.activeConfig,activeConfig);
+  assert.match(config.clientCommandId,/configdigest123/);
+  assert.throws(()=>buildControllerActiveConfigCommand(longPosition,activeConfig,''),/ACTIVE_CONFIG_DIGEST_REQUIRED/);
 });

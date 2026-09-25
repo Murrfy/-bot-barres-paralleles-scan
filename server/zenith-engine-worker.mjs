@@ -387,7 +387,23 @@ async function applyControllerState(controllerState){
   return {revision,stateHash};
 }
 
-function activeMaxLossOnlyConfigRefreshAllowed(currentConfig,nextConfig){
+function validActiveProtectionStages(stages){
+  if(!Array.isArray(stages)||stages.length<1||stages.length>200)return false;
+  let previousArm=-Infinity,previousFloor=-Infinity;
+  for(const row of stages){
+    if(!row||typeof row!=='object'||Array.isArray(row))return false;
+    if(Object.keys(row).some(key=>!['enabled','arm','floor'].includes(key)))return false;
+    const enabled=row.enabled!==false,arm=n(row.arm,NaN),floor=n(row.floor,NaN);
+    if(!Number.isFinite(arm)||!Number.isFinite(floor)||arm<0||floor<0||arm>1e9||floor>1e9)return false;
+    if(enabled){
+      if(!(floor<arm)||!(arm>previousArm)||floor+1e-8<previousFloor)return false;
+      previousArm=arm;previousFloor=floor;
+    }
+  }
+  return true;
+}
+
+function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig){
   if(!currentConfig||typeof currentConfig!=='object'||!nextConfig||typeof nextConfig!=='object')return false;
   for(const key of ['settings','manualTokens','validated']){
     if(stableStringify(currentConfig[key]||{})!==stableStringify(nextConfig[key]||{}))return false;
@@ -398,6 +414,10 @@ function activeMaxLossOnlyConfigRefreshAllowed(currentConfig,nextConfig){
   const nextTokens=nextConfig.tokenSettings&&typeof nextConfig.tokenSettings==='object'
     ?nextConfig.tokenSettings:{};
   const symbols=[...new Set([...Object.keys(currentTokens),...Object.keys(nextTokens)])].sort();
+  const safeMutable=new Set([
+    'maxLoss','marginType','targetProfit','manualTargetProfit','protectionStages',
+    'exactSaleEnabled','exactSalePrice','exactSaleSource'
+  ]);
   let changed=0;
 
   for(const symbol of symbols){
@@ -408,8 +428,7 @@ function activeMaxLossOnlyConfigRefreshAllowed(currentConfig,nextConfig){
 
     const beforeRest={...before};
     const afterRest={...after};
-    delete beforeRest.maxLoss;delete afterRest.maxLoss;
-    delete beforeRest.marginType;delete afterRest.marginType;
+    for(const key of safeMutable){delete beforeRest[key];delete afterRest[key]}
     if(stableStringify(beforeRest)!==stableStringify(afterRest))return false;
 
     const maxLoss=n(after.maxLoss,NaN);
@@ -417,6 +436,13 @@ function activeMaxLossOnlyConfigRefreshAllowed(currentConfig,nextConfig){
     if(!(maxLoss>=2&&maxLoss<=REAL_RISK_LIMITS.maxLossUsd))return false;
     if(!(margin>0)||maxLoss>margin+1e-8)return false;
     if(String(after.marginType||'ISOLATED').toUpperCase()!=='ISOLATED')return false;
+
+    const target=n(after.targetProfit,NaN),manual=n(after.manualTargetProfit,target);
+    if(!(target>0)||!(manual>0)||Math.abs(target-manual)>1e-8)return false;
+    const exactEnabled=after.exactSaleEnabled===true,exactPrice=n(after.exactSalePrice,0);
+    if(exactEnabled&&!(exactPrice>0))return false;
+    if(!(exactPrice>=0)||String(after.exactSaleSource||'settings')!=='settings')return false;
+    if(!validActiveProtectionStages(after.protectionStages))return false;
     changed+=1;
   }
 
@@ -453,7 +479,7 @@ async function syncControllerConfig(){
   if(data.synchronized===true&&!localMatches){
     const activity=data.activity||{};
     if(n(activity.activePositions)>0||n(activity.openOrders)>0){
-      if(!activeMaxLossOnlyConfigRefreshAllowed(runtime.config,controllerState.data)){
+      if(!activeSafeTokenConfigRefreshAllowed(runtime.config,controllerState.data)){
         runtime.synchronized=false;
         runtime.error='ENGINE_LOCAL_CONFIG_DRIFT_ACTIVE';
         return false;
@@ -2253,6 +2279,181 @@ async function safeAckActiveMaxLossAfterReconcile(raw,executionProof,body){
   return runtime.synchronized;
 }
 
+async function applyPendingProtectionTableBeforeConfigCommit(raw,body){
+  const symbol=String(body?.symbol||'').toUpperCase();
+  const direction=String(body?.direction||'').toUpperCase();
+  const quantity=Math.abs(n(body?.quantity,0));
+  const stages=body?.activeConfig?.protectionStages;
+  if(!symbol||!['LONG','SHORT'].includes(direction)||!(quantity>0)||!validActiveProtectionStages(stages)){
+    await failCommand(raw,'ACTIVE_PROTECTION_CONFIG_INVALID');
+    execution.lastError='ACTIVE_PROTECTION_CONFIG_INVALID';
+    return false;
+  }
+  if(!autoProtection.highWaterLoaded){
+    const loaded=await loadAutoHighWater();
+    if(!loaded){
+      await requeueCommand(raw,'ACTIVE_PROTECTION_HIGH_WATER_UNAVAILABLE',1500);
+      return false;
+    }
+  }
+
+  const projection=streamProjection();
+  const position=(projection.binancePositions||[]).find(row=>{
+    const amount=n(row?.positionAmt??row?.quantity,0);
+    const rowDirection=amount>=0?'LONG':'SHORT';
+    return String(row?.symbol||'').toUpperCase()===symbol&&
+      rowDirection===direction&&Math.abs(Math.abs(amount)-quantity)<=1e-12;
+  })||null;
+  if(!position){
+    await failCommand(raw,'ACTIVE_PROTECTION_POSITION_CHANGED');
+    execution.lastError='ACTIVE_PROTECTION_POSITION_CHANGED';
+    return false;
+  }
+
+  const account=await binanceApi('/api/binance-read');
+  if(!account.response.ok||account.data?.ok!==true){
+    const reason='ACTIVE_PROTECTION_MARK_'+String(account.data?.code||('HTTP_'+account.response.status));
+    if(account.response.status===429){
+      await requeueCommand(raw,reason,1500);
+    }else{
+      await failCommand(raw,reason);
+      execution.lastError=reason;
+    }
+    return false;
+  }
+  const restPosition=(Array.isArray(account.data?.positions)?account.data.positions:[]).find(row=>{
+    const amount=n(row?.positionAmt??row?.quantity,0);
+    const rowDirection=amount>=0?'LONG':'SHORT';
+    return String(row?.symbol||'').toUpperCase()===symbol&&rowDirection===direction&&Math.abs(amount)>0;
+  })||null;
+  const mark=n(restPosition?.markPrice,0);
+  const restQty=Math.abs(n(restPosition?.positionAmt??restPosition?.quantity,0));
+  if(!(mark>0)||!restPosition||Math.abs(restQty-quantity)>1e-12){
+    await failCommand(raw,'ACTIVE_PROTECTION_MARK_POSITION_MISMATCH');
+    execution.lastError='ACTIVE_PROTECTION_MARK_POSITION_MISMATCH';
+    return false;
+  }
+
+  const highWater=observeAutoHighWater(position,mark);
+  if(!Number.isFinite(highWater)||!(await persistAutoHighWaterNow())){
+    await requeueCommand(raw,'ACTIVE_PROTECTION_HIGH_WATER_NOT_PERSISTED',1500);
+    return false;
+  }
+
+  const priceFilter=await ensurePriceFilter(symbol);
+  if(!priceFilter){
+    await requeueCommand(raw,'ACTIVE_PROTECTION_PRICE_FILTER_UNAVAILABLE',1500);
+    return false;
+  }
+
+  let plan;
+  try{
+    plan=evaluateMasterAutoProgressiveProtection({
+      position,
+      markPrice:mark,
+      protectionStages:stages,
+      currentOrders:Array.isArray(projection.binanceOrders)?projection.binanceOrders:[],
+      priceFilter,
+      previousHighWaterProfitUsd:highWater,
+    });
+  }catch(error){
+    const reason='ACTIVE_PROTECTION_PLAN_'+cleanReason(error?.message||'FAILED','FAILED');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+
+  if(plan.action==='BLOCK'){
+    const reason='ACTIVE_PROTECTION_BLOCKED_'+cleanReason(plan.reason||'BLOCKED','BLOCKED');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+  if(plan.action==='REPLACE'){
+    const changed=await executeAutoProgressive(plan);
+    if(changed!==true){
+      const reason='ACTIVE_PROTECTION_REPLACEMENT_NOT_CONFIRMED';
+      await failCommand(raw,reason);
+      execution.lastError=reason;
+      return false;
+    }
+  }
+  return true;
+}
+
+async function safeAckActiveConfigAfterReconcile(raw,executionProof,body,failurePrefix='EXEC_ACTIVE_CONFIG_ACK_RETRY'){
+  try{
+    const reconciled=await awaitReconciliation();
+    if(reconciled!==true||userStreamReady(stream.state)!==true)throw new Error('RECONCILIATION_NOT_READY');
+  }catch(error){
+    const reason=failurePrefix+'_'+String(error?.message||'RECONCILE');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+
+  let ack;
+  try{
+    ack=await ackCommand(raw,executionProof);
+  }catch(error){
+    const reason=failurePrefix+'_'+String(error?.message||'ACK');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+
+  const activeConfig=ack?.activeConfig;
+  const symbol=String(ack?.symbol||body?.symbol||'').toUpperCase();
+  const revision=Math.max(0,n(ack?.controllerRevision,0));
+  const expectedHash=String(ack?.controllerStateHash||'');
+  if(ack?.activeConfigCommitted!==true||!runtime.config||!symbol||!(revision>0)||!expectedHash||
+     !activeConfig||typeof activeConfig!=='object'||Array.isArray(activeConfig)){
+    runtime.synchronized=false;
+    runtime.error='ACTIVE_CONFIG_ACK_INVALID';
+    await publishRuntime().catch(()=>{});
+    return false;
+  }
+
+  const target=n(activeConfig.targetProfit,NaN);
+  const manual=n(activeConfig.manualTargetProfit,NaN);
+  const exactEnabled=activeConfig.exactSaleEnabled===true;
+  const exactPrice=n(activeConfig.exactSalePrice,0);
+  if(!(target>0)||!(manual>0)||Math.abs(target-manual)>1e-8||
+     (exactEnabled&&!(exactPrice>0))||!(exactPrice>=0)||
+     String(activeConfig.exactSaleSource||'')!=='settings'||
+     !validActiveProtectionStages(activeConfig.protectionStages)){
+    runtime.synchronized=false;
+    runtime.error='ACTIVE_CONFIG_ACK_PAYLOAD_INVALID';
+    await publishRuntime().catch(()=>{});
+    return false;
+  }
+
+  const tokenSettings=runtime.config.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const current=tokenSettings[symbol]&&typeof tokenSettings[symbol]==='object'?tokenSettings[symbol]:{};
+  runtime.config={
+    ...runtime.config,
+    tokenSettings:{
+      ...tokenSettings,
+      [symbol]:{...current,...activeConfig,marginType:'ISOLATED'},
+    },
+  };
+  const localHash=sha256Hex(stableStringify(runtime.config));
+  runtime.controllerRevision=revision;
+  runtime.appliedRevision=revision;
+  runtime.synchronized=localHash===expectedHash;
+  runtime.error=runtime.synchronized?'':'ACTIVE_CONFIG_ACK_HASH_MISMATCH';
+  await publishRuntime().catch(()=>{});
+  return runtime.synchronized;
+}
+
+async function runActiveConfigCommand(command,raw,dispatch){
+  if(!(await applyPendingProtectionTableBeforeConfigCommit(raw,dispatch.body)))return false;
+  return safeAckActiveConfigAfterReconcile(
+    raw,{activeConfigReady:true},dispatch.body,'EXEC_ACTIVE_PROTECTIONS_CONFIG_ACK_RETRY'
+  );
+}
+
 async function handleMutationFailure(raw,response,data,prefix){
   const reason=String(data?.code||data?.reason||data?.error||('HTTP_'+response.status));
   const ambiguous=data?.ambiguous===true||data?.result?.ambiguous===true;
@@ -2480,6 +2681,10 @@ async function runProtectiveUpdate(command,raw,dispatch){
     return clientId;
   }
 
+  if(type==='EXEC_UPDATE_EXIT'&&body.activeConfig){
+    if(!(await applyPendingProtectionTableBeforeConfigCommit(raw,body)))return false;
+  }
+
   let newClientId='';
   if(maxLoss||progressive){
     newClientId=await placeNew({deferReconcile:maxLoss});
@@ -2500,6 +2705,11 @@ async function runProtectiveUpdate(command,raw,dispatch){
   }
   if(maxLoss&&Number.isFinite(n(body.maxLossUsd,NaN))){
     return safeAckActiveMaxLossAfterReconcile(raw,{newClientId},body);
+  }
+  if(type==='EXEC_UPDATE_EXIT'&&body.activeConfig){
+    return safeAckActiveConfigAfterReconcile(
+      raw,{newClientId},body,'EXEC_ACTIVE_TARGET_CONFIG_ACK_RETRY'
+    );
   }
   return safeAckAfterReconcile(raw,{newClientId},'EXEC_PROTECTIVE_UPDATE_ACK_RETRY');
 }
@@ -2672,6 +2882,7 @@ async function commandCycle(){
     if(dispatch.type==='EXEC_CLOSE_POSITION')ok=await runFullClose(command,raw);
     else if(dispatch.type==='EXEC_CANCEL_ENTRY')ok=await runCancelEntry(command,raw,dispatch);
     else if(dispatch.type==='EXEC_OPEN_MARKET_POSITION')ok=await runMarketEntry(command,raw,dispatch);
+    else if(dispatch.type==='EXEC_UPDATE_ACTIVE_CONFIG')ok=await runActiveConfigCommand(command,raw,dispatch);
     else if(dispatch.type==='EXEC_UPDATE_EXIT'||dispatch.type==='EXEC_UPDATE_PROTECTION'){
       ok=await runProtectiveUpdate(command,raw,dispatch);
     }else{

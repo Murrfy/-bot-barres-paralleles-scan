@@ -89,3 +89,21 @@ test('cancel entry requires Binance client order id',()=>{
     id:'command-cancel-1234',type:'EXEC_CANCEL_ENTRY',payload:{symbol:'BTCUSDT'}
   }),/CLIENT_ORDER_ID_INVALID/);
 });
+
+
+test('active protection-table config command is server-only and carries no Binance endpoint',()=>{
+  const activeConfig={
+    targetProfit:40,manualTargetProfit:40,
+    protectionStages:[{enabled:true,arm:105,floor:100}],
+    exactSaleEnabled:false,exactSalePrice:0,exactSaleSource:'settings'
+  };
+  const d=buildMasterCommandDispatch({
+    id:'active-config-command-123',
+    type:'EXEC_UPDATE_ACTIVE_CONFIG',
+    payload:{symbol:'BTCUSDT',direction:'LONG',quantity:0.02,activeConfig}
+  });
+  assert.equal(d.supported,true);
+  assert.equal(d.endpoint,'');
+  assert.equal(d.body.type,'EXEC_UPDATE_ACTIVE_CONFIG');
+  assert.deepEqual(d.body.activeConfig,activeConfig);
+});

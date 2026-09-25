@@ -218,6 +218,8 @@ jobs:
         run: node --test scripts/test-protection-visibility-toggle.mjs
       - name: Test active real MAX-LOSS edit confirmation
         run: node --test scripts/test-active-maxloss-edit-v2.mjs
+      - name: Test confirmed active target and protection edits
+        run: node --test scripts/test-active-target-protections-edit.mjs
       - name: Test real-only UI and limit-only sells
         run: node --test scripts/test-real-only-ui.mjs
       - name: Test real Binance net history
@@ -278,6 +280,8 @@ jobs:
         run: node --test scripts/test-active-maxloss-transition.mjs
       - name: Test ACKed active MAX-LOSS config refresh
         run: node --test scripts/test-active-maxloss-config-refresh.mjs
+      - name: Test atomic active target/protection commit
+        run: node --test scripts/test-active-target-protection-confirmation.mjs
       - name: Test MASTER command worker routing
         run: node --test scripts/test-master-worker-routing.mjs
       - name: Test idempotent real entry cancellation

@@ -1065,6 +1065,7 @@ const PAUSE_PENDING_ALLOWED_COMMANDS = new Set([
   'CANCEL_ENTRY',
   'EXEC_UPDATE_EXIT',
   'EXEC_UPDATE_PROTECTION',
+  'EXEC_UPDATE_ACTIVE_CONFIG',
   'EXEC_CLOSE_POSITION',
   'EXEC_CANCEL_ENTRY',
 ]);
@@ -1080,6 +1081,7 @@ const ALLOWED_COMMAND_TYPES = new Set([
   'CANCEL_ENTRY',
   'EXEC_UPDATE_EXIT',
   'EXEC_UPDATE_PROTECTION',
+  'EXEC_UPDATE_ACTIVE_CONFIG',
   'EXEC_CLOSE_POSITION',
   'EXEC_CANCEL_ENTRY',
   'EXEC_OPEN_MARKET_POSITION',
@@ -1088,6 +1090,7 @@ const ALLOWED_COMMAND_TYPES = new Set([
 const PROTECTIVE_EXEC_COMMANDS = new Set([
   'EXEC_UPDATE_EXIT',
   'EXEC_UPDATE_PROTECTION',
+  'EXEC_UPDATE_ACTIVE_CONFIG',
   'EXEC_CLOSE_POSITION',
   'EXEC_CANCEL_ENTRY',
 ]);
@@ -1145,13 +1148,104 @@ function runtimeClosePositionQuantity(runtimeState, symbol, direction) {
   return 0;
 }
 
+function activeProtectionStagesStatus(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 200) {
+    return { ok:false, reason:'ACTIVE_PROTECTION_STAGES_INVALID' };
+  }
+  const rows = [];
+  let previousArm = -Infinity;
+  let previousFloor = -Infinity;
+  for (let i = 0; i < value.length; i++) {
+    const row = value[i];
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_INVALID' };
+    }
+    const keys = Object.keys(row);
+    if (keys.some(key => !['enabled','arm','floor'].includes(key))) {
+      return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_FIELD_INVALID' };
+    }
+    const enabled = row.enabled !== false;
+    const arm = Number(row.arm);
+    const floor = Number(row.floor);
+    if (!Number.isFinite(arm) || !Number.isFinite(floor) || arm < 0 || floor < 0 || arm > 1e9 || floor > 1e9) {
+      return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_AMOUNT_INVALID' };
+    }
+    if (enabled) {
+      if (!(floor < arm)) return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_FLOOR_INVALID' };
+      if (!(arm > previousArm)) return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_ORDER_INVALID' };
+      if (floor + 1e-8 < previousFloor) return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_FLOOR_DECREASE' };
+      previousArm = arm;
+      previousFloor = floor;
+    }
+    rows.push({ enabled, arm, floor });
+  }
+  return { ok:true, rows };
+}
+
+function activeConfigStatus(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok:false, reason:'ACTIVE_CONFIG_REQUIRED' };
+  }
+  const allowed = new Set([
+    'targetProfit','manualTargetProfit','protectionStages',
+    'exactSaleEnabled','exactSalePrice','exactSaleSource'
+  ]);
+  if (Object.keys(value).some(key => !allowed.has(key))) {
+    return { ok:false, reason:'ACTIVE_CONFIG_FIELD_INVALID' };
+  }
+  const targetProfit = Number(value.targetProfit);
+  const manualTargetProfit = Number(value.manualTargetProfit);
+  const exactSaleEnabled = value.exactSaleEnabled === true;
+  const exactSalePrice = Number(value.exactSalePrice || 0);
+  const exactSaleSource = String(value.exactSaleSource || '');
+  if (!(targetProfit > 0) || targetProfit > 1e9) return { ok:false, reason:'ACTIVE_TARGET_PROFIT_INVALID' };
+  if (!(manualTargetProfit > 0) || manualTargetProfit > 1e9) return { ok:false, reason:'ACTIVE_MANUAL_TARGET_INVALID' };
+  if (Math.abs(targetProfit - manualTargetProfit) > 1e-8) return { ok:false, reason:'ACTIVE_TARGETS_MUST_MATCH' };
+  if (exactSaleEnabled && !(exactSalePrice > 0)) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_REQUIRED' };
+  if (!Number.isFinite(exactSalePrice) || exactSalePrice < 0) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_INVALID' };
+  if (!exactSaleEnabled && exactSalePrice !== 0) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_MUST_BE_ZERO' };
+  if (!exactSaleEnabled && exactSalePrice !== 0) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_MUST_BE_ZERO' };
+  if (exactSaleSource !== 'settings') return { ok:false, reason:'ACTIVE_EXACT_SALE_SOURCE_INVALID' };
+  const stages = activeProtectionStagesStatus(value.protectionStages);
+  if (!stages.ok) return stages;
+  return {
+    ok:true,
+    activeConfig:{
+      targetProfit,
+      manualTargetProfit,
+      protectionStages:stages.rows,
+      exactSaleEnabled,
+      exactSalePrice,
+      exactSaleSource:'settings',
+    },
+  };
+}
+
 function execUpdatePayloadStatus(type, payload) {
   try {
     const normalized = normalizeProtectiveUpdatePayload(type, payload);
+    if (payload?.activeConfig != null) {
+      const config = activeConfigStatus(payload.activeConfig);
+      if (!config.ok) return config;
+      return { ok:true, ...normalized, activeConfig:config.activeConfig };
+    }
     return { ok:true, ...normalized };
   } catch (e) {
     return { ok:false, reason:String(e?.message || 'PROTECTIVE_UPDATE_PAYLOAD_INVALID') };
   }
+}
+
+function execActiveConfigPayloadStatus(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok:false, reason:'PAYLOAD_OBJECT_REQUIRED' };
+  const symbol = String(payload.symbol || '').toUpperCase();
+  const direction = String(payload.direction || '').toUpperCase();
+  const quantity = Number(payload.quantity);
+  if (!/^[A-Z0-9]{3,30}$/.test(symbol)) return { ok:false, reason:'SYMBOL_INVALID' };
+  if (!['LONG','SHORT'].includes(direction)) return { ok:false, reason:'DIRECTION_INVALID' };
+  if (!(quantity > 0)) return { ok:false, reason:'QUANTITY_INVALID' };
+  const config = activeConfigStatus(payload.activeConfig);
+  if (!config.ok) return config;
+  return { ok:true, symbol, direction, quantity, activeConfig:config.activeConfig };
 }
 
 function runtimePositionRecord(runtimeState, symbol, direction) {
@@ -1170,6 +1264,25 @@ function runtimePositionRecord(runtimeState, symbol, direction) {
 function runtimeOpenOrder(runtimeState, predicate) {
   const orders = Array.isArray(runtimeState?.data?.binanceOrders) ? runtimeState.data.binanceOrders : [];
   return orders.find(predicate) || null;
+}
+
+function runtimeProgressiveProtectionConflict(runtimeState, symbol, direction) {
+  const sym = String(symbol || '').toUpperCase();
+  const dir = String(direction || '').toUpperCase();
+  const expectedSide = dir === 'LONG' ? 'SELL' : 'BUY';
+  const orders = Array.isArray(runtimeState?.data?.binanceOrders) ? runtimeState.data.binanceOrders : [];
+  const rows = orders.filter(order => {
+    if (String(order?.orderClass || '').toUpperCase() !== 'ALGO') return false;
+    if (String(order?.symbol || '').toUpperCase() !== sym) return false;
+    if (String(order?.side || '').toUpperCase() !== expectedSide) return false;
+    if (String(order?.positionSide || 'BOTH').toUpperCase() !== 'BOTH') return false;
+    if (String(order?.type || '').toUpperCase() !== 'STOP') return false;
+    if (!(order?.reduceOnly === true || order?.reduceOnly === 'true')) return false;
+    return true;
+  });
+  if (rows.length > 1) return true;
+  if (rows.length === 1 && !/^zth-PRO-[A-Za-z0-9._:-]+$/.test(String(rows[0]?.clientAlgoId || ''))) return true;
+  return false;
 }
 
 function numberMatches(a, b) {
@@ -1935,6 +2048,130 @@ async function prepareActiveMaxLossControllerCommit(command, payloadStatus, devi
   };
 }
 
+async function prepareActiveConfigControllerCommit(command, payloadStatus, device, commitKind = 'ACTIVE_CONFIG') {
+  const activeConfig = payloadStatus?.activeConfig;
+  if (!activeConfig) return null;
+  const validated = activeConfigStatus(activeConfig);
+  if (!validated.ok) {
+    const e = new Error(validated.reason); e.code = validated.reason; throw e;
+  }
+
+  const commandType = String(command?.type || '').toUpperCase();
+  if (!['EXEC_UPDATE_EXIT','EXEC_UPDATE_ACTIVE_CONFIG'].includes(commandType)) {
+    const e = new Error('ACTIVE_CONFIG_COMMAND_TYPE_INVALID'); e.code = 'ACTIVE_CONFIG_COMMAND_TYPE_INVALID'; throw e;
+  }
+  if (commandType === 'EXEC_UPDATE_EXIT' && validated.activeConfig.exactSaleEnabled &&
+      !numberMatches(validated.activeConfig.exactSalePrice, payloadStatus?.targetPrice)) {
+    const e = new Error('ACTIVE_EXACT_SALE_PRICE_MISMATCH'); e.code = 'ACTIVE_EXACT_SALE_PRICE_MISMATCH'; throw e;
+  }
+
+  const controllerRaw = await redis(['GET', KEY_CONTROLLER_STATE]);
+  const controllerState = parseStoredJson(controllerRaw);
+  const expectedControllerDeviceId = String(command?.deviceId || '');
+  if (!controllerState || String(controllerState.controllerDeviceId || '') !== expectedControllerDeviceId) {
+    const e = new Error('CONTROLLER_STATE_OWNER_CHANGED'); e.code = 'CONTROLLER_STATE_OWNER_CHANGED'; throw e;
+  }
+  const revision = Number(controllerState.revision || 0);
+  const currentStateHash = String(controllerState.stateHash || '');
+  const data = controllerState.data && typeof controllerState.data === 'object' ? controllerState.data : null;
+  if (!Number.isInteger(revision) || revision <= 0 || !currentStateHash || !data ||
+      sha256(stableStringify(data)) !== currentStateHash) {
+    const e = new Error('CONTROLLER_STATE_INVALID'); e.code = 'CONTROLLER_STATE_INVALID'; throw e;
+  }
+
+  const symbol = String(payloadStatus.symbol || '').toUpperCase();
+  const tokenSettings = data.tokenSettings && typeof data.tokenSettings === 'object' ? data.tokenSettings : {};
+  const settings = data.settings && typeof data.settings === 'object' ? data.settings : {};
+  const currentToken = tokenSettings[symbol] && typeof tokenSettings[symbol] === 'object' ? tokenSettings[symbol] : {};
+  const margin = Number(currentToken.margin ?? settings.margin);
+  const maxLoss = Number(currentToken.maxLoss ?? settings.maxLoss);
+  const leverage = Number(currentToken.leverage ?? settings.leverage);
+  if (!(margin > 0) || margin > REAL_RISK_LIMITS.maxMarginUsdt) {
+    const e = new Error('CONFIGURED_MARGIN_INVALID'); e.code = 'CONFIGURED_MARGIN_INVALID'; throw e;
+  }
+  if (!(maxLoss >= 2) || maxLoss > REAL_RISK_LIMITS.maxLossUsd || maxLoss > margin + 1e-8) {
+    const e = new Error('CONFIGURED_MAX_LOSS_INVALID'); e.code = 'CONFIGURED_MAX_LOSS_INVALID'; throw e;
+  }
+  if (!(leverage >= 1) || leverage > REAL_RISK_LIMITS.maxLeverage) {
+    const e = new Error('CONFIGURED_LEVERAGE_INVALID'); e.code = 'CONFIGURED_LEVERAGE_INVALID'; throw e;
+  }
+  if (String(currentToken.marginType || settings.marginType || 'ISOLATED').toUpperCase() !== 'ISOLATED') {
+    const e = new Error('CONFIGURED_MARGIN_TYPE_INVALID'); e.code = 'CONFIGURED_MARGIN_TYPE_INVALID'; throw e;
+  }
+
+  const currentProtections = Array.isArray(currentToken.protectionStages)
+    ? currentToken.protectionStages
+    : Array.isArray(settings.protectionStages) ? settings.protectionStages : [];
+  const currentTarget = Number(currentToken.manualTargetProfit ?? currentToken.targetProfit ?? settings.targetProfit);
+  const currentExactSaleEnabled = currentToken.exactSaleEnabled === true;
+  const currentExactSalePrice = currentExactSaleEnabled ? Number(currentToken.exactSalePrice || 0) : 0;
+
+  if (commandType === 'EXEC_UPDATE_ACTIVE_CONFIG') {
+    if (!numberMatches(validated.activeConfig.targetProfit, currentTarget) ||
+        !numberMatches(validated.activeConfig.manualTargetProfit, currentTarget) ||
+        validated.activeConfig.exactSaleEnabled !== currentExactSaleEnabled ||
+        !numberMatches(validated.activeConfig.exactSalePrice, currentExactSalePrice)) {
+      const e = new Error('ACTIVE_PROTECTIONS_CANNOT_CHANGE_TARGET'); e.code = 'ACTIVE_PROTECTIONS_CANNOT_CHANGE_TARGET'; throw e;
+    }
+  }
+
+  const nextToken = {
+    ...currentToken,
+    ...validated.activeConfig,
+    marginType:'ISOLATED',
+  };
+  const nextData = {
+    ...data,
+    tokenSettings:{
+      ...tokenSettings,
+      [symbol]:nextToken,
+    },
+  };
+  const nextRevision = revision + 1;
+  const updatedAt = Date.now();
+  const nextStateHash = sha256(stableStringify(nextData));
+  const nextControllerState = {
+    ...controllerState,
+    version:1,
+    revision:nextRevision,
+    updatedAt,
+    controllerDeviceId:expectedControllerDeviceId,
+    stateHash:nextStateHash,
+    data:nextData,
+  };
+  const appliedState = {
+    version:1,
+    revision:nextRevision,
+    stateHash:nextStateHash,
+    appliedAt:updatedAt,
+    masterDeviceId:String(device?.deviceId || ''),
+  };
+  const audit = {
+    at:updatedAt,
+    kind:String(commitKind || 'ACTIVE_CONFIG') + '_COMMITTED',
+    commandId:String(command?.id || ''),
+    controllerDeviceId:expectedControllerDeviceId,
+    masterDeviceId:String(device?.deviceId || ''),
+    symbol,
+    previousRevision:revision,
+    revision:nextRevision,
+    stateHash:nextStateHash,
+  };
+  return {
+    expectedControllerDeviceId,
+    expectedRevision:revision,
+    expectedStateHash:currentStateHash,
+    nextRevision,
+    nextStateHash,
+    nextControllerRaw:JSON.stringify(nextControllerState),
+    appliedRaw:JSON.stringify(appliedState),
+    auditRaw:JSON.stringify(audit),
+    symbol,
+    activeConfig:validated.activeConfig,
+    activeConfigKind:String(commitKind || 'ACTIVE_CONFIG'),
+  };
+}
+
 async function completeProcessingCommandAtomic(raw, commandId, device, controllerCommit = null) {
   let command = null;
   try { command = JSON.parse(String(raw || '')); } catch {}
@@ -1949,11 +2186,17 @@ async function completeProcessingCommandAtomic(raw, commandId, device, controlle
     reason: '',
     at: Date.now(),
     ...(controllerCommit ? {
-      activeMaxLossCommitted:true,
+      ...(controllerCommit.activeConfig ? {
+        activeConfigCommitted:true,
+        activeConfigKind:String(controllerCommit.activeConfigKind || 'ACTIVE_CONFIG'),
+        activeConfig:controllerCommit.activeConfig,
+      } : {
+        activeMaxLossCommitted:true,
+        maxLossUsd:controllerCommit.maxLossUsd,
+      }),
       controllerRevision:controllerCommit.nextRevision,
       controllerStateHash:controllerCommit.nextStateHash,
       symbol:controllerCommit.symbol,
-      maxLossUsd:controllerCommit.maxLossUsd,
     } : {}),
   });
   const script = [
@@ -4299,6 +4542,15 @@ export default async function handler(req, res) {
         "local roleIssuedAt = tonumber(redis.call('GET', KEYS[5]) or '0') or 0",
         "local sessionCreatedAt = tonumber(ARGV[5]) or 0",
         "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return {-3, tostring(roleIssuedAt), ''} end",
+        "if redis.call('LLEN', KEYS[6]) > 0 or redis.call('LLEN', KEYS[7]) > 0 then",
+        "  local currentRaw = redis.call('GET', KEYS[1])",
+        "  local currentRev = 0",
+        "  if currentRaw then",
+        "    local ok, current = pcall(cjson.decode, currentRaw)",
+        "    if ok and current and current['revision'] then currentRev = tonumber(current['revision']) or 0 end",
+        "  end",
+        "  return {-5, tostring(currentRev), currentRaw or ''}",
+        "end",
         "local currentRaw = redis.call('GET', KEYS[1])",
         "local currentRev = 0",
         "if currentRaw then",
@@ -4323,9 +4575,10 @@ export default async function handler(req, res) {
       ].join('\n');
 
       const result = await redis([
-        'EVAL', script, '5',
+        'EVAL', script, '7',
         KEY_CONTROLLER_STATE, KEY_CONTROLLER_REV, KEY_AUDIT,
         KEY_CONTROLLER_DEVICE, roleAssignmentKey(PREFIX, 'controller'),
+        KEY_PENDING, KEY_PROCESSING,
         String(expectedRevision),
         JSON.stringify(snapshotTemplate),
         JSON.stringify(auditTemplate),
@@ -4347,6 +4600,16 @@ export default async function handler(req, res) {
       }
       if (resultCode === -4) {
         return send(res, 500, { ok: false, code: 'CONTROLLER_STATE_REVISION_SERIALIZATION_FAILED' });
+      }
+      if (resultCode === -5) {
+        let state = null;
+        try { state = rawState ? JSON.parse(rawState) : null; } catch {}
+        return send(res, 409, {
+          ok:false,
+          code:'CONTROLLER_STATE_COMMAND_IN_FLIGHT',
+          currentRevision,
+          state,
+        });
       }
 
       let state = null;
@@ -4483,6 +4746,9 @@ export default async function handler(req, res) {
         clientCommandId:String(result.clientCommandId || clientCommandId || ''),
         at:Number(result.at || 0),
         activeMaxLossCommitted:result.activeMaxLossCommitted===true,
+        activeConfigCommitted:result.activeConfigCommitted===true,
+        activeConfigKind:String(result.activeConfigKind || ''),
+        activeConfig:result.activeConfig && typeof result.activeConfig === 'object' ? result.activeConfig : null,
         controllerRevision:Math.max(0,Number(result.controllerRevision || 0)),
         controllerStateHash:String(result.controllerStateHash || ''),
         symbol:String(result.symbol || ''),
@@ -4573,6 +4839,12 @@ export default async function handler(req, res) {
       }
       if (type === 'EXEC_UPDATE_EXIT' || type === 'EXEC_UPDATE_PROTECTION') {
         const payloadStatus = execUpdatePayloadStatus(type, payload);
+        if (!payloadStatus.ok) {
+          return send(res, 400, { ok:false, code:'COMMAND_PAYLOAD_INVALID', reason:payloadStatus.reason });
+        }
+      }
+      if (type === 'EXEC_UPDATE_ACTIVE_CONFIG') {
+        const payloadStatus = execActiveConfigPayloadStatus(payload);
         if (!payloadStatus.ok) {
           return send(res, 400, { ok:false, code:'COMMAND_PAYLOAD_INVALID', reason:payloadStatus.reason });
         }
@@ -4715,6 +4987,20 @@ export default async function handler(req, res) {
       }
       if (String(command.type || '').toUpperCase() === 'EXEC_OPEN_MARKET_POSITION') {
         const payloadStatus = execMarketOpenPayloadStatus(command.payload);
+        if (!payloadStatus.ok) {
+          await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason }, device);
+          return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
+        }
+      }
+      if (String(command.type || '').toUpperCase() === 'EXEC_UPDATE_ACTIVE_CONFIG') {
+        const payloadStatus = execActiveConfigPayloadStatus(command.payload);
+        if (!payloadStatus.ok) {
+          await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason }, device);
+          return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
+        }
+      }
+      if (['EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION'].includes(String(command.type || '').toUpperCase())) {
+        const payloadStatus = execUpdatePayloadStatus(String(command.type || '').toUpperCase(), command.payload);
         if (!payloadStatus.ok) {
           await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason }, device);
           return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
@@ -5071,7 +5357,18 @@ export default async function handler(req, res) {
         }
         if (!confirmedOrder) return send(res, 409, { ok:false, code:'EXECUTION_ACK_NEW_ORDER_NOT_CONFIRMED' });
 
-        if (payloadStatus.protectionKind === 'MAX_LOSS' && Number.isFinite(Number(payloadStatus.maxLossUsd))) {
+        if (commandType === 'EXEC_UPDATE_EXIT' && payloadStatus.activeConfig) {
+          try {
+            controllerCompletion = await prepareActiveConfigControllerCommit(
+              command,payloadStatus,device,'ACTIVE_TARGET_CONFIG'
+            );
+          } catch (e) {
+            return send(res, 409, {
+              ok:false,
+              code:e?.code || 'ACTIVE_TARGET_CONFIG_COMMIT_PREPARE_FAILED',
+            });
+          }
+        } else if (payloadStatus.protectionKind === 'MAX_LOSS' && Number.isFinite(Number(payloadStatus.maxLossUsd))) {
           try {
             controllerCompletion = await prepareActiveMaxLossControllerCommit(command, payloadStatus, device);
           } catch (e) {
@@ -5087,6 +5384,47 @@ export default async function handler(req, res) {
         await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
           at:Date.now(),kind:'EXEC_PROTECTIVE_UPDATE_CONFIRMED',commandId,commandType,
           deviceId:device.deviceId,symbol:payloadStatus.symbol,newClientId,previousId,
+          reconciliationObservedAt:Number(readiness.report?.observedAt || 0),
+        })]);
+        await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      }
+
+      if (commandType === 'EXEC_UPDATE_ACTIVE_CONFIG') {
+        const payloadStatus = execActiveConfigPayloadStatus(command?.payload);
+        if (!payloadStatus.ok) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_PAYLOAD_INVALID', reason:payloadStatus.reason });
+        }
+        const readiness = await freshConsistentReconciliation(device.deviceId);
+        if (!readiness.ok) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_RECONCILIATION_REQUIRED', reason:readiness.reason });
+        }
+        const position = runtimePositionRecord(readiness.runtimeState, payloadStatus.symbol, payloadStatus.direction);
+        const liveQuantity = Math.abs(Number(position?.positionAmt ?? position?.quantity ?? 0));
+        if (!position || !numberMatches(liveQuantity, payloadStatus.quantity)) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_POSITION_CHANGED', liveQuantity });
+        }
+        const entryPrice = Number(position?.entryPrice || 0);
+        if (!runtimeEmergencyProtection(
+          readiness.runtimeState,payloadStatus.symbol,payloadStatus.direction,entryPrice,liveQuantity
+        )) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_EMERGENCY_PROTECTION_MISSING' });
+        }
+        if (runtimeProgressiveProtectionConflict(readiness.runtimeState,payloadStatus.symbol,payloadStatus.direction)) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROGRESSIVE_PROTECTION_CONFLICT' });
+        }
+        try {
+          controllerCompletion = await prepareActiveConfigControllerCommit(
+            command,payloadStatus,device,'ACTIVE_PROTECTIONS_CONFIG'
+          );
+        } catch (e) {
+          return send(res, 409, {
+            ok:false,
+            code:e?.code || 'ACTIVE_PROTECTIONS_CONFIG_COMMIT_PREPARE_FAILED',
+          });
+        }
+        await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+          at:Date.now(),kind:'EXEC_ACTIVE_CONFIG_CONFIRMED',commandId,
+          deviceId:device.deviceId,symbol:payloadStatus.symbol,
           reconciliationObservedAt:Number(readiness.report?.observedAt || 0),
         })]);
         await redis(['LTRIM', KEY_AUDIT, '0', '199']);
@@ -5167,11 +5505,17 @@ export default async function handler(req, res) {
         ok:true,
         commandId,
         ...(controllerCompletion ? {
-          activeMaxLossCommitted:true,
+          ...(controllerCompletion.activeConfig ? {
+            activeConfigCommitted:true,
+            activeConfigKind:String(controllerCompletion.activeConfigKind || 'ACTIVE_CONFIG'),
+            activeConfig:controllerCompletion.activeConfig,
+          } : {
+            activeMaxLossCommitted:true,
+            maxLossUsd:controllerCompletion.maxLossUsd,
+          }),
           controllerRevision:controllerCompletion.nextRevision,
           controllerStateHash:controllerCompletion.nextStateHash,
           symbol:controllerCompletion.symbol,
-          maxLossUsd:controllerCompletion.maxLossUsd,
         } : {}),
       });
     }

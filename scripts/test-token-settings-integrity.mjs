@@ -64,8 +64,9 @@ test('watched tokens freeze settings while active positions keep only safe contr
   assert.match(locks,/\['tExactBuy','tExactBuyPrice','tExactSale','tExactSalePrice','tTarget','tMaxLoss'\]/);
   assert.match(locks,/Position réelle ACTIVE : objectif de gain, prix déterminé de VENTE, protections et perte MAX modifiables/);
   assert.match(locks,/\['tExactBuy','tExactBuyPrice'\]/);
-  assert.match(locks,/\$\('tMaxLoss'\)\.disabled=!realActive\|\|maxLossPending/);
-  assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]/);
+  assert.match(locks,/activeSettingPending/);
+  assert.match(locks,/\$\('tMaxLoss'\)\.disabled=!realActive\|\|activeSettingPending/);
+  assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]\.forEach\(id=>\$\(id\)\.disabled=activeSettingPending\)/);
   assert.match(locks,/\$\('fMargin'\)\.disabled=true;\$\('fLev'\)\.disabled=true/);
 });
 
@@ -119,8 +120,9 @@ test('live Binance positions lock unsafe token controls on the iPhone',()=>{
   const locks=block('function setTokenFieldsEnabled()','function updateTokenPreview()');
   assert.match(locks,/realActive=controllerRealPositionBySymbol\(selectedSymbol\)/);
   assert.match(locks,/\['tExactBuy','tExactBuyPrice'\]/);
-  assert.match(locks,/\$\('tMaxLoss'\)\.disabled=!realActive\|\|maxLossPending/);
-  assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]/);
+  assert.match(locks,/activeSettingPending/);
+  assert.match(locks,/\$\('tMaxLoss'\)\.disabled=!realActive\|\|activeSettingPending/);
+  assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]\.forEach\(id=>\$\(id\)\.disabled=activeSettingPending\)/);
   assert.match(locks,/Position réelle ACTIVE/);
   const futures=block('async function saveFutures()','function readBotSettings()');
   assert.match(futures,/anyActivePositionBySymbol\(s\)/);
@@ -143,19 +145,21 @@ test('live Binance target preview uses actual entry quantity and direction',()=>
   assert.match(preview,/realPositionPriceForPnl\(realActive,target\)/);
 });
 
-test('live Binance target edits synchronize central state before protected exit replacement',()=>{
+test('live Binance target and protection edits keep old config until server ACK',()=>{
   const realSave=block('async function saveRealActiveTokenSettings','async function saveToken()');
   assert.match(realSave,/!inv\.managedMaxLoss\|\|inv\.maxLossConflict/);
   assert.match(realSave,/inv\.progressiveConflict/);
   assert.match(realSave,/buildRealProtectionLevels\(\{[\s\S]*position,[\s\S]*targetProfitUsd:manualTarget,[\s\S]*maxLossUsd:requestedMaxLoss,[\s\S]*priceFilter[\s\S]*\}\)/);
-  assert.match(realSave,/tokenSettings\[s\]=\{\.\.\.old,targetProfit:manualTarget,manualTargetProfit:manualTarget,protectionStages:nextProtections/);
-  assert.match(realSave,/const centralOk=await syncControllerCloudStateNow\(\)/);
-  assert.match(realSave,/queueRealProtectiveUpdate\(position,'EXIT',\{wantedPrice:wantedExit,fromSettings:true\}\)/);
-  assert.match(realSave,/if\(!queued\)[\s\S]*previousOwn[\s\S]*syncControllerCloudStateNow/);
+  assert.match(realSave,/const activeConfig=\{/);
+  assert.match(realSave,/protectionStages:nextProtections/);
+  assert.match(realSave,/queueRealProtectiveUpdate\(position,'EXIT',[\s\S]*activeConfig/);
+  assert.match(realSave,/queueRealActiveConfigUpdate\(position,activeConfig\)/);
+  assert.doesNotMatch(realSave,/tokenSettings\[s\]\s*=/);
+  assert.doesNotMatch(realSave,/syncControllerCloudStateNow\(\)/);
   const queue=block('async function queueRealProtectiveUpdate(position,kind,options={})','function renderRealEntryOrders()');
-  assert.match(queue,/wanted=parsePrice\(options\?\.wantedPrice,0\)/);
-  assert.match(queue,/realProtectiveUpdatePending\.set/);
-  assert.match(queue,/setTimeout\(\(\)=>refreshBinanceAccount\(\),1000\);[\s\S]*return true/);
+  assert.match(queue,/clientCommandId:String\(command\?\.clientCommandId\|\|''\)/);
+  assert.match(queue,/persistRealProtectiveUpdatePending\(\)/);
+  assert.match(queue,/checkRealTrackedCommandStatus/);
 });
 
 test('live protection editor never shrinks below the currently stored stage count',()=>{
