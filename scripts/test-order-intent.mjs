@@ -86,11 +86,11 @@ test('protective exit uses LIMIT IOC OPPONENT without explicit price',()=>{
   assert.equal(p.params.reduceOnly,'true');
 });
 
-test('last-resort exit is reduce-only market',()=>{
-  const p=buildExitOrderPlan({commandId:'cmd-12345678',symbol:'BTCUSDT',direction:'SHORT',quantity:0.02,exitMode:'MARKET_LAST_RESORT'});
-  assert.equal(p.params.side,'BUY');
-  assert.equal(p.params.type,'MARKET');
-  assert.equal(p.params.reduceOnly,'true');
+test('MARKET exit planning is forbidden',()=>{
+  assert.throws(
+    ()=>buildExitOrderPlan({commandId:'cmd-12345678',symbol:'BTCUSDT',direction:'SHORT',quantity:0.02,exitMode:'MARKET_LAST_RESORT'}),
+    /EXIT_MODE_INVALID/
+  );
 });
 
 test('protective IOC accepts audited OPPONENT escalation values only',()=>{

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { conflictingProtectiveOrders, emergencyProtection } from '../api/binance-protective-update-execute.js';
@@ -110,4 +111,14 @@ test('progressive placement allows a normal Zenith zth-EXI target LIMIT',()=>{
     clientOrderId:'zth-EXI-0123456789abcdef01234567'
   };
   assert.equal(conflictingProtectiveOrders(runtime([target]),update,'PROGRESSIVE',[]).length,0);
+});
+
+
+test('server enforces the configured MAX-LOSS cap, not only the global $400 ceiling',()=>{
+  const source=fs.readFileSync('api/binance-protective-update-execute.js','utf8');
+  assert.match(source,/KEY_CONTROLLER_STATE/);
+  assert.match(source,/configuredMaxLossUsd\(state\.controllerState,update\.symbol\)/);
+  assert.match(source,/Math\.min\(configuredMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
+  assert.match(source,/MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT/);
+  assert.match(source,/CONFIGURED_MAX_LOSS_UNAVAILABLE/);
 });

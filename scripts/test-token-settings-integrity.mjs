@@ -119,7 +119,9 @@ test('live Binance positions lock unsafe token controls on the iPhone',()=>{
   assert.match(locks,/Position réelle ACTIVE/);
   const futures=block('async function saveFutures()','function readBotSettings()');
   assert.match(futures,/anyActivePositionBySymbol\(s\)/);
-  assert.match(html,/async function instantBuySelected\(\)[\s\S]*anyActivePositionBySymbol\(s\)/);
+  const instant=block('async function instantBuySelected()','async function manualClose');
+  assert.doesNotMatch(instant,/createPosition\(/);
+  assert.match(instant,/achat immédiat réel uniquement/i);
   assert.match(html,/function tokenDefaults\(\)[\s\S]*anyActivePositionBySymbol\(selectedSymbol\)/);
 });
 
@@ -164,4 +166,25 @@ test('special TradFi and future perpetual symbols remain discoverable in Futures
   assert.match(exchange,/s\?\.status==='TRADING'/);
   assert.match(exchange,/if\(!isUsdMPerpetualContract\(s\)\)continue/);
   assert.match(html,/function addManualToken\(\)[\s\S]*exchangeMap\.has\(symbol\)/);
+});
+
+
+test('real-only UI exposes no simulation controls or local fake position path',()=>{
+  assert.doesNotMatch(html,/<button[^>]+id="resetSimBtn"/);
+  assert.doesNotMatch(html,/Positions actives — simulation/);
+  assert.doesNotMatch(html,/simulation uniquement/);
+  assert.match(html,/argent réel uniquement|réel uniquement/);
+  const create=block('function createPosition(s,entry,source)','function closePosition');
+  assert.match(create,/Simulation supprimée/);
+  assert.match(create,/return null/);
+  const close=block('function closePosition','async function currentMarketPrice');
+  assert.match(close,/Simulation supprimée/);
+  assert.match(close,/return false/);
+});
+
+
+test('configured protection lists are never truncated by a lower calculated target count',()=>{
+  const normalize=block('function normalizeProtections(stages,target=3000)','function cfg(symbol)');
+  assert.match(normalize,/Math\.max\(protectionCountForTarget\(target\),src\.length\)/);
+  assert.doesNotMatch(normalize,/target==null/);
 });

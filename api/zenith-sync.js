@@ -1066,7 +1066,7 @@ function execClosePayloadStatus(payload) {
   if (!['LONG','SHORT'].includes(direction)) return { ok:false, reason:'DIRECTION_INVALID' };
   if (!Number.isFinite(quantity) || quantity <= 0) return { ok:false, reason:'QUANTITY_INVALID' };
   if (payload.closeAll !== true) return { ok:false, reason:'CLOSE_ALL_REQUIRED' };
-  if (!['PROTECTIVE_IOC','MARKET_LAST_RESORT'].includes(exitMode)) return { ok:false, reason:'EXIT_MODE_INVALID' };
+  if (exitMode !== 'PROTECTIVE_IOC') return { ok:false, reason:'EXIT_MODE_LIMIT_REQUIRED' };
   return { ok:true, symbol, direction, quantity, exitMode, closeAll:true };
 }
 

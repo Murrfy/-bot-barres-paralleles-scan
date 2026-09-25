@@ -184,3 +184,12 @@ test('delivery contracts are not mistaken for perpetual contracts', () => {
   const r=evaluateEntryRisk(base({symbolInfo}));
   assert.ok(r.reasons.includes('SYMBOL_NOT_USDT_PERPETUAL'));
 });
+
+
+test('Binance auto-add margin is rejected even in ISOLATED mode', () => {
+  const symbolConfig={...base().symbolConfig,isAutoAddMargin:true};
+  const r=evaluateEntryRisk(base({symbolConfig}));
+  assert.equal(r.ready,false);
+  assert.ok(r.reasons.includes('AUTO_ADD_MARGIN_ENABLED'));
+  assert.equal(r.normalized.autoAddMargin,true);
+});
