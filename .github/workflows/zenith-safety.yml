@@ -216,6 +216,8 @@ jobs:
         run: node --test scripts/test-token-settings-integrity.mjs
       - name: Test protection table visibility toggle
         run: node --test scripts/test-protection-visibility-toggle.mjs
+      - name: Test active real MAX-LOSS edit confirmation
+        run: node --test scripts/test-active-maxloss-edit-v2.mjs
       - name: Test real-only UI and limit-only sells
         run: node --test scripts/test-real-only-ui.mjs
       - name: Test real Binance net history
