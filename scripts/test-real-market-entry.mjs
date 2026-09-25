@@ -111,3 +111,17 @@ test('reconciliation report certifies auto-add margin from Binance REST',()=>{
   assert.match(reconcile,/isAutoAddMargin:p\.isAutoAddMargin===true/);
   assert.match(reconcile,/isAutoAddMargin:position\.isAutoAddMargin/);
 });
+
+
+test('reconciliation certifies ISOLATED and auto-add margin OFF from symbolConfig',()=>{
+  const reconcile=fs.readFileSync('api/binance-reconcile.js','utf8');
+  const sync=fs.readFileSync('api/zenith-sync.js','utf8');
+  assert.match(reconcile,/signedGet\('\/fapi\/v1\/symbolConfig',[\s\S]*\{ symbol \}/);
+  assert.match(reconcile,/BINANCE_SYMBOL_CONFIG_MISSING/);
+  assert.match(reconcile,/BINANCE_POSITION_CONFIG_UNSAFE/);
+  assert.match(reconcile,/position\?\.isAutoAddMargin !== false/);
+  assert.match(reconcile,/certifiedPositions/);
+  assert.match(sync,/readiness\.report\?\.certifiedPositions/);
+  assert.match(sync,/certifiedPosition\?\.isAutoAddMargin !== false/);
+  assert.match(sync,/EXECUTION_ACK_AUTO_ADD_MARGIN_(?:ENABLED|UNKNOWN)/);
+});
