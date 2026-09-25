@@ -24,7 +24,7 @@ test('closed Zenith LONG uses actual fills, commissions and funding for exact ne
   assert.equal(r.entryPrice,100);
   assert.equal(r.exitPrice,110);
   assert.equal(r.grossRealizedPnl,10);
-  assert.equal(r.commissionUsdt,.084);
+  assert.ok(Math.abs(r.commissionUsdt-.084)<1e-12);
   assert.equal(r.fundingUsdt,-.2);
   assert.ok(Math.abs(r.netUsdt-9.716)<1e-12);
   assert.equal(r.exactNetUsdt,true);
@@ -84,16 +84,20 @@ test('history merge is stable and keeps newest unique cycles',()=>{
 
 test('UI history is Binance-real only and never displays protection level numbers',()=>{
   const html=fs.readFileSync('index.html','utf8');
-  const start=html.indexOf('function renderHistory(){');
+  const helpersStart=html.indexOf('function historyFeeText');
+  const start=html.indexOf('function renderHistory(){',helpersStart);
   const end=html.indexOf('function applyTheme()',start);
-  assert.ok(start>=0&&end>start);
+  assert.ok(helpersStart>=0&&start>helpersStart&&end>start);
+  const helpers=html.slice(helpersStart,start);
   const block=html.slice(start,end);
+  assert.match(helpers,/commissionUsdt/);
+  assert.match(helpers,/fundingUsdt/);
   assert.match(block,/binanceHistory\.history/);
   assert.match(block,/grossRealizedPnl/);
-  assert.match(block,/commissionUsdt/);
-  assert.match(block,/fundingUsdt/);
+  assert.match(block,/historyFeeText\(row\)/);
+  assert.match(block,/historyFundingText\(row\)/);
   assert.match(block,/netUsdt/);
-  assert.doesNotMatch(block,/Niveau|Protection|level/i);
+  assert.doesNotMatch(helpers+block,/Niveau|Protection|level/i);
   assert.ok(html.includes('id="refreshHistoryBtn"'));
   assert.equal(html.includes('id="resetClosedBtn"'),false);
 });
