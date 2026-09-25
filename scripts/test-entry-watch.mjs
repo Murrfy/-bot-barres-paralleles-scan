@@ -85,3 +85,14 @@ test('pruning removes stale validation identities but preserves current state',(
   const stale={...current,identity:'BTCUSDT:999:100'};
   assert.deepEqual(pruneEntryWatchStates({BTCUSDT:current,ETHUSDT:stale},[def]),{BTCUSDT:current});
 });
+
+
+test('REST fallback cannot erase an exact aggTrade cursor',()=>{
+  let r=evaluateEntryWatchTick({definition:def,price:101,eventId:120,eventTime:9000});
+  assert.equal(r.state.lastAggId,120);
+  assert.equal(r.state.lastAggTime,9000);
+  r=evaluateEntryWatchTick({definition:def,state:r.state,price:102,eventId:-1,eventTime:9500});
+  assert.equal(r.state.lastAggId,120);
+  assert.equal(r.state.lastAggTime,9000);
+  assert.equal(r.state.lastPrice,102);
+});
