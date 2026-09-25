@@ -343,6 +343,18 @@ function configuredMaxLossUsd(controllerState, symbol) {
   return value > 0 ? Math.min(value, REAL_RISK_LIMITS.maxLossUsd) : NaN;
 }
 
+function configuredMarginUsd(controllerState, symbol) {
+  const data = controllerState?.data && typeof controllerState.data === 'object' ? controllerState.data : null;
+  if (!data) return NaN;
+  const sym = String(symbol || '').toUpperCase();
+  const tokenSettings = data.tokenSettings && typeof data.tokenSettings === 'object' ? data.tokenSettings : {};
+  const globalSettings = data.settings && typeof data.settings === 'object' ? data.settings : {};
+  const token = tokenSettings[sym] && typeof tokenSettings[sym] === 'object' ? tokenSettings[sym] : {};
+  const value = number(token.margin, number(globalSettings.margin, NaN));
+  return value > 0 ? value : NaN;
+}
+
+
 function parseProcessingCommands(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
@@ -377,6 +389,8 @@ function authorizedPendingMaxLossEdit(position, actualOrders, processingCommands
     const triggerPrice = number(payload.triggerPrice, NaN);
     const commandQuantity = number(payload.quantity, NaN);
     if (!(requestedMaxLossUsd >= 2 && requestedMaxLossUsd <= REAL_RISK_LIMITS.maxLossUsd)) continue;
+    const configuredMargin = configuredMarginUsd(controllerState, symbol);
+    if (!(configuredMargin > 0) || requestedMaxLossUsd > configuredMargin + 1e-8) continue;
     if (!(triggerPrice > 0) || !(commandQuantity > 0) || Math.abs(commandQuantity - quantity) > 1e-12) continue;
     const previousClientAlgoId = String(payload.previousClientAlgoId || '');
     const expectedSide = direction === 'LONG' ? 'SELL' : 'BUY';
