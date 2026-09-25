@@ -17,9 +17,8 @@ function block(source,start,end){
 
 test('active target and progressive table never pre-write controller state',()=>{
   const save=block(html,'async function saveRealActiveTokenSettings','async function saveToken()');
-  assert.match(save,/targetChanged&&protectionsChanged/);
-  assert.match(save,/modifie l’objectif de vente et le tableau des protections séparément/);
   assert.match(save,/activeConfig=\{/);
+  assert.match(save,/protectionStages:nextProtections/);
   assert.match(save,/queueRealProtectiveUpdate\(position,'EXIT'/);
   assert.match(save,/queueRealActiveConfigUpdate\(position,activeConfig\)/);
   assert.doesNotMatch(save,/syncControllerCloudStateNow\(/);
@@ -54,7 +53,7 @@ test('iPhone persists active changes before POST and only commits local settings
   assert.doesNotMatch(status,/syncControllerCloudStateNow\(/);
 });
 
-test('server accepts only narrow active fields and separates target changes from protection changes',()=>{
+test('server accepts only narrow active fields while protection-only commands cannot change target',()=>{
   const validator=block(sync,'function activeConfigStatus','function execUpdatePayloadStatus');
   assert.match(validator,/targetProfit.*manualTargetProfit.*protectionStages/s);
   assert.match(validator,/exactSaleEnabled.*exactSalePrice.*exactSaleSource/s);
@@ -62,7 +61,7 @@ test('server accepts only narrow active fields and separates target changes from
   assert.match(validator,/ACTIVE_EXACT_SALE_PRICE_MUST_BE_ZERO/);
 
   const commit=block(sync,'async function prepareActiveConfigControllerCommit','async function completeProcessingCommandAtomic');
-  assert.match(commit,/ACTIVE_EXIT_CANNOT_CHANGE_PROTECTIONS/);
+  assert.doesNotMatch(commit,/ACTIVE_EXIT_CANNOT_CHANGE_PROTECTIONS/);
   assert.match(commit,/ACTIVE_PROTECTIONS_CANNOT_CHANGE_TARGET/);
   assert.match(commit,/CONFIGURED_MAX_LOSS_INVALID/);
   assert.match(commit,/CONFIGURED_MARGIN_TYPE_INVALID/);
