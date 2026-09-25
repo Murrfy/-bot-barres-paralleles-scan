@@ -607,8 +607,9 @@ function reconcileEntryWatchConfig(){
 }
 
 function watchedEntrySymbols(){
-  const active=activeProtectionSymbols();
   const out=new Set();
+  if(!entryWatch.loaded)return out;
+  const active=activeProtectionSymbols();
   for(const definition of entryWatchDefinitions()){
     const state=entryWatch.states.get(definition.symbol);
     if(!active.has(definition.symbol)&&!(n(state?.triggeredAt,0)>0))out.add(definition.symbol);
