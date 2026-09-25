@@ -250,6 +250,7 @@ const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='z
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
 let masterControlState={mode:'',masterRegistered:false,masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,realExecutionArmed:false,error:''};
+let serverEntryWatch={states:{},updatedAt:0,lastOk:0,error:''},serverEntryWatchTimer=null;
 let masterRuntimeState={mode:'PAUSED',leaseActive:false,controllerRevision:0,appliedRevision:0,synchronized:false,heartbeatFresh:false,userStreamReady:false,realExecutionArmed:false,error:''},masterRuntimeTimer=null,masterRuntimeBusy=false;
 let masterWakeLock={sentinel:null,requesting:false,lastAttemptAt:0,error:''};
 let masterUserStream={state:null,ws:null,starting:false,seeding:false,bufferedEvents:[],reconcileBusy:false,reconcileDebounceTimer:null,reconcileInterval:null,keepaliveTimer:null,restartTimer:null,reconnectTimer:null,connectionSeq:0,lastError:'',modules:null};
@@ -1260,6 +1261,7 @@ async function refreshControllerIdentity(){
     if(role==='controller'){
       scheduleControllerCloudStateSync();
       refreshMasterControls();
+      startServerEntryWatch();
     }else{
       startMasterRuntimeLoop();
     }
@@ -2559,6 +2561,41 @@ async function refreshBinanceAccount(){
     return false;
   }
 }
+async function refreshServerEntryWatch(){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return false;
+  try{
+    const r=await fetch('/api/zenith-sync?action=entry-watch-status',{cache:'no-store',headers:{Accept:'application/json'}});
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    serverEntryWatch={
+      states:q.states&&typeof q.states==='object'?q.states:{},
+      updatedAt:n(q.updatedAt,0),
+      lastOk:Date.now(),
+      error:''
+    };
+    renderTable();renderKpis();if(selectedSymbol)setTokenFieldsEnabled();
+    return true;
+  }catch(e){
+    serverEntryWatch={...serverEntryWatch,error:String(e?.message||'Connexion impossible')};
+    return false;
+  }
+}
+function startServerEntryWatch(){if(serverEntryWatchTimer)clearInterval(serverEntryWatchTimer);refreshServerEntryWatch();serverEntryWatchTimer=setInterval(refreshServerEntryWatch,3000)}
+function realEntryWatchState(s){
+  const state=serverEntryWatch?.states?.[String(s||'').toUpperCase()];
+  const v=validated[String(s||'').toUpperCase()];
+  if(!state||!v)return null;
+  if(n(state.validatedAt)!==n(v.validatedAt)||Math.abs(n(state.buy)-n(v.buy))>Math.max(1e-9,Math.abs(n(v.buy))*1e-10))return null;
+  return state;
+}
+function realEntryDidNotStart(s){
+  const state=realEntryWatchState(s);
+  return Boolean(state&&(state.status==='NOT_STARTED'||(n(state.pendingUntil)>0&&Date.now()>=n(state.pendingUntil)&&n(state.triggeredAt)<=0)));
+}
+function realEntryWaitingSlot(s){
+  const state=realEntryWatchState(s);
+  return Boolean(state&&state.status==='WAITING_SLOT'&&n(state.pendingUntil)>Date.now());
+}
 function startBinanceAccountReadOnly(){if(binanceAccountTimer)clearInterval(binanceAccountTimer);refreshBinanceAccount();binanceAccountTimer=setInterval(refreshBinanceAccount,15000)}
 async function refreshBinanceHistory(){
   try{
@@ -2648,14 +2685,14 @@ function limitsText(s,margin,leverage){const d=futuresDraft(s,margin,leverage,'L
 function showTokenPane(){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.pane==='tokenPane'));document.querySelectorAll('.pane').forEach(x=>x.classList.toggle('on',x.id==='tokenPane'));$('settingsSymbol').classList.remove('invisible')}
 function openTokenSettings(symbol,scroll=true){if(!symbol)return;selectedSymbol=String(symbol).toUpperCase();save();showTokenPane();renderAll();syncRealtime();if(scroll){requestAnimationFrame(()=>{const el=$('tokenSettingsBlock');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest',inline:'end'})})}}
 async function addManualToken(){let symbol=($('manualTokenInput').value||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');if(!symbol)return setStatus('Entre le nom du jeton.',true);if(!symbol.endsWith('USDT'))symbol+='USDT';try{$('manualTokenAddBtn').disabled=true;let last=0,directFound=false;try{const t=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(symbol)}`);last=n(t?.price);directFound=last>0}catch(_){}if(!directFound){await ensureExchange(true);if(!exchangeMap.has(symbol))return setStatus(`${symbol} est introuvable sur Binance Futures USDⓈ-M.`,true);try{const t=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(symbol)}`);last=n(t?.price)}catch(_){}}if(!(last>0))return setStatus(`${symbol} existe peut-être sur Binance mais son prix Futures est indisponible actuellement.`,true);await ensureExchange();if(!exchangeMap.has(symbol))return setStatus(`${symbol} n’est pas actuellement négociable en Futures perpétuel USDT sur Binance.`,true);lastPrices.set(symbol,last);delete dismissed[symbol];$('manualTokenInput').value='';openTokenSettings(symbol,true);setStatus(`${symbol} trouvé sur Binance Futures USDⓈ-M. Réglages ouverts — il n’entrera dans la liste qu’après validation de la surveillance.`)}catch(e){setStatus(`Ajout impossible : ${e.message}`,true)}finally{$('manualTokenAddBtn').disabled=false}}
-function rowStatus(s){const m=missedSignals[s];if(m?.state==='expired')return 'OBJECTIF DÉPASSÉ !!';if(m?.state==='waiting')return `ATTENTE PLACE (${Math.max(0,Math.ceil((n(m.expiresAt)-Date.now())/1000))}s)`;if(openBySymbol(s))return 'ACTIF';if(validated[s]&&!revalidateBlock[s])return 'SURVEILLÉ';if(revalidateBlock[s])return 'À REVALIDER';return 'NON SURVEILLÉ'}
+function rowStatus(s){const realState=realEntryWatchState(s);if(realEntryDidNotStart(s))return 'N’A PAS DÉMARRÉ';if(realEntryWaitingSlot(s))return `ATTENTE PLACE (${Math.max(0,Math.ceil((n(realState.pendingUntil)-Date.now())/1000))}s)`;const m=missedSignals[s];if(m?.state==='expired')return 'N’A PAS DÉMARRÉ';if(m?.state==='waiting')return `ATTENTE PLACE (${Math.max(0,Math.ceil((n(m.expiresAt)-Date.now())/1000))}s)`;if(openBySymbol(s))return 'ACTIF';if(validated[s]&&!revalidateBlock[s])return 'SURVEILLÉ';if(revalidateBlock[s])return 'À REVALIDER';return 'NON SURVEILLÉ'}
 function tableRows(){const by=new Map();for(const [s,r] of Object.entries(manualTokens))by.set(s,{symbol:s,last:n(lastPrices.get(s),r?.last),manual:true});for(const s of Object.keys(validated))if(!by.has(s))by.set(s,{symbol:s,last:n(lastPrices.get(s))});for(const s of Object.keys(missedSignals))if(!by.has(s))by.set(s,{symbol:s,last:n(lastPrices.get(s))});for(const p of openPositions)if(!by.has(p.symbol))by.set(p.symbol,{symbol:p.symbol,last:n(lastPrices.get(p.symbol),p.entryPrice)});const rows=[...by.values()];const rank=s=>openBySymbol(s)?0:validated[s]?1:missedSignals[s]?2:3;rows.sort((a,b)=>rank(a.symbol)-rank(b.symbol)||n(manualTokens[a.symbol]?.addedAt)-n(manualTokens[b.symbol]?.addedAt)||a.symbol.localeCompare(b.symbol));return rows}
 function distanceBuy(s,last){const b=tokenExactBuy(s);return b>0&&last>0?((n(last)-b)/n(last))*100:null}
 function effectiveSalePrice(s){const p=openBySymbol(s);if(p&&n(p.targetPrice)>0)return n(p.targetPrice);const exact=tokenExactSale(s);if(exact>0)return exact;const buy=n(validated[s]?.buy,tokenExactBuy(s));if(!(buy>0))return 0;const c=cfg(s);return priceForPnl(buy,notional(c),n(c.targetProfit,settings.targetProfit))}
 function dismissSymbol(s){if(openBySymbol(s))return setStatus(`${s} est ACTIF.`,true);if(validated[s])return setStatus(`${s} est surveillé : annule d'abord son achat surveillé.`,true);dismissed[s]=Date.now();delete manualTokens[s];if(selectedSymbol===s)selectedSymbol=tableRows().find(r=>r.symbol!==s)?.symbol||'';save();renderAll();setStatus(`${s} supprimé de la liste.`)}
 function renderTable(){expireWaitingSignals();const rows=tableRows(),body=$('selectionBody');$('selectionCount').textContent=`${rows.length} jeton(s)`;body.innerHTML=rows.map((r,i)=>{const s=r.symbol,last=n(lastPrices.get(s),r.last),buy=n(validated[s]?.buy,tokenExactBuy(s)),sale=effectiveSalePrice(s),d=distanceBuy(s,last),st=rowStatus(s),missed=missedSignals[s]?.state==='expired',waiting=missedSignals[s]?.state==='waiting',rc=openBySymbol(s)?'activeRow':validated[s]?'validRow':'',cls=s===selectedSymbol?'sel ':'';return `<tr class="${cls}${rc}" data-symbol="${escapeHtml(s)}"><td>${i+1}</td><td><b>${escapeHtml(s)}</b></td><td>${price(last)}</td><td>${price(buy)}</td><td>${price(sale)}</td><td>${d==null?'—':d.toFixed(2)+'%'}</td><td class="${missed?'missedStatus':waiting?'waitingStatus':''}">${escapeHtml(st)}</td><td><button class="trashMini" data-trash="${escapeHtml(s)}" ${openBySymbol(s)||validated[s]?'disabled':''}>🗑</button></td></tr>`}).join('');body.querySelectorAll('tr[data-symbol]').forEach(tr=>tr.onclick=e=>{if(e.target.closest('[data-trash]'))return;openTokenSettings(tr.dataset.symbol,true)});body.querySelectorAll('[data-trash]').forEach(b=>b.onclick=e=>{e.stopPropagation();dismissSymbol(b.dataset.trash)})}
 function totals(){const t=binanceHistory?.totals||{};return{gain:Math.max(0,n(t.gain,0)),loss:Math.max(0,n(t.loss,0)),net:n(t.net,0)}}
-function renderKpis(){const t=totals(),watch=Object.keys(validated).filter(s=>!openBySymbol(s)&&!revalidateBlock[s]).length;$('kWatch').textContent=watch;$('kActive').textContent=String(n(binanceAccount.realPositions,0))+'/'+String(settings.maxActive);$('kGain').textContent=money(t.gain);$('kLoss').textContent=money(-t.loss);$('liveBadge').textContent='LIVE '+String(wsLive?1:0);$('liveBadge').classList.toggle('on',wsLive);renderBinanceAccount()}
+function renderKpis(){const t=totals(),watch=Object.keys(validated).filter(s=>!openBySymbol(s)&&!revalidateBlock[s]&&!realEntryDidNotStart(s)).length;$('kWatch').textContent=watch;$('kActive').textContent=String(n(binanceAccount.realPositions,0))+'/'+String(settings.maxActive);$('kGain').textContent=money(t.gain);$('kLoss').textContent=money(-t.loss);$('liveBadge').textContent='LIVE '+String(wsLive?1:0);$('liveBadge').classList.toggle('on',wsLive);renderBinanceAccount()}
 function pnlAt(p,mark){return ((n(mark)-n(p.entryPrice))/n(p.entryPrice))*n(p.notional)}
 function priceForPnl(entry,notionalValue,pnl){return n(entry)*(1+n(pnl)/n(notionalValue))}
 function durationHMS(openedAt,closedAt=Date.now()){const secs=Math.max(0,Math.floor((n(closedAt,Date.now())-n(openedAt,Date.now()))/1000)),h=Math.floor(secs/3600),m=Math.floor((secs%3600)/60),sec=secs%60;return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0')}
@@ -2692,7 +2729,7 @@ function fillFutures(){const s=selectedSymbol,has=!!s;$('futuresNoSelection').hi
 function fillBot(){$('bMaxActive').value=settings.maxActive;$('bTheme').value=settings.theme==='light'?'light':'dark';$('bSound').checked=settings.sound!==false;$('bVibrate').checked=settings.vibrate!==false;const summary=$('defaultRiskSummary');if(summary)summary.textContent=`Défauts risque : marge ISOLÉE ${n(settings.margin).toFixed(2)} · x${Math.round(n(settings.leverage))} · objectif +${n(settings.targetProfit).toFixed(2)} · MAX -${n(settings.maxLoss).toFixed(2)} · ${Array.isArray(settings.protectionStages)?settings.protectionStages.length:0} protections`;const btn=$('saveBotDefaultsBtn');if(btn)btn.disabled=!selectedSymbol}
 function setTokenFieldsEnabled(){
   if(!selectedSymbol)return;
-  const localActive=openBySymbol(selectedSymbol),realActive=controllerRealPositionBySymbol(selectedSymbol),active=!!(localActive||realActive),watched=!!validated[selectedSymbol]&&!active,lock=$('tokenLockHint');
+  const localActive=openBySymbol(selectedSymbol),realActive=controllerRealPositionBySymbol(selectedSymbol),active=!!(localActive||realActive),watched=!!validated[selectedSymbol]&&!realEntryDidNotStart(selectedSymbol)&&!active,lock=$('tokenLockHint');
   const protectionEls=$('protectionEditor')?.querySelectorAll('input')||[];
   if(watched){
     ['tExactBuy','tExactBuyPrice','tExactSale','tExactSalePrice','tTarget','tMaxLoss'].forEach(id=>$(id).disabled=true);
@@ -3037,7 +3074,7 @@ $('showProtectionsToggle').addEventListener('change',()=>{settings.showProtectio
 $('adminCodeCancel').onclick=()=>closeAdminCodeModal(null);$('adminCodeConfirm').onclick=submitAdminCodeModal;$('adminCodeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submitAdminCodeModal()}else if(e.key==='Escape'){e.preventDefault();closeAdminCodeModal(null)}});$('adminCodeModal').addEventListener('pointerdown',e=>{if(e.target===e.currentTarget)closeAdminCodeModal(null)});
 $('masterAuthorizeBtn').onclick=controllerAuthorizeMaster;$('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('masterRevokeBtn').onclick=controllerRevokeMaster;$('panicClearBtn').onclick=controllerClearPanic;
 $('refreshHistoryBtn').onclick=()=>refreshBinanceHistory();
-document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio();if(controllerIdentity.role==='master')syncMasterWakeLock(true)},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){syncMasterWakeLock(true);masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
+document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio();if(controllerIdentity.role==='master')syncMasterWakeLock(true)},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){syncMasterWakeLock(true);masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}if(Object.values(missedSignals).some(x=>x?.state==='waiting')||Object.keys(serverEntryWatch?.states||{}).length)renderTable()},1000);
 load();restoreRealProtectiveUpdatePending();applyTheme();renderAll();for(const [key,pending] of realProtectiveUpdatePending.entries())void checkRealTrackedCommandStatus(key,pending);ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startBinanceHistory();startControllerIdentityCheck();
 </script>
 </body>
