@@ -86,3 +86,23 @@ test('active target changes resize protections without discarding already reache
   assert.match(protections,/Math\.max\(protectionCountForTarget\(target\),Math\.max\(0,Math\.floor\(n\(minCount,0\)\)\)\)/);
   assert.match(protections,/reachedProtectionCount\(stages,maxProfit\)/);
 });
+
+
+test('global risk defaults can be updated without overwriting per-token overrides',()=>{
+  const saveDefaults=block('async function saveSelectedAsDefaults()','async function saveToken()');
+  assert.match(saveDefaults,/openPositions\.length\|\|n\(binanceAccount\.realPositions\)>0\|\|Object\.keys\(validated\)\.length/);
+  assert.match(saveDefaults,/settings=\{\.\.\.settings,margin,leverage,marginType:'ISOLATED',targetProfit:target,maxLoss,protectionStages:clone\(protections\)\}/);
+  assert.doesNotMatch(saveDefaults,/tokenSettings\s*=/);
+  assert.match(saveDefaults,/maxLoss>margin/);
+  const cloud=block('function controllerCloudStatePayload()','async function syncControllerCloudStateNow()');
+  assert.match(cloud,/settings:clone\(settings\)/);
+  assert.match(cloud,/tokenSettings:clone\(normalizeRecordBlock\(tokenSettings\)\)/);
+});
+
+test('global defaults stay visible and are copied only by explicit action',()=>{
+  assert.match(html,/id="defaultRiskSummary"/);
+  assert.match(html,/id="saveBotDefaultsBtn"/);
+  const fill=block('function fillBot()','function setTokenFieldsEnabled()');
+  assert.match(fill,/Défauts risque : marge ISOLÉE/);
+  assert.match(html,/\$\('saveBotDefaultsBtn'\)\.onclick=saveSelectedAsDefaults/);
+});
