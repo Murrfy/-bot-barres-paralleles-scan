@@ -26,11 +26,14 @@ test('symbol config cannot write while real-entry writes are locked',()=>{
   assert.ok(handler.includes('REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED'));
 });
 
-test('MAX-LOSS covering protection is required before Binance symbol config mutation',()=>{
-  const provisional=handler.indexOf('const provisionalProtection=findCoveringEntryProtection(');
-  const blocked=handler.indexOf("code:'ENTRY_PROTECTION_NOT_ARMED'",provisional);
+test('Binance symbol config may be prepared first, but entry dispatch requires confirmed prepared MAX-LOSS',()=>{
   const ensureConfig=handler.indexOf('const configResult=await ensureBinanceEntrySymbolConfig({');
-  assert.ok(provisional>=0&&blocked>provisional&&ensureConfig>blocked);
+  const preparePhase=handler.indexOf("if(phase==='PREPARE_PROTECTION')");
+  const exactProtection=handler.indexOf('.find(order=>transitionProtectionMatches(order,storedTransition))');
+  const protectionBlocked=handler.indexOf("code:'ENTRY_PROTECTION_NOT_STREAM_CONFIRMED'",exactProtection);
+  const entryOrder=handler.indexOf('const result=await placeStandardOrderIdempotent({',exactProtection);
+  assert.ok(ensureConfig>=0&&preparePhase>ensureConfig);
+  assert.ok(exactProtection>preparePhase&&protectionBlocked>exactProtection&&entryOrder>protectionBlocked);
 });
 
 test('entry reruns live preflight after Binance confirms symbol config',()=>{
