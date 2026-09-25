@@ -1065,6 +1065,7 @@ const PAUSE_PENDING_ALLOWED_COMMANDS = new Set([
   'CANCEL_ENTRY',
   'EXEC_UPDATE_EXIT',
   'EXEC_UPDATE_PROTECTION',
+  'EXEC_UPDATE_ACTIVE_CONFIG',
   'EXEC_CLOSE_POSITION',
   'EXEC_CANCEL_ENTRY',
 ]);
@@ -1080,6 +1081,7 @@ const ALLOWED_COMMAND_TYPES = new Set([
   'CANCEL_ENTRY',
   'EXEC_UPDATE_EXIT',
   'EXEC_UPDATE_PROTECTION',
+  'EXEC_UPDATE_ACTIVE_CONFIG',
   'EXEC_CLOSE_POSITION',
   'EXEC_CANCEL_ENTRY',
   'EXEC_OPEN_MARKET_POSITION',
@@ -1088,6 +1090,7 @@ const ALLOWED_COMMAND_TYPES = new Set([
 const PROTECTIVE_EXEC_COMMANDS = new Set([
   'EXEC_UPDATE_EXIT',
   'EXEC_UPDATE_PROTECTION',
+  'EXEC_UPDATE_ACTIVE_CONFIG',
   'EXEC_CLOSE_POSITION',
   'EXEC_CANCEL_ENTRY',
 ]);
@@ -4685,6 +4688,12 @@ export default async function handler(req, res) {
           return send(res, 400, { ok:false, code:'COMMAND_PAYLOAD_INVALID', reason:payloadStatus.reason });
         }
       }
+      if (type === 'EXEC_UPDATE_ACTIVE_CONFIG') {
+        const payloadStatus = execActiveConfigPayloadStatus(payload);
+        if (!payloadStatus.ok) {
+          return send(res, 400, { ok:false, code:'COMMAND_PAYLOAD_INVALID', reason:payloadStatus.reason });
+        }
+      }
 
       const createdAt = Date.now();
       const command = {
@@ -4823,6 +4832,13 @@ export default async function handler(req, res) {
       }
       if (String(command.type || '').toUpperCase() === 'EXEC_OPEN_MARKET_POSITION') {
         const payloadStatus = execMarketOpenPayloadStatus(command.payload);
+        if (!payloadStatus.ok) {
+          await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason }, device);
+          return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
+        }
+      }
+      if (String(command.type || '').toUpperCase() === 'EXEC_UPDATE_ACTIVE_CONFIG') {
+        const payloadStatus = execActiveConfigPayloadStatus(command.payload);
         if (!payloadStatus.ok) {
           await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason }, device);
           return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
