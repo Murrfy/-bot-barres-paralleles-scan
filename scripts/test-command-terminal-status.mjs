@@ -8,6 +8,10 @@ test('terminal command results persist ACK/FAIL records for the originating cont
   assert.match(sync,/function commandTerminalResultKey\(commandId\)/);
   assert.match(sync,/status: 'ACK'/);
   assert.match(sync,/writeCommandTerminalResult\([\s\S]*'FAIL'/);
+  const writer=sync.slice(sync.indexOf('async function writeCommandTerminalResult'),sync.indexOf('async function pushDeadLetter'));
+  assert.match(writer,/const commandId = String\(command\?\.id \|\| ''\)/);
+  assert.match(writer,/commandId,/);
+  assert.doesNotMatch(writer,/normalizedCommandId/);
   assert.match(sync,/deviceId: String\(command\?\.deviceId \|\| ''\)/);
   assert.match(sync,/String\(COMMAND_DEDUPE_TTL_SECONDS\)/);
 });
