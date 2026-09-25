@@ -93,7 +93,8 @@ test('runtime publication never mixes browser simulation positions into server R
   assert.ok(block.includes('openPositions:[]'));
   assert.ok(block.includes('binancePositions:'));
   assert.ok(block.includes('binanceOrders:'));
-  assert.ok(block.includes("const executionMode=runtime.realExecutionArmed?'REAL':'SIMULATION';"));
+  assert.ok(block.includes("const executionMode='REAL';"));
+  assert.equal(block.includes('SIMULATION'),false);
 });
 
 test('command execution stays fail-closed on ambiguity and requires stream readiness',()=>{

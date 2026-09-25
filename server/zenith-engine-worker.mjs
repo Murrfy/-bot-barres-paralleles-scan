@@ -24,7 +24,14 @@ import {
 } from '../lib/protective-close-state.mjs';
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
+import { pendingEntryProtectionLossTargets } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
+import {
+  entryWatchDefinition,
+  entryWatchIdentity,
+  evaluateEntryWatchTick,
+  pruneEntryWatchStates,
+} from '../lib/entry-watch.mjs';
 
 const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
 const BINANCE_PUBLIC_BASE='https://fapi.binance.com';
@@ -36,6 +43,7 @@ const RECONCILE_MS=15000;
 const KEEPALIVE_MS=45*60*1000;
 const STREAM_RESTART_MS=23*60*60*1000;
 const MARK_FALLBACK_MS=6000;
+const ENTRY_WATCH_RECOVERY_MS=48*60*60*1000;
 const BOOTSTRAP_RETRY_MS=15000;
 
 const instanceId='engine-instance-'+crypto.randomUUID();
@@ -88,6 +96,19 @@ const autoProtection={
   metadataFetchAt:0,
   busySymbols:new Set(),
   lastError:'',
+  lastActionAt:0,
+};
+
+const entryWatch={
+  states:new Map(),
+  authorizationAt:0,
+  loaded:false,
+  loadPromise:null,
+  saveTimer:null,
+  saveBusy:false,
+  busySymbols:new Set(),
+  lastError:'',
+  lastCrossingAt:0,
   lastActionAt:0,
 };
 
@@ -478,6 +499,350 @@ function scheduleAutoHighWaterSave(delay=5000){
   },Math.max(250,delay));
 }
 
+function entryWatchDefinitions(){
+  const validated=runtime.config?.validated&&typeof runtime.config.validated==='object'
+    ?runtime.config.validated:{};
+  const out=[];
+  for(const [symbol,row] of Object.entries(validated)){
+    const definition=entryWatchDefinition(symbol,row);
+    if(definition)out.push(definition);
+  }
+  return out;
+}
+
+function entryWatchDefinitionMap(){
+  return new Map(entryWatchDefinitions().map(definition=>[definition.symbol,definition]));
+}
+
+function entryWatchStateObject(){
+  return Object.fromEntries([...entryWatch.states.entries()].map(([symbol,state])=>[symbol,clone(state)]));
+}
+
+function entryWatchSeedArmed(definition){
+  const row=runtime.config?.validated?.[definition.symbol];
+  return Boolean(
+    row?.armedAbove===true&&
+    Date.now()-definition.validatedAt>=0&&
+    Date.now()-definition.validatedAt<=ENTRY_WATCH_RECOVERY_MS
+  );
+}
+
+async function loadEntryWatchState(force=false){
+  if(entryWatch.loaded&&!force)return true;
+  if(entryWatch.loadPromise&&!force)return entryWatch.loadPromise;
+  const task=(async()=>{
+    const result=await syncApi('engine-entry-watch-state');
+    if(!result.response.ok||result.data?.ok!==true){
+      entryWatch.lastError=String(result.data?.code||('HTTP_'+result.response.status));
+      return false;
+    }
+    entryWatch.authorizationAt=n(result.data.authorizationAt,0);
+    entryWatch.states.clear();
+    const states=result.data.states&&typeof result.data.states==='object'?result.data.states:{};
+    for(const [symbol,state] of Object.entries(states)){
+      const definition=entryWatchDefinition(symbol,state);
+      if(!definition||String(state?.identity||'')!==entryWatchIdentity(definition))continue;
+      entryWatch.states.set(definition.symbol,clone(state));
+      const aggId=n(state?.lastAggId,-1),aggTime=n(state?.lastAggTime,0);
+      if(aggId>=0){
+        const previous=n(markStream.lastAggIds.get(definition.symbol),-1);
+        if(aggId>previous)markStream.lastAggIds.set(definition.symbol,aggId);
+      }
+      if(aggTime>0){
+        const previous=n(markStream.lastAggTimes.get(definition.symbol),0);
+        if(aggTime>previous)markStream.lastAggTimes.set(definition.symbol,aggTime);
+      }
+    }
+    entryWatch.loaded=entryWatch.authorizationAt>0;
+    return entryWatch.loaded;
+  })();
+  entryWatch.loadPromise=task;
+  try{return await task}
+  finally{entryWatch.loadPromise=null}
+}
+
+async function persistEntryWatchStateNow(){
+  if(entryWatch.saveBusy)return false;
+  if(!entryWatch.loaded||!(entryWatch.authorizationAt>0))return false;
+  entryWatch.saveBusy=true;
+  try{
+    const result=await syncApi('engine-entry-watch-state',{
+      method:'POST',
+      body:{authorizationAt:entryWatch.authorizationAt,states:entryWatchStateObject()},
+    });
+    if(!result.response.ok||result.data?.ok!==true){
+      const code=String(result.data?.code||('HTTP_'+result.response.status));
+      entryWatch.lastError=code;
+      if(code==='ENGINE_ENTRY_WATCH_AUTHORIZATION_CHANGED'||code==='ENGINE_RESTART_AUTHORIZATION_REQUIRED'){
+        entryWatch.loaded=false;
+        entryWatch.authorizationAt=0;
+        entryWatch.states.clear();
+      }
+      return false;
+    }
+    entryWatch.lastError='';
+    return true;
+  }catch(error){
+    entryWatch.lastError=String(error?.message||'ENGINE_ENTRY_WATCH_SAVE_FAILED');
+    return false;
+  }finally{
+    entryWatch.saveBusy=false;
+  }
+}
+
+function scheduleEntryWatchSave(delay=1000){
+  if(entryWatch.saveTimer)clearTimeout(entryWatch.saveTimer);
+  entryWatch.saveTimer=setTimeout(()=>{
+    entryWatch.saveTimer=null;
+    persistEntryWatchStateNow().catch(error=>logError('ENTRY_WATCH_SAVE_FAILED',error));
+  },Math.max(250,delay));
+}
+
+function reconcileEntryWatchConfig(){
+  if(!entryWatch.loaded)return false;
+  const definitions=entryWatchDefinitions();
+  const before=stableStringify(entryWatchStateObject());
+  const pruned=pruneEntryWatchStates(entryWatchStateObject(),definitions);
+  entryWatch.states=new Map(Object.entries(pruned));
+  const changed=before!==stableStringify(pruned);
+  if(changed)scheduleEntryWatchSave(250);
+  return changed;
+}
+
+function watchedEntrySymbols(){
+  const out=new Set();
+  if(!entryWatch.loaded)return out;
+  const active=activeProtectionSymbols();
+  for(const definition of entryWatchDefinitions()){
+    const state=entryWatch.states.get(definition.symbol);
+    if(!active.has(definition.symbol)&&!(n(state?.triggeredAt,0)>0))out.add(definition.symbol);
+  }
+  return out;
+}
+
+function trackedMarkSymbols(){
+  return new Set([...activeProtectionSymbols(),...watchedEntrySymbols()]);
+}
+
+function watchedEntryConfig(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  const definition=entryWatchDefinitionMap().get(wanted);
+  if(!definition)return null;
+  const tokenSettings=runtime.config?.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const globalSettings=runtime.config?.settings&&typeof runtime.config.settings==='object'
+    ?runtime.config.settings:{};
+  const token=tokenSettings[wanted]&&typeof tokenSettings[wanted]==='object'?tokenSettings[wanted]:{};
+  const margin=n(token.margin,n(globalSettings.margin,0));
+  const leverage=n(token.leverage,n(globalSettings.leverage,0));
+  const maxLoss=n(token.maxLoss,n(globalSettings.maxLoss,0));
+  const maxActive=Math.max(
+    1,
+    Math.min(
+      REAL_RISK_LIMITS.maxActivePositions,
+      Math.floor(n(globalSettings.maxActive,REAL_RISK_LIMITS.maxActivePositions))
+    )
+  );
+  if(!(margin>0)||!(leverage>0)||!(maxLoss>0))return null;
+  return {
+    ...definition,
+    margin,leverage,maxLoss,maxActive,
+  };
+}
+
+function occupiedRealEntrySlots(){
+  const projection=streamProjection();
+  const occupied=new Set();
+  for(const position of projection.binancePositions||[]){
+    if(Math.abs(n(position?.positionAmt??position?.quantity,0))>0){
+      const symbol=String(position?.symbol||'').toUpperCase();
+      if(symbol)occupied.add(symbol);
+    }
+  }
+  for(const order of projection.binanceOrders||[]){
+    const symbol=String(order?.symbol||'').toUpperCase();
+    if(!symbol)continue;
+    const reduceOnly=order?.reduceOnly===true||order?.reduceOnly==='true';
+    const closePosition=order?.closePosition===true||order?.closePosition==='true';
+    if(!reduceOnly&&!closePosition)occupied.add(symbol);
+  }
+  return occupied;
+}
+
+function entryWatchMayDispatch(symbol){
+  const config=watchedEntryConfig(symbol);
+  if(!config||!entryWatch.loaded)return false;
+  if(!runtime.synchronized||!runtime.heartbeatFresh||runtime.mode!=='RUNNING')return false;
+  if(!masterExecutionEligible({
+    role:'master',
+    hidden:false,
+    leaseActive:runtime.leaseActive,
+    realExecutionArmed:runtime.realExecutionArmed,
+    userStreamReady:userStreamReady(stream.state),
+    mode:runtime.mode,
+  }))return false;
+  const occupied=occupiedRealEntrySlots();
+  return !occupied.has(config.symbol)&&occupied.size<config.maxActive;
+}
+
+function autoEntryCommandId(config){
+  const digest=sha256Hex(`${config.symbol}|${config.validatedAt}|${config.buy}`).slice(0,20);
+  return `auto-entry-${config.symbol}-${digest}`;
+}
+
+async function callEntryExecute(body){
+  return binanceApi('/api/binance-entry-execute',{method:'POST',body});
+}
+
+async function executeWatchedEntry(config){
+  const symbol=config.symbol;
+  if(entryWatch.busySymbols.has(symbol))return {ok:false,reason:'ENTRY_ALREADY_BUSY'};
+  if(!entryWatchMayDispatch(symbol))return {ok:false,reason:'ENTRY_SLOT_OR_RUNTIME_NOT_READY',slotBlocked:true};
+
+  entryWatch.busySymbols.add(symbol);
+  const commandId=autoEntryCommandId(config);
+  const common={
+    type:'EXEC_OPEN_POSITION',
+    commandId,
+    symbol,
+    side:'BUY',
+    orderType:'LIMIT',
+    margin:config.margin,
+    leverage:config.leverage,
+    maxLoss:config.maxLoss,
+    limitPrice:config.buy,
+  };
+  let preparedCommitted=false;
+  try{
+    const prepared=await callEntryExecute({...common,phase:'PREPARE_PROTECTION'});
+    if(!prepared.response.ok||prepared.data?.ok!==true){
+      const reasons=Array.isArray(prepared.data?.reasons)?prepared.data.reasons:[];
+      const reason='ENTRY_PREPARE_'+String(prepared.data?.code||prepared.data?.reason||('HTTP_'+prepared.response.status));
+      entryWatch.lastError=reason;
+      return {
+        ok:false,reason,
+        slotBlocked:reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'),
+        prepared:false,
+      };
+    }
+    preparedCommitted=true;
+    const protectionId=String(prepared.data?.protectionPlan?.algoPlan?.params?.clientAlgoId||'');
+    if(!/^zth-MAX-[A-Za-z0-9._:-]+$/.test(protectionId)){
+      entryWatch.lastError='ENTRY_PREPARE_PROTECTION_ID_MISSING';
+      return {ok:false,reason:entryWatch.lastError,prepared:true};
+    }
+
+    const protection=await waitForStreamOrder({kind:'ALGO',clientId:protectionId,terminal:false},3500);
+    if(!protection){
+      entryWatch.lastError='ENTRY_PREPARE_NOT_STREAM_CONFIRMED';
+      scheduleReconcile(250);
+      return {ok:false,reason:entryWatch.lastError,prepared:true};
+    }
+
+    await publishRuntime();
+    const submitted=await callEntryExecute({...common,phase:'SUBMIT_ENTRY'});
+    if(!submitted.response.ok||submitted.data?.ok!==true){
+      entryWatch.lastError='ENTRY_SUBMIT_'+String(
+        submitted.data?.code||submitted.data?.reason||('HTTP_'+submitted.response.status)
+      );
+      scheduleReconcile(250);
+      return {ok:false,reason:entryWatch.lastError,prepared:true};
+    }
+
+    const entryId=String(submitted.data?.plan?.params?.newClientOrderId||'');
+    if(!entryId){
+      entryWatch.lastError='ENTRY_ORDER_ID_MISSING';
+      scheduleReconcile(250);
+      return {ok:false,reason:entryWatch.lastError,prepared:true};
+    }
+
+    entryWatch.lastActionAt=Date.now();
+    entryWatch.lastError='';
+    log('AUTO_ENTRY_SUBMITTED',{
+      symbol,commandId,limitPrice:config.buy,
+      margin:config.margin,leverage:config.leverage,maxLoss:config.maxLoss,
+      entryClientOrderId:entryId,protectionClientAlgoId:protectionId,
+    });
+    scheduleReconcile(150);
+    return {ok:true,commandId,entryClientOrderId:entryId,protectionClientAlgoId:protectionId};
+  }catch(error){
+    const reason='AUTO_ENTRY_'+cleanReason(error?.message||'FAILED','FAILED');
+    entryWatch.lastError=reason;
+    scheduleReconcile(500);
+    return {ok:false,reason,prepared:preparedCommitted};
+  }finally{
+    entryWatch.busySymbols.delete(symbol);
+  }
+}
+
+async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.now()}={}){
+  const wanted=String(symbol||'').toUpperCase();
+  const definition=entryWatchDefinitionMap().get(wanted);
+  if(!definition)return false;
+  const previous=entryWatch.states.get(wanted)||null;
+  const result=evaluateEntryWatchTick({
+    definition,
+    state:previous,
+    price,
+    eventId,
+    eventTime,
+    allowTrigger:entryWatchMayDispatch(wanted),
+    seedArmed:!previous&&entryWatchSeedArmed(definition),
+  });
+  if(result.action==='DUPLICATE')return false;
+
+  entryWatch.states.set(wanted,result.state);
+  if(result.action==='PENDING'){
+    entryWatch.lastCrossingAt=n(result.state.suppressedCrossingAt,Date.now());
+    entryWatch.lastError='ENTRY_WAITING_FOR_POSITION_SLOT';
+    scheduleEntryWatchSave(250);
+    return true;
+  }
+  if(result.action==='EXPIRED'){
+    entryWatch.lastError='ENTRY_TRIGGER_EXPIRED';
+    scheduleEntryWatchSave(250);
+    log('ENTRY_WATCH_EXPIRED',{symbol:wanted,buy:definition.buy});
+    return true;
+  }
+  if(result.action!=='TRIGGER'){
+    scheduleEntryWatchSave();
+    return true;
+  }
+
+  // Persist the one-shot trigger before any Binance write. If persistence is unavailable,
+  // fail closed and do not place a real order.
+  if(!(await persistEntryWatchStateNow())){
+    entryWatch.lastError='ENTRY_TRIGGER_NOT_PERSISTED';
+    return false;
+  }
+
+  const config=watchedEntryConfig(wanted);
+  if(!config){
+    entryWatch.lastError='ENTRY_CONFIG_INVALID';
+    return false;
+  }
+  const executed=await executeWatchedEntry(config);
+  if(executed.ok){
+    scheduleEntryWatchSave(250);
+    return true;
+  }
+
+  // A slot can disappear between the crossing decision and Binance preflight. Preserve the
+  // historical 50-second waiting rule only if no protection/order was committed yet.
+  if(executed.slotBlocked===true&&executed.prepared!==true){
+    const state=entryWatch.states.get(wanted);
+    if(state){
+      state.triggeredAt=0;
+      state.pendingUntil=Math.max(Date.now()+1,n(eventTime,Date.now())+50000);
+      state.blockedAt=0;
+      entryWatch.states.set(wanted,state);
+      await persistEntryWatchStateNow().catch(()=>false);
+    }
+  }
+  log('AUTO_ENTRY_FAILED',{symbol:wanted,reason:executed.reason||'UNKNOWN'});
+  return false;
+}
+
 async function pruneAutoHighWater(){
   if(!autoProtection.highWaterLoaded||userStreamReady(stream.state)!==true)return false;
   const active=new Set(
@@ -740,10 +1105,14 @@ function activePositionForSymbol(symbol){
 function trackingStartTime(symbol){
   const wanted=String(symbol||'').toUpperCase();
   const position=activePositionForSymbol(wanted);
+  const definition=entryWatchDefinitionMap().get(wanted);
+  const state=entryWatch.states.get(wanted);
   return Math.max(
     0,
-    n(markStream.lastAggTimes.get(wanted),
-      n(position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,Date.now()-2000))
+    n(markStream.lastAggTimes.get(wanted),0),
+    n(position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,0),
+    n(state?.lastAggTime,0),
+    n(definition?.validatedAt,Date.now()-2000)
   );
 }
 
@@ -756,7 +1125,8 @@ function rememberAggCursor(symbol,id,time){
 async function processAggTradeRow(symbol,row){
   if(!row)return false;
   const wanted=String(symbol||row?.s||'').toUpperCase();
-  if(!activeProtectionSymbols().has(wanted))return false;
+  const tracked=trackedMarkSymbols();
+  if(!tracked.has(wanted))return false;
   const id=n(row?.a,-1);
   const eventTime=n(row?.T,n(row?.E,Date.now()));
   const previousId=markStream.lastAggIds.get(wanted);
@@ -764,28 +1134,31 @@ async function processAggTradeRow(symbol,row){
   const price=n(row?.p,0);
   if(!(price>0))return false;
   markStream.lastEventAt=Date.now();
-  await runAutoProtection(wanted,price);
+  if(activeProtectionSymbols().has(wanted))await runAutoProtection(wanted,price);
+  if(watchedEntrySymbols().has(wanted)){
+    await processEntryWatchPrice(wanted,price,{eventId:id,eventTime});
+  }
   rememberAggCursor(wanted,id,eventTime);
   return true;
 }
 
 async function recoverMissedAggTrades(symbol){
   const wanted=String(symbol||'').toUpperCase();
-  if(!activeProtectionSymbols().has(wanted)||markStream.recovering.has(wanted))return false;
+  if(!trackedMarkSymbols().has(wanted)||markStream.recovering.has(wanted))return false;
   markStream.recovering.add(wanted);
   markStream.pendingAggTrades.set(wanted,[]);
   try{
-    let start=Math.max(Date.now()-48*60*60*1000,trackingStartTime(wanted)-250);
+    let start=Math.max(Date.now()-ENTRY_WATCH_RECOVERY_MS,trackingStartTime(wanted)-250);
     let fromId=null;
     let pages=0;
-    while(activeProtectionSymbols().has(wanted)&&pages<25){
+    while(trackedMarkSymbols().has(wanted)&&pages<25){
       const path=fromId==null
         ?`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&startTime=${Math.floor(start)}&limit=1000`
         :`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&fromId=${fromId}&limit=1000`;
       const rows=await publicBinanceJson(path);
       if(!Array.isArray(rows)||!rows.length)break;
       for(const row of rows){
-        if(!activeProtectionSymbols().has(wanted))break;
+        if(!trackedMarkSymbols().has(wanted))break;
         await processAggTradeRow(wanted,row);
       }
       pages++;
@@ -795,14 +1168,34 @@ async function recoverMissedAggTrades(symbol){
       await sleep(40);
     }
     if(pages>=25){
-      await failClosedAutoProtection('MARK_RECOVERY_PARTIAL_'+wanted);
+      if(activeProtectionSymbols().has(wanted)){
+        await failClosedAutoProtection('MARK_RECOVERY_PARTIAL_'+wanted);
+      }else{
+        entryWatch.lastError='ENTRY_WATCH_RECOVERY_PARTIAL_'+wanted;
+        const state=entryWatch.states.get(wanted);
+        if(state){
+          state.armedAbove=false;
+          entryWatch.states.set(wanted,state);
+          scheduleEntryWatchSave(250);
+        }
+      }
       return false;
     }
     return true;
   }catch(error){
-    await failClosedAutoProtection(
-      'MARK_RECOVERY_FAILED_'+cleanReason(error?.message||'BINANCE_PUBLIC_RECOVERY','BINANCE_PUBLIC_RECOVERY')
-    );
+    if(activeProtectionSymbols().has(wanted)){
+      await failClosedAutoProtection(
+        'MARK_RECOVERY_FAILED_'+cleanReason(error?.message||'BINANCE_PUBLIC_RECOVERY','BINANCE_PUBLIC_RECOVERY')
+      );
+    }else{
+      entryWatch.lastError='ENTRY_WATCH_RECOVERY_FAILED_'+cleanReason(error?.message||'BINANCE_PUBLIC_RECOVERY','BINANCE_PUBLIC_RECOVERY');
+      const state=entryWatch.states.get(wanted);
+      if(state){
+        state.armedAbove=false;
+        entryWatch.states.set(wanted,state);
+        scheduleEntryWatchSave(250);
+      }
+    }
     return false;
   }finally{
     const queued=markStream.pendingAggTrades.get(wanted)||[];
@@ -810,7 +1203,7 @@ async function recoverMissedAggTrades(symbol){
     markStream.pendingAggTrades.delete(wanted);
     queued.sort((a,b)=>n(a?.a)-n(b?.a)||n(a?.T)-n(b?.T));
     for(const row of queued){
-      if(activeProtectionSymbols().has(wanted))await processAggTradeRow(wanted,row);
+      if(trackedMarkSymbols().has(wanted))await processAggTradeRow(wanted,row);
     }
   }
 }
@@ -827,12 +1220,13 @@ function sendMarkControl(method,params){
 
 function syncMarkSubscriptions(){
   if(!markStream.ws||markStream.ws.readyState!==WebSocket.OPEN)return false;
-  const desired=new Set([...activeProtectionSymbols()].map(markStreamName));
+  const symbols=trackedMarkSymbols();
+  const desired=new Set([...symbols].map(markStreamName));
   const add=[...desired].filter(name=>!markStream.subscribed.has(name));
   const remove=[...markStream.subscribed].filter(name=>!desired.has(name));
   if(add.length&&sendMarkControl('SUBSCRIBE',add)){
     add.forEach(name=>markStream.subscribed.add(name));
-    for(const symbol of activeProtectionSymbols()){
+    for(const symbol of symbols){
       if(add.includes(markStreamName(symbol))){
         void recoverMissedAggTrades(symbol).catch(error=>logError('MARK_RECOVERY_FAILED',error,{symbol}));
       }
@@ -870,7 +1264,17 @@ async function processMarkPayload(payload){
   if(markStream.recovering.has(symbol)){
     const queued=markStream.pendingAggTrades.get(symbol)||[];
     if(queued.length>=1000){
-      await failClosedAutoProtection('MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol);
+      if(activeProtectionSymbols().has(symbol)){
+        await failClosedAutoProtection('MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol);
+      }else{
+        entryWatch.lastError='ENTRY_WATCH_RECOVERY_BUFFER_OVERFLOW_'+symbol;
+        const state=entryWatch.states.get(symbol);
+        if(state){
+          state.armedAbove=false;
+          entryWatch.states.set(symbol,state);
+          scheduleEntryWatchSave(250);
+        }
+      }
       return false;
     }
     queued.push(row);
@@ -883,23 +1287,35 @@ async function processMarkPayload(payload){
 async function fallbackMarkPrices(){
   if(stopping||!runtime.leaseActive)return false;
   if(markStream.ws&&markStream.ws.readyState===WebSocket.OPEN)return false;
-  if(!activeProtectionSymbols().size)return false;
+  if(!trackedMarkSymbols().size)return false;
   try{
-    const result=await binanceApi('/api/binance-read');
-    if(result.response.status===429)return false;
-    if(!result.response.ok||result.data?.ok!==true){
-      const code=String(result.data?.code||('HTTP_'+result.response.status));
-      if(fatalAuthorityCode(code)){
-        const error=new Error(code);error.code=code;throw error;
-      }
-      markStream.lastError='MARK_FALLBACK_'+code;
-      return false;
-    }
     const tasks=[];
-    for(const position of Array.isArray(result.data?.positions)?result.data.positions:[]){
-      const symbol=String(position?.symbol||'').toUpperCase();
-      const mark=n(position?.markPrice,0);
-      if(activeProtectionSymbols().has(symbol)&&mark>0)tasks.push(runAutoProtection(symbol,mark));
+    if(activeProtectionSymbols().size){
+      const result=await binanceApi('/api/binance-read');
+      if(result.response.status!==429&&result.response.ok&&result.data?.ok===true){
+        for(const position of Array.isArray(result.data?.positions)?result.data.positions:[]){
+          const symbol=String(position?.symbol||'').toUpperCase();
+          const mark=n(position?.markPrice,0);
+          if(activeProtectionSymbols().has(symbol)&&mark>0)tasks.push(runAutoProtection(symbol,mark));
+        }
+      }else if(result.response.status!==429){
+        const code=String(result.data?.code||('HTTP_'+result.response.status));
+        if(fatalAuthorityCode(code)){
+          const error=new Error(code);error.code=code;throw error;
+        }
+        markStream.lastError='MARK_FALLBACK_'+code;
+      }
+    }
+    const watched=watchedEntrySymbols();
+    if(watched.size){
+      const prices=await publicBinanceJson('/fapi/v1/ticker/price');
+      for(const row of Array.isArray(prices)?prices:[]){
+        const symbol=String(row?.symbol||'').toUpperCase();
+        const px=n(row?.price,0);
+        if(watched.has(symbol)&&px>0){
+          tasks.push(processEntryWatchPrice(symbol,px,{eventId:-1,eventTime:Date.now()}));
+        }
+      }
     }
     if(tasks.length)await Promise.allSettled(tasks);
     return true;
@@ -956,12 +1372,12 @@ async function ensureMarkPriceStream(){
 }
 
 function streamProjection(){
-  return runtimeInventoryFromUserStream(stream.state,runtime.realExecutionArmed?'REAL':'SIMULATION');
+  return runtimeInventoryFromUserStream(stream.state,'REAL');
 }
 
 function runtimeSnapshot(){
   const projection=streamProjection();
-  const executionMode=runtime.realExecutionArmed?'REAL':'SIMULATION';
+  const executionMode='REAL';
   return {
     executionMode,
     mode:executionMode,
@@ -1079,6 +1495,77 @@ async function markMaxLossRepairFailure(reason){
   scheduleReconcile(1500);
   return code;
 }
+async function cancelPendingEntriesMissingPreparedProtection(report){
+  const targets=pendingEntryProtectionLossTargets(report);
+  if(!targets.length)return {handled:false,canceled:0,filledRace:false,reason:'NO_PENDING_ENTRY_PROTECTION_LOSS'};
+
+  let canceled=0;
+  let filledRace=false;
+  for(const target of targets){
+    const body={
+      type:'EXEC_CANCEL_ENTRY',
+      commandId:target.commandId,
+      symbol:target.symbol,
+      clientOrderId:target.entryClientOrderId,
+    };
+    const result=await callProtectiveExecute(body);
+    if(!result.response.ok||result.data?.ok!==true){
+      const reason='ENTRY_PROTECTION_LOSS_CANCEL_'+String(
+        result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status)
+      );
+      entryWatch.lastError=reason;
+      runtime.error=reason;
+      scheduleReconcile(500);
+      return {handled:true,canceled,filledRace,reason};
+    }
+
+    const disposition=String(result.data?.result?.disposition||'').toUpperCase();
+    const status=String(result.data?.result?.order?.status||'').toUpperCase();
+    if(disposition==='ALREADY_FILLED'||status==='FILLED'){
+      // Race: the LIMIT filled before cancellation won. Never close the position here.
+      // The next reconciliation hands the live position to the normal MAX-LOSS repair path.
+      filledRace=true;
+      log('ENTRY_PROTECTION_LOSS_FILL_RACE',{
+        symbol:target.symbol,
+        commandId:target.commandId,
+        clientOrderId:target.entryClientOrderId,
+      });
+      continue;
+    }
+
+    let terminalStatus=status;
+    if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus)){
+      const terminal=await waitForStreamOrder({
+        kind:'STANDARD',clientId:target.entryClientOrderId,terminal:true,
+      },3000);
+      terminalStatus=String(terminal?.status||terminalStatus||'').toUpperCase();
+    }
+    if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus)){
+      const reason='ENTRY_PROTECTION_LOSS_CANCEL_NOT_CONFIRMED';
+      entryWatch.lastError=reason;
+      runtime.error=reason;
+      scheduleReconcile(500);
+      return {handled:true,canceled,filledRace,reason};
+    }
+    canceled++;
+    log('ENTRY_CANCELED_AFTER_MAXLOSS_LOSS',{
+      symbol:target.symbol,
+      commandId:target.commandId,
+      clientOrderId:target.entryClientOrderId,
+      terminalStatus,
+    });
+  }
+
+  await publishRuntime().catch(()=>{});
+  entryWatch.lastError='';
+  return {
+    handled:true,
+    canceled,
+    filledRace,
+    reason:filledRace?'ENTRY_FILL_RACE_RECONCILE':'ENTRY_CANCELLED_AFTER_MAXLOSS_LOSS',
+  };
+}
+
 async function repairMissingMaxLoss(report){
   const exactTarget=missingMaxLossRepairTarget(report);
   if(!exactTarget)return {handled:false,repaired:false,reason:'NO_EXACT_REPAIR_TARGET'};
@@ -1180,6 +1667,19 @@ async function reconcile(secondPass=false){
       const reason=String(data?.code||('HTTP_'+response.status));
       await invalidateStream('BINANCE_RECONCILIATION_'+reason);
       return false;
+    }
+
+    const pendingProtectionLoss=pendingEntryProtectionLossTargets(data.report);
+    if(pendingProtectionLoss.length){
+      if(secondPass){
+        await invalidateStream('ENTRY_PROTECTION_LOSS_CANCEL_RECONCILIATION_FAILED');
+        return false;
+      }
+      const recovered=await cancelPendingEntriesMissingPreparedProtection(data.report);
+      if(!recovered.handled)return false;
+      stream.reconcileBusy=false;
+      await sleep(100);
+      return reconcile(true);
     }
 
     const orphanTargets=orphanZenithCleanupOrders(data.report);
@@ -1790,6 +2290,8 @@ async function runtimeCycle(){
     await publishRuntime().catch(error=>logError('RUNTIME_PUBLISH_FAILED',error));
     await ensureUserStream();
     await loadAutoHighWater().catch(error=>logError('AUTO_HIGH_WATER_LOAD_FAILED',error));
+    await loadEntryWatchState().catch(error=>logError('ENTRY_WATCH_LOAD_FAILED',error));
+    reconcileEntryWatchConfig();
     await ensureMarkPriceStream();
     syncMarkSubscriptions();
     return true;
@@ -1822,8 +2324,10 @@ async function shutdown(code=0){
   if(markStream.restartTimer)clearTimeout(markStream.restartTimer);
   if(markStream.fallbackTimer)clearInterval(markStream.fallbackTimer);
   if(autoProtection.highWaterSaveTimer)clearTimeout(autoProtection.highWaterSaveTimer);
+  if(entryWatch.saveTimer)clearTimeout(entryWatch.saveTimer);
   clearStreamTimers();
   await persistAutoHighWaterNow().catch(()=>{});
+  await persistEntryWatchStateNow().catch(()=>{});
   closeMarkPriceStream('ENGINE_SHUTDOWN',false);
   await closeRemoteUserStream();
   const ws=stream.ws;

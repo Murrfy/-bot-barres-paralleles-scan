@@ -60,6 +60,7 @@ const KEY_ENGINE_INSTANCE = `${PREFIX}:engine-instance`;
 const KEY_ENGINE_AUTHORIZED = `${PREFIX}:engine-authorized`;
 const KEY_ENGINE_DISABLED = `${PREFIX}:engine-disabled`;
 const KEY_ENGINE_PROTECTION_HIGH_WATER = `${PREFIX}:engine-protection-high-water`;
+const KEY_ENGINE_ENTRY_WATCH_STATE = `${PREFIX}:engine-entry-watch-state`;
 const MASTER_TTL_SECONDS = 20;
 const ENGINE_INSTANCE_TTL_SECONDS = 45;
 const MASTER_HEARTBEAT_TTL_SECONDS = 60;
@@ -3511,6 +3512,189 @@ export default async function handler(req, res) {
         pendingCommands: Number(pending || 0),
         processingCommands: Number(processing || 0),
         reasons,
+      });
+    }
+
+    if (action === 'engine-entry-watch-state' && req.method === 'GET') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+      if (device.principal !== 'engine') {
+        return send(res, 403, { ok:false, code:'ENGINE_PRINCIPAL_REQUIRED' });
+      }
+
+      const readScript = [
+        "local currentInstance = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if currentInstance ~= ARGV[1] then return {-1, '', ''} end",
+        "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if registered ~= ARGV[2] then return {-2, '', ''} end",
+        "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if lease ~= ARGV[2] then return {-3, '', ''} end",
+        "local epoch = tostring(redis.call('GET', KEYS[4]) or '')",
+        "if epoch ~= ARGV[3] then return {-4, '', ''} end",
+        "local authorization = tostring(redis.call('GET', KEYS[5]) or '')",
+        "if authorization == '' then return {-5, '', ''} end",
+        "local watchState = tostring(redis.call('GET', KEYS[6]) or '')",
+        "return {1, authorization, watchState}"
+      ].join('\n');
+
+      const result = await redis([
+        'EVAL', readScript, '6',
+        KEY_ENGINE_INSTANCE,
+        KEY_MASTER_DEVICE,
+        KEY_MASTER,
+        roleAssignmentKey(PREFIX, 'master'),
+        KEY_ENGINE_AUTHORIZED,
+        KEY_ENGINE_ENTRY_WATCH_STATE,
+        String(device.engineInstanceId || ''),
+        String(device.deviceId || ''),
+        String(Number(device.createdAt || 0)),
+      ]);
+      const code = Number(Array.isArray(result) ? result[0] : 0);
+      if (code !== 1) {
+        return send(res, 409, {
+          ok:false,
+          code: code === -1 ? 'ENGINE_INSTANCE_FENCED'
+            : code === -2 ? 'MASTER_ROLE_CHANGED'
+            : code === -3 ? 'MASTER_LEASE_REQUIRED'
+            : code === -4 ? 'MASTER_SESSION_REVOKED'
+            : code === -5 ? 'ENGINE_RESTART_AUTHORIZATION_REQUIRED'
+            : 'ENGINE_ENTRY_WATCH_READ_FAILED',
+        });
+      }
+
+      const authorization = parseStoredJson(Array.isArray(result) ? result[1] : '');
+      const authorizationAt = Number(authorization?.authorizedAt || 0);
+      if (authorization?.version !== 1 ||
+          String(authorization?.masterDeviceId || '') !== String(device.deviceId || '') ||
+          !Number.isFinite(authorizationAt) || authorizationAt <= 0) {
+        return send(res, 409, { ok:false, code:'ENGINE_RESTART_AUTHORIZATION_INVALID' });
+      }
+      const stored = parseStoredJson(Array.isArray(result) ? result[2] : '');
+      const sameScope = Boolean(
+        stored?.version === 1 &&
+        Number(stored?.authorizationAt || 0) === authorizationAt &&
+        plainJsonObject(stored?.states)
+      );
+      return send(res, 200, {
+        ok:true,
+        authorizationAt,
+        states:sameScope ? stored.states : {},
+        staleScope:Boolean(stored && !sameScope),
+        updatedAt:sameScope ? Number(stored.updatedAt || 0) : 0,
+      });
+    }
+
+    if (action === 'engine-entry-watch-state' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+      if (device.principal !== 'engine') {
+        return send(res, 403, { ok:false, code:'ENGINE_PRINCIPAL_REQUIRED' });
+      }
+      const authorizationAt = Number(req.body?.authorizationAt);
+      const states = req.body?.states;
+      if (!Number.isSafeInteger(authorizationAt) || authorizationAt <= 0 || !plainJsonObject(states)) {
+        return send(res, 400, { ok:false, code:'ENGINE_ENTRY_WATCH_INVALID' });
+      }
+      const keys = Object.keys(states);
+      if (keys.length > 100) {
+        return send(res, 413, { ok:false, code:'ENGINE_ENTRY_WATCH_TOO_MANY_STATES', maxEntries:100 });
+      }
+      const cleanStates = {};
+      for (const rawSymbol of keys) {
+        const symbol = String(rawSymbol || '').toUpperCase();
+        const state = states[rawSymbol];
+        if (!/^[A-Z0-9]{3,30}$/.test(symbol) || !plainJsonObject(state)) {
+          return send(res, 400, { ok:false, code:'ENGINE_ENTRY_WATCH_STATE_INVALID' });
+        }
+        const buy = Number(state.buy);
+        const validatedAt = Number(state.validatedAt);
+        const lastPrice = Number(state.lastPrice || 0);
+        const lastAggId = Number(state.lastAggId ?? -1);
+        const lastAggTime = Number(state.lastAggTime || 0);
+        const suppressedCrossingAt = Number(state.suppressedCrossingAt || 0);
+        const pendingUntil = Number(state.pendingUntil || 0);
+        const blockedAt = Number(state.blockedAt || 0);
+        const triggeredAt = Number(state.triggeredAt || 0);
+        const identity = String(state.identity || '');
+        if (state.version !== 1 ||
+            !(buy > 0) || buy > 1e12 ||
+            !Number.isSafeInteger(validatedAt) || validatedAt <= 0 ||
+            identity !== symbol + ':' + String(validatedAt) + ':' + String(buy) ||
+            typeof state.armedAbove !== 'boolean' ||
+            !(lastPrice >= 0) || lastPrice > 1e12 ||
+            !Number.isSafeInteger(lastAggId) || lastAggId < -1 ||
+            !Number.isSafeInteger(lastAggTime) || lastAggTime < 0 ||
+            !Number.isSafeInteger(suppressedCrossingAt) || suppressedCrossingAt < 0 ||
+            !Number.isSafeInteger(pendingUntil) || pendingUntil < 0 ||
+            !Number.isSafeInteger(blockedAt) || blockedAt < 0 ||
+            !Number.isSafeInteger(triggeredAt) || triggeredAt < 0) {
+          return send(res, 400, { ok:false, code:'ENGINE_ENTRY_WATCH_STATE_INVALID' });
+        }
+        cleanStates[symbol] = {
+          version:1,identity,symbol,buy,validatedAt,
+          armedAbove:state.armedAbove,
+          lastPrice,lastAggId,lastAggTime,suppressedCrossingAt,pendingUntil,blockedAt,triggeredAt,
+        };
+      }
+      const statesRaw = JSON.stringify(cleanStates);
+      if (Buffer.byteLength(statesRaw, 'utf8') > 64 * 1024) {
+        return send(res, 413, { ok:false, code:'ENGINE_ENTRY_WATCH_TOO_LARGE' });
+      }
+      const updatedAt = Date.now();
+      const writeScript = [
+        "local currentInstance = tostring(redis.call('GET', KEYS[1]) or '')",
+        "if currentInstance ~= ARGV[1] then return -1 end",
+        "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
+        "if registered ~= ARGV[2] then return -2 end",
+        "local lease = tostring(redis.call('GET', KEYS[3]) or '')",
+        "if lease ~= ARGV[2] then return -3 end",
+        "local epoch = tostring(redis.call('GET', KEYS[4]) or '')",
+        "if epoch ~= ARGV[3] then return -4 end",
+        "local authorizationRaw = redis.call('GET', KEYS[5])",
+        "if not authorizationRaw then return -5 end",
+        "local ok, authorization = pcall(cjson.decode, authorizationRaw)",
+        "if not ok or tonumber(authorization['version'] or 0) ~= 1 then return -6 end",
+        "if tostring(authorization['masterDeviceId'] or '') ~= ARGV[2] then return -6 end",
+        "if tonumber(authorization['authorizedAt'] or 0) ~= tonumber(ARGV[4]) then return -7 end",
+        "local incomingOk, incoming = pcall(cjson.decode, ARGV[5])",
+        "if not incomingOk or type(incoming) ~= 'table' then return -8 end",
+        "local record = {version=1, authorizationAt=tonumber(ARGV[4]), updatedAt=tonumber(ARGV[6]), states=incoming}",
+        "redis.call('SET', KEYS[6], cjson.encode(record))",
+        "return 1"
+      ].join('\n');
+      const resultCode = Number(await redis([
+        'EVAL', writeScript, '6',
+        KEY_ENGINE_INSTANCE,
+        KEY_MASTER_DEVICE,
+        KEY_MASTER,
+        roleAssignmentKey(PREFIX, 'master'),
+        KEY_ENGINE_AUTHORIZED,
+        KEY_ENGINE_ENTRY_WATCH_STATE,
+        String(device.engineInstanceId || ''),
+        String(device.deviceId || ''),
+        String(Number(device.createdAt || 0)),
+        String(authorizationAt),
+        statesRaw,
+        String(updatedAt),
+      ]));
+      if (resultCode !== 1) {
+        return send(res, 409, {
+          ok:false,
+          code: resultCode === -1 ? 'ENGINE_INSTANCE_FENCED'
+            : resultCode === -2 ? 'MASTER_ROLE_CHANGED'
+            : resultCode === -3 ? 'MASTER_LEASE_REQUIRED'
+            : resultCode === -4 ? 'MASTER_SESSION_REVOKED'
+            : resultCode === -5 ? 'ENGINE_RESTART_AUTHORIZATION_REQUIRED'
+            : resultCode === -7 ? 'ENGINE_ENTRY_WATCH_AUTHORIZATION_CHANGED'
+            : resultCode === -8 ? 'ENGINE_ENTRY_WATCH_INVALID'
+            : 'ENGINE_RESTART_AUTHORIZATION_INVALID',
+        });
+      }
+      return send(res, 200, {
+        ok:true,
+        authorizationAt,
+        updatedAt,
+        stateCount:Object.keys(cleanStates).length,
       });
     }
 

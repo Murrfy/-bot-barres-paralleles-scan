@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, sameOriginMutation, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
-import { evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity } from '../lib/entry-transition.mjs';
+import { evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches } from '../lib/entry-transition.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -481,6 +481,66 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
   if (missingMaxLossProtections.length) reasons.push('MISSING_BINANCE_MAX_LOSS_PROTECTION');
   if (ambiguousMaxLossProtections.length) reasons.push('AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION');
 
+  const transitionMissingProtectionPendingEntries = transitionState.active
+    .filter(transition => {
+      if (transition.state !== 'ENTRY_SUBMITTED') return false;
+      const key = transition.symbol + ':' + transition.direction;
+      if (!transitionState.missingProtections.includes(key)) return false;
+      const live = actualPositions.some(position =>
+        String(position?.symbol || '').toUpperCase() === transition.symbol &&
+        positionQty(position) > 0 &&
+        direction(position) === transition.direction
+      );
+      if (live) return false;
+      return actualOrders.some(order => transitionEntryMatches(order, transition));
+    })
+    .map(transition => ({
+      commandId: transition.commandId,
+      symbol: transition.symbol,
+      direction: transition.direction,
+      quantity: transition.quantity,
+      limitPrice: transition.limitPrice,
+      entryClientOrderId: transition.entryClientOrderId,
+      protectionClientAlgoId: transition.protectionClientAlgoId,
+      expiresAt: transition.expiresAt,
+    }));
+
+  const transitionEntryMissingPreparedProtections = transitionState.active
+    .filter(transition => {
+      if (transition.state !== 'ENTRY_SUBMITTED') return false;
+      const key = transition.symbol + ':' + transition.direction;
+      if (!transitionState.missingEntries.includes(key)) return false;
+      const live = actualPositions.some(position =>
+        String(position?.symbol || '').toUpperCase() === transition.symbol &&
+        positionQty(position) > 0 &&
+        direction(position) === transition.direction
+      );
+      if (live) return false;
+      return actualOrders.some(order => transitionProtectionMatches(order, transition));
+    })
+    .map(transition => {
+      const order = actualOrders.find(row => transitionProtectionMatches(row, transition)) || {};
+      return {
+        commandId: transition.commandId,
+        symbol: transition.symbol,
+        direction: transition.direction,
+        entryClientOrderId: transition.entryClientOrderId,
+        protectionClientAlgoId: transition.protectionClientAlgoId,
+        orderClass: 'ALGO',
+        clientAlgoId: transition.protectionClientAlgoId,
+        side: String(order.side || (transition.direction === 'LONG' ? 'SELL' : 'BUY')).toUpperCase(),
+        positionSide: String(order.positionSide || 'BOTH').toUpperCase(),
+        type: String(order.type || 'STOP_MARKET').toUpperCase(),
+        reduceOnly: order.reduceOnly === true || order.reduceOnly === 'true',
+        closePosition: order.closePosition === true || order.closePosition === 'true',
+        triggerPrice: String(order.triggerPrice ?? order.stopPrice ?? transition.protectionTriggerPrice),
+        price: String(order.price ?? ''),
+        origQty: String(order.origQty ?? ''),
+        timeInForce: String(order.timeInForce || ''),
+        expiresAt: transition.expiresAt,
+      };
+    });
+
   const failClosed = reasons.length > 0;
 
   return {
@@ -515,8 +575,14 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
           symbol: row.symbol,
           direction: row.direction,
           commandId: row.commandId,
+          quantity: row.quantity,
+          limitPrice: row.limitPrice,
+          entryClientOrderId: row.entryClientOrderId,
+          protectionClientAlgoId: row.protectionClientAlgoId,
           expiresAt: row.expiresAt,
         })),
+        missingProtectionPendingEntries: transitionMissingProtectionPendingEntries,
+        entryMissingPreparedProtections: transitionEntryMissingPreparedProtections,
         invalidReasons: transitionState.invalid.map(row => String(row.reason || 'ENTRY_TRANSITION_INVALID')),
         expired: transitionState.expired.length,
         missingProtections: transitionState.missingProtections,
