@@ -420,7 +420,7 @@ function activeMaxLossOnlyConfigRefreshAllowed(currentConfig,nextConfig){
     changed+=1;
   }
 
-  return changed>0;
+  return changed===1;
 }
 
 async function syncControllerConfig(){
