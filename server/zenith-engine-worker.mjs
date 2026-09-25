@@ -692,7 +692,7 @@ function watchedEntrySymbols(){
   const active=activeProtectionSymbols();
   for(const definition of entryWatchDefinitions()){
     const state=entryWatch.states.get(definition.symbol);
-    if(!active.has(definition.symbol)&&!(n(state?.triggeredAt,0)>0))out.add(definition.symbol);
+    if(!active.has(definition.symbol)&&!(n(state?.triggeredAt,0)>0)&&!(n(state?.blockedAt,0)>0))out.add(definition.symbol);
   }
   return out;
 }
