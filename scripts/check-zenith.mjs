@@ -1084,8 +1084,11 @@ if (!masterAdmin.includes('panicBtn') || !masterAdmin.includes('clearPanicBtn') 
     !masterAdmin.includes('panicStop') || !masterAdmin.includes('clearPanic')) {
   fail('MASTER admin must expose PANIC STOP and protected re-arm controls');
 }
-if (!index.includes('escapeHtml') || !index.includes('escapeHtml(h.reason)') || !index.includes('escapeHtml(p.symbol)')) {
-  fail('dynamic trading UI strings must be HTML-escaped');
+if (!index.includes('escapeHtml') ||
+    !index.includes('escapeHtml(row.symbol)') ||
+    !index.includes('escapeHtml(asset)') ||
+    !index.includes('escapeHtml(p.symbol)')) {
+  fail('dynamic Binance trading and history UI strings must be HTML-escaped');
 }
 if (index.includes('data-refresh="${p.symbol}"') || index.includes('data-close="${p.symbol}"')) {
   fail('unescaped dynamic position symbols must never be inserted into HTML data attributes');
