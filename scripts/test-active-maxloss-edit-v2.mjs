@@ -48,7 +48,10 @@ test('iPhone commits active MAX-LOSS locally only from terminal server ACK metad
   assert.match(status,/status==='ACK'/);
   assert.match(status,/q\.activeMaxLossCommitted===true/);
   assert.match(status,/controllerStateHash/);
-  assert.match(status,/tokenSettings\[symbol\]=\{\.\.\.old,maxLoss:confirmedLoss,marginType:'ISOLATED'\}/);
+  assert.match(status,/nextTokenSettings=\{\.\.\.tokenSettings,\[symbol\]:\{\.\.\.old,maxLoss:confirmedLoss,marginType:'ISOLATED'\}\}/);
+  assert.match(status,/localStateHash=Number\.isFinite\(confirmedLoss\)/);
+  assert.match(status,/localStateHash===serverStateHash/);
+  assert.match(status,/tokenSettings=nextTokenSettings/);
   assert.match(status,/localStorage\.setItem\(ZENITH_CONTROLLER_REV_KEY,String\(revision\)\)/);
   assert.match(status,/saveLocalOnly\(\)/);
   assert.doesNotMatch(status,/syncControllerCloudStateNow\(\)/);
