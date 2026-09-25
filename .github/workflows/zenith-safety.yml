@@ -46,6 +46,8 @@ jobs:
         run: node --check api/binance-entry-preflight.js
       - name: Check fail-closed Binance entry execution API syntax
         run: node --check api/binance-entry-execute.js
+      - name: Check fail-closed Binance entry preparation API syntax
+        run: node --check api/binance-entry-prepare.js
       - name: Check protective execution API syntax
         run: node --check api/binance-protective-execute.js
       - name: Check protective update execution API syntax
@@ -110,6 +112,10 @@ jobs:
         run: node --test scripts/test-command-requeue-revoke-fence.mjs
       - name: Test real-entry risk preflight
         run: node --test scripts/test-entry-preflight.mjs
+      - name: Test deterministic protected entry bundle
+        run: node --test scripts/test-entry-bundle.mjs
+      - name: Test fail-closed entry preparation
+        run: node --test scripts/test-entry-prepare.mjs
       - name: Test real entry execution rate limit
         run: node --test scripts/test-entry-execution-rate-limit.mjs
       - name: Test atomic final real-entry dispatch gate
