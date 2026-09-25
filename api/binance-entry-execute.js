@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { buildEntryOrderPlan } from '../lib/order-intent.mjs';
 import { buildEntryProtectionPlan } from '../lib/entry-protection-plan.mjs';
+import { buildEmergencyMaxLossLevel } from '../lib/real-protection-levels.mjs';
+import { buildProtectiveAlgoPlan } from '../lib/protective-update-intent.mjs';
 import { ensureBinanceEntrySymbolConfig } from '../lib/binance-symbol-config.mjs';
 import { placeStandardOrderIdempotent } from '../lib/binance-order-writer.mjs';
 import { placeAlgoOrderIdempotent } from '../lib/binance-algo-writer.mjs';
@@ -297,14 +299,19 @@ export default async function handler(req,res){
   if(String(master?.principal||'')!=='engine'){
     return send(res,423,{ok:false,code:'ENTRY_ENGINE_REQUIRED',writeAttempted:false});
   }
-  if(!phaseProvided ||
-      type!=='EXEC_OPEN_POSITION' ||
-      !['PREPARE_PROTECTION','SUBMIT_ENTRY'].includes(phase) ||
-      !/^[A-Za-z0-9._:-]{8,128}$/.test(commandId) ||
-      !/^[A-Z0-9]{3,30}$/.test(symbol) ||
-      !['BUY','SELL'].includes(side) ||
-      orderType!=='LIMIT' ||
-      !(margin>0)||!(leverage>0)||!(maxLoss>0)||!(limitPrice>0)){
+  const marketEntry=type==='EXEC_OPEN_MARKET_POSITION'&&phase==='SUBMIT_MARKET_ENTRY';
+  const limitEntry=type==='EXEC_OPEN_POSITION'&&['PREPARE_PROTECTION','SUBMIT_ENTRY'].includes(phase);
+  const requestValid=Boolean(
+    phaseProvided &&
+    (marketEntry||limitEntry) &&
+    /^[A-Za-z0-9._:-]{8,128}$/.test(commandId) &&
+    /^[A-Z0-9]{3,30}$/.test(symbol) &&
+    (marketEntry?side==='BUY':['BUY','SELL'].includes(side)) &&
+    (marketEntry?orderType==='MARKET':orderType==='LIMIT') &&
+    margin>0&&leverage>0&&maxLoss>0 &&
+    (marketEntry||limitPrice>0)
+  );
+  if(!requestValid){
     return send(res,400,{ok:false,code:phaseProvided?'ENTRY_EXECUTION_REQUEST_INVALID':'ENTRY_PHASE_REQUIRED',writeAttempted:false});
   }
 
@@ -372,7 +379,7 @@ export default async function handler(req,res){
     );
     const maxActivePositions=await readConfiguredMaxActivePositions();
     let preflight=await runLiveEntryPreflight({
-      apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:limitPrice,maxActivePositions,
+      apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:marketEntry?0:limitPrice,maxActivePositions,
     });
     const configOnlyReasons=new Set(['MARGIN_TYPE_NOT_ISOLATED','ACCOUNT_LEVERAGE_MISMATCH']);
     let initialReasons=Array.isArray(preflight.evaluation?.reasons)?preflight.evaluation.reasons:[];
@@ -388,7 +395,7 @@ export default async function handler(req,res){
     }
 
     if(configReasons.length){
-      if(phase!=='PREPARE_PROTECTION'){
+      if(phase!=='PREPARE_PROTECTION'&&!marketEntry){
         return send(res,409,{
           ok:false,code:'ENTRY_SYMBOL_CONFIG_CHANGED_AFTER_PREPARE',
           reasons:initialReasons,normalized:preflight.evaluation.normalized,writeAttempted:false,
@@ -433,7 +440,7 @@ export default async function handler(req,res){
       await redis(['LTRIM',KEY_AUDIT,'0','199']);
 
       preflight=await runLiveEntryPreflight({
-        apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:limitPrice,maxActivePositions,
+        apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:marketEntry?0:limitPrice,maxActivePositions,
       });
       initialReasons=Array.isArray(preflight.evaluation?.reasons)?preflight.evaluation.reasons:[];
       if(preflight.evaluation.ready!==true){
@@ -452,7 +459,7 @@ export default async function handler(req,res){
     let plan;
     try{
       plan=buildEntryOrderPlan({
-        command:{id:commandId,symbol,side,orderType,limitPrice,margin,leverage,maxLoss},
+        command:{id:commandId,symbol,side,orderType,...(marketEntry?{}:{limitPrice}),margin,leverage,maxLoss},
         riskSnapshot:{ready:true,observedAt:preflight.observedAt,normalized:preflight.evaluation.normalized},
         now:Date.now(),
       });
