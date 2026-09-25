@@ -110,6 +110,8 @@ jobs:
         run: node --test scripts/test-command-requeue-revoke-fence.mjs
       - name: Test real-entry risk preflight
         run: node --test scripts/test-entry-preflight.mjs
+      - name: Test safe per-token Binance Futures configuration
+        run: node --test scripts/test-binance-symbol-config.mjs
       - name: Test real entry execution rate limit
         run: node --test scripts/test-entry-execution-rate-limit.mjs
       - name: Test atomic final real-entry dispatch gate
@@ -182,6 +184,14 @@ jobs:
         run: node --test scripts/test-order-intent.mjs
       - name: Test fail-closed entry protection gate
         run: node --test scripts/test-entry-protection-gate.mjs
+      - name: Test deterministic pre-entry MAX-LOSS plan
+        run: node --test scripts/test-entry-protection-plan.mjs
+      - name: Test 24/7 watched-entry wiring
+        run: node --test scripts/test-engine-watched-entry-wiring.mjs
+      - name: Test pending-entry MAX-LOSS loss recovery
+        run: node --test scripts/test-entry-protection-loss-cancel.mjs
+      - name: Test pending-entry protection-loss execution gate
+        run: node --test scripts/test-entry-protection-loss-execute.mjs
       - name: Test central managed emergency hard-cap ACK
         run: node --test scripts/test-central-emergency-cap.mjs
       - name: Test PANIC idempotent audit protection

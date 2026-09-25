@@ -21,8 +21,8 @@ const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
     "const requestBodyStatus = (req,maxBytes) => { const bytes=Number(req?.headers?.['content-length']||0); return bytes>maxBytes?{ok:false,maxBytes}:{ok:true,maxBytes}; };\n"
   )
   .replace(
-    /^import \{ evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity \} from '\.\.\/lib\/entry-transition\.mjs';\n/m,
-    "const entryTransitionOrderIdentity = order => { const s=String(order?.symbol||'').toUpperCase(); if(order?.clientAlgoId)return s+':algo-client:'+String(order.clientAlgoId); if(order?.algoId)return s+':algo:'+String(order.algoId); if(order?.clientOrderId)return s+':client:'+String(order.clientOrderId); if(order?.orderId)return s+':id:'+String(order.orderId); return ''; }; const evaluateEntryTransitionReconciliation = () => ({active:[],invalid:[],expired:[],allowedOrderIdentities:new Set(),missingProtections:[],missingEntries:[]});\n"
+    /^import \{ evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches \} from '\.\.\/lib\/entry-transition\.mjs';\n/m,
+    "const entryTransitionOrderIdentity = order => { const s=String(order?.symbol||'').toUpperCase(); if(order?.clientAlgoId)return s+':algo-client:'+String(order.clientAlgoId); if(order?.algoId)return s+':algo:'+String(order.algoId); if(order?.clientOrderId)return s+':client:'+String(order.clientOrderId); if(order?.orderId)return s+':id:'+String(order.orderId); return ''; }; const transitionEntryMatches = () => false; const evaluateEntryTransitionReconciliation = () => ({active:[],invalid:[],expired:[],allowedOrderIdentities:new Set(),missingProtections:[],missingEntries:[]});\n"
   );
 const { default: handler, reconcile, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder } = await import(
   'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder };').toString('base64')

@@ -84,3 +84,45 @@ test('submitted transition requires entry order until a matching position exists
   });
   assert.deepEqual(filled.missingEntries,[]);
 });
+
+
+test('pending submitted entry without MAX-LOSS is the dangerous transition state',()=>{
+  const record={...base,state:'ENTRY_SUBMITTED',entryClientOrderId:entry.clientOrderId};
+  const r=evaluateEntryTransitionReconciliation({
+    transitions:[record],actualOrders:[entry],actualPositions:[],now
+  });
+  assert.deepEqual(r.missingProtections,['BTCUSDT:LONG']);
+  assert.deepEqual(r.missingEntries,[]);
+  assert.equal(r.allowedOrderIdentities.has('BTCUSDT:client:'+entry.clientOrderId),true);
+});
+
+test('filled entry delegates protection safety to normal live-position reconciliation',()=>{
+  const record={...base,state:'ENTRY_SUBMITTED',entryClientOrderId:entry.clientOrderId};
+  const r=evaluateEntryTransitionReconciliation({
+    transitions:[record],
+    actualOrders:[],
+    actualPositions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2'}],
+    now
+  });
+  assert.deepEqual(r.missingProtections,[]);
+  assert.deepEqual(r.missingEntries,[]);
+});
+
+test('fully canceled entry with no position and no protection is inert',()=>{
+  const record={...base,state:'ENTRY_SUBMITTED',entryClientOrderId:entry.clientOrderId};
+  const r=evaluateEntryTransitionReconciliation({
+    transitions:[record],actualOrders:[],actualPositions:[],now
+  });
+  assert.deepEqual(r.missingProtections,[]);
+  assert.deepEqual(r.missingEntries,[]);
+});
+
+test('entry gone but prepared protection still present is surfaced for cleanup',()=>{
+  const record={...base,state:'ENTRY_SUBMITTED',entryClientOrderId:entry.clientOrderId};
+  const r=evaluateEntryTransitionReconciliation({
+    transitions:[record],actualOrders:[protection],actualPositions:[],now
+  });
+  assert.deepEqual(r.missingProtections,[]);
+  assert.deepEqual(r.missingEntries,['BTCUSDT:LONG']);
+  assert.equal(r.allowedOrderIdentities.has('BTCUSDT:algo-client:'+protection.clientAlgoId),true);
+});

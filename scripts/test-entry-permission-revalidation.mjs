@@ -27,7 +27,7 @@ function request(){
       origin:'https://zenith.test',
     },
     body:{
-      type:'EXEC_OPEN_POSITION',commandId:'cmd-permission-001',symbol:'BTCUSDT',
+      type:'EXEC_OPEN_POSITION',phase:'PREPARE_PROTECTION',commandId:'cmd-permission-001',symbol:'BTCUSDT',
       side:'BUY',orderType:'LIMIT',margin:100,leverage:10,maxLoss:40,limitPrice:50000,
     },
   };
