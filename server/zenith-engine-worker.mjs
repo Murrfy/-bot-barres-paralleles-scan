@@ -2279,6 +2279,78 @@ async function safeAckActiveMaxLossAfterReconcile(raw,executionProof,body){
   return runtime.synchronized;
 }
 
+async function safeAckActiveConfigAfterReconcile(raw,executionProof,body,failurePrefix='EXEC_ACTIVE_CONFIG_ACK_RETRY'){
+  try{
+    const reconciled=await awaitReconciliation();
+    if(reconciled!==true||userStreamReady(stream.state)!==true)throw new Error('RECONCILIATION_NOT_READY');
+  }catch(error){
+    const reason=failurePrefix+'_'+String(error?.message||'RECONCILE');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+
+  let ack;
+  try{
+    ack=await ackCommand(raw,executionProof);
+  }catch(error){
+    const reason=failurePrefix+'_'+String(error?.message||'ACK');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+
+  const activeConfig=ack?.activeConfig;
+  const symbol=String(ack?.symbol||body?.symbol||'').toUpperCase();
+  const revision=Math.max(0,n(ack?.controllerRevision,0));
+  const expectedHash=String(ack?.controllerStateHash||'');
+  if(ack?.activeConfigCommitted!==true||!runtime.config||!symbol||!(revision>0)||!expectedHash||
+     !activeConfig||typeof activeConfig!=='object'||Array.isArray(activeConfig)){
+    runtime.synchronized=false;
+    runtime.error='ACTIVE_CONFIG_ACK_INVALID';
+    await publishRuntime().catch(()=>{});
+    return false;
+  }
+
+  const target=n(activeConfig.targetProfit,NaN);
+  const manual=n(activeConfig.manualTargetProfit,NaN);
+  const exactEnabled=activeConfig.exactSaleEnabled===true;
+  const exactPrice=n(activeConfig.exactSalePrice,0);
+  if(!(target>0)||!(manual>0)||Math.abs(target-manual)>1e-8||
+     (exactEnabled&&!(exactPrice>0))||!(exactPrice>=0)||
+     String(activeConfig.exactSaleSource||'')!=='settings'||
+     !validActiveProtectionStages(activeConfig.protectionStages)){
+    runtime.synchronized=false;
+    runtime.error='ACTIVE_CONFIG_ACK_PAYLOAD_INVALID';
+    await publishRuntime().catch(()=>{});
+    return false;
+  }
+
+  const tokenSettings=runtime.config.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const current=tokenSettings[symbol]&&typeof tokenSettings[symbol]==='object'?tokenSettings[symbol]:{};
+  runtime.config={
+    ...runtime.config,
+    tokenSettings:{
+      ...tokenSettings,
+      [symbol]:{...current,...activeConfig,marginType:'ISOLATED'},
+    },
+  };
+  const localHash=sha256Hex(stableStringify(runtime.config));
+  runtime.controllerRevision=revision;
+  runtime.appliedRevision=revision;
+  runtime.synchronized=localHash===expectedHash;
+  runtime.error=runtime.synchronized?'':'ACTIVE_CONFIG_ACK_HASH_MISMATCH';
+  await publishRuntime().catch(()=>{});
+  return runtime.synchronized;
+}
+
+async function runActiveConfigCommand(command,raw,dispatch){
+  return safeAckActiveConfigAfterReconcile(
+    raw,{activeConfigReady:true},dispatch.body,'EXEC_ACTIVE_PROTECTIONS_CONFIG_ACK_RETRY'
+  );
+}
+
 async function handleMutationFailure(raw,response,data,prefix){
   const reason=String(data?.code||data?.reason||data?.error||('HTTP_'+response.status));
   const ambiguous=data?.ambiguous===true||data?.result?.ambiguous===true;
@@ -2527,6 +2599,11 @@ async function runProtectiveUpdate(command,raw,dispatch){
   if(maxLoss&&Number.isFinite(n(body.maxLossUsd,NaN))){
     return safeAckActiveMaxLossAfterReconcile(raw,{newClientId},body);
   }
+  if(type==='EXEC_UPDATE_EXIT'&&body.activeConfig){
+    return safeAckActiveConfigAfterReconcile(
+      raw,{newClientId},body,'EXEC_ACTIVE_TARGET_CONFIG_ACK_RETRY'
+    );
+  }
   return safeAckAfterReconcile(raw,{newClientId},'EXEC_PROTECTIVE_UPDATE_ACK_RETRY');
 }
 
@@ -2698,6 +2775,7 @@ async function commandCycle(){
     if(dispatch.type==='EXEC_CLOSE_POSITION')ok=await runFullClose(command,raw);
     else if(dispatch.type==='EXEC_CANCEL_ENTRY')ok=await runCancelEntry(command,raw,dispatch);
     else if(dispatch.type==='EXEC_OPEN_MARKET_POSITION')ok=await runMarketEntry(command,raw,dispatch);
+    else if(dispatch.type==='EXEC_UPDATE_ACTIVE_CONFIG')ok=await runActiveConfigCommand(command,raw,dispatch);
     else if(dispatch.type==='EXEC_UPDATE_EXIT'||dispatch.type==='EXEC_UPDATE_PROTECTION'){
       ok=await runProtectiveUpdate(command,raw,dispatch);
     }else{
