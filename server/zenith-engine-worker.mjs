@@ -975,10 +975,12 @@ function activePositionForSymbol(symbol){
 function trackingStartTime(symbol){
   const wanted=String(symbol||'').toUpperCase();
   const position=activePositionForSymbol(wanted);
+  const watched=watchedEntryConfig(wanted);
   return Math.max(
     0,
     n(markStream.lastAggTimes.get(wanted),
-      n(position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,Date.now()-2000))
+      n(position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,
+        n(watched?.validatedAt,Date.now()-2000)))
   );
 }
 
@@ -991,7 +993,7 @@ function rememberAggCursor(symbol,id,time){
 async function processAggTradeRow(symbol,row){
   if(!row)return false;
   const wanted=String(symbol||row?.s||'').toUpperCase();
-  if(!activeProtectionSymbols().has(wanted))return false;
+  if(!markTrackedSymbols().has(wanted))return false;
   const id=n(row?.a,-1);
   const eventTime=n(row?.T,n(row?.E,Date.now()));
   const previousId=markStream.lastAggIds.get(wanted);
@@ -999,28 +1001,29 @@ async function processAggTradeRow(symbol,row){
   const price=n(row?.p,0);
   if(!(price>0))return false;
   markStream.lastEventAt=Date.now();
-  await runAutoProtection(wanted,price);
+  if(activeProtectionSymbols().has(wanted))await runAutoProtection(wanted,price);
+  if(watchedEntrySymbols().has(wanted))await runWatchedEntry(wanted,price);
   rememberAggCursor(wanted,id,eventTime);
   return true;
 }
 
 async function recoverMissedAggTrades(symbol){
   const wanted=String(symbol||'').toUpperCase();
-  if(!activeProtectionSymbols().has(wanted)||markStream.recovering.has(wanted))return false;
+  if(!markTrackedSymbols().has(wanted)||markStream.recovering.has(wanted))return false;
   markStream.recovering.add(wanted);
   markStream.pendingAggTrades.set(wanted,[]);
   try{
     let start=Math.max(Date.now()-48*60*60*1000,trackingStartTime(wanted)-250);
     let fromId=null;
     let pages=0;
-    while(activeProtectionSymbols().has(wanted)&&pages<25){
+    while(markTrackedSymbols().has(wanted)&&pages<25){
       const path=fromId==null
         ?`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&startTime=${Math.floor(start)}&limit=1000`
         :`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&fromId=${fromId}&limit=1000`;
       const rows=await publicBinanceJson(path);
       if(!Array.isArray(rows)||!rows.length)break;
       for(const row of rows){
-        if(!activeProtectionSymbols().has(wanted))break;
+        if(!markTrackedSymbols().has(wanted))break;
         await processAggTradeRow(wanted,row);
       }
       pages++;
@@ -1045,7 +1048,7 @@ async function recoverMissedAggTrades(symbol){
     markStream.pendingAggTrades.delete(wanted);
     queued.sort((a,b)=>n(a?.a)-n(b?.a)||n(a?.T)-n(b?.T));
     for(const row of queued){
-      if(activeProtectionSymbols().has(wanted))await processAggTradeRow(wanted,row);
+      if(markTrackedSymbols().has(wanted))await processAggTradeRow(wanted,row);
     }
   }
 }
@@ -1062,12 +1065,12 @@ function sendMarkControl(method,params){
 
 function syncMarkSubscriptions(){
   if(!markStream.ws||markStream.ws.readyState!==WebSocket.OPEN)return false;
-  const desired=new Set([...activeProtectionSymbols()].map(markStreamName));
+  const desired=new Set([...markTrackedSymbols()].map(markStreamName));
   const add=[...desired].filter(name=>!markStream.subscribed.has(name));
   const remove=[...markStream.subscribed].filter(name=>!desired.has(name));
   if(add.length&&sendMarkControl('SUBSCRIBE',add)){
     add.forEach(name=>markStream.subscribed.add(name));
-    for(const symbol of activeProtectionSymbols()){
+    for(const symbol of markTrackedSymbols()){
       if(add.includes(markStreamName(symbol))){
         void recoverMissedAggTrades(symbol).catch(error=>logError('MARK_RECOVERY_FAILED',error,{symbol}));
       }
