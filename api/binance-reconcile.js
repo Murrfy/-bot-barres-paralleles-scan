@@ -844,9 +844,29 @@ export default async function handler(req, res) {
     let runtimeState = null;
     try { runtimeState = runtimeRaw ? JSON.parse(runtimeRaw) : null; } catch {}
 
-    const actualPositions = (Array.isArray(positions) ? positions : [])
-      .filter(p => Math.abs(number(p.positionAmt)) > 0)
-      .map(normalizeActualPosition);
+    const activePositionRows = (Array.isArray(positions) ? positions : [])
+      .filter(p => Math.abs(number(p.positionAmt)) > 0);
+    const activeSymbols = [...new Set(activePositionRows.map(p => String(p?.symbol || '').toUpperCase()).filter(Boolean))];
+    const symbolConfigRows = await Promise.all(activeSymbols.map(async symbol => {
+      const raw = await signedGet('/fapi/v1/symbolConfig', apiKey, secret, serverTime, { symbol });
+      const rows = Array.isArray(raw) ? raw : [raw];
+      const config = rows.find(row => String(row?.symbol || '').toUpperCase() === symbol) || null;
+      if (!config) throw new Error('BINANCE_SYMBOL_CONFIG_MISSING');
+      return config;
+    }));
+    const symbolConfigBySymbol = new Map(
+      symbolConfigRows.map(config => [String(config?.symbol || '').toUpperCase(), config])
+    );
+    const actualPositions = activePositionRows.map(position => {
+      const symbol = String(position?.symbol || '').toUpperCase();
+      const config = symbolConfigBySymbol.get(symbol) || {};
+      return normalizeActualPosition({
+        ...position,
+        marginType: config.marginType ?? position.marginType,
+        leverage: config.leverage ?? position.leverage,
+        isAutoAddMargin: config.isAutoAddMargin,
+      });
+    });
 
     const standardOrders = (Array.isArray(openOrders) ? openOrders : [])
       .map(o => ({ orderClass: 'STANDARD', ...normalizeActualOrder(o) }));
@@ -858,6 +878,25 @@ export default async function handler(req, res) {
 
     const entryTransitions = parseEntryTransitionStore(entryTransitionRaw);
     const result = reconcile(runtimeState, actualPositions, actualOrders, entryTransitions);
+    const unsafePositionConfigs = actualPositions
+      .filter(position =>
+        String(position?.marginType || '').toUpperCase() !== 'ISOLATED' ||
+        position?.isAutoAddMargin !== false
+      )
+      .map(position => ({
+        symbol:position.symbol,
+        direction:position.direction,
+        marginType:String(position.marginType || '').toUpperCase(),
+        isAutoAddMargin:position.isAutoAddMargin,
+      }));
+    if (unsafePositionConfigs.length) {
+      if (!result.reasons.includes('BINANCE_POSITION_CONFIG_UNSAFE')) {
+        result.reasons.push('BINANCE_POSITION_CONFIG_UNSAFE');
+      }
+      result.failClosed = true;
+      result.status = 'MISMATCH';
+      result.differences.unsafePositionConfigs = unsafePositionConfigs;
+    }
     result.actual.standardOrders = standardOrders.length;
     result.actual.algoOrders = algoOrders.length;
     const observedAt = started;
