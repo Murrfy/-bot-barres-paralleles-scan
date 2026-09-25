@@ -242,6 +242,26 @@ function entryReadinessReason(state,masterDeviceId){
   return executionReadiness(state.runtimeState,state.report,masterDeviceId);
 }
 
+function near(a,b){
+  const x=Number(a),y=Number(b);
+  return Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x-y)<=Math.max(1e-9,Math.abs(y)*1e-10);
+}
+async function readEntryTransition(commandId){
+  const raw=await redis(['HGET',KEY_ENTRY_TRANSITIONS,String(commandId||'')]);
+  return parseJson(raw);
+}
+async function writeEntryTransition(commandId,transition){
+  await redis(['HSET',KEY_ENTRY_TRANSITIONS,String(commandId||''),JSON.stringify(transition)]);
+  return transition;
+}
+function entryTransitionMatchesRequest(transition,{symbol,side,quantity,limitPrice,maxLoss}={}){
+  return String(transition?.symbol||'').toUpperCase()===String(symbol||'').toUpperCase()&&
+    String(transition?.side||'').toUpperCase()===String(side||'').toUpperCase()&&
+    near(transition?.quantity,quantity)&&
+    near(transition?.limitPrice,limitPrice)&&
+    near(transition?.maxLossUsd,maxLoss);
+}
+
 export default async function handler(req,res){
   if(req.method!=='POST')return send(res,405,{ok:false,code:'METHOD_NOT_ALLOWED'});
   if(!sameOriginMutation(req))return send(res,403,{ok:false,code:'ORIGIN_FORBIDDEN'});
@@ -254,6 +274,8 @@ export default async function handler(req,res){
   if(!master)return send(res,401,{ok:false,code:'MASTER_REQUIRED',writeAttempted:false});
 
   const type=String(req.body?.type||'').toUpperCase();
+  const phaseProvided=req.body?.phase!==undefined&&req.body?.phase!==null&&String(req.body.phase)!=='';
+  const phase=String(req.body?.phase||'SUBMIT_ENTRY').toUpperCase();
   const commandId=String(req.body?.commandId||'');
   const symbol=String(req.body?.symbol||'').trim().toUpperCase();
   const side=String(req.body?.side||'').toUpperCase();
@@ -264,6 +286,7 @@ export default async function handler(req,res){
   const limitPrice=Number(req.body?.limitPrice);
 
   if(type!=='EXEC_OPEN_POSITION' ||
+      !['PREPARE_PROTECTION','SUBMIT_ENTRY'].includes(phase) ||
       !/^[A-Za-z0-9._:-]{8,128}$/.test(commandId) ||
       !/^[A-Z0-9]{3,30}$/.test(symbol) ||
       !['BUY','SELL'].includes(side) ||
