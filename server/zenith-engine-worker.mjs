@@ -387,7 +387,23 @@ async function applyControllerState(controllerState){
   return {revision,stateHash};
 }
 
-function activeMaxLossOnlyConfigRefreshAllowed(currentConfig,nextConfig){
+function validActiveProtectionStages(stages){
+  if(!Array.isArray(stages)||stages.length<1||stages.length>200)return false;
+  let previousArm=-Infinity,previousFloor=-Infinity;
+  for(const row of stages){
+    if(!row||typeof row!=='object'||Array.isArray(row))return false;
+    if(Object.keys(row).some(key=>!['enabled','arm','floor'].includes(key)))return false;
+    const enabled=row.enabled!==false,arm=n(row.arm,NaN),floor=n(row.floor,NaN);
+    if(!Number.isFinite(arm)||!Number.isFinite(floor)||arm<0||floor<0||arm>1e9||floor>1e9)return false;
+    if(enabled){
+      if(!(floor<arm)||!(arm>previousArm)||floor+1e-8<previousFloor)return false;
+      previousArm=arm;previousFloor=floor;
+    }
+  }
+  return true;
+}
+
+function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig){
   if(!currentConfig||typeof currentConfig!=='object'||!nextConfig||typeof nextConfig!=='object')return false;
   for(const key of ['settings','manualTokens','validated']){
     if(stableStringify(currentConfig[key]||{})!==stableStringify(nextConfig[key]||{}))return false;
@@ -398,6 +414,10 @@ function activeMaxLossOnlyConfigRefreshAllowed(currentConfig,nextConfig){
   const nextTokens=nextConfig.tokenSettings&&typeof nextConfig.tokenSettings==='object'
     ?nextConfig.tokenSettings:{};
   const symbols=[...new Set([...Object.keys(currentTokens),...Object.keys(nextTokens)])].sort();
+  const safeMutable=new Set([
+    'maxLoss','marginType','targetProfit','manualTargetProfit','protectionStages',
+    'exactSaleEnabled','exactSalePrice','exactSaleSource'
+  ]);
   let changed=0;
 
   for(const symbol of symbols){
@@ -408,8 +428,7 @@ function activeMaxLossOnlyConfigRefreshAllowed(currentConfig,nextConfig){
 
     const beforeRest={...before};
     const afterRest={...after};
-    delete beforeRest.maxLoss;delete afterRest.maxLoss;
-    delete beforeRest.marginType;delete afterRest.marginType;
+    for(const key of safeMutable){delete beforeRest[key];delete afterRest[key]}
     if(stableStringify(beforeRest)!==stableStringify(afterRest))return false;
 
     const maxLoss=n(after.maxLoss,NaN);
@@ -417,6 +436,13 @@ function activeMaxLossOnlyConfigRefreshAllowed(currentConfig,nextConfig){
     if(!(maxLoss>=2&&maxLoss<=REAL_RISK_LIMITS.maxLossUsd))return false;
     if(!(margin>0)||maxLoss>margin+1e-8)return false;
     if(String(after.marginType||'ISOLATED').toUpperCase()!=='ISOLATED')return false;
+
+    const target=n(after.targetProfit,NaN),manual=n(after.manualTargetProfit,target);
+    if(!(target>0)||!(manual>0)||Math.abs(target-manual)>1e-8)return false;
+    const exactEnabled=after.exactSaleEnabled===true,exactPrice=n(after.exactSalePrice,0);
+    if(exactEnabled&&!(exactPrice>0))return false;
+    if(!(exactPrice>=0)||String(after.exactSaleSource||'settings')!=='settings')return false;
+    if(!validActiveProtectionStages(after.protectionStages))return false;
     changed+=1;
   }
 
@@ -453,7 +479,7 @@ async function syncControllerConfig(){
   if(data.synchronized===true&&!localMatches){
     const activity=data.activity||{};
     if(n(activity.activePositions)>0||n(activity.openOrders)>0){
-      if(!activeMaxLossOnlyConfigRefreshAllowed(runtime.config,controllerState.data)){
+      if(!activeSafeTokenConfigRefreshAllowed(runtime.config,controllerState.data)){
         runtime.synchronized=false;
         runtime.error='ENGINE_LOCAL_CONFIG_DRIFT_ACTIVE';
         return false;
