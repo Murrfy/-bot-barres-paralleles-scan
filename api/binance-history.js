@@ -113,32 +113,93 @@ function windowsFor(now){
   const start=Math.max(0,now-HISTORY_LOOKBACK_MS);
   const out=[];
   for(let from=start;from<now;from+=HISTORY_WINDOW_MS){
-    out.push({startTime:from,endTime:Math.min(now,from+HISTORY_WINDOW_MS)});
+    out.push({startTime:from,endTime:Math.min(now,from+HISTORY_WINDOW_MS-1)});
+  }
+  return out;
+}
+function zenithHistorySymbols(orders=[]){
+  const symbols=new Set();
+  for(const order of Array.isArray(orders)?orders:[]){
+    const symbol=String(order?.symbol||'').trim().toUpperCase();
+    const clientOrderId=String(order?.clientOrderId||'');
+    if(symbol&&/^zth-ENT-[A-Za-z0-9._:-]+$/.test(clientOrderId))symbols.add(symbol);
+  }
+  return [...symbols].sort();
+}
+function uniqueRows(rows,keyOf){
+  const out=[],seen=new Set();
+  for(const row of Array.isArray(rows)?rows:[]){
+    const key=String(keyOf(row)||'');
+    if(!key||seen.has(key))continue;
+    seen.add(key);out.push(row);
+  }
+  return out;
+}
+async function runBatched(tasks,size=8){
+  const out=[];
+  for(let i=0;i<tasks.length;i+=Math.max(1,size)){
+    const rows=await Promise.all(tasks.slice(i,i+Math.max(1,size)).map(task=>task()));
+    out.push(...rows);
   }
   return out;
 }
 async function fetchRecentHistory(apiKey,secret,serverTime){
   const windows=windowsFor(serverTime);
-  const chunks=await Promise.all(windows.map(async window=>{
+  const offset=serverTime-Date.now();
+  const signedNow=()=>Date.now()+offset;
+
+  // allOrders can now be queried without symbol. Discover only symbols whose
+  // opening order belongs to Zenith, then call userTrades with its required symbol.
+  const baseChunks=await Promise.all(windows.map(async window=>{
     const common={...window,limit:1000};
-    const [trades,orders,funding]=await Promise.all([
-      signedGet('/fapi/v1/userTrades',apiKey,secret,serverTime,common),
-      signedGet('/fapi/v1/allOrders',apiKey,secret,serverTime,common),
-      signedGet('/fapi/v1/income',apiKey,secret,serverTime,{...common,incomeType:'FUNDING_FEE'}),
+    const [orders,funding]=await Promise.all([
+      signedGet('/fapi/v1/allOrders',apiKey,secret,signedNow(),common),
+      signedGet('/fapi/v1/income',apiKey,secret,signedNow(),{...common,incomeType:'FUNDING_FEE'}),
     ]);
-    if(!Array.isArray(trades)||!Array.isArray(orders)||!Array.isArray(funding)){
+    if(!Array.isArray(orders)||!Array.isArray(funding)){
       const e=new Error('BINANCE_HISTORY_RESPONSE_INVALID');e.code='BINANCE_HISTORY_RESPONSE_INVALID';throw e;
     }
-    if(trades.length>=1000||orders.length>=1000||funding.length>=1000){
+    if(orders.length>=1000||funding.length>=1000){
       const e=new Error('BINANCE_HISTORY_WINDOW_TRUNCATED');e.code='BINANCE_HISTORY_WINDOW_TRUNCATED';throw e;
     }
-    return {trades,orders,funding};
+    return {orders,funding};
   }));
-  return {
-    trades:chunks.flatMap(x=>x.trades),
-    orders:chunks.flatMap(x=>x.orders),
-    funding:chunks.flatMap(x=>x.funding),
-  };
+
+  const orders=uniqueRows(
+    baseChunks.flatMap(x=>x.orders),
+    row=>String(row?.symbol||'').toUpperCase()+':'+String(row?.orderId??'')
+  );
+  const funding=uniqueRows(
+    baseChunks.flatMap(x=>x.funding),
+    row=>String(row?.tranId??'')||[
+      String(row?.symbol||'').toUpperCase(),String(row?.incomeType||''),
+      String(row?.time??''),String(row?.income??''),String(row?.asset||'')
+    ].join(':')
+  );
+  const symbols=zenithHistorySymbols(orders);
+  const tradeTasks=[];
+  for(const symbol of symbols){
+    for(const window of windows){
+      tradeTasks.push(async()=>{
+        const trades=await signedGet('/fapi/v1/userTrades',apiKey,secret,signedNow(),{
+          symbol,...window,limit:1000
+        });
+        if(!Array.isArray(trades)){
+          const e=new Error('BINANCE_HISTORY_RESPONSE_INVALID');e.code='BINANCE_HISTORY_RESPONSE_INVALID';throw e;
+        }
+        if(trades.length>=1000){
+          const e=new Error('BINANCE_HISTORY_WINDOW_TRUNCATED');e.code='BINANCE_HISTORY_WINDOW_TRUNCATED';throw e;
+        }
+        return trades;
+      });
+    }
+  }
+  const tradeChunks=await runBatched(tradeTasks,8);
+  const trades=uniqueRows(
+    tradeChunks.flat(),
+    row=>String(row?.symbol||'').toUpperCase()+':'+String(row?.id??row?.tradeId??'')
+  );
+  return {trades,orders,funding,symbols};
 }
 
 export default async function handler(req,res){
@@ -206,4 +267,4 @@ export default async function handler(req,res){
   }
 }
 
-export { windowsFor, fetchRecentHistory };
+export { windowsFor, zenithHistorySymbols, uniqueRows, fetchRecentHistory };
