@@ -414,9 +414,10 @@ function persistRealProtectiveUpdatePending(){
     const now=Date.now(),rows=[];
     for(const [key,pending] of realProtectiveUpdatePending.entries()){
       if(String(pending?.kind||'').toUpperCase()!=='MAX_LOSS')continue;
-      const commandId=String(pending?.commandId||''),maxLossUsd=n(pending?.maxLossUsd,NaN),at=n(pending?.at,0);
-      if(!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)||!(maxLossUsd>=2&&maxLossUsd<=400)||!(at>0)||now-at>10*60*1000)continue;
-      rows.push({key,symbol:String(pending?.symbol||'').toUpperCase(),kind:'MAX_LOSS',price:n(pending?.price,NaN),maxLossUsd,commandId,at});
+      const commandId=String(pending?.commandId||''),clientCommandId=String(pending?.clientCommandId||''),maxLossUsd=n(pending?.maxLossUsd,NaN),at=n(pending?.at,0);
+      const hasServerId=/^[A-Za-z0-9._:-]{8,128}$/.test(commandId),hasClientId=/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId);
+      if((!hasServerId&&!hasClientId)||!(maxLossUsd>=2&&maxLossUsd<=400)||!(at>0)||now-at>30*24*60*60*1000)continue;
+      rows.push({key,symbol:String(pending?.symbol||'').toUpperCase(),kind:'MAX_LOSS',price:n(pending?.price,NaN),maxLossUsd,commandId:hasServerId?commandId:'',clientCommandId:hasClientId?clientCommandId:'',at});
     }
     localStorage.setItem(ZENITH_REAL_PROTECTIVE_PENDING_KEY,JSON.stringify(rows));
   }catch(_){}
@@ -426,25 +427,45 @@ function restoreRealProtectiveUpdatePending(){
     const now=Date.now(),rows=JSON.parse(localStorage.getItem(ZENITH_REAL_PROTECTIVE_PENDING_KEY)||'[]');
     if(!Array.isArray(rows))return;
     for(const row of rows){
-      const key=String(row?.key||''),symbol=String(row?.symbol||'').toUpperCase(),commandId=String(row?.commandId||''),maxLossUsd=n(row?.maxLossUsd,NaN),at=n(row?.at,0),priceValue=n(row?.price,NaN);
+      const key=String(row?.key||''),symbol=String(row?.symbol||'').toUpperCase(),commandId=String(row?.commandId||''),clientCommandId=String(row?.clientCommandId||''),maxLossUsd=n(row?.maxLossUsd,NaN),at=n(row?.at,0),priceValue=n(row?.price,NaN);
+      const hasServerId=/^[A-Za-z0-9._:-]{8,128}$/.test(commandId),hasClientId=/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId);
       if(!/^[A-Z0-9]{3,30}:(?:LONG|SHORT):MAX_LOSS$/.test(key)||!/^[A-Z0-9]{3,30}$/.test(symbol)||
-         !/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)||!(maxLossUsd>=2&&maxLossUsd<=400)||!(at>0)||now-at>10*60*1000)continue;
-      realProtectiveUpdatePending.set(key,{symbol,kind:'MAX_LOSS',price:priceValue,maxLossUsd,commandId,at,checking:false});
+         (!hasServerId&&!hasClientId)||!(maxLossUsd>=2&&maxLossUsd<=400)||!(at>0)||now-at>30*24*60*60*1000)continue;
+      realProtectiveUpdatePending.set(key,{symbol,kind:'MAX_LOSS',price:priceValue,maxLossUsd,commandId:hasServerId?commandId:'',clientCommandId:hasClientId?clientCommandId:'',at,checking:false});
     }
     persistRealProtectiveUpdatePending();
   }catch(_){}
 }
 async function checkRealMaxLossCommandStatus(key,pending){
-  if(!pending||pending.checking===true||!/^[A-Za-z0-9._:-]{8,128}$/.test(String(pending.commandId||'')))return;
+  if(!pending||pending.checking===true)return;
+  const commandId=String(pending.commandId||''),clientCommandId=String(pending.clientCommandId||'');
+  const hasServerId=/^[A-Za-z0-9._:-]{8,128}$/.test(commandId),hasClientId=/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId);
+  if(!hasServerId&&!hasClientId)return;
   pending.checking=true;
   try{
-    const r=await fetch('/api/zenith-sync?action=command-status&commandId='+encodeURIComponent(String(pending.commandId)),{
+    const query=hasServerId
+      ?'commandId='+encodeURIComponent(commandId)
+      :'clientCommandId='+encodeURIComponent(clientCommandId);
+    const r=await fetch('/api/zenith-sync?action=command-status&'+query,{
       cache:'no-store',headers:{Accept:'application/json'}
     });
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
     if(realProtectiveUpdatePending.get(key)!==pending)return;
+    const resolvedCommandId=String(q.commandId||'');
+    if(!hasServerId&&/^[A-Za-z0-9._:-]{8,128}$/.test(resolvedCommandId)){
+      pending.commandId=resolvedCommandId;
+      persistRealProtectiveUpdatePending();
+    }
     const status=String(q.status||'PENDING').toUpperCase();
+    if(status==='NOT_FOUND'){
+      realProtectiveUpdatePending.delete(key);
+      persistRealProtectiveUpdatePending();
+      if(selectedSymbol===String(pending.symbol||'').toUpperCase())fillToken();
+      renderRealPositions();
+      setStatus(String(pending.symbol||'')+' : commande perte MAX non enregistrée par le serveur — ancien réglage conservé.',true);
+      return;
+    }
     if(status==='ACK'){
       const symbol=String(pending.symbol||'').toUpperCase(),confirmedLoss=n(q.maxLossUsd,NaN),wantedLoss=n(pending.maxLossUsd,NaN),revision=Math.max(0,n(q.controllerRevision,0));
       const ackValid=q.activeMaxLossCommitted===true&&String(q.symbol||'').toUpperCase()===symbol&&
@@ -591,9 +612,10 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
     price:wanted,
     at:Date.now(),
     ...(normalizedKind==='MAX_LOSS'&&Number.isFinite(n(options?.maxLossUsd,NaN))
-      ?{maxLossUsd:n(options.maxLossUsd)}
+      ?{maxLossUsd:n(options.maxLossUsd),clientCommandId:String(command?.clientCommandId||'')}
       :{})
   });
+  if(normalizedKind==='MAX_LOSS'&&Number.isFinite(n(options?.maxLossUsd,NaN)))persistRealProtectiveUpdatePending();
   renderRealPositions();
   try{
     const r=await fetch('/api/zenith-sync?action=command',{
@@ -616,6 +638,14 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
     setTimeout(()=>refreshBinanceAccount(),1000);
     return true;
   }catch(e){
+    const pending=realProtectiveUpdatePending.get(key);
+    if(normalizedKind==='MAX_LOSS'&&pending&&Number.isFinite(n(pending.maxLossUsd,NaN))&&/^[A-Za-z0-9._:-]{8,128}$/.test(String(pending.clientCommandId||''))){
+      persistRealProtectiveUpdatePending();
+      pending.lastError=String(e?.message||'ENVOI_INDETERMINE');
+      setStatus(`${position.symbol} : réponse d’envoi MAX-LOSS indéterminée — Zenith vérifie la commande serveur, sans la renvoyer.`,true);
+      setTimeout(()=>void checkRealMaxLossCommandStatus(key,pending),750);
+      return false;
+    }
     realProtectiveUpdatePending.delete(key);
     persistRealProtectiveUpdatePending();
     renderRealPositions();
