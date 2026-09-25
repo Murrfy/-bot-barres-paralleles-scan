@@ -210,6 +210,8 @@ jobs:
         run: node --test scripts/test-token-settings-integrity.mjs
       - name: Test real-only UI and limit-only sells
         run: node --test scripts/test-real-only-ui.mjs
+      - name: Test real Binance net history
+        run: node --test scripts/test-real-binance-history.mjs
       - name: Test proof-driven entry confirmation
         run: node --test scripts/test-entry-open-state.mjs
       - name: Test MASTER protective command dispatcher
