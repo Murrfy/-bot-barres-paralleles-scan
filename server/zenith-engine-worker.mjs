@@ -2279,6 +2279,108 @@ async function safeAckActiveMaxLossAfterReconcile(raw,executionProof,body){
   return runtime.synchronized;
 }
 
+async function applyPendingProtectionTableBeforeConfigCommit(raw,body){
+  const symbol=String(body?.symbol||'').toUpperCase();
+  const direction=String(body?.direction||'').toUpperCase();
+  const quantity=Math.abs(n(body?.quantity,0));
+  const stages=body?.activeConfig?.protectionStages;
+  if(!symbol||!['LONG','SHORT'].includes(direction)||!(quantity>0)||!validActiveProtectionStages(stages)){
+    await failCommand(raw,'ACTIVE_PROTECTION_CONFIG_INVALID');
+    execution.lastError='ACTIVE_PROTECTION_CONFIG_INVALID';
+    return false;
+  }
+  if(!autoProtection.highWaterLoaded){
+    const loaded=await loadAutoHighWater();
+    if(!loaded){
+      await requeueCommand(raw,'ACTIVE_PROTECTION_HIGH_WATER_UNAVAILABLE',1500);
+      return false;
+    }
+  }
+
+  const projection=streamProjection();
+  const position=(projection.binancePositions||[]).find(row=>{
+    const amount=n(row?.positionAmt??row?.quantity,0);
+    const rowDirection=amount>=0?'LONG':'SHORT';
+    return String(row?.symbol||'').toUpperCase()===symbol&&
+      rowDirection===direction&&Math.abs(Math.abs(amount)-quantity)<=1e-12;
+  })||null;
+  if(!position){
+    await failCommand(raw,'ACTIVE_PROTECTION_POSITION_CHANGED');
+    execution.lastError='ACTIVE_PROTECTION_POSITION_CHANGED';
+    return false;
+  }
+
+  const account=await binanceApi('/api/binance-read');
+  if(!account.response.ok||account.data?.ok!==true){
+    const reason='ACTIVE_PROTECTION_MARK_'+String(account.data?.code||('HTTP_'+account.response.status));
+    if(account.response.status===429){
+      await requeueCommand(raw,reason,1500);
+    }else{
+      await failCommand(raw,reason);
+      execution.lastError=reason;
+    }
+    return false;
+  }
+  const restPosition=(Array.isArray(account.data?.positions)?account.data.positions:[]).find(row=>{
+    const amount=n(row?.positionAmt??row?.quantity,0);
+    const rowDirection=amount>=0?'LONG':'SHORT';
+    return String(row?.symbol||'').toUpperCase()===symbol&&rowDirection===direction&&Math.abs(amount)>0;
+  })||null;
+  const mark=n(restPosition?.markPrice,0);
+  const restQty=Math.abs(n(restPosition?.positionAmt??restPosition?.quantity,0));
+  if(!(mark>0)||!restPosition||Math.abs(restQty-quantity)>1e-12){
+    await failCommand(raw,'ACTIVE_PROTECTION_MARK_POSITION_MISMATCH');
+    execution.lastError='ACTIVE_PROTECTION_MARK_POSITION_MISMATCH';
+    return false;
+  }
+
+  const highWater=observeAutoHighWater(position,mark);
+  if(!Number.isFinite(highWater)||!(await persistAutoHighWaterNow())){
+    await requeueCommand(raw,'ACTIVE_PROTECTION_HIGH_WATER_NOT_PERSISTED',1500);
+    return false;
+  }
+
+  const priceFilter=await ensurePriceFilter(symbol);
+  if(!priceFilter){
+    await requeueCommand(raw,'ACTIVE_PROTECTION_PRICE_FILTER_UNAVAILABLE',1500);
+    return false;
+  }
+
+  let plan;
+  try{
+    plan=evaluateMasterAutoProgressiveProtection({
+      position,
+      markPrice:mark,
+      protectionStages:stages,
+      currentOrders:Array.isArray(projection.binanceOrders)?projection.binanceOrders:[],
+      priceFilter,
+      previousHighWaterProfitUsd:highWater,
+    });
+  }catch(error){
+    const reason='ACTIVE_PROTECTION_PLAN_'+cleanReason(error?.message||'FAILED','FAILED');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+
+  if(plan.action==='BLOCK'){
+    const reason='ACTIVE_PROTECTION_BLOCKED_'+cleanReason(plan.reason||'BLOCKED','BLOCKED');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+  if(plan.action==='REPLACE'){
+    const changed=await executeAutoProgressive(plan);
+    if(changed!==true){
+      const reason='ACTIVE_PROTECTION_REPLACEMENT_NOT_CONFIRMED';
+      await failCommand(raw,reason);
+      execution.lastError=reason;
+      return false;
+    }
+  }
+  return true;
+}
+
 async function safeAckActiveConfigAfterReconcile(raw,executionProof,body,failurePrefix='EXEC_ACTIVE_CONFIG_ACK_RETRY'){
   try{
     const reconciled=await awaitReconciliation();
@@ -2346,6 +2448,7 @@ async function safeAckActiveConfigAfterReconcile(raw,executionProof,body,failure
 }
 
 async function runActiveConfigCommand(command,raw,dispatch){
+  if(!(await applyPendingProtectionTableBeforeConfigCommit(raw,dispatch.body)))return false;
   return safeAckActiveConfigAfterReconcile(
     raw,{activeConfigReady:true},dispatch.body,'EXEC_ACTIVE_PROTECTIONS_CONFIG_ACK_RETRY'
   );
@@ -2600,6 +2703,7 @@ async function runProtectiveUpdate(command,raw,dispatch){
     return safeAckActiveMaxLossAfterReconcile(raw,{newClientId},body);
   }
   if(type==='EXEC_UPDATE_EXIT'&&body.activeConfig){
+    if(!(await applyPendingProtectionTableBeforeConfigCommit(raw,body)))return false;
     return safeAckActiveConfigAfterReconcile(
       raw,{newClientId},body,'EXEC_ACTIVE_TARGET_CONFIG_ACK_RETRY'
     );
