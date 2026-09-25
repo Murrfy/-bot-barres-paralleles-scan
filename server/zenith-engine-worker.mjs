@@ -23,6 +23,7 @@ import {
   PROTECTIVE_CLOSE_ATTEMPTS,
 } from '../lib/protective-close-state.mjs';
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
+import { planAutomaticTargetExit } from '../lib/auto-target-exit.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
 import { pendingEntryProtectionLossTargets } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
@@ -94,6 +95,12 @@ const autoProtection={
   highWaterSaveBusy:false,
   priceFilters:new Map(),
   metadataFetchAt:0,
+  busySymbols:new Set(),
+  lastError:'',
+  lastActionAt:0,
+};
+
+const autoTarget={
   busySymbols:new Set(),
   lastError:'',
   lastActionAt:0,
