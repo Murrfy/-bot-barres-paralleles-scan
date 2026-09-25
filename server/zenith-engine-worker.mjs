@@ -25,6 +25,12 @@ import {
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
+import {
+  entryWatchDefinition,
+  entryWatchIdentity,
+  evaluateEntryWatchTick,
+  pruneEntryWatchStates,
+} from '../lib/entry-watch.mjs';
 
 const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
 const BINANCE_PUBLIC_BASE='https://fapi.binance.com';
@@ -36,6 +42,7 @@ const RECONCILE_MS=15000;
 const KEEPALIVE_MS=45*60*1000;
 const STREAM_RESTART_MS=23*60*60*1000;
 const MARK_FALLBACK_MS=6000;
+const ENTRY_WATCH_RECOVERY_MS=48*60*60*1000;
 const BOOTSTRAP_RETRY_MS=15000;
 
 const instanceId='engine-instance-'+crypto.randomUUID();
@@ -89,6 +96,17 @@ const autoProtection={
   busySymbols:new Set(),
   lastError:'',
   lastActionAt:0,
+};
+
+const entryWatch={
+  states:new Map(),
+  authorizationAt:0,
+  loaded:false,
+  loadPromise:null,
+  saveTimer:null,
+  saveBusy:false,
+  lastError:'',
+  lastCrossingAt:0,
 };
 
 const markStream={
@@ -478,6 +496,165 @@ function scheduleAutoHighWaterSave(delay=5000){
   },Math.max(250,delay));
 }
 
+function entryWatchDefinitions(){
+  const validated=runtime.config?.validated&&typeof runtime.config.validated==='object'
+    ?runtime.config.validated:{};
+  const out=[];
+  for(const [symbol,row] of Object.entries(validated)){
+    const definition=entryWatchDefinition(symbol,row);
+    if(definition)out.push(definition);
+  }
+  return out;
+}
+
+function entryWatchDefinitionMap(){
+  return new Map(entryWatchDefinitions().map(definition=>[definition.symbol,definition]));
+}
+
+function entryWatchStateObject(){
+  return Object.fromEntries([...entryWatch.states.entries()].map(([symbol,state])=>[symbol,clone(state)]));
+}
+
+function entryWatchSeedArmed(definition){
+  const row=runtime.config?.validated?.[definition.symbol];
+  return Boolean(
+    row?.armedAbove===true&&
+    Date.now()-definition.validatedAt>=0&&
+    Date.now()-definition.validatedAt<=ENTRY_WATCH_RECOVERY_MS
+  );
+}
+
+async function loadEntryWatchState(force=false){
+  if(entryWatch.loaded&&!force)return true;
+  if(entryWatch.loadPromise&&!force)return entryWatch.loadPromise;
+  const task=(async()=>{
+    const result=await syncApi('engine-entry-watch-state');
+    if(!result.response.ok||result.data?.ok!==true){
+      entryWatch.lastError=String(result.data?.code||('HTTP_'+result.response.status));
+      return false;
+    }
+    entryWatch.authorizationAt=n(result.data.authorizationAt,0);
+    entryWatch.states.clear();
+    const states=result.data.states&&typeof result.data.states==='object'?result.data.states:{};
+    for(const [symbol,state] of Object.entries(states)){
+      const definition=entryWatchDefinition(symbol,state);
+      if(!definition||String(state?.identity||'')!==entryWatchIdentity(definition))continue;
+      entryWatch.states.set(definition.symbol,clone(state));
+      const aggId=n(state?.lastAggId,-1),aggTime=n(state?.lastAggTime,0);
+      if(aggId>=0){
+        const previous=n(markStream.lastAggIds.get(definition.symbol),-1);
+        if(aggId>previous)markStream.lastAggIds.set(definition.symbol,aggId);
+      }
+      if(aggTime>0){
+        const previous=n(markStream.lastAggTimes.get(definition.symbol),0);
+        if(aggTime>previous)markStream.lastAggTimes.set(definition.symbol,aggTime);
+      }
+    }
+    entryWatch.loaded=entryWatch.authorizationAt>0;
+    return entryWatch.loaded;
+  })();
+  entryWatch.loadPromise=task;
+  try{return await task}
+  finally{entryWatch.loadPromise=null}
+}
+
+async function persistEntryWatchStateNow(){
+  if(entryWatch.saveBusy)return false;
+  if(!entryWatch.loaded||!(entryWatch.authorizationAt>0))return false;
+  entryWatch.saveBusy=true;
+  try{
+    const result=await syncApi('engine-entry-watch-state',{
+      method:'POST',
+      body:{authorizationAt:entryWatch.authorizationAt,states:entryWatchStateObject()},
+    });
+    if(!result.response.ok||result.data?.ok!==true){
+      const code=String(result.data?.code||('HTTP_'+result.response.status));
+      entryWatch.lastError=code;
+      if(code==='ENGINE_ENTRY_WATCH_AUTHORIZATION_CHANGED'||code==='ENGINE_RESTART_AUTHORIZATION_REQUIRED'){
+        entryWatch.loaded=false;
+        entryWatch.authorizationAt=0;
+        entryWatch.states.clear();
+      }
+      return false;
+    }
+    entryWatch.lastError='';
+    return true;
+  }catch(error){
+    entryWatch.lastError=String(error?.message||'ENGINE_ENTRY_WATCH_SAVE_FAILED');
+    return false;
+  }finally{
+    entryWatch.saveBusy=false;
+  }
+}
+
+function scheduleEntryWatchSave(delay=1000){
+  if(entryWatch.saveTimer)clearTimeout(entryWatch.saveTimer);
+  entryWatch.saveTimer=setTimeout(()=>{
+    entryWatch.saveTimer=null;
+    persistEntryWatchStateNow().catch(error=>logError('ENTRY_WATCH_SAVE_FAILED',error));
+  },Math.max(250,delay));
+}
+
+function reconcileEntryWatchConfig(){
+  if(!entryWatch.loaded)return false;
+  const definitions=entryWatchDefinitions();
+  const before=stableStringify(entryWatchStateObject());
+  const pruned=pruneEntryWatchStates(entryWatchStateObject(),definitions);
+  entryWatch.states=new Map(Object.entries(pruned));
+  const changed=before!==stableStringify(pruned);
+  if(changed)scheduleEntryWatchSave(250);
+  return changed;
+}
+
+function watchedEntrySymbols(){
+  const out=new Set();
+  if(!entryWatch.loaded)return out;
+  const active=activeProtectionSymbols();
+  for(const definition of entryWatchDefinitions()){
+    const state=entryWatch.states.get(definition.symbol);
+    if(!active.has(definition.symbol)&&!(n(state?.triggeredAt,0)>0))out.add(definition.symbol);
+  }
+  return out;
+}
+
+function trackedMarkSymbols(){
+  return new Set([...activeProtectionSymbols(),...watchedEntrySymbols()]);
+}
+
+function entryWatchMayDispatch(){
+  // Detection-only safety phase: no entry order is dispatched from this branch.
+  return false;
+}
+
+async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.now()}={}){
+  const wanted=String(symbol||'').toUpperCase();
+  const definition=entryWatchDefinitionMap().get(wanted);
+  if(!definition)return false;
+  const previous=entryWatch.states.get(wanted)||null;
+  const result=evaluateEntryWatchTick({
+    definition,
+    state:previous,
+    price,
+    eventId,
+    eventTime,
+    allowTrigger:entryWatchMayDispatch(),
+    seedArmed:!previous&&entryWatchSeedArmed(definition),
+  });
+  if(result.action==='DUPLICATE')return false;
+  entryWatch.states.set(wanted,result.state);
+  scheduleEntryWatchSave();
+  if(result.action==='SUPPRESSED'){
+    entryWatch.lastCrossingAt=n(result.state.suppressedCrossingAt,Date.now());
+    log('ENTRY_WATCH_CROSSING_SUPPRESSED',{
+      symbol:wanted,
+      buy:definition.buy,
+      observedPrice:n(price),
+      reason:'REAL_ENTRY_DISPATCH_NOT_INSTALLED',
+    });
+  }
+  return true;
+}
+
 async function pruneAutoHighWater(){
   if(!autoProtection.highWaterLoaded||userStreamReady(stream.state)!==true)return false;
   const active=new Set(
@@ -740,10 +917,14 @@ function activePositionForSymbol(symbol){
 function trackingStartTime(symbol){
   const wanted=String(symbol||'').toUpperCase();
   const position=activePositionForSymbol(wanted);
+  const definition=entryWatchDefinitionMap().get(wanted);
+  const state=entryWatch.states.get(wanted);
   return Math.max(
     0,
-    n(markStream.lastAggTimes.get(wanted),
-      n(position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,Date.now()-2000))
+    n(markStream.lastAggTimes.get(wanted),0),
+    n(position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,0),
+    n(state?.lastAggTime,0),
+    n(definition?.validatedAt,Date.now()-2000)
   );
 }
 
@@ -756,7 +937,8 @@ function rememberAggCursor(symbol,id,time){
 async function processAggTradeRow(symbol,row){
   if(!row)return false;
   const wanted=String(symbol||row?.s||'').toUpperCase();
-  if(!activeProtectionSymbols().has(wanted))return false;
+  const tracked=trackedMarkSymbols();
+  if(!tracked.has(wanted))return false;
   const id=n(row?.a,-1);
   const eventTime=n(row?.T,n(row?.E,Date.now()));
   const previousId=markStream.lastAggIds.get(wanted);
@@ -764,28 +946,31 @@ async function processAggTradeRow(symbol,row){
   const price=n(row?.p,0);
   if(!(price>0))return false;
   markStream.lastEventAt=Date.now();
-  await runAutoProtection(wanted,price);
+  if(activeProtectionSymbols().has(wanted))await runAutoProtection(wanted,price);
+  if(watchedEntrySymbols().has(wanted)){
+    await processEntryWatchPrice(wanted,price,{eventId:id,eventTime});
+  }
   rememberAggCursor(wanted,id,eventTime);
   return true;
 }
 
 async function recoverMissedAggTrades(symbol){
   const wanted=String(symbol||'').toUpperCase();
-  if(!activeProtectionSymbols().has(wanted)||markStream.recovering.has(wanted))return false;
+  if(!trackedMarkSymbols().has(wanted)||markStream.recovering.has(wanted))return false;
   markStream.recovering.add(wanted);
   markStream.pendingAggTrades.set(wanted,[]);
   try{
-    let start=Math.max(Date.now()-48*60*60*1000,trackingStartTime(wanted)-250);
+    let start=Math.max(Date.now()-ENTRY_WATCH_RECOVERY_MS,trackingStartTime(wanted)-250);
     let fromId=null;
     let pages=0;
-    while(activeProtectionSymbols().has(wanted)&&pages<25){
+    while(trackedMarkSymbols().has(wanted)&&pages<25){
       const path=fromId==null
         ?`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&startTime=${Math.floor(start)}&limit=1000`
         :`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&fromId=${fromId}&limit=1000`;
       const rows=await publicBinanceJson(path);
       if(!Array.isArray(rows)||!rows.length)break;
       for(const row of rows){
-        if(!activeProtectionSymbols().has(wanted))break;
+        if(!trackedMarkSymbols().has(wanted))break;
         await processAggTradeRow(wanted,row);
       }
       pages++;
@@ -795,14 +980,34 @@ async function recoverMissedAggTrades(symbol){
       await sleep(40);
     }
     if(pages>=25){
-      await failClosedAutoProtection('MARK_RECOVERY_PARTIAL_'+wanted);
+      if(activeProtectionSymbols().has(wanted)){
+        await failClosedAutoProtection('MARK_RECOVERY_PARTIAL_'+wanted);
+      }else{
+        entryWatch.lastError='ENTRY_WATCH_RECOVERY_PARTIAL_'+wanted;
+        const state=entryWatch.states.get(wanted);
+        if(state){
+          state.armedAbove=false;
+          entryWatch.states.set(wanted,state);
+          scheduleEntryWatchSave(250);
+        }
+      }
       return false;
     }
     return true;
   }catch(error){
-    await failClosedAutoProtection(
-      'MARK_RECOVERY_FAILED_'+cleanReason(error?.message||'BINANCE_PUBLIC_RECOVERY','BINANCE_PUBLIC_RECOVERY')
-    );
+    if(activeProtectionSymbols().has(wanted)){
+      await failClosedAutoProtection(
+        'MARK_RECOVERY_FAILED_'+cleanReason(error?.message||'BINANCE_PUBLIC_RECOVERY','BINANCE_PUBLIC_RECOVERY')
+      );
+    }else{
+      entryWatch.lastError='ENTRY_WATCH_RECOVERY_FAILED_'+cleanReason(error?.message||'BINANCE_PUBLIC_RECOVERY','BINANCE_PUBLIC_RECOVERY');
+      const state=entryWatch.states.get(wanted);
+      if(state){
+        state.armedAbove=false;
+        entryWatch.states.set(wanted,state);
+        scheduleEntryWatchSave(250);
+      }
+    }
     return false;
   }finally{
     const queued=markStream.pendingAggTrades.get(wanted)||[];
@@ -810,7 +1015,7 @@ async function recoverMissedAggTrades(symbol){
     markStream.pendingAggTrades.delete(wanted);
     queued.sort((a,b)=>n(a?.a)-n(b?.a)||n(a?.T)-n(b?.T));
     for(const row of queued){
-      if(activeProtectionSymbols().has(wanted))await processAggTradeRow(wanted,row);
+      if(trackedMarkSymbols().has(wanted))await processAggTradeRow(wanted,row);
     }
   }
 }
@@ -827,12 +1032,13 @@ function sendMarkControl(method,params){
 
 function syncMarkSubscriptions(){
   if(!markStream.ws||markStream.ws.readyState!==WebSocket.OPEN)return false;
-  const desired=new Set([...activeProtectionSymbols()].map(markStreamName));
+  const symbols=trackedMarkSymbols();
+  const desired=new Set([...symbols].map(markStreamName));
   const add=[...desired].filter(name=>!markStream.subscribed.has(name));
   const remove=[...markStream.subscribed].filter(name=>!desired.has(name));
   if(add.length&&sendMarkControl('SUBSCRIBE',add)){
     add.forEach(name=>markStream.subscribed.add(name));
-    for(const symbol of activeProtectionSymbols()){
+    for(const symbol of symbols){
       if(add.includes(markStreamName(symbol))){
         void recoverMissedAggTrades(symbol).catch(error=>logError('MARK_RECOVERY_FAILED',error,{symbol}));
       }
@@ -870,7 +1076,17 @@ async function processMarkPayload(payload){
   if(markStream.recovering.has(symbol)){
     const queued=markStream.pendingAggTrades.get(symbol)||[];
     if(queued.length>=1000){
-      await failClosedAutoProtection('MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol);
+      if(activeProtectionSymbols().has(symbol)){
+        await failClosedAutoProtection('MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol);
+      }else{
+        entryWatch.lastError='ENTRY_WATCH_RECOVERY_BUFFER_OVERFLOW_'+symbol;
+        const state=entryWatch.states.get(symbol);
+        if(state){
+          state.armedAbove=false;
+          entryWatch.states.set(symbol,state);
+          scheduleEntryWatchSave(250);
+        }
+      }
       return false;
     }
     queued.push(row);
@@ -883,23 +1099,35 @@ async function processMarkPayload(payload){
 async function fallbackMarkPrices(){
   if(stopping||!runtime.leaseActive)return false;
   if(markStream.ws&&markStream.ws.readyState===WebSocket.OPEN)return false;
-  if(!activeProtectionSymbols().size)return false;
+  if(!trackedMarkSymbols().size)return false;
   try{
-    const result=await binanceApi('/api/binance-read');
-    if(result.response.status===429)return false;
-    if(!result.response.ok||result.data?.ok!==true){
-      const code=String(result.data?.code||('HTTP_'+result.response.status));
-      if(fatalAuthorityCode(code)){
-        const error=new Error(code);error.code=code;throw error;
-      }
-      markStream.lastError='MARK_FALLBACK_'+code;
-      return false;
-    }
     const tasks=[];
-    for(const position of Array.isArray(result.data?.positions)?result.data.positions:[]){
-      const symbol=String(position?.symbol||'').toUpperCase();
-      const mark=n(position?.markPrice,0);
-      if(activeProtectionSymbols().has(symbol)&&mark>0)tasks.push(runAutoProtection(symbol,mark));
+    if(activeProtectionSymbols().size){
+      const result=await binanceApi('/api/binance-read');
+      if(result.response.status!==429&&result.response.ok&&result.data?.ok===true){
+        for(const position of Array.isArray(result.data?.positions)?result.data.positions:[]){
+          const symbol=String(position?.symbol||'').toUpperCase();
+          const mark=n(position?.markPrice,0);
+          if(activeProtectionSymbols().has(symbol)&&mark>0)tasks.push(runAutoProtection(symbol,mark));
+        }
+      }else if(result.response.status!==429){
+        const code=String(result.data?.code||('HTTP_'+result.response.status));
+        if(fatalAuthorityCode(code)){
+          const error=new Error(code);error.code=code;throw error;
+        }
+        markStream.lastError='MARK_FALLBACK_'+code;
+      }
+    }
+    const watched=watchedEntrySymbols();
+    if(watched.size){
+      const prices=await publicBinanceJson('/fapi/v1/ticker/price');
+      for(const row of Array.isArray(prices)?prices:[]){
+        const symbol=String(row?.symbol||'').toUpperCase();
+        const px=n(row?.price,0);
+        if(watched.has(symbol)&&px>0){
+          tasks.push(processEntryWatchPrice(symbol,px,{eventId:-1,eventTime:Date.now()}));
+        }
+      }
     }
     if(tasks.length)await Promise.allSettled(tasks);
     return true;
@@ -1791,6 +2019,8 @@ async function runtimeCycle(){
     await publishRuntime().catch(error=>logError('RUNTIME_PUBLISH_FAILED',error));
     await ensureUserStream();
     await loadAutoHighWater().catch(error=>logError('AUTO_HIGH_WATER_LOAD_FAILED',error));
+    await loadEntryWatchState().catch(error=>logError('ENTRY_WATCH_LOAD_FAILED',error));
+    reconcileEntryWatchConfig();
     await ensureMarkPriceStream();
     syncMarkSubscriptions();
     return true;
@@ -1823,8 +2053,10 @@ async function shutdown(code=0){
   if(markStream.restartTimer)clearTimeout(markStream.restartTimer);
   if(markStream.fallbackTimer)clearInterval(markStream.fallbackTimer);
   if(autoProtection.highWaterSaveTimer)clearTimeout(autoProtection.highWaterSaveTimer);
+  if(entryWatch.saveTimer)clearTimeout(entryWatch.saveTimer);
   clearStreamTimers();
   await persistAutoHighWaterNow().catch(()=>{});
+  await persistEntryWatchStateNow().catch(()=>{});
   closeMarkPriceStream('ENGINE_SHUTDOWN',false);
   await closeRemoteUserStream();
   const ws=stream.ws;
