@@ -2391,9 +2391,13 @@ function durationHMS(openedAt,closedAt=Date.now()){const secs=Math.max(0,Math.fl
 function elapsedHMS(openedAt){return durationHMS(openedAt,Date.now())}
 function renderPositions(){return false}
 function historyFeeText(row){
-  const parts=[];
-  if(n(row?.commissionUsdt,0)>0)parts.push(money(-n(row.commissionUsdt)));
-  for(const [asset,amount] of Object.entries(row?.feesByAsset||{})){if(asset==='USDT'||!(n(amount)>0))continue;parts.push('-'+n(amount).toFixed(8).replace(/0+$/,'').replace(/\.$/,'')+' '+escapeHtml(asset));}
+  const parts=[],usdt=n(row?.commissionUsdt,0);
+  if(Math.abs(usdt)>1e-12)parts.push(usdt>0?money(-usdt):money(Math.abs(usdt))+' rebate');
+  for(const [asset,amount] of Object.entries(row?.feesByAsset||{})){
+    if(asset==='USDT'||Math.abs(n(amount))<=1e-12)continue;
+    const value=n(amount),shown=Math.abs(value).toFixed(8).replace(/0+$/,'').replace(/\.$/,'');
+    parts.push((value>0?'-':'+')+shown+' '+escapeHtml(asset)+(value<0?' rebate':''));
+  }
   return parts.length?parts.join(' · '):money(0);
 }
 function historyFundingText(row){

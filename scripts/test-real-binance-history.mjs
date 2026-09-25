@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { buildZenithClosedTradeHistory, mergeTradeHistory } from '../lib/real-trade-history.mjs';
+import { windowsFor, zenithOrder } from '../api/binance-history.js';
 
 function order(orderId,clientOrderId,symbol='BTCUSDT'){
   return {symbol,orderId,clientOrderId};
@@ -28,6 +29,20 @@ test('closed Zenith LONG uses actual fills, commissions and funding for exact ne
   assert.equal(r.fundingUsdt,-.2);
   assert.ok(Math.abs(r.netUsdt-9.716)<1e-12);
   assert.equal(r.exactNetUsdt,true);
+});
+
+test('negative Binance commission is preserved as rebate and increases exact net',()=>{
+  const rows=buildZenithClosedTradeHistory({
+    orders:[order(3,'zth-ENT-rebateaaaaaaaaaaaaaaaaaa'),order(4,'zth-EXI-rebatebbbbbbbbbbbbbbbbbb')],
+    trades:[
+      trade({id:3,orderId:3,side:'BUY',qty:1,price:100,commission:-.01,time:1000}),
+      trade({id:4,orderId:4,side:'SELL',qty:1,price:105,realizedPnl:5,commission:.02,time:2000}),
+    ],
+  });
+  assert.equal(rows.length,1);
+  assert.ok(Math.abs(rows[0].commissionUsdt-.01)<1e-12);
+  assert.ok(Math.abs(rows[0].netUsdt-4.99)<1e-12);
+  assert.equal(rows[0].feesByAsset.USDT,.01);
 });
 
 test('partial entry and exit fills produce weighted actual prices and summed fees',()=>{
@@ -91,6 +106,7 @@ test('UI history is Binance-real only and never displays protection level number
   const helpers=html.slice(helpersStart,start);
   const block=html.slice(start,end);
   assert.match(helpers,/commissionUsdt/);
+  assert.match(helpers,/rebate/);
   assert.match(helpers,/fundingUsdt/);
   assert.match(block,/binanceHistory\.history/);
   assert.match(block,/grossRealizedPnl/);
@@ -102,10 +118,31 @@ test('UI history is Binance-real only and never displays protection level number
   assert.equal(html.includes('id="resetClosedBtn"'),false);
 });
 
+test('history windows never overlap and stay within Binance seven-day range',()=>{
+  const now=30*24*60*60*1000+12345;
+  const windows=windowsFor(now);
+  assert.ok(windows.length>=5);
+  for(let i=0;i<windows.length;i++){
+    const w=windows[i];
+    assert.ok(w.endTime>=w.startTime);
+    assert.ok(w.endTime-w.startTime<7*24*60*60*1000);
+    if(i>0)assert.equal(w.startTime,windows[i-1].endTime+1);
+  }
+  assert.equal(windows.at(-1).endTime,now);
+});
+
+test('Zenith order discovery accepts deterministic Zenith client ids only',()=>{
+  assert.equal(zenithOrder({clientOrderId:'zth-ENT-aaaaaaaaaaaaaaaaaaaaaaaa'}),true);
+  assert.equal(zenithOrder({clientOrderId:'zth-EXI-bbbbbbbbbbbbbbbbbbbbbbbb'}),true);
+  assert.equal(zenithOrder({clientOrderId:'manual-order'}),false);
+});
+
 test('history API is read-only and uses official Futures trade/order/income sources',()=>{
   const source=fs.readFileSync('api/binance-history.js','utf8');
-  assert.match(source,/\/fapi\/v1\/userTrades/);
   assert.match(source,/\/fapi\/v1\/allOrders/);
+  assert.match(source,/orders\.filter\(zenithOrder\)/);
+  assert.match(source,/\/fapi\/v1\/userTrades/);
+  assert.match(source,/symbol:job\.symbol/);
   assert.match(source,/\/fapi\/v1\/income/);
   assert.match(source,/incomeType:'FUNDING_FEE'/);
   assert.match(source,/KEY_ARCHIVE/);
