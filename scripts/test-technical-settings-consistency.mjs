@@ -42,3 +42,11 @@ test('real preflight verifies actual Binance per-symbol Futures configuration',(
   assert.match(risk,/ACCOUNT_LEVERAGE_MISMATCH/);
   assert.match(risk,/LEVERAGE_BRACKET_EXCEEDED/);
 });
+
+test('changed profit targets drive the protection ladder and invalid exact loss targets are rejected',()=>{
+  assert.match(html,/syncProtectionsToTarget\(Math\.max\(0,target\)\)/);
+  assert.match(html,/salePrice<=buyPrice/);
+  assert.match(html,/Le prix de vente déterminé doit être supérieur au prix d’achat déterminé/);
+  assert.match(html,/function protectionCountForTarget\(target\)/);
+  assert.match(html,/arm:105\+i\*100,floor:100\+i\*100/);
+});
