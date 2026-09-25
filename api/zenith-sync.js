@@ -4350,7 +4350,7 @@ export default async function handler(req, res) {
         id: crypto.randomUUID(),
         clientCommandId,
         createdAt,
-        expiresAt: createdAt + (type === 'EXEC_OPEN_MARKET_POSITION' ? 15 * 1000 : COMMAND_MAX_AGE_MS),
+        expiresAt: createdAt + (type === 'EXEC_OPEN_MARKET_POSITION' ? 30 * 1000 : COMMAND_MAX_AGE_MS),
         deviceId: device.deviceId,
         type,
         payload,
