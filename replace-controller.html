@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
-<title>Zenith — Remplacer l’iPhone</title>
+<title>Zenith — Remplacer le téléphone</title>
 <style>
 :root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#07111f;color:#eef6ff}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;background:#07111f}
@@ -23,17 +23,17 @@ button:disabled{opacity:.5}
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>Zenith — nouvel iPhone</h1>
-    <div class="sub">Cette procédure remplace l’ancien iPhone contrôleur directement avec le code administrateur Zenith, sans iPad et sans toucher aux positions Binance.</div>
+    <h1>Zenith — nouveau téléphone</h1>
+    <div class="sub">Cette procédure remplace l’ancien téléphone contrôleur directement avec le code administrateur Zenith, sans autre appareil et sans toucher aux positions Binance.</div>
 
     <label for="adminCode">Code administrateur Zenith</label>
     <input id="adminCode" type="password" maxlength="256" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Code administrateur">
 
-    <button id="replaceBtn">Reprendre le contrôle sur cet iPhone</button>
+    <button id="replaceBtn">Reprendre le contrôle sur ce téléphone</button>
 
     <div id="status" class="status">Prêt.</div>
     <a id="openBot" class="link" href="/" hidden>Ouvrir Zenith</a>
-    <div class="small">Après validation, l’ancien iPhone est automatiquement refusé par le serveur. Le code administrateur n’est ni stocké ni renvoyé. Les réglages centraux sont récupérés avant l’ouverture du bot.</div>
+    <div class="small">Après validation, l’ancien téléphone est automatiquement refusé par le serveur. Le code administrateur n’est ni stocké ni renvoyé. Les réglages centraux sont récupérés avant l’ouverture du bot.</div>
   </div>
 </div>
 <script>
@@ -55,7 +55,7 @@ const setStatus=(msg,type='')=>{
 function replacementDeviceId(){
   let id=localStorage.getItem(REPLACEMENT_DEVICE_ID_KEY);
   if(!id){
-    id='iphone-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
+    id='phone-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
     localStorage.setItem(REPLACEMENT_DEVICE_ID_KEY,id);
   }
   return id;
@@ -101,7 +101,7 @@ async function replaceController(){
       body:JSON.stringify({
         adminCode,
         deviceId:newDeviceId,
-        deviceName:'iPhone contrôleur Zenith'
+        deviceName:'Téléphone contrôleur Zenith'
       })
     });
 
@@ -120,7 +120,7 @@ async function replaceController(){
     $('adminCode').value='';
 
     setStatus(
-      'Nouvel iPhone activé. Ancien iPhone révoqué.'+
+      'Nouveau téléphone activé. Ancien téléphone révoqué.'+
       (restored?' Réglages centraux restaurés · révision '+String(q.state.revision||0)+'.':''),
       'ok'
     );
