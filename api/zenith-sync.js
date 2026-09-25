@@ -1145,13 +1145,102 @@ function runtimeClosePositionQuantity(runtimeState, symbol, direction) {
   return 0;
 }
 
+function activeProtectionStagesStatus(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 200) {
+    return { ok:false, reason:'ACTIVE_PROTECTION_STAGES_INVALID' };
+  }
+  const rows = [];
+  let previousArm = -Infinity;
+  let previousFloor = -Infinity;
+  for (let i = 0; i < value.length; i++) {
+    const row = value[i];
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_INVALID' };
+    }
+    const keys = Object.keys(row);
+    if (keys.some(key => !['enabled','arm','floor'].includes(key))) {
+      return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_FIELD_INVALID' };
+    }
+    const enabled = row.enabled !== false;
+    const arm = Number(row.arm);
+    const floor = Number(row.floor);
+    if (!Number.isFinite(arm) || !Number.isFinite(floor) || arm < 0 || floor < 0 || arm > 1e9 || floor > 1e9) {
+      return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_AMOUNT_INVALID' };
+    }
+    if (enabled) {
+      if (!(floor < arm)) return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_FLOOR_INVALID' };
+      if (!(arm > previousArm)) return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_ORDER_INVALID' };
+      if (floor + 1e-8 < previousFloor) return { ok:false, reason:'ACTIVE_PROTECTION_STAGE_FLOOR_DECREASE' };
+      previousArm = arm;
+      previousFloor = floor;
+    }
+    rows.push({ enabled, arm, floor });
+  }
+  return { ok:true, rows };
+}
+
+function activeConfigStatus(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok:false, reason:'ACTIVE_CONFIG_REQUIRED' };
+  }
+  const allowed = new Set([
+    'targetProfit','manualTargetProfit','protectionStages',
+    'exactSaleEnabled','exactSalePrice','exactSaleSource'
+  ]);
+  if (Object.keys(value).some(key => !allowed.has(key))) {
+    return { ok:false, reason:'ACTIVE_CONFIG_FIELD_INVALID' };
+  }
+  const targetProfit = Number(value.targetProfit);
+  const manualTargetProfit = Number(value.manualTargetProfit);
+  const exactSaleEnabled = value.exactSaleEnabled === true;
+  const exactSalePrice = Number(value.exactSalePrice || 0);
+  const exactSaleSource = String(value.exactSaleSource || '');
+  if (!(targetProfit > 0) || targetProfit > 1e9) return { ok:false, reason:'ACTIVE_TARGET_PROFIT_INVALID' };
+  if (!(manualTargetProfit > 0) || manualTargetProfit > 1e9) return { ok:false, reason:'ACTIVE_MANUAL_TARGET_INVALID' };
+  if (Math.abs(targetProfit - manualTargetProfit) > 1e-8) return { ok:false, reason:'ACTIVE_TARGETS_MUST_MATCH' };
+  if (exactSaleEnabled && !(exactSalePrice > 0)) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_REQUIRED' };
+  if (!Number.isFinite(exactSalePrice) || exactSalePrice < 0) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_INVALID' };
+  if (exactSaleSource !== 'settings') return { ok:false, reason:'ACTIVE_EXACT_SALE_SOURCE_INVALID' };
+  const stages = activeProtectionStagesStatus(value.protectionStages);
+  if (!stages.ok) return stages;
+  return {
+    ok:true,
+    activeConfig:{
+      targetProfit,
+      manualTargetProfit,
+      protectionStages:stages.rows,
+      exactSaleEnabled,
+      exactSalePrice,
+      exactSaleSource:'settings',
+    },
+  };
+}
+
 function execUpdatePayloadStatus(type, payload) {
   try {
     const normalized = normalizeProtectiveUpdatePayload(type, payload);
+    if (payload?.activeConfig != null) {
+      const config = activeConfigStatus(payload.activeConfig);
+      if (!config.ok) return config;
+      return { ok:true, ...normalized, activeConfig:config.activeConfig };
+    }
     return { ok:true, ...normalized };
   } catch (e) {
     return { ok:false, reason:String(e?.message || 'PROTECTIVE_UPDATE_PAYLOAD_INVALID') };
   }
+}
+
+function execActiveConfigPayloadStatus(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok:false, reason:'PAYLOAD_OBJECT_REQUIRED' };
+  const symbol = String(payload.symbol || '').toUpperCase();
+  const direction = String(payload.direction || '').toUpperCase();
+  const quantity = Number(payload.quantity);
+  if (!/^[A-Z0-9]{3,30}$/.test(symbol)) return { ok:false, reason:'SYMBOL_INVALID' };
+  if (!['LONG','SHORT'].includes(direction)) return { ok:false, reason:'DIRECTION_INVALID' };
+  if (!(quantity > 0)) return { ok:false, reason:'QUANTITY_INVALID' };
+  const config = activeConfigStatus(payload.activeConfig);
+  if (!config.ok) return config;
+  return { ok:true, symbol, direction, quantity, activeConfig:config.activeConfig };
 }
 
 function runtimePositionRecord(runtimeState, symbol, direction) {
@@ -1170,6 +1259,25 @@ function runtimePositionRecord(runtimeState, symbol, direction) {
 function runtimeOpenOrder(runtimeState, predicate) {
   const orders = Array.isArray(runtimeState?.data?.binanceOrders) ? runtimeState.data.binanceOrders : [];
   return orders.find(predicate) || null;
+}
+
+function runtimeProgressiveProtectionConflict(runtimeState, symbol, direction) {
+  const sym = String(symbol || '').toUpperCase();
+  const dir = String(direction || '').toUpperCase();
+  const expectedSide = dir === 'LONG' ? 'SELL' : 'BUY';
+  const orders = Array.isArray(runtimeState?.data?.binanceOrders) ? runtimeState.data.binanceOrders : [];
+  const rows = orders.filter(order => {
+    if (String(order?.orderClass || '').toUpperCase() !== 'ALGO') return false;
+    if (String(order?.symbol || '').toUpperCase() !== sym) return false;
+    if (String(order?.side || '').toUpperCase() !== expectedSide) return false;
+    if (String(order?.positionSide || 'BOTH').toUpperCase() !== 'BOTH') return false;
+    if (String(order?.type || '').toUpperCase() !== 'STOP') return false;
+    if (!(order?.reduceOnly === true || order?.reduceOnly === 'true')) return false;
+    return true;
+  });
+  if (rows.length > 1) return true;
+  if (rows.length === 1 && !/^zth-PRO-[A-Za-z0-9._:-]+$/.test(String(rows[0]?.clientAlgoId || ''))) return true;
+  return false;
 }
 
 function numberMatches(a, b) {
