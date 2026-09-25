@@ -19,7 +19,8 @@ function block(source,start,end){
 test('active real MAX-LOSS is editable only when no edit is pending',()=>{
   const locks=block(html,'function setTokenFieldsEnabled()','function updateTokenPreview()');
   assert.match(locks,/const maxLossPending=Boolean\(realActive&&realProtectiveUpdatePending\.get/);
-  assert.match(locks,/\$\('tMaxLoss'\)\.disabled=!realActive\|\|maxLossPending/);
+  assert.match(locks,/activeSettingPending/);
+  assert.match(locks,/\$\('tMaxLoss'\)\.disabled=!realActive\|\|activeSettingPending/);
   assert.match(locks,/confirmation Binance\/serveur/);
 });
 
