@@ -212,6 +212,8 @@ jobs:
         run: node --test scripts/test-maxloss-status-ui.mjs
       - name: Test per-token settings integrity
         run: node --test scripts/test-token-settings-integrity.mjs
+      - name: Test active real MAX-LOSS editing
+        run: node --test scripts/test-active-maxloss-edit.mjs
       - name: Test real-only UI and limit-only sells
         run: node --test scripts/test-real-only-ui.mjs
       - name: Test real Binance net history
