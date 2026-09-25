@@ -4691,6 +4691,9 @@ export default async function handler(req, res) {
         clientCommandId:String(result.clientCommandId || clientCommandId || ''),
         at:Number(result.at || 0),
         activeMaxLossCommitted:result.activeMaxLossCommitted===true,
+        activeConfigCommitted:result.activeConfigCommitted===true,
+        activeConfigKind:String(result.activeConfigKind || ''),
+        activeConfig:result.activeConfig && typeof result.activeConfig === 'object' ? result.activeConfig : null,
         controllerRevision:Math.max(0,Number(result.controllerRevision || 0)),
         controllerStateHash:String(result.controllerStateHash || ''),
         symbol:String(result.symbol || ''),
@@ -5292,7 +5295,18 @@ export default async function handler(req, res) {
         }
         if (!confirmedOrder) return send(res, 409, { ok:false, code:'EXECUTION_ACK_NEW_ORDER_NOT_CONFIRMED' });
 
-        if (payloadStatus.protectionKind === 'MAX_LOSS' && Number.isFinite(Number(payloadStatus.maxLossUsd))) {
+        if (commandType === 'EXEC_UPDATE_EXIT' && payloadStatus.activeConfig) {
+          try {
+            controllerCompletion = await prepareActiveConfigControllerCommit(
+              command,payloadStatus,device,'ACTIVE_TARGET_CONFIG'
+            );
+          } catch (e) {
+            return send(res, 409, {
+              ok:false,
+              code:e?.code || 'ACTIVE_TARGET_CONFIG_COMMIT_PREPARE_FAILED',
+            });
+          }
+        } else if (payloadStatus.protectionKind === 'MAX_LOSS' && Number.isFinite(Number(payloadStatus.maxLossUsd))) {
           try {
             controllerCompletion = await prepareActiveMaxLossControllerCommit(command, payloadStatus, device);
           } catch (e) {
@@ -5308,6 +5322,47 @@ export default async function handler(req, res) {
         await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
           at:Date.now(),kind:'EXEC_PROTECTIVE_UPDATE_CONFIRMED',commandId,commandType,
           deviceId:device.deviceId,symbol:payloadStatus.symbol,newClientId,previousId,
+          reconciliationObservedAt:Number(readiness.report?.observedAt || 0),
+        })]);
+        await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      }
+
+      if (commandType === 'EXEC_UPDATE_ACTIVE_CONFIG') {
+        const payloadStatus = execActiveConfigPayloadStatus(command?.payload);
+        if (!payloadStatus.ok) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_PAYLOAD_INVALID', reason:payloadStatus.reason });
+        }
+        const readiness = await freshConsistentReconciliation(device.deviceId);
+        if (!readiness.ok) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_RECONCILIATION_REQUIRED', reason:readiness.reason });
+        }
+        const position = runtimePositionRecord(readiness.runtimeState, payloadStatus.symbol, payloadStatus.direction);
+        const liveQuantity = Math.abs(Number(position?.positionAmt ?? position?.quantity ?? 0));
+        if (!position || !numberMatches(liveQuantity, payloadStatus.quantity)) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_POSITION_CHANGED', liveQuantity });
+        }
+        const entryPrice = Number(position?.entryPrice || 0);
+        if (!runtimeEmergencyProtection(
+          readiness.runtimeState,payloadStatus.symbol,payloadStatus.direction,entryPrice,liveQuantity
+        )) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_EMERGENCY_PROTECTION_MISSING' });
+        }
+        if (runtimeProgressiveProtectionConflict(readiness.runtimeState,payloadStatus.symbol,payloadStatus.direction)) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROGRESSIVE_PROTECTION_CONFLICT' });
+        }
+        try {
+          controllerCompletion = await prepareActiveConfigControllerCommit(
+            command,payloadStatus,device,'ACTIVE_PROTECTIONS_CONFIG'
+          );
+        } catch (e) {
+          return send(res, 409, {
+            ok:false,
+            code:e?.code || 'ACTIVE_PROTECTIONS_CONFIG_COMMIT_PREPARE_FAILED',
+          });
+        }
+        await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+          at:Date.now(),kind:'EXEC_ACTIVE_CONFIG_CONFIRMED',commandId,
+          deviceId:device.deviceId,symbol:payloadStatus.symbol,
           reconciliationObservedAt:Number(readiness.report?.observedAt || 0),
         })]);
         await redis(['LTRIM', KEY_AUDIT, '0', '199']);
@@ -5388,11 +5443,17 @@ export default async function handler(req, res) {
         ok:true,
         commandId,
         ...(controllerCompletion ? {
-          activeMaxLossCommitted:true,
+          ...(controllerCompletion.activeConfig ? {
+            activeConfigCommitted:true,
+            activeConfigKind:String(controllerCompletion.activeConfigKind || 'ACTIVE_CONFIG'),
+            activeConfig:controllerCompletion.activeConfig,
+          } : {
+            activeMaxLossCommitted:true,
+            maxLossUsd:controllerCompletion.maxLossUsd,
+          }),
           controllerRevision:controllerCompletion.nextRevision,
           controllerStateHash:controllerCompletion.nextStateHash,
           symbol:controllerCompletion.symbol,
-          maxLossUsd:controllerCompletion.maxLossUsd,
         } : {}),
       });
     }
