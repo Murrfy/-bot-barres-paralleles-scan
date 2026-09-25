@@ -186,6 +186,8 @@ jobs:
         run: node --test scripts/test-central-emergency-cap.mjs
       - name: Test PANIC idempotent audit protection
         run: node --test scripts/test-panic-idempotency.mjs
+      - name: Test manual-only PANIC and no anomaly auto-close
+        run: node --test scripts/test-manual-panic-no-auto-close.mjs
       - name: Test proof-driven entry confirmation
         run: node --test scripts/test-entry-open-state.mjs
       - name: Test MASTER protective command dispatcher
