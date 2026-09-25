@@ -85,3 +85,53 @@ test('invalid exact sale never falls back silently to a calculated target',()=>{
   assert.equal(plan.action,'BLOCK');
   assert.equal(plan.reason,'LONG_TARGET_NOT_ABOVE_ENTRY');
 });
+
+test('managed target is refreshed when a later partial fill increases the live position',()=>{
+  const plan=planAutomaticTargetExit({
+    position:longPosition,
+    currentOrders:[{
+      orderClass:'STANDARD',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+      type:'LIMIT',timeInForce:'GTC',reduceOnly:true,price:'125',origQty:'1',
+      executedQty:'0',clientOrderId:'zth-EXI-oldtarget123456'
+    }],
+    tokenSettings:{BTCUSDT:{targetProfit:25}},settings:{targetProfit:100},
+    priceFilter,maxLossConfirmed:true,
+  });
+  assert.equal(plan.action,'REPLACE');
+  assert.equal(plan.reason,'MANAGED_TARGET_REFRESH_REQUIRED');
+  assert.equal(plan.previousClientOrderId,'zth-EXI-oldtarget123456');
+  assert.equal(plan.targetPrice,112.5);
+  assert.equal(plan.live.quantity,2);
+});
+
+test('managed target is refreshed when average entry changes the calculated target price',()=>{
+  const plan=planAutomaticTargetExit({
+    position:{...longPosition,entryPrice:'101'},
+    currentOrders:[{
+      orderClass:'STANDARD',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+      type:'LIMIT',timeInForce:'GTC',reduceOnly:true,price:'112.5',origQty:'2',
+      executedQty:'0',clientOrderId:'zth-EXI-oldprice1234567'
+    }],
+    tokenSettings:{BTCUSDT:{targetProfit:25}},settings:{targetProfit:100},
+    priceFilter,maxLossConfirmed:true,
+  });
+  assert.equal(plan.action,'REPLACE');
+  assert.equal(plan.previousClientOrderId,'zth-EXI-oldprice1234567');
+  assert.notEqual(plan.targetPrice,112.5);
+  assert.ok(plan.actualTargetProfitUsd>=25);
+});
+
+test('partially executed target is kept when its remaining quantity exactly matches the live position',()=>{
+  const plan=planAutomaticTargetExit({
+    position:{...longPosition,positionAmt:'1'},
+    currentOrders:[{
+      orderClass:'STANDARD',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+      type:'LIMIT',timeInForce:'GTC',reduceOnly:true,price:'125',origQty:'2',
+      executedQty:'1',clientOrderId:'zth-EXI-partialtarget123'
+    }],
+    tokenSettings:{BTCUSDT:{targetProfit:25}},settings:{targetProfit:100},
+    priceFilter,maxLossConfirmed:true,
+  });
+  assert.equal(plan.action,'NONE');
+  assert.equal(plan.reason,'MANAGED_TARGET_ALREADY_OPEN');
+});
