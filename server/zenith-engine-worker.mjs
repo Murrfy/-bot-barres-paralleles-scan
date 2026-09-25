@@ -1955,6 +1955,13 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
       return {handled:true,canceled,filledRace,reason};
     }
     canceled++;
+    const watchState=entryWatch.states.get(target.symbol);
+    if(watchState){
+      watchState.triggeredAt=0;
+      watchState.pendingUntil=0;
+      watchState.blockedAt=Date.now();
+      entryWatch.states.set(target.symbol,watchState);
+    }
     log('ENTRY_CANCELED_AFTER_MAXLOSS_LOSS',{
       symbol:target.symbol,
       commandId:target.commandId,
@@ -1963,6 +1970,7 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
     });
   }
 
+  if(canceled>0)await persistEntryWatchStateNow().catch(()=>false);
   await publishRuntime().catch(()=>{});
   entryWatch.lastError='';
   return {
