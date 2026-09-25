@@ -467,16 +467,21 @@ async function checkRealMaxLossCommandStatus(key,pending){
       return;
     }
     if(status==='ACK'){
-      const symbol=String(pending.symbol||'').toUpperCase(),confirmedLoss=n(q.maxLossUsd,NaN),wantedLoss=n(pending.maxLossUsd,NaN),revision=Math.max(0,n(q.controllerRevision,0));
+      const symbol=String(pending.symbol||'').toUpperCase(),confirmedLoss=n(q.maxLossUsd,NaN),wantedLoss=n(pending.maxLossUsd,NaN),revision=Math.max(0,n(q.controllerRevision,0)),serverStateHash=String(q.controllerStateHash||'');
+      const old=tokenSettings[symbol]||{};
+      const nextTokenSettings={...tokenSettings,[symbol]:{...old,maxLoss:confirmedLoss,marginType:'ISOLATED'}};
+      const localStateHash=Number.isFinite(confirmedLoss)
+        ?await sha256Hex(stableStringify(controllerCloudStatePayload(nextTokenSettings)))
+        :'';
       const ackValid=q.activeMaxLossCommitted===true&&String(q.symbol||'').toUpperCase()===symbol&&
-        Number.isFinite(confirmedLoss)&&realNumberMatches(confirmedLoss,wantedLoss)&&revision>0&&String(q.controllerStateHash||'');
+        Number.isFinite(confirmedLoss)&&realNumberMatches(confirmedLoss,wantedLoss)&&revision>0&&
+        serverStateHash&&localStateHash===serverStateHash;
       if(!ackValid){
         pending.lastError='ACTIVE_MAX_LOSS_ACK_INVALID';
-        setStatus(symbol+' : ACK MAX-LOSS incomplet — réglage local NON modifié.',true);
+        setStatus(symbol+' : ACK MAX-LOSS incohérent avec l’état central — réglage local NON modifié.',true);
         return;
       }
-      const old=tokenSettings[symbol]||{};
-      tokenSettings[symbol]={...old,maxLoss:confirmedLoss,marginType:'ISOLATED'};
+      tokenSettings=nextTokenSettings;
       localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(revision));
       controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
       saveLocalOnly();
@@ -2238,12 +2243,12 @@ function startMasterRuntimeLoop(){
   if(!masterRuntimeTimer)masterRuntimeTimer=setInterval(masterRuntimeCycle,8000);
 }
 
-function controllerCloudStatePayload(){
+function controllerCloudStatePayload(tokenSettingsSource=tokenSettings){
   const controlSettings=clone(settings);
   for(const key of ['theme','sound','vibrate','showProtections'])delete controlSettings[key];
   return {
     settings:controlSettings,
-    tokenSettings:clone(normalizeRecordBlock(tokenSettings)),
+    tokenSettings:clone(normalizeRecordBlock(tokenSettingsSource)),
     manualTokens:clone(normalizeRecordBlock(manualTokens)),
     validated:clone(normalizeRecordBlock(validated))
   };
