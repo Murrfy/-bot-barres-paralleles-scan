@@ -130,3 +130,63 @@ test('protective orders do not consume a position slot', () => {
   assert.equal(r.normalized.occupiedPositionSlots,2);
   assert.equal(r.reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'),false);
 });
+
+
+test('selected amount is rejected above the account max notional', () => {
+  const r = evaluateEntryRisk(base({
+    margin:1000,
+    leverage:10,
+    symbolConfig:{...base().symbolConfig,maxNotionalValue:'9000'},
+  }));
+  assert.equal(r.ready,false);
+  assert.ok(r.reasons.includes('ACCOUNT_MAX_NOTIONAL_EXCEEDED'));
+  assert.equal(r.normalized.requestedNotional,10000);
+  assert.equal(r.normalized.accountMaxNotionalValue,9000);
+});
+
+test('selected leverage is rejected when its Binance notional bracket allows less', () => {
+  const r = evaluateEntryRisk(base({
+    margin:1000,
+    leverage:10,
+    symbolConfig:{...base().symbolConfig,leverage:10},
+    bracketInfo:{
+      symbol:'BTCUSDT',
+      brackets:[{bracket:1,initialLeverage:8,notionalFloor:0,notionalCap:50000}],
+    },
+  }));
+  assert.equal(r.ready,false);
+  assert.ok(r.reasons.includes('LEVERAGE_BRACKET_EXCEEDED'));
+  assert.equal(r.normalized.leverageBracket.initialLeverage,8);
+});
+
+test('selected margin must be covered by available Futures balance', () => {
+  const r = evaluateEntryRisk(base({margin:750,availableBalanceUsdt:749.99}));
+  assert.equal(r.ready,false);
+  assert.ok(r.reasons.includes('AVAILABLE_BALANCE_INSUFFICIENT'));
+});
+
+test('calculated order quantity respects Binance maximum quantity', () => {
+  const symbolInfo=structuredClone(base().symbolInfo);
+  symbolInfo.filters=symbolInfo.filters.map(filter=>
+    filter.filterType==='LOT_SIZE'
+      ?{...filter,maxQty:'0.10'}
+      :filter
+  );
+  const r=evaluateEntryRisk(base({symbolInfo}));
+  assert.equal(r.ready,false);
+  assert.ok(r.reasons.includes('QUANTITY_ABOVE_MAX'));
+  assert.equal(r.normalized.maxQuantity,0.1);
+});
+
+test('calculated order notional respects Binance minimum notional', () => {
+  const symbolInfo=structuredClone(base().symbolInfo);
+  symbolInfo.filters=symbolInfo.filters.map(filter=>
+    filter.filterType==='MIN_NOTIONAL'
+      ?{...filter,notional:'20000'}
+      :filter
+  );
+  const r=evaluateEntryRisk(base({symbolInfo}));
+  assert.equal(r.ready,false);
+  assert.ok(r.reasons.includes('NOTIONAL_BELOW_EXCHANGE_MIN'));
+  assert.equal(r.normalized.exchangeMinNotional,20000);
+});
