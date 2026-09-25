@@ -132,3 +132,24 @@ test('MARKET remains forbidden for every sell planner',()=>{
   assert.match(intent,/mode === 'PROTECTIVE_IOC'/);
   assert.doesNotMatch(intent,/EXIT_MARKET/);
 });
+
+
+test('MARKET ACK requires explicit auto-add-margin false, never unknown',()=>{
+  const sync=fs.readFileSync('api/zenith-sync.js','utf8');
+  const inventory=fs.readFileSync('lib/master-runtime-inventory.mjs','utf8');
+  const seed=fs.readFileSync('lib/user-stream-seed.mjs','utf8');
+  const snapshot=fs.readFileSync('api/binance-runtime-snapshot.js','utf8');
+  assert.match(sync,/position\?\.isAutoAddMargin !== false/);
+  assert.match(sync,/EXECUTION_ACK_AUTO_ADD_MARGIN_UNKNOWN/);
+  assert.match(snapshot,/isAutoAddMargin:p\.isAutoAddMargin===true\|\|String\(p\.isAutoAddMargin\|\|''\)\.toLowerCase\(\)==='true'/);
+  assert.match(seed,/isAutoAddMargin:p\.isAutoAddMargin===true\?true:p\.isAutoAddMargin===false\?false:null/);
+  assert.match(inventory,/isAutoAddMargin:p\.isAutoAddMargin===true\?true:p\.isAutoAddMargin===false\?false:null/);
+});
+
+test('instant-buy UI stays pending beyond the central 30-second command lifetime',()=>{
+  const html=fs.readFileSync('index.html','utf8');
+  const start=html.indexOf('async function instantBuySelected()');
+  const end=html.indexOf('async function manualClose',start);
+  const block=html.slice(start,end);
+  assert.match(block,/\},32000\);/);
+});
