@@ -238,6 +238,10 @@ jobs:
         run: node --test scripts/test-protective-command.mjs
       - name: Test automatic real target and max-loss levels
         run: node --test scripts/test-real-protection-levels.mjs
+      - name: Test automatic real LIMIT target planning
+        run: node --test scripts/test-auto-target-exit.mjs
+      - name: Test automatic real LIMIT target wiring
+        run: node --test scripts/test-auto-target-exit-wiring.mjs
       - name: Test highest-crossed MASTER auto protection
         run: node --test scripts/test-master-auto-protection.mjs
       - name: Test CONTRACT_PRICE alignment for ATTEINT and protections
