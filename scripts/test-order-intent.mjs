@@ -104,11 +104,16 @@ test('protective IOC accepts audited OPPONENT escalation values only',()=>{
 });
 
 
-test('real entry planning rejects MARKET and any preflight/request drift',()=>{
-  assert.throws(()=>buildEntryOrderPlan({
+test('explicit MARKET BUY entry is price-free while request/preflight drift remains blocked',()=>{
+  const market=buildEntryOrderPlan({
     command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'MARKET',margin:100,leverage:10,maxLoss:40},
     riskSnapshot:risk(),now
-  }),/ENTRY_ORDER_TYPE_LIMIT_REQUIRED/);
+  });
+  assert.equal(market.params.type,'MARKET');
+  assert.equal(market.params.newOrderRespType,'RESULT');
+  assert.equal(market.params.quantity,'0.02');
+  assert.equal('price' in market.params,false);
+  assert.equal('timeInForce' in market.params,false);
   assert.throws(()=>buildEntryOrderPlan({
     command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:49999,margin:100,leverage:10,maxLoss:40},
     riskSnapshot:risk(),now
