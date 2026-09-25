@@ -5,10 +5,10 @@ import fs from 'node:fs';
 const api=fs.readFileSync('api/binance-entry-execute.js','utf8');
 
 test('exact deterministic entry identity is persisted before Binance LIMIT POST',()=>{
-  const start=api.indexOf("const dispatchGate=await finalEntryDispatchGate(");
-  const end=api.indexOf("await redis(['LPUSH',KEY_AUDIT,JSON.stringify({",start);
+  const start=api.indexOf("const rawTransition=await readEntryTransition(commandId);");
+  const end=api.indexOf("kind:'BINANCE_ENTRY_ORDER_DISPATCH'",start);
   assert.ok(start>=0&&end>start);
-  const block=api.slice(start,end+2000);
+  const block=api.slice(start,end+1200);
   const buildIntent=block.indexOf("const submittedIntent={");
   const validateIntent=block.indexOf("normalizeEntryTransition(submittedIntent");
   const persistIntent=block.indexOf("await writeEntryTransition(commandId,checkedSubmittedIntent.transition)");
