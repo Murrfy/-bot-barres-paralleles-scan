@@ -23,6 +23,7 @@ const KEY_STATE = `${PREFIX}:state`;
 const KEY_RECONCILE_LAST = `${PREFIX}:reconcile:last`;
 const KEY_AUDIT = `${PREFIX}:audit`;
 const KEY_ENTRY_TRANSITIONS = `${PREFIX}:entry-transitions`;
+const KEY_CONTROLLER_STATE = `${PREFIX}:controller-state`;
 const BINANCE_RECONCILE_RATE_LIMIT_PER_MINUTE = 30;
 const VERCEL_CONTROL_MUTATION_ALLOWED = !process.env.VERCEL_ENV ||
   process.env.VERCEL_ENV === 'development' ||
@@ -328,6 +329,114 @@ function orderProtectsPosition(order, position) {
   const expectedSide = direction(position) === 'LONG' ? 'SELL' : 'BUY';
   if (String(order?.side || '').toUpperCase() !== expectedSide) return false;
   return order?.reduceOnly === true || order?.closePosition === true;
+}
+
+function configuredMaxLossUsd(controllerState, symbol) {
+  const data = controllerState?.data && typeof controllerState.data === 'object' ? controllerState.data : null;
+  if (!data) return NaN;
+  const sym = String(symbol || '').toUpperCase();
+  const tokenSettings = data.tokenSettings && typeof data.tokenSettings === 'object' ? data.tokenSettings : {};
+  const globalSettings = data.settings && typeof data.settings === 'object' ? data.settings : {};
+  const token = tokenSettings[sym] && typeof tokenSettings[sym] === 'object' ? tokenSettings[sym] : {};
+  const value = number(token.maxLoss, number(globalSettings.maxLoss, NaN));
+  return value > 0 ? Math.min(value, REAL_RISK_LIMITS.maxLossUsd) : NaN;
+}
+
+function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions, actualOrders) {
+  const unavailable = [];
+  const exceeds = [];
+  const missingConfiguredProtection = [];
+
+  for (const position of Array.isArray(actualPositions) ? actualPositions : []) {
+    const key = positionKey(position);
+    const configuredMaxLoss = configuredMaxLossUsd(controllerState, position.symbol);
+    if (!(configuredMaxLoss > 0)) {
+      unavailable.push(key);
+      missingConfiguredProtection.push(key);
+      continue;
+    }
+
+    const entryPrice = number(position.entryPrice, NaN);
+    const quantity = positionQty(position);
+    const expectedSide = position.direction === 'LONG' ? 'SELL' : 'BUY';
+    let validConfiguredProtection = false;
+
+    for (const order of Array.isArray(actualOrders) ? actualOrders : []) {
+      if (String(order?.orderClass || '').toUpperCase() !== 'ALGO') continue;
+      if (String(order?.symbol || '').toUpperCase() !== position.symbol) continue;
+      if (String(order?.positionSide || '').toUpperCase() !== String(position.positionSide || '').toUpperCase()) continue;
+      if (String(order?.side || '').toUpperCase() !== expectedSide) continue;
+      if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') continue;
+      if (order?.closePosition !== true) continue;
+      if (!zenithManagedOrderId(order)) continue;
+
+      const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
+      if (!(entryPrice > 0) || !(trigger > 0) || !(quantity > 0)) continue;
+      const lossSide = position.direction === 'LONG' ? trigger < entryPrice : trigger > entryPrice;
+      if (!lossSide) continue;
+
+      const impliedLossUsd = position.direction === 'LONG'
+        ? (entryPrice - trigger) * quantity
+        : (trigger - entryPrice) * quantity;
+
+      if (impliedLossUsd > configuredMaxLoss + 1e-8) {
+        exceeds.push({
+          key,
+          symbol: position.symbol,
+          direction: position.direction,
+          triggerPrice: trigger,
+          impliedLossUsd,
+          configuredMaxLossUsd: configuredMaxLoss,
+          hardMaxLossUsd: REAL_RISK_LIMITS.maxLossUsd,
+          clientAlgoId: String(order?.clientAlgoId || ''),
+          algoId: String(order?.algoId || ''),
+        });
+        continue;
+      }
+      validConfiguredProtection = true;
+    }
+
+    if (!validConfiguredProtection) missingConfiguredProtection.push(key);
+  }
+
+  if (!result?.differences || typeof result.differences !== 'object') result.differences = {};
+  result.differences.configuredMaxLossUnavailable = [...new Set(unavailable)];
+  if (exceeds.length) {
+    const existingUnsafe = Array.isArray(result.differences.unsafeMaxLossProtections)
+      ? result.differences.unsafeMaxLossProtections : [];
+    const seen = new Set(existingUnsafe.map(row => `${row?.key}:${row?.clientAlgoId}:${row?.algoId}`));
+    for (const row of exceeds) {
+      const id = `${row.key}:${row.clientAlgoId}:${row.algoId}`;
+      if (!seen.has(id)) {
+        existingUnsafe.push(row);
+        seen.add(id);
+      }
+    }
+    result.differences.unsafeMaxLossProtections = existingUnsafe;
+  }
+
+  const missing = new Set(Array.isArray(result.differences.missingMaxLossProtections)
+    ? result.differences.missingMaxLossProtections : []);
+  for (const key of missingConfiguredProtection) missing.add(key);
+  result.differences.missingMaxLossProtections = [...missing];
+
+  const reasons = Array.isArray(result.reasons) ? result.reasons : [];
+  if (unavailable.length && !reasons.includes('CONFIGURED_MAX_LOSS_UNAVAILABLE')) {
+    reasons.push('CONFIGURED_MAX_LOSS_UNAVAILABLE');
+  }
+  if (exceeds.length && !reasons.includes('MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT')) {
+    reasons.push('MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT');
+  }
+  if (missingConfiguredProtection.length && !reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION')) {
+    reasons.push('MISSING_BINANCE_MAX_LOSS_PROTECTION');
+  }
+
+  if (unavailable.length || exceeds.length || missingConfiguredProtection.length) {
+    result.failClosed = true;
+    result.status = 'MISMATCH';
+  }
+  result.reasons = reasons;
+  return result;
 }
 
 function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions = []) {
@@ -816,10 +925,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    const [time, runtimeRaw, entryTransitionRaw] = await Promise.all([
+    const [time, runtimeRaw, entryTransitionRaw, controllerRaw] = await Promise.all([
       jsonFetch(`${BASE}/fapi/v1/time`),
       redis(['GET', KEY_STATE]),
       redis(['HGETALL', KEY_ENTRY_TRANSITIONS]),
+      redis(['GET', KEY_CONTROLLER_STATE]),
     ]);
 
     const serverTime = number(time?.serverTime, NaN);
@@ -877,7 +987,14 @@ export default async function handler(req, res) {
     const actualOrders = [...standardOrders, ...algoOrders];
 
     const entryTransitions = parseEntryTransitionStore(entryTransitionRaw);
-    const result = reconcile(runtimeState, actualPositions, actualOrders, entryTransitions);
+    let controllerState = null;
+    try { controllerState = controllerRaw ? JSON.parse(controllerRaw) : null; } catch {}
+    const result = enforceConfiguredMaxLossSafety(
+      reconcile(runtimeState, actualPositions, actualOrders, entryTransitions),
+      controllerState,
+      actualPositions,
+      actualOrders
+    );
     const unsafePositionConfigs = actualPositions
       .filter(position =>
         String(position?.marginType || '').toUpperCase() !== 'ISOLATED' ||

@@ -24,8 +24,8 @@ const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
     /^import \{ evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches \} from '\.\.\/lib\/entry-transition\.mjs';\n/m,
     "const entryTransitionOrderIdentity = order => { const s=String(order?.symbol||'').toUpperCase(); if(order?.clientAlgoId)return s+':algo-client:'+String(order.clientAlgoId); if(order?.algoId)return s+':algo:'+String(order.algoId); if(order?.clientOrderId)return s+':client:'+String(order.clientOrderId); if(order?.orderId)return s+':id:'+String(order.orderId); return ''; }; const evaluateEntryTransitionReconciliation = () => ({active:[],invalid:[],expired:[],allowedOrderIdentities:new Set(),missingProtections:[],missingEntries:[]}); const transitionEntryMatches = () => false; const transitionProtectionMatches = () => false;\n"
   );
-const { default: handler, reconcile, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder } = await import(
-  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder };').toString('base64')
+const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder } = await import(
+  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder };').toString('base64')
 );
 const runtime = (positions = [], orders = [], mode = 'REAL') => ({
   updatedAt: Date.now(), data: { executionMode: mode, binancePositions: positions, binanceOrders: orders },
@@ -282,6 +282,38 @@ test('MAX-LOSS exactly at the hard $400 cap remains valid', () => {
   const result = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
   assert.equal(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'),false);
   assert.equal(result.differences.unsafeMaxLossProtections.length,0);
+});
+
+
+test('reconciliation rejects a Zenith MAX-LOSS above the configured per-token cap', () => {
+  const baseResult = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
+  const controllerState = {data:{settings:{maxLoss:400},tokenSettings:{BTCUSDT:{maxLoss:100}}}};
+  const result = enforceConfiguredMaxLossSafety(baseResult,controllerState,[normalized],[normalizedEmergency]);
+  assert.equal(result.failClosed,true);
+  assert.ok(result.reasons.includes('MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT'));
+  assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
+  assert.deepEqual(result.differences.missingMaxLossProtections,['BTCUSDT:LONG']);
+  assert.equal(result.differences.unsafeMaxLossProtections.at(-1).configuredMaxLossUsd,100);
+  assert.equal(result.differences.unsafeMaxLossProtections.at(-1).impliedLossUsd,400);
+});
+
+test('reconciliation accepts MAX-LOSS exactly within the configured per-token cap', () => {
+  const tight = normalizeActualAlgoOrder({...emergency,algoId:177,clientAlgoId:'zth-MAX-tight',triggerPrice:'49900'});
+  const baseResult = reconcile(runtime([position], [tight]), [normalized], [tight]);
+  const controllerState = {data:{settings:{maxLoss:400},tokenSettings:{BTCUSDT:{maxLoss:100}}}};
+  const result = enforceConfiguredMaxLossSafety(baseResult,controllerState,[normalized],[tight]);
+  assert.equal(result.reasons.includes('MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT'),false);
+  assert.equal(result.reasons.includes('CONFIGURED_MAX_LOSS_UNAVAILABLE'),false);
+  assert.equal(result.differences.missingMaxLossProtections.length,0);
+});
+
+test('missing configured MAX-LOSS fails closed instead of falling back to $400', () => {
+  const baseResult = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
+  const result = enforceConfiguredMaxLossSafety(baseResult,{data:{settings:{},tokenSettings:{}}},[normalized],[normalizedEmergency]);
+  assert.equal(result.failClosed,true);
+  assert.ok(result.reasons.includes('CONFIGURED_MAX_LOSS_UNAVAILABLE'));
+  assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
+  assert.deepEqual(result.differences.configuredMaxLossUnavailable,['BTCUSDT:LONG']);
 });
 
 

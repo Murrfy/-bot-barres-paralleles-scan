@@ -24,6 +24,7 @@ function base(overrides = {}) {
     symbolConfig: {
       symbol: 'BTCUSDT',
       marginType: 'ISOLATED',
+      isAutoAddMargin: false,
       leverage: 10,
       maxNotionalValue: '100000',
     },
@@ -192,4 +193,13 @@ test('Binance auto-add margin is rejected even in ISOLATED mode', () => {
   assert.equal(r.ready,false);
   assert.ok(r.reasons.includes('AUTO_ADD_MARGIN_ENABLED'));
   assert.equal(r.normalized.autoAddMargin,true);
+});
+
+test('unknown Binance auto-add margin state fails closed', () => {
+  const symbolConfig={...base().symbolConfig};
+  delete symbolConfig.isAutoAddMargin;
+  const r=evaluateEntryRisk(base({symbolConfig}));
+  assert.equal(r.ready,false);
+  assert.ok(r.reasons.includes('AUTO_ADD_MARGIN_UNKNOWN'));
+  assert.equal(r.normalized.autoAddMargin,null);
 });
