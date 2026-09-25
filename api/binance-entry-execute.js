@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { buildEntryOrderPlan } from '../lib/order-intent.mjs';
+import { ensureBinanceEntrySymbolConfig } from '../lib/binance-symbol-config.mjs';
 import { placeStandardOrderIdempotent } from '../lib/binance-order-writer.mjs';
 import { findCoveringEntryProtection } from '../lib/entry-protection-gate.mjs';
 import { runLiveEntryPreflight } from './binance-entry-preflight.js';
@@ -325,18 +326,92 @@ export default async function handler(req,res){
       });
     }
 
-    const preflight=await runLiveEntryPreflight({
+    const writesEnabled=Boolean(
+      REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED
+    );
+
+    let preflight=await runLiveEntryPreflight({
       apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:limitPrice,
     });
-    if(preflight.evaluation.ready!==true){
+    const configOnlyReasons=new Set(['MARGIN_TYPE_NOT_ISOLATED','ACCOUNT_LEVERAGE_MISMATCH']);
+    const initialReasons=Array.isArray(preflight.evaluation?.reasons)?preflight.evaluation.reasons:[];
+    const configReasons=initialReasons.filter(reason=>configOnlyReasons.has(reason));
+    const nonConfigReasons=initialReasons.filter(reason=>!configOnlyReasons.has(reason));
+
+    if(preflight.evaluation.ready!==true&&nonConfigReasons.length){
       return send(res,409,{
         ok:false,
         code:'ENTRY_PREFLIGHT_REJECTED',
-        reasons:preflight.evaluation.reasons,
+        reasons:initialReasons,
         normalized:preflight.evaluation.normalized,
         observedAt:preflight.observedAt,
         writeAttempted:false,
       });
+    }
+
+    if(preflight.evaluation.ready!==true&&configReasons.length){
+      if(!writesEnabled){
+        return send(res,423,{
+          ok:false,
+          code:'REAL_ENTRY_WRITE_LOCKED',
+          realTradingEnabled:REAL_TRADING_ENABLED,
+          binanceWriteEnabled:BINANCE_WRITE_ENABLED,
+          pairingDisabled:PAIRING_DISABLED,
+          realEntryWriteEnabled:REAL_ENTRY_WRITE_ENABLED,
+          reason:'BINANCE_SYMBOL_CONFIG_CHANGE_REQUIRED',
+          writeAttempted:false,
+        });
+      }
+
+      const configGateState=await readExecutionState();
+      const configGateReason=entryReadinessReason(configGateState,master.deviceId);
+      if(configGateReason){
+        return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:configGateReason,writeAttempted:false});
+      }
+      const provisionalQuantity=Number(preflight.evaluation?.normalized?.quantity);
+      const provisionalProtection=findCoveringEntryProtection(configGateState.runtimeState,{
+        symbol,side,quantity:provisionalQuantity,limitPrice,
+      });
+      if(provisionalProtection.ready!==true){
+        return send(res,423,{
+          ok:false,
+          code:'ENTRY_PROTECTION_NOT_ARMED',
+          reason:provisionalProtection.reason||'ENTRY_PROTECTION_NOT_ARMED',
+          writeAttempted:false,
+        });
+      }
+
+      const configResult=await ensureBinanceEntrySymbolConfig({
+        apiKey,secret,symbol,leverage,timestamp:preflight.serverTime,
+      });
+      await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+        at:Date.now(),
+        kind:'BINANCE_SYMBOL_CONFIG_APPLY',
+        deviceId:master.deviceId,
+        commandId,
+        symbol,
+        requestedMarginType:'ISOLATED',
+        requestedLeverage:leverage,
+        marginTypeChanged:configResult.marginTypeChanged===true,
+        leverageChanged:configResult.leverageChanged===true,
+        recoveredAfterAmbiguous:configResult.recoveredAfterAmbiguous===true,
+        writeAttempted:configResult.writeAttempted===true,
+      })]);
+      await redis(['LTRIM',KEY_AUDIT,'0','199']);
+
+      preflight=await runLiveEntryPreflight({
+        apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:limitPrice,
+      });
+      if(preflight.evaluation.ready!==true){
+        return send(res,409,{
+          ok:false,
+          code:'ENTRY_PREFLIGHT_REJECTED_AFTER_CONFIG',
+          reasons:preflight.evaluation.reasons,
+          normalized:preflight.evaluation.normalized,
+          observedAt:preflight.observedAt,
+          writeAttempted:configResult.writeAttempted===true,
+        });
+      }
     }
 
     const latest=await readExecutionState();
@@ -371,9 +446,6 @@ export default async function handler(req,res){
       });
     }
 
-    const writesEnabled=Boolean(
-      REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED
-    );
     if(!writesEnabled){
       return send(res,423,{
         ok:false,
@@ -453,13 +525,15 @@ export default async function handler(req,res){
         writeAttempted:false,
       });
     }
+    const internalCode=String(e?.code||e?.message||'');
+    const configFailure=/^BINANCE_(?:MARGIN_TYPE|LEVERAGE|SYMBOL_CONFIG)_/.test(internalCode);
     return send(res,502,{
       ok:false,
-      code:e?.message==='ORDER_RESULT_AMBIGUOUS'?'ORDER_RESULT_AMBIGUOUS':'BINANCE_ENTRY_EXECUTION_FAILED',
+      code:e?.message==='ORDER_RESULT_AMBIGUOUS'?'ORDER_RESULT_AMBIGUOUS':configFailure?internalCode:'BINANCE_ENTRY_EXECUTION_FAILED',
       error:'Binance entry execution failed.',
-      binanceCode:e?.code??null,
+      binanceCode:e?.binanceCode??(typeof e?.code==='number'?e.code:null),
       ambiguous:e?.ambiguous===true,
-      writeAttempted:e?.message==='ORDER_RESULT_AMBIGUOUS',
+      writeAttempted:e?.writeAttempted===true||e?.message==='ORDER_RESULT_AMBIGUOUS',
     });
   }
 }
