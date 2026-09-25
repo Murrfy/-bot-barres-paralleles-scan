@@ -58,11 +58,31 @@ test('client controls do not advertise values above server real-risk caps',()=>{
   assert.doesNotMatch(html,/settings\.maxActive\|\|3\)\),1,20/);
 });
 
-test('watched and active tokens freeze unsafe fields',()=>{
+test('watched tokens freeze settings while active positions keep only safe controls editable',()=>{
   const locks=block('function setTokenFieldsEnabled()','function updateTokenPreview()');
   assert.match(locks,/Achat surveillé : paramètres verrouillés/);
   assert.match(locks,/\['tExactBuy','tExactBuyPrice','tExactSale','tExactSalePrice','tTarget','tMaxLoss'\]/);
-  assert.match(locks,/Position active : seuls le prix déterminé de VENTE et les protections peuvent être modifiés/);
-  assert.match(locks,/\['tExactBuy','tExactBuyPrice','tTarget','tMaxLoss'\]/);
+  assert.match(locks,/Position active : objectif de gain, prix déterminé de VENTE et protections modifiables/);
+  assert.match(locks,/\['tExactBuy','tExactBuyPrice','tMaxLoss'\]/);
+  assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]/);
   assert.match(locks,/\$\('fMargin'\)\.disabled=true;\$\('fLev'\)\.disabled=true/);
+});
+
+test('active-position gain target persists and recalculates the active target price',()=>{
+  const save=block('async function saveToken()','function devalidateSelected()');
+  assert.match(save,/manualTarget=Math\.max\(0,n\(\$\('tTarget'\)\.dataset\.manualTarget/);
+  assert.match(save,/targetProfit:manualTarget,manualTargetProfit:manualTarget/);
+  assert.match(save,/active\.baseTargetProfit=manualTarget/);
+  assert.match(save,/active\.targetProfit=exact\?exactProfitFor[\s\S]*:active\.baseTargetProfit/);
+  assert.match(save,/active\.targetPrice=exact\|\|priceForPnl\(active\.entryPrice,active\.notional,active\.targetProfit\)/);
+});
+
+test('active target changes resize protections without discarding already reached stages',()=>{
+  const sync=block('function syncProtectionsToTarget(target)','function fillToken()');
+  assert.match(sync,/const active=openBySymbol\(selectedSymbol\)/);
+  assert.match(sync,/minCount=active\?reachedProtectionCount\(merged,active\.maxProfit\):0/);
+  assert.match(sync,/renderProtectionEditor\(merged,target,minCount\)/);
+  const protections=block('function protectionsForTarget(stages,target,minCount=0)','function applyProtectionVisibility()');
+  assert.match(protections,/Math\.max\(protectionCountForTarget\(target\),Math\.max\(0,Math\.floor\(n\(minCount,0\)\)\)\)/);
+  assert.match(protections,/reachedProtectionCount\(stages,maxProfit\)/);
 });
