@@ -2446,9 +2446,70 @@ async function saveSelectedAsDefaults(){
   settings={...settings,margin,leverage,marginType:'ISOLATED',targetProfit:target,maxLoss,protectionStages:clone(protections)};
   save();fillBot();if(selectedSymbol)fillToken();setStatus(`Défauts globaux enregistrés depuis ${s} : marge ${margin.toFixed(2)}, x${leverage}, objectif +${target.toFixed(2)}, MAX -${maxLoss.toFixed(2)}.`);
 }
+async function saveRealActiveTokenSettings(s,position,old,protections){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('Modification réelle refusée : iPhone contrôleur non vérifié.',true);
+  const inv=realProtectionInventory(position);
+  if(!inv.managedMaxLoss||inv.maxLossConflict)return setStatus(`${s} : modification refusée — aucune MAX-LOSS Zenith unique et confirmée.`,true);
+  if(inv.progressiveConflict)return setStatus(`${s} : protections non modifiées — protection gain concurrente ou externe détectée.`,true);
+
+  const saleEnabled=$('tExactSale').checked,salePrice=Math.max(0,parsePrice($('tExactSalePrice').value));
+  const manualTarget=Math.max(0,n($('tTarget').dataset.manualTarget,n($('tTarget').value,n(old.manualTargetProfit,n(old.targetProfit,settings.targetProfit)))));
+  if(!(manualTarget>0))return setStatus('Objectif de gain invalide : entre un montant supérieur à 0 $.',true);
+  if(saleEnabled&&!(salePrice>0))return setStatus('Entre un prix de vente déterminé supérieur à 0.',true);
+  const saleRuleErr=saleEnabled?validateLimitPrice(s,salePrice,'Prix de vente'):'';if(saleRuleErr)return setStatus(`${s} : ${saleRuleErr}.`,true);
+
+  const currentMaxLoss=n(old.maxLoss,settings.maxLoss);
+  let wantedExit=saleEnabled?salePrice:0;
+  if(!wantedExit){
+    try{
+      const rules=symbolRules(s),priceFilter=rules?.filters?.PRICE_FILTER;
+      if(!priceFilter)throw new Error('PRICE_FILTER_REQUIRED');
+      const mod=await loadControllerRealProtectionModule();
+      const levels=mod.buildRealProtectionLevels({position,targetProfitUsd:manualTarget,maxLossUsd:currentMaxLoss,priceFilter});
+      wantedExit=n(levels.targetPrice,0);
+    }catch(e){
+      return setStatus(`${s} : recalcul objectif réel refusé — ${String(e?.message||'calcul impossible')}.`,true);
+    }
+  }
+
+  const previousTarget=n(old.manualTargetProfit,n(old.targetProfit,settings.targetProfit));
+  const targetChanged=Math.abs(previousTarget-manualTarget)>1e-8||
+    Boolean(old.exactSaleEnabled)!==saleEnabled||
+    (saleEnabled&&!realNumberMatches(n(old.exactSalePrice,0),salePrice));
+  const oldProtections=normalizeProtections(old.protectionStages||settings.protectionStages,null);
+  const nextProtections=normalizeProtections(protections,null);
+  const protectionsChanged=stableStringify(oldProtections)!==stableStringify(nextProtections);
+  if(!targetChanged&&!protectionsChanged){
+    return setStatus(`${s} réel : aucune modification à appliquer.`);
+  }
+
+  const hadOwn=Object.prototype.hasOwnProperty.call(tokenSettings,s),previousOwn=hadOwn?clone(tokenSettings[s]):null;
+  tokenSettings[s]={...old,targetProfit:manualTarget,manualTargetProfit:manualTarget,protectionStages:nextProtections,exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings',marginType:'ISOLATED'};
+  save();
+  const centralOk=await syncControllerCloudStateNow();
+  if(!centralOk){
+    if(hadOwn)tokenSettings[s]=previousOwn;else delete tokenSettings[s];
+    save();renderAll();
+    return setStatus(`${s} : modification annulée — l’état central Upstash n’a pas confirmé la nouvelle configuration.`,true);
+  }
+
+  if(targetChanged){
+    const queued=await queueRealProtectiveUpdate(position,'EXIT',{wantedPrice:wantedExit,fromSettings:true});
+    if(!queued){
+      if(hadOwn)tokenSettings[s]=previousOwn;else delete tokenSettings[s];
+      save();await syncControllerCloudStateNow().catch(()=>false);renderAll();
+      return;
+    }
+  }
+
+  renderAll();
+  if(targetChanged&&protectionsChanged)setStatus(`${s} réel : objectif envoyé au moteur et en attente de confirmation Binance ; protections synchronisées, high-water conservé.`);
+  else if(targetChanged)setStatus(`${s} réel : objectif envoyé au moteur et en attente de confirmation Binance.`);
+  else setStatus(`${s} réel : protections synchronisées ; le moteur conserve le high-water et confirme la nouvelle protection Binance avant de retirer l’ancienne.`);
+}
 async function saveToken(){
   const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);
-  const active=openBySymbol(s),watched=!!validated[s]&&!active;
+  const localActive=openBySymbol(s),realActive=controllerRealPositionBySymbol(s),active=localActive||realActive,watched=!!validated[s]&&!active;
   if(watched)return setStatus(`${s} est surveillé : utilise « Annuler l’achat surveillé » avant de modifier ses paramètres.`,true);
   try{await ensureExchange()}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}
   const old=tokenSettings[s]||{},protections=protectionDraft(),protectionError=protectionValidationError(protections);
@@ -2457,7 +2518,9 @@ async function saveToken(){
     return setStatus('Perte maximale invalide : Zenith réel impose un minimum de 2 $ et un plafond de 400 $.',true);
   }
   if(protectionError)return setStatus(protectionError,true);
-  if(active){
+  if(realActive)return saveRealActiveTokenSettings(s,realActive,old,protections);
+  if(localActive){
+    const active=localActive;
     const saleEnabled=$('tExactSale').checked,salePrice=Math.max(0,parsePrice($('tExactSalePrice').value)),manualTarget=Math.max(0,n($('tTarget').dataset.manualTarget,n($('tTarget').value,n(active.baseTargetProfit,settings.targetProfit))));
     if(!(manualTarget>0))return setStatus('Objectif de gain invalide : entre un montant supérieur à 0 $.',true);
     if(saleEnabled&&!(salePrice>0))return setStatus('Entre un prix de vente déterminé supérieur à 0.',true);
