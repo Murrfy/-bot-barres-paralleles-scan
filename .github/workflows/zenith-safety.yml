@@ -190,6 +190,8 @@ jobs:
         run: node --test scripts/test-engine-watched-entry-wiring.mjs
       - name: Test pending-entry MAX-LOSS loss recovery
         run: node --test scripts/test-entry-protection-loss-cancel.mjs
+      - name: Test pending-entry protection-loss execution gate
+        run: node --test scripts/test-entry-protection-loss-execute.mjs
       - name: Test central managed emergency hard-cap ACK
         run: node --test scripts/test-central-emergency-cap.mjs
       - name: Test PANIC idempotent audit protection
