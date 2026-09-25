@@ -70,7 +70,7 @@ test('successful recovery rotates ownership, creates a fresh HttpOnly session an
   assert.equal(endpoint.includes('MASTER_ADMIN_CODE'),false);
 });
 
-test('new-phone page asks only for ADMIN recovery and stores no ADMIN secret',()=>{
+test('new-device page asks only for ADMIN recovery and stores no ADMIN secret',()=>{
   assert.ok(page.includes('Code administrateur Zenith'));
   assert.ok(page.includes("type=\"password\""));
   assert.ok(page.includes("action=controller-recovery-admin"));
@@ -82,14 +82,14 @@ test('new-phone page asks only for ADMIN recovery and stores no ADMIN secret',()
 });
 
 
-test('main Zenith page exposes lost-phone recovery only when this device is not recognized',()=>{
+test('main Zenith page exposes lost-device recovery only when this device is not recognized',()=>{
   assert.ok(index.includes('id="replaceControllerBtn"'));
   assert.ok(index.includes('href="/replace-controller.html"'));
-  assert.ok(index.includes('Reprendre le contrôle sur ce téléphone'));
+  assert.ok(index.includes('Reprendre le contrôle sur cet appareil'));
   assert.ok(index.includes("replaceBtn.hidden=controllerIdentity.paired===true"));
 });
 
-test('lost-phone recovery path does not invoke PANIC, pause, resume or MASTER replacement',()=>{
+test('lost-device recovery path does not invoke PANIC, pause, resume or MASTER replacement',()=>{
   assert.equal(page.includes("action=emergency-stop"),false);
   assert.equal(page.includes("action=master-pause"),false);
   assert.equal(page.includes("action=master-resume"),false);
