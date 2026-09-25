@@ -3963,6 +3963,50 @@ export default async function handler(req, res) {
       });
     }
 
+    if (action === 'entry-watch-status' && req.method === 'GET') {
+      const device = await requireDevice(req, res, ['controller','master']);
+      if (!device) return;
+
+      const raw = await redis(['GET', KEY_ENGINE_ENTRY_WATCH_STATE]);
+      const stored = parseStoredJson(raw);
+      const source = stored?.version === 1 && plainJsonObject(stored?.states) ? stored.states : {};
+      const states = {};
+      const now = Date.now();
+      for (const [rawSymbol, value] of Object.entries(source)) {
+        const symbol = String(rawSymbol || '').toUpperCase();
+        if (!/^[A-Z0-9]{3,30}$/.test(symbol) || !plainJsonObject(value)) continue;
+        const buy = Number(value.buy);
+        const validatedAt = Number(value.validatedAt || 0);
+        const pendingUntil = Number(value.pendingUntil || 0);
+        const blockedAt = Number(value.blockedAt || 0);
+        const triggeredAt = Number(value.triggeredAt || 0);
+        const lastPrice = Number(value.lastPrice || 0);
+        if (!(buy > 0) || !(validatedAt > 0)) continue;
+        const status = blockedAt > 0 || (pendingUntil > 0 && now >= pendingUntil && triggeredAt <= 0)
+          ? 'NOT_STARTED'
+          : pendingUntil > now && triggeredAt <= 0
+            ? 'WAITING_SLOT'
+            : triggeredAt > 0
+              ? 'TRIGGERED'
+              : 'WATCHING';
+        states[symbol] = {
+          symbol,
+          buy,
+          validatedAt,
+          pendingUntil: Math.max(0, pendingUntil),
+          blockedAt: Math.max(0, blockedAt),
+          triggeredAt: Math.max(0, triggeredAt),
+          lastPrice: Number.isFinite(lastPrice) && lastPrice >= 0 ? lastPrice : 0,
+          status,
+        };
+      }
+      return send(res, 200, {
+        ok:true,
+        updatedAt:Number(stored?.updatedAt || 0),
+        states,
+      });
+    }
+
     if (action === 'engine-entry-watch-state' && req.method === 'GET') {
       const device = await requireDevice(req, res, ['master']);
       if (!device) return;

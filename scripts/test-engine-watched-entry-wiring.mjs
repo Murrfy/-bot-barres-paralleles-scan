@@ -27,15 +27,19 @@ test('crossing trigger is persisted before any Binance entry write',()=>{
   const end=worker.indexOf('async function pruneAutoHighWater',start);
   const block=worker.slice(start,end);
   const persist=block.indexOf('await persistEntryWatchStateNow()');
-  const execute=block.indexOf('await executeWatchedEntry(config)');
+  const execute=block.indexOf('await executeWatchedEntry(config,{');
   assert.ok(persist>=0&&execute>persist);
   assert.match(block,/ENTRY_TRIGGER_NOT_PERSISTED/);
 });
 
-test('50-second window is persistent and expires fail-closed',()=>{
+test('50-second window is persistent, uses current LIMIT price when a slot opens, and expires fail-closed',()=>{
   assert.match(worker,/ENTRY_WAITING_FOR_POSITION_SLOT/);
   assert.match(worker,/pendingUntil/);
   assert.match(worker,/ENTRY_TRIGGER_EXPIRED/);
+  assert.match(worker,/limitPrice:n\(result\.signal\?\.limitPrice,config\.buy\)/);
+  assert.match(worker,/delayedCurrentPrice:result\.signal\?\.delayedCurrentPrice===true/);
+  assert.match(worker,/limitPrice:effectiveLimitPrice/);
+  assert.match(worker,/requestedBuyPrice:config\.buy/);
 });
 
 test('phased real entry can only be driven by engine principal',()=>{
