@@ -3027,7 +3027,7 @@ async function manualClose(){
 }
 function tickPosition(){return false}
 function expireWaitingSignals(){let changed=false;const now=Date.now();for(const [s,m] of Object.entries(missedSignals)){if(m?.state==='waiting'&&now>=n(m.expiresAt)){m.state='expired';delete validated[s];changed=true}}if(changed){save();syncRealtime()}}
-function startWaitingSignal(s){const v=validated[s];if(!v||missedSignals[s]?.state)return;missedSignals[s]={state:'waiting',startedAt:Date.now(),expiresAt:Date.now()+50000,buy:n(v.buy)};save();renderAll();setStatus(`${s} : prix d’achat touché mais limite de positions atteinte. Délai d’activation : 50 secondes.`,true);setTimeout(()=>{const m=missedSignals[s];if(m?.state==='waiting'&&Date.now()>=n(m.expiresAt)){m.state='expired';delete validated[s];save();syncRealtime();renderAll();setStatus(`${s} : OBJECTIF DÉPASSÉ !! Jeton gelé.`,true)}},50100)}
+function startWaitingSignal(s){const v=validated[s];if(!v||missedSignals[s]?.state)return;missedSignals[s]={state:'waiting',startedAt:Date.now(),expiresAt:Date.now()+50000,buy:n(v.buy)};save();renderAll();setStatus(`${s} : prix d’achat touché mais limite de positions atteinte. Délai d’activation : 50 secondes.`,true);setTimeout(()=>{const m=missedSignals[s];if(m?.state==='waiting'&&Date.now()>=n(m.expiresAt)){m.state='expired';delete validated[s];save();syncRealtime();renderAll();setStatus(`${s} : N’A PAS DÉMARRÉ — aucune place libérée pendant les 50 secondes.`,true)}},50100)}
 function processWaitingSignals(){return false}
 function tickValidated(s,mark){
   const v=validated[s],buy=n(v?.buy);
