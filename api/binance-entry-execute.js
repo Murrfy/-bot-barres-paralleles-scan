@@ -1,8 +1,11 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { buildEntryOrderPlan } from '../lib/order-intent.mjs';
+import { buildEntryProtectionPlan } from '../lib/entry-protection-plan.mjs';
 import { placeStandardOrderIdempotent } from '../lib/binance-order-writer.mjs';
+import { placeAlgoOrderIdempotent } from '../lib/binance-algo-writer.mjs';
 import { findCoveringEntryProtection } from '../lib/entry-protection-gate.mjs';
+import { normalizeEntryTransition, transitionProtectionMatches } from '../lib/entry-transition.mjs';
 import { runLiveEntryPreflight } from './binance-entry-preflight.js';
 import { validateExecutionArmRecord, executionReadiness } from './binance-protective-execute.js';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
@@ -17,6 +20,9 @@ const KEY_AUDIT=`${PREFIX}:audit`;
 const KEY_REAL_EXECUTION_ARMED=`${PREFIX}:safety:real-execution-armed`;
 const KEY_MASTER_MODE=`${PREFIX}:master-mode`;
 const KEY_EMERGENCY_STOP=`${PREFIX}:safety:emergency-stop`;
+const KEY_ENTRY_TRANSITIONS=`${PREFIX}:entry-transitions`;
+const KEY_CONTROLLER_REV=`${PREFIX}:controller-state:rev`;
+const KEY_ENGINE_INSTANCE=`${PREFIX}:engine-instance`;
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
