@@ -65,7 +65,7 @@
       <button id="masterRevokeBtn" class="btn danger" hidden>Révoquer MASTER</button>
       <button id="panicClearBtn" class="btn" hidden>Réarmer sécurité</button>
     </span>
-    <button id="resetClosedBtn" class="btn">Réinitialiser gains / fermés</button>
+    <button id="refreshHistoryBtn" class="btn">Rafraîchir historique Binance</button>
   </div>
   <div id="adminCodeModal" class="adminCodeModal" hidden>
     <div class="adminCodeCard" role="dialog" aria-modal="true" aria-labelledby="adminCodeTitle">
@@ -184,7 +184,7 @@
 
       <div class="block mt8">
         <div class="panelTitle"><h2>Historique</h2><span id="historyTotals" class="hint"></span></div>
-        <div class="history"><table><thead><tr><th>Date</th><th>Jeton</th><th>Achat</th><th>Vente</th><th>Chrono</th><th>P&amp;L</th><th>Motif</th></tr></thead><tbody id="historyBody"></tbody></table></div>
+        <div class="history"><table><thead><tr><th>Date</th><th>Jeton</th><th>Achat réel</th><th>Vente réelle</th><th>Chrono</th><th>Net Binance</th><th>Motif</th></tr></thead><tbody id="historyBody"></tbody></table></div>
       </div>
     </section>
   </div>
@@ -244,6 +244,7 @@ let exchangeMap=new Map(),lastPrices=new Map(),ws=null,wsLive=false,fallbackTime
 const lastAggIds=new Map(),lastAggTimes=new Map(),recoveringSymbols=new Set(),pendingAggTrades=new Map();
 let cursorSaveTimer=null;
 let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,positions:[],standardOrders:[],algoOrders:[],openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
+let realHistory=[],realHistoryState={lastOk:0,error:'',loading:false,lookbackDays:30},binanceHistoryTimer=null;
 let controllerRealCommandModule=null,controllerRealProtectionModule=null,realClosePending=new Set(),realCancelPending=new Set(),realProtectiveUpdatePending=new Map();
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
@@ -2239,6 +2240,26 @@ function startControllerIdentityCheck(){
   refreshControllerIdentity();
   controllerIdentityTimer=setInterval(refreshControllerIdentity,300000);
 }
+async function refreshRealHistory({manual=false}={}){
+  if(realHistoryState.loading)return false;
+  realHistoryState={...realHistoryState,loading:true,error:''};
+  renderHistory();
+  try{
+    const r=await fetch('/api/binance-trade-history',{cache:'no-store',headers:{Accept:'application/json'}});
+    let q={};try{q=await r.json()}catch(_){q={}}
+    if(!r.ok||q?.ok!==true)throw new Error(q?.error||q?.code||('HTTP '+r.status));
+    realHistory=Array.isArray(q.history)?q.history:[];
+    realHistoryState={lastOk:Date.now(),error:'',loading:false,lookbackDays:Math.max(1,n(q.lookbackDays,30))};
+    renderHistory();renderKpis();
+    if(manual)setStatus(`Historique Binance actualisé : ${realHistory.length} trade(s) fermé(s).`);
+    return true;
+  }catch(e){
+    realHistoryState={...realHistoryState,loading:false,error:e?.message||'Historique Binance indisponible'};
+    renderHistory();
+    if(manual)setStatus('Historique Binance indisponible : '+realHistoryState.error,true);
+    return false;
+  }
+}
 async function refreshBinanceAccount(){
   try{
     const r=await fetch('/api/binance-read',{
@@ -2288,7 +2309,14 @@ async function refreshBinanceAccount(){
     return false;
   }
 }
-function startBinanceAccountReadOnly(){if(binanceAccountTimer)clearInterval(binanceAccountTimer);refreshBinanceAccount();binanceAccountTimer=setInterval(refreshBinanceAccount,15000)}
+function startBinanceAccountReadOnly(){
+  if(binanceAccountTimer)clearInterval(binanceAccountTimer);
+  if(binanceHistoryTimer)clearInterval(binanceHistoryTimer);
+  refreshBinanceAccount();
+  refreshRealHistory();
+  binanceAccountTimer=setInterval(refreshBinanceAccount,15000);
+  binanceHistoryTimer=setInterval(()=>refreshRealHistory(),180000);
+}
 function notional(c){return n(c.binanceEffectiveNotional)>0?n(c.binanceEffectiveNotional):n(c.margin,100)*n(c.leverage,10)}
 function normalizeProtections(stages,target=3000){const src=Array.isArray(stages)?stages:[],count=Math.max(protectionCountForTarget(target),src.length);return Array.from({length:count},(_,i)=>{const d=defaultProtection(i),x=src[i]||d;return{enabled:x.enabled!==false,arm:Math.max(0,n(x.arm,d.arm)),floor:Math.max(0,n(x.floor,d.floor))}})}
 function cfg(symbol){const t=tokenSettings[symbol]||{},base={...settings,...t};base.marginType='ISOLATED';base.protectionStages=normalizeProtections(t.protectionStages||settings.protectionStages,n(t.manualTargetProfit,n(t.targetProfit,settings.targetProfit)));if(t.exactBuyEnabled&&n(t.exactBuyPrice)>0&&t.exactSaleEnabled&&n(t.exactSalePrice)>0)base.targetProfit=((n(t.exactSalePrice)-n(t.exactBuyPrice))/n(t.exactBuyPrice))*notional(base);return base}
@@ -2372,14 +2400,36 @@ function distanceBuy(s,last){const b=tokenExactBuy(s);return b>0&&last>0?((n(las
 function effectiveSalePrice(s){const p=openBySymbol(s);if(p&&n(p.targetPrice)>0)return n(p.targetPrice);const exact=tokenExactSale(s);if(exact>0)return exact;const buy=n(validated[s]?.buy,tokenExactBuy(s));if(!(buy>0))return 0;const c=cfg(s);return priceForPnl(buy,notional(c),n(c.targetProfit,settings.targetProfit))}
 function dismissSymbol(s){if(openBySymbol(s))return setStatus(`${s} est ACTIF.`,true);if(validated[s])return setStatus(`${s} est surveillé : annule d'abord son achat surveillé.`,true);dismissed[s]=Date.now();delete manualTokens[s];if(selectedSymbol===s)selectedSymbol=tableRows().find(r=>r.symbol!==s)?.symbol||'';save();renderAll();setStatus(`${s} supprimé de la liste.`)}
 function renderTable(){expireWaitingSignals();const rows=tableRows(),body=$('selectionBody');$('selectionCount').textContent=`${rows.length} jeton(s)`;body.innerHTML=rows.map((r,i)=>{const s=r.symbol,last=n(lastPrices.get(s),r.last),buy=n(validated[s]?.buy,tokenExactBuy(s)),sale=effectiveSalePrice(s),d=distanceBuy(s,last),st=rowStatus(s),missed=missedSignals[s]?.state==='expired',waiting=missedSignals[s]?.state==='waiting',rc=openBySymbol(s)?'activeRow':validated[s]?'validRow':'',cls=s===selectedSymbol?'sel ':'';return `<tr class="${cls}${rc}" data-symbol="${escapeHtml(s)}"><td>${i+1}</td><td><b>${escapeHtml(s)}</b></td><td>${price(last)}</td><td>${price(buy)}</td><td>${price(sale)}</td><td>${d==null?'—':d.toFixed(2)+'%'}</td><td class="${missed?'missedStatus':waiting?'waitingStatus':''}">${escapeHtml(st)}</td><td><button class="trashMini" data-trash="${escapeHtml(s)}" ${openBySymbol(s)||validated[s]?'disabled':''}>🗑</button></td></tr>`}).join('');body.querySelectorAll('tr[data-symbol]').forEach(tr=>tr.onclick=e=>{if(e.target.closest('[data-trash]'))return;openTokenSettings(tr.dataset.symbol,true)});body.querySelectorAll('[data-trash]').forEach(b=>b.onclick=e=>{e.stopPropagation();dismissSymbol(b.dataset.trash)})}
-function totals(){let gain=0,loss=0;for(const h of history){if(h.status==='OPEN'||h.closedAt==null)continue;const pl=n(h.pnl);if(pl>=0)gain+=pl;else loss+=Math.abs(pl)}return{gain,loss}}
-function renderKpis(){const t=totals(),watch=Object.keys(validated).filter(s=>!openBySymbol(s)&&!revalidateBlock[s]).length;$('kWatch').textContent=watch;$('kActive').textContent=`${n(binanceAccount.realPositions,0)}/${settings.maxActive}`;$('kGain').textContent=`+$${t.gain.toFixed(2)}`;$('kLoss').textContent=`-$${t.loss.toFixed(2)}`;$('liveBadge').textContent=`LIVE ${wsLive?1:0}`;$('liveBadge').classList.toggle('on',wsLive);renderBinanceAccount()}
+function totals(){let gain=0,loss=0;for(const h of realHistory){const pl=n(h.netPnl);if(pl>=0)gain+=pl;else loss+=Math.abs(pl)}return{gain,loss}}
+function renderKpis(){const t=totals(),watch=Object.keys(validated).filter(s=>!openBySymbol(s)&&!revalidateBlock[s]).length;$('kWatch').textContent=watch;$('kActive').textContent=`${n(binanceAccount.realPositions,0)}/${settings.maxActive}`;$('kGain').textContent=`+${t.gain.toFixed(2)}`;$('kLoss').textContent=`-${t.loss.toFixed(2)}`;$('liveBadge').textContent=`LIVE ${wsLive?1:0}`;$('liveBadge').classList.toggle('on',wsLive);renderBinanceAccount()}
 function pnlAt(p,mark){return ((n(mark)-n(p.entryPrice))/n(p.entryPrice))*n(p.notional)}
 function priceForPnl(entry,notionalValue,pnl){return n(entry)*(1+n(pnl)/n(notionalValue))}
 function durationHMS(openedAt,closedAt=Date.now()){const secs=Math.max(0,Math.floor((n(closedAt,Date.now())-n(openedAt,Date.now()))/1000)),h=Math.floor(secs/3600),m=Math.floor((secs%3600)/60),s=secs%60;return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
 function elapsedHMS(openedAt){return durationHMS(openedAt,Date.now())}
 function renderPositions(){return false}
-function renderHistory(){const t=totals();$('historyTotals').textContent=`+$${t.gain.toFixed(2)} / -$${t.loss.toFixed(2)}`;$('historyBody').innerHTML=history.length?history.slice().reverse().slice(0,80).map(h=>{const active=h.status==='OPEN'||h.closedAt==null,pl=active?'—':money(h.pnl),when=h.openedAt||h.closedAt,chrono=durationHMS(h.openedAt,active?Date.now():h.closedAt);return `<tr><td>${fmtDate(when)}</td><td><b>${escapeHtml(h.symbol)}</b></td><td>${price(h.entryPrice)}</td><td>${active?'—':price(h.exitPrice)}</td><td>${chrono}</td><td class="historyPnl ${active?'active':n(h.pnl)>=0?'pos':'neg'}">${pl}</td><td>${active?'ACHAT':'VENTE — '+escapeHtml(h.reason)}</td></tr>`}).join(''):'<tr><td colspan="7" class="hint">Aucun achat enregistré.</td></tr>'}
+function renderHistory(){
+  const t=totals(),head=$('historyTotals'),body=$('historyBody');
+  if(head){
+    const freshness=realHistoryState.lastOk?` · Binance réel ${realHistoryState.lookbackDays} j`:' · Binance réel';
+    head.textContent=`+${t.gain.toFixed(2)} / -${t.loss.toFixed(2)}${freshness}`;
+  }
+  if(!body)return;
+  if(realHistoryState.loading&&!realHistory.length){
+    body.innerHTML='<tr><td colspan="7" class="hint">Chargement de l’historique Binance…</td></tr>';
+    return;
+  }
+  if(realHistoryState.error&&!realHistory.length){
+    body.innerHTML=`<tr><td colspan="7" class="hint">${escapeHtml(realHistoryState.error)}</td></tr>`;
+    return;
+  }
+  body.innerHTML=realHistory.length?realHistory.slice(0,80).map(h=>{
+    const net=n(h.netPnl),chrono=durationHMS(h.openedAt,h.closedAt);
+    const exact=h.exactNet===true;
+    const netText=(exact?'':'≈ ')+money(net);
+    const reason=String(h.reason||'VENTE BINANCE').replace(/niveau\s*\d+/gi,'').trim()||'VENTE BINANCE';
+    return `<tr><td>${fmtDate(h.closedAt||h.openedAt)}</td><td><b>${escapeHtml(h.symbol)}</b></td><td>${price(h.entryPrice)}</td><td>${price(h.exitPrice)}</td><td>${chrono}</td><td class="historyPnl ${net>=0?'pos':'neg'}">${netText}</td><td>${escapeHtml(reason)}</td></tr>`;
+  }).join(''):'<tr><td colspan="7" class="hint">Aucun trade Zenith fermé trouvé chez Binance sur la période.</td></tr>';
+}
 function applyTheme(){const theme=settings.theme==='light'?'light':'dark';document.documentElement.dataset.theme=theme;const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute('content',theme==='light'?'#eef3f8':'#07111d')}
 let audioCtx=null;
 function ensureAudio(){if(!settings.sound)return null;try{if(!audioCtx)audioCtx=new (window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==='suspended')audioCtx.resume();return audioCtx}catch(_){return null}}
@@ -2617,7 +2667,7 @@ $('manualTokenAddBtn').onclick=addManualToken;$('manualTokenInput').addEventList
 $('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();save()});
 $('adminCodeCancel').onclick=()=>closeAdminCodeModal(null);$('adminCodeConfirm').onclick=submitAdminCodeModal;$('adminCodeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submitAdminCodeModal()}else if(e.key==='Escape'){e.preventDefault();closeAdminCodeModal(null)}});$('adminCodeModal').addEventListener('pointerdown',e=>{if(e.target===e.currentTarget)closeAdminCodeModal(null)});
 $('masterAuthorizeBtn').onclick=controllerAuthorizeMaster;$('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('masterRevokeBtn').onclick=controllerRevokeMaster;$('panicClearBtn').onclick=controllerClearPanic;
-$('resetClosedBtn').onclick=()=>{if(!confirm('Effacer les gains, pertes et trades fermés ?'))return;history=[];save();renderAll()};
+$('refreshHistoryBtn').onclick=()=>refreshRealHistory({manual:true});
 document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio();if(controllerIdentity.role==='master')syncMasterWakeLock(true)},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){syncMasterWakeLock(true);masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
 load();applyTheme();renderAll();ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startControllerIdentityCheck();
 </script>
