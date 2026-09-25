@@ -245,7 +245,7 @@ const lastAggIds=new Map(),lastAggTimes=new Map(),recoveringSymbols=new Set(),pe
 let cursorSaveTimer=null;
 let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,positions:[],standardOrders:[],algoOrders:[],openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
 let binanceHistory={connected:false,history:[],totals:{gain:0,loss:0,net:0},generatedAt:0,lastOk:0,error:''},binanceHistoryTimer=null;
-let controllerRealCommandModule=null,controllerRealProtectionModule=null,realClosePending=new Set(),realCancelPending=new Set(),realProtectiveUpdatePending=new Map();
+let controllerRealCommandModule=null,controllerRealProtectionModule=null,realClosePending=new Set(),realCancelPending=new Set(),realProtectiveUpdatePending=new Map(),realMarketEntryPending=new Set();
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
@@ -2443,6 +2443,7 @@ function setTokenFieldsEnabled(){
   ['tExactBuy','tExactBuyPrice','tExactSale','tExactSalePrice','tMaxLoss'].forEach(id=>$(id).disabled=false);
   $('tTarget').disabled=$('tTarget').dataset.exactAuto==='1';protectionEls.forEach(el=>el.disabled=false);
   $('saveTokenBtn').disabled=false;$('tokenDefaultsBtn').disabled=false;$('fMargin').disabled=false;$('fLev').disabled=false;$('saveFuturesBtn').disabled=false;
+  $('instantBuyBtn').disabled=realMarketEntryPending.has(selectedSymbol);
   lock.hidden=true;lock.textContent='';
 }
 function updateTokenPreview(){
@@ -2593,10 +2594,61 @@ function closePosition(){
 }
 async function currentMarketPrice(s){try{const d=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(s)}`),p=n(d.price);if(p)lastPrices.set(s,p);return p}catch(_){return 0}}
 async function instantBuySelected(){
-  const s=selectedSymbol;
+  const s=String(selectedSymbol||'').toUpperCase();
   if(!s)return setStatus('Sélectionne un jeton.',true);
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
+    return setStatus('Achat immédiat réel refusé : iPhone contrôleur non vérifié.',true);
+  }
   if(anyActivePositionBySymbol(s))return setStatus(`${s} a déjà une position réelle active.`,true);
-  setStatus(`${s} : achat immédiat réel uniquement. Le chemin Binance MARKET n’est pas encore armé ; aucune simulation n’a été créée.`,true);
+  if(validated[s])return setStatus(`${s} est déjà surveillé en LIMIT. Annule d’abord l’achat surveillé avant un achat immédiat.`,true);
+  if(realMarketEntryPending.has(s))return setStatus(`${s} : achat immédiat déjà en cours de confirmation Binance.`,true);
+  if(n(binanceAccount.realPositions,0)>=n(settings.maxActive,3)){
+    return setStatus(`Impossible : la limite de ${settings.maxActive} positions réelles est déjà atteinte.`,true);
+  }
+
+  const c=cfg(s);
+  let command;
+  try{
+    const mod=await loadControllerRealCommandModule();
+    command=mod.buildControllerMarketEntryCommand(s,{
+      margin:n(c.margin),
+      leverage:n(c.leverage),
+      maxLoss:n(c.maxLoss),
+    },Date.now());
+  }catch(e){
+    return setStatus(`${s} : achat immédiat refusé — ${String(e?.message||'paramètres invalides')}.`,true);
+  }
+
+  if(!confirm(
+    `ARGENT RÉEL — ACHAT IMMÉDIAT MARKET de ${s} ?\n\n`+
+    `Binance achètera au prix disponible. Le prix exact est connu après exécution.\n`+
+    `Zenith calculera ensuite le MAX-LOSS depuis le prix réellement exécuté, le vérifiera sur Binance, puis vérifiera la sortie LIMIT.\n\n`+
+    `Aucune simulation ne sera créée.`
+  ))return;
+
+  realMarketEntryPending.add(s);
+  setTokenFieldsEnabled();
+  try{
+    const r=await fetch('/api/zenith-sync?action=command',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify(command)
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.reason||q?.code||q?.error||('HTTP '+r.status));
+    setStatus(`${s} : achat MARKET réel mis en file. Zenith attend le fill Binance puis la confirmation MAX-LOSS avant validation.`);
+    setTimeout(()=>refreshBinanceAccount(),750);
+    setTimeout(()=>refreshBinanceAccount(),2000);
+    setTimeout(()=>{
+      realMarketEntryPending.delete(s);
+      setTokenFieldsEnabled();
+      refreshBinanceAccount();
+    },16000);
+  }catch(e){
+    realMarketEntryPending.delete(s);
+    setTokenFieldsEnabled();
+    setStatus(`${s} : achat MARKET réel NON envoyé — ${String(e?.message||'erreur')}.`,true);
+  }
 }
 async function manualClose(){
   setStatus('Fermeture locale interdite : utilise uniquement la fermeture réelle Binance.',true);
