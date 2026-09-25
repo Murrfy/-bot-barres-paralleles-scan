@@ -50,13 +50,23 @@ test('final entry dispatch gate atomically revalidates MASTER, lease, mode, PANI
   ]) assert.ok(stateBlock.includes(required),required);
 });
 
-test('no real entry reaches Binance unless the final gate commits first',()=>{
-  const gateCall=handler.indexOf('const dispatchGate=await finalEntryDispatchGate(');
-  const blocked=handler.indexOf("'ENTRY_EXECUTION_COMMIT_BLOCKED'");
-  const write=handler.indexOf('const result=await placeStandardOrderIdempotent({');
-  assert.ok(gateCall>=0,'final entry gate call missing');
-  assert.ok(blocked>gateCall,'gate rejection missing');
-  assert.ok(write>blocked,'Binance entry write must occur only after final gate');
+test('no real entry reaches Binance unless its final gate commits first',()=>{
+  const marketStart=handler.indexOf('if(marketEntry){');
+  const marketBlocked=handler.indexOf("'MARKET_ENTRY_COMMIT_BLOCKED'",marketStart);
+  const marketGate=handler.lastIndexOf('const dispatchGate=await finalEntryDispatchGate(',marketBlocked);
+  const marketWrite=handler.indexOf('const result=await placeStandardOrderIdempotent({',marketBlocked);
+  assert.ok(marketStart>=0,'MARKET entry block missing');
+  assert.ok(marketGate>marketStart,'MARKET final gate call missing');
+  assert.ok(marketBlocked>marketGate,'MARKET gate rejection missing');
+  assert.ok(marketWrite>marketBlocked,'MARKET Binance write must occur only after final gate');
+
+  const limitBlocked=handler.indexOf("'ENTRY_EXECUTION_COMMIT_BLOCKED'",marketWrite);
+  const limitGate=handler.lastIndexOf('const dispatchGate=await finalEntryDispatchGate(',limitBlocked);
+  const limitWrite=handler.indexOf('const result=await placeStandardOrderIdempotent({',limitBlocked);
+  assert.ok(limitGate>marketWrite,'LIMIT final gate call missing');
+  assert.ok(limitBlocked>limitGate,'LIMIT gate rejection missing');
+  assert.ok(limitWrite>limitBlocked,'LIMIT Binance write must occur only after final gate');
+
   assert.ok(handler.includes('master.roleIssuedAt'));
   assert.ok(handler.includes('latest.armRaw'));
   assert.ok(handler.includes('writeAttempted:false'));

@@ -127,6 +127,7 @@ function normalizePosition(p){
     liquidationPrice:n(p.liquidationPrice),
     leverage:n(p.leverage),
     marginType:String(p.marginType||''),
+    isAutoAddMargin:p.isAutoAddMargin===true||String(p.isAutoAddMargin||'').toLowerCase()==='true',
     isolatedMargin:n(p.isolatedMargin),
     notional:n(p.notional),
     updateTime:n(p.updateTime),

@@ -1044,6 +1044,7 @@ const ALLOWED_COMMAND_TYPES = new Set([
   'EXEC_UPDATE_PROTECTION',
   'EXEC_CLOSE_POSITION',
   'EXEC_CANCEL_ENTRY',
+  'EXEC_OPEN_MARKET_POSITION',
 ]);
 
 const PROTECTIVE_EXEC_COMMANDS = new Set([
@@ -1069,6 +1070,27 @@ function execClosePayloadStatus(payload) {
   if (payload.closeAll !== true) return { ok:false, reason:'CLOSE_ALL_REQUIRED' };
   if (exitMode !== 'PROTECTIVE_IOC') return { ok:false, reason:'EXIT_MODE_LIMIT_REQUIRED' };
   return { ok:true, symbol, direction, quantity, exitMode, closeAll:true };
+}
+
+function execMarketOpenPayloadStatus(payload, now = Date.now()) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok:false, reason:'PAYLOAD_OBJECT_REQUIRED' };
+  const symbol = String(payload.symbol || '').toUpperCase();
+  const side = String(payload.side || '').toUpperCase();
+  const orderType = String(payload.orderType || '').toUpperCase();
+  const margin = Number(payload.margin);
+  const leverage = Number(payload.leverage);
+  const maxLoss = Number(payload.maxLoss);
+  const requestedAt = Number(payload.requestedAt);
+  if (!/^[A-Z0-9]{3,30}$/.test(symbol)) return { ok:false, reason:'SYMBOL_INVALID' };
+  if (side !== 'BUY') return { ok:false, reason:'MARKET_ENTRY_BUY_ONLY' };
+  if (orderType !== 'MARKET') return { ok:false, reason:'MARKET_ENTRY_TYPE_REQUIRED' };
+  if (!(margin > 0) || margin > REAL_RISK_LIMITS.maxMarginUsdt) return { ok:false, reason:'MARGIN_INVALID' };
+  if (!(leverage > 0) || leverage > REAL_RISK_LIMITS.maxLeverage) return { ok:false, reason:'LEVERAGE_INVALID' };
+  if (!(maxLoss > 0) || maxLoss > REAL_RISK_LIMITS.maxLossUsd) return { ok:false, reason:'MAX_LOSS_INVALID' };
+  if (!Number.isFinite(requestedAt) || requestedAt <= 0) return { ok:false, reason:'REQUESTED_AT_INVALID' };
+  const age = Number(now) - requestedAt;
+  if (!Number.isFinite(age) || age < -5000 || age > 30000) return { ok:false, reason:'MARKET_ENTRY_REQUEST_STALE' };
+  return { ok:true, symbol, side, orderType, margin, leverage, maxLoss, requestedAt };
 }
 
 function runtimeClosePositionQuantity(runtimeState, symbol, direction) {
@@ -4310,6 +4332,12 @@ export default async function handler(req, res) {
           return send(res, 400, { ok:false, code:'COMMAND_PAYLOAD_INVALID', reason:payloadStatus.reason });
         }
       }
+      if (type === 'EXEC_OPEN_MARKET_POSITION') {
+        const payloadStatus = execMarketOpenPayloadStatus(payload);
+        if (!payloadStatus.ok) {
+          return send(res, 400, { ok:false, code:'COMMAND_PAYLOAD_INVALID', reason:payloadStatus.reason });
+        }
+      }
       if (type === 'EXEC_UPDATE_EXIT' || type === 'EXEC_UPDATE_PROTECTION') {
         const payloadStatus = execUpdatePayloadStatus(type, payload);
         if (!payloadStatus.ok) {
@@ -4322,7 +4350,7 @@ export default async function handler(req, res) {
         id: crypto.randomUUID(),
         clientCommandId,
         createdAt,
-        expiresAt: createdAt + COMMAND_MAX_AGE_MS,
+        expiresAt: createdAt + (type === 'EXEC_OPEN_MARKET_POSITION' ? 30 * 1000 : COMMAND_MAX_AGE_MS),
         deviceId: device.deviceId,
         type,
         payload,
@@ -4447,6 +4475,13 @@ export default async function handler(req, res) {
       }
       if (String(command.type || '').toUpperCase() === 'EXEC_CLOSE_POSITION') {
         const payloadStatus = execClosePayloadStatus(command.payload);
+        if (!payloadStatus.ok) {
+          await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason }, device);
+          return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
+        }
+      }
+      if (String(command.type || '').toUpperCase() === 'EXEC_OPEN_MARKET_POSITION') {
+        const payloadStatus = execMarketOpenPayloadStatus(command.payload);
         if (!payloadStatus.ok) {
           await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason }, device);
           return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
@@ -4578,6 +4613,118 @@ export default async function handler(req, res) {
       try { command = JSON.parse(raw); } catch {}
       const commandId = String(command?.id || '');
       const commandType = String(command?.type || '').toUpperCase();
+
+      if (commandType === 'EXEC_OPEN_MARKET_POSITION') {
+        const payload = command?.payload || {};
+        const symbol = String(payload.symbol || '').toUpperCase();
+        const side = String(payload.side || '').toUpperCase();
+        const orderType = String(payload.orderType || '').toUpperCase();
+        const configuredMaxLoss = Number(payload.maxLoss);
+        const proof = req.body?.executionProof || {};
+        const clientOrderId = String(proof.clientOrderId || '');
+        const proofStatus = String(proof.status || '').toUpperCase();
+        const proofEntryPrice = Number(proof.entryPrice);
+        const proofQuantity = Number(proof.quantity);
+
+        if (!/^[A-Z0-9]{3,30}$/.test(symbol) ||
+            side !== 'BUY' ||
+            orderType !== 'MARKET' ||
+            !(configuredMaxLoss > 0) ||
+            configuredMaxLoss > REAL_RISK_LIMITS.maxLossUsd ||
+            !/^zth-ENT-[A-Za-z0-9._:-]+$/.test(clientOrderId) ||
+            proofStatus !== 'FILLED' ||
+            !(proofEntryPrice > 0) ||
+            !(proofQuantity > 0) ||
+            proof.maxLossConfirmed !== true ||
+            proof.reconciled !== true) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
+        }
+
+        const readiness = await freshConsistentReconciliation(device.deviceId);
+        if (!readiness.ok) {
+          return send(res, 409, {
+            ok:false,
+            code:'EXECUTION_ACK_RECONCILIATION_REQUIRED',
+            reason:readiness.reason,
+          });
+        }
+
+        const position = runtimePositionRecord(readiness.runtimeState, symbol, 'LONG');
+        const liveQuantity = Math.abs(Number(position?.positionAmt ?? position?.quantity ?? 0));
+        const liveEntryPrice = Number(position?.entryPrice || 0);
+        if (!position ||
+            !numberMatches(liveQuantity, proofQuantity) ||
+            !numberMatches(liveEntryPrice, proofEntryPrice)) {
+          return send(res, 409, {
+            ok:false,
+            code:'EXECUTION_ACK_MARKET_POSITION_MISMATCH',
+            liveQuantity,
+            liveEntryPrice,
+          });
+        }
+        const certifiedPosition=(Array.isArray(readiness.report?.certifiedPositions)
+          ?readiness.report.certifiedPositions:[]).find(row=>
+            String(row?.symbol||'').toUpperCase()===symbol&&
+            String(row?.direction||'').toUpperCase()==='LONG'
+          )||null;
+        const certifiedQty=Math.abs(Number(certifiedPosition?.positionAmt??certifiedPosition?.quantity??0));
+        const certifiedEntry=Number(certifiedPosition?.entryPrice||0);
+        if(!certifiedPosition||
+            !numberMatches(certifiedQty,liveQuantity)||
+            !numberMatches(certifiedEntry,liveEntryPrice)){
+          return send(res,409,{ok:false,code:'EXECUTION_ACK_REST_POSITION_MISMATCH'});
+        }
+        if (String(certifiedPosition?.marginType || '').toUpperCase() !== 'ISOLATED') {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_MARGIN_NOT_ISOLATED' });
+        }
+        if (certifiedPosition?.isAutoAddMargin !== false) {
+          return send(res, 409, {
+            ok:false,
+            code:certifiedPosition?.isAutoAddMargin===true
+              ?'EXECUTION_ACK_AUTO_ADD_MARGIN_ENABLED'
+              :'EXECUTION_ACK_AUTO_ADD_MARGIN_UNKNOWN'
+          });
+        }
+
+        const protection = runtimeEmergencyProtection(
+          readiness.runtimeState,
+          symbol,
+          'LONG',
+          liveEntryPrice,
+          liveQuantity
+        );
+        if (!protection) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_EMERGENCY_PROTECTION_MISSING' });
+        }
+        const triggerPrice = Number(protection?.triggerPrice ?? protection?.stopPrice);
+        const impliedLossUsd = (liveEntryPrice - triggerPrice) * liveQuantity;
+        if (!(impliedLossUsd >= 0) || impliedLossUsd > configuredMaxLoss + 1e-8) {
+          return send(res, 409, {
+            ok:false,
+            code:'EXECUTION_ACK_MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT',
+            impliedLossUsd:Number.isFinite(impliedLossUsd)?impliedLossUsd:null,
+            configuredMaxLossUsd:configuredMaxLoss,
+          });
+        }
+
+        await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+          at:Date.now(),
+          kind:'EXEC_MARKET_ENTRY_CONFIRMED',
+          commandId,
+          deviceId:device.deviceId,
+          symbol,
+          clientOrderId,
+          entryPrice:liveEntryPrice,
+          quantity:liveQuantity,
+          maxLossTriggerPrice:triggerPrice,
+          configuredMaxLossUsd:configuredMaxLoss,
+          impliedLossUsd,
+          marginType:String(certifiedPosition.marginType||'').toUpperCase(),
+          isAutoAddMargin:false,
+          reconciliationObservedAt:Number(readiness.report?.observedAt || 0),
+        })]);
+        await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      }
 
       if (commandType === 'EXEC_CANCEL_ENTRY') {
         const payload = command?.payload || {};

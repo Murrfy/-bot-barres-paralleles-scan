@@ -1111,10 +1111,19 @@ if (!sync.includes('COMMAND_MAX_AGE_MS = 2 * 60 * 1000') ||
     !sync.includes('DEAD_LETTER_MAX = 500')) {
   fail('command queue must bound age, depth, payloads, MASTER raw command strings and dead-letter retention');
 }
+const pauseAllowedStart=sync.indexOf('const PAUSE_PENDING_ALLOWED_COMMANDS');
+const commandAllowStart=sync.indexOf('const ALLOWED_COMMAND_TYPES');
+const protectiveExecStart=sync.indexOf('const PROTECTIVE_EXEC_COMMANDS');
+const pauseAllowedBlock=pauseAllowedStart>=0&&commandAllowStart>pauseAllowedStart
+  ?sync.slice(pauseAllowedStart,commandAllowStart):'';
+const commandAllowBlock=commandAllowStart>=0&&protectiveExecStart>commandAllowStart
+  ?sync.slice(commandAllowStart,protectiveExecStart):'';
 if (!sync.includes('ALLOWED_COMMAND_TYPES') ||
     !sync.includes("'COMMAND_TYPE_NOT_ALLOWED'") ||
-    sync.includes("'EXEC_OPEN_POSITION'")) {
-  fail('command queue must use a protective-only allowlist until real entry execution is audited');
+    sync.includes("'EXEC_OPEN_POSITION'") ||
+    !commandAllowBlock.includes("'EXEC_OPEN_MARKET_POSITION'") ||
+    pauseAllowedBlock.includes("'EXEC_OPEN_MARKET_POSITION'")) {
+  fail('command queue must allow only the audited instant MARKET opening exception, never generic opening or PAUSE_PENDING entry');
 }
 if (!sync.includes("'COMMAND_EXPIRED'") ||
     !sync.includes("'COMMAND_QUEUE_FULL'") ||

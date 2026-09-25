@@ -22,7 +22,10 @@ test('production UI is real-only and exposes no simulation controls',()=>{
 test('instant buy can never fall back to a local simulated position',()=>{
   const instant=block('async function instantBuySelected()','async function manualClose');
   assert.doesNotMatch(instant,/createPosition\(/);
-  assert.match(instant,/achat immédiat réel uniquement/i);
+  assert.match(instant,/buildControllerMarketEntryCommand/);
+  assert.match(instant,/\/api\/zenith-sync\?action=command/);
+  assert.match(instant,/ACHAT IMMÉDIAT MARKET/);
+  assert.match(instant,/Aucune simulation ne sera créée/);
 });
 
 test('market data never creates or closes a browser-local position',()=>{

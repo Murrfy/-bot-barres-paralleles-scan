@@ -1596,6 +1596,25 @@ async function waitForStreamOrder({kind,clientId,terminal=false},timeoutMs=3000)
   return order;
 }
 
+function streamLongPosition(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  return (streamProjection().binancePositions||[]).find(position=>
+    String(position?.symbol||'').toUpperCase()===wanted&&
+    String(position?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
+    n(position?.positionAmt??position?.quantity,0)>0
+  )||null;
+}
+async function waitForLongPosition(symbol,timeoutMs=5000){
+  const deadline=Date.now()+Math.max(500,n(timeoutMs,5000));
+  let position=null;
+  while(Date.now()<deadline){
+    position=streamLongPosition(symbol);
+    if(position&&n(position?.entryPrice,0)>0)return position;
+    await sleep(100);
+  }
+  return position;
+}
+
 async function callProtectiveExecute(body){
   return binanceApi('/api/binance-protective-execute',{method:'POST',body});
 }
@@ -2134,6 +2153,121 @@ async function runCancelEntry(command,raw,dispatch){
   return safeAckAfterReconcile(raw,{terminalStatus},'EXEC_CANCEL_ACK_RETRY');
 }
 
+async function runMarketEntry(command,raw,dispatch){
+  const body={...dispatch.body};
+  const symbol=String(body.symbol||'').toUpperCase();
+
+  // An instant buy must still be RUNNING at the last possible moment.
+  if(runtime.mode!=='RUNNING'){
+    await failCommand(raw,'MARKET_ENTRY_MASTER_NOT_RUNNING');
+    execution.lastError='MARKET_ENTRY_MASTER_NOT_RUNNING';
+    return false;
+  }
+
+  const result=await callEntryExecute(body);
+  if(!result.response.ok||result.data?.ok!==true){
+    const reason=String(result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status));
+    const ambiguous=result.data?.ambiguous===true||result.data?.result?.ambiguous===true;
+    const wrote=result.data?.writeAttempted===true;
+    if(ambiguous||wrote){
+      await failCommand(raw,'MARKET_ENTRY_AMBIGUOUS_'+reason);
+      execution.lastError='MARKET_ENTRY_AMBIGUOUS_'+reason;
+      // A fill may exist even when the HTTP result is ambiguous. Never send another
+      // blind MARKET order; reconciliation will discover the position and repair MAX-LOSS.
+      scheduleReconcile(100);
+      return false;
+    }
+    if([409,423,429,503].includes(Number(result.response.status))){
+      await requeueCommand(raw,'MARKET_ENTRY_'+reason,500);
+      return false;
+    }
+    await failCommand(raw,'MARKET_ENTRY_'+reason);
+    execution.lastError='MARKET_ENTRY_'+reason;
+    return false;
+  }
+
+  const clientOrderId=String(result.data?.plan?.params?.newClientOrderId||'');
+  if(!/^zth-ENT-[A-Za-z0-9._:-]+$/.test(clientOrderId)){
+    await failCommand(raw,'MARKET_ENTRY_CLIENT_ID_MISSING');
+    execution.lastError='MARKET_ENTRY_CLIENT_ID_MISSING';
+    scheduleReconcile(100);
+    return false;
+  }
+
+  let order=await waitForStreamOrder({kind:'STANDARD',clientId:clientOrderId,terminal:true},5000);
+  if(!order&&String(result.data?.result?.order?.status||'').toUpperCase()==='FILLED'){
+    // The REST RESULT can beat the private stream by a few milliseconds.
+    await sleep(150);
+    order=await waitForStreamOrder({kind:'STANDARD',clientId:clientOrderId,terminal:true},2500);
+  }
+  const status=String(order?.status||result.data?.result?.order?.status||'').toUpperCase();
+  if(status&&status!=='FILLED'){
+    await failCommand(raw,'MARKET_ENTRY_NOT_FILLED_'+status);
+    execution.lastError='MARKET_ENTRY_NOT_FILLED_'+status;
+    scheduleReconcile(100);
+    return false;
+  }
+
+  const expectedQty=n(result.data?.plan?.params?.quantity,0);
+  const position=await waitForLongPosition(symbol,5000);
+  const liveQty=n(position?.positionAmt??position?.quantity,0);
+  if(!position||!(liveQty>0)||!(n(position?.entryPrice,0)>0)){
+    // Retrying this command is idempotent because the same deterministic clientOrderId
+    // is queried before any POST. No second blind MARKET order can be created.
+    await requeueCommand(raw,'MARKET_POSITION_NOT_STREAM_CONFIRMED',500);
+    scheduleReconcile(100);
+    return false;
+  }
+  if(expectedQty>0&&Math.abs(liveQty-expectedQty)>Math.max(1e-9,expectedQty*1e-8)){
+    await failCommand(raw,'MARKET_POSITION_QUANTITY_MISMATCH');
+    execution.lastError='MARKET_POSITION_QUANTITY_MISMATCH';
+    scheduleReconcile(100);
+    return false;
+  }
+
+  await publishRuntime();
+
+  // The exact MAX-LOSS is computed from this real Binance entryPrice/quantity.
+  // reconcile() repairs it, verifies it on the private stream, then places/verifies
+  // the automatic target LIMIT. Never ACK the MARKET command before that completes.
+  const reconciled=await awaitReconciliation(15000);
+  if(reconciled!==true){
+    await requeueCommand(raw,'MARKET_POST_FILL_PROTECTION_PENDING',750);
+    return false;
+  }
+
+  const confirmedPosition=streamLongPosition(symbol);
+  const projection=streamProjection();
+  const configuredMaxLoss=configuredMaxLossForSymbol(symbol);
+  const maxLossConfirmed=Boolean(
+    confirmedPosition&&configuredMaxLoss>0&&
+    uniqueManagedMaxLoss(confirmedPosition,projection.binanceOrders||[],configuredMaxLoss)
+  );
+  if(!maxLossConfirmed){
+    await requeueCommand(raw,'MARKET_MAX_LOSS_NOT_CONFIRMED',750);
+    scheduleReconcile(100);
+    return false;
+  }
+
+  await ackCommand(raw,{
+    symbol,
+    clientOrderId,
+    status:'FILLED',
+    entryPrice:n(confirmedPosition?.entryPrice,0),
+    quantity:Math.abs(n(confirmedPosition?.positionAmt??confirmedPosition?.quantity,0)),
+    maxLossConfirmed:true,
+    reconciled:true,
+  });
+  log('INSTANT_MARKET_ENTRY_CONFIRMED',{
+    symbol,
+    clientOrderId,
+    entryPrice:n(confirmedPosition?.entryPrice,0),
+    quantity:Math.abs(n(confirmedPosition?.positionAmt??confirmedPosition?.quantity,0)),
+    maxLossConfirmed:true,
+  });
+  return true;
+}
+
 async function runProtectiveUpdate(command,raw,dispatch){
   const body={...dispatch.body};
   const type=String(dispatch.type||'').toUpperCase();
@@ -2385,6 +2519,7 @@ async function commandCycle(){
     let ok=false;
     if(dispatch.type==='EXEC_CLOSE_POSITION')ok=await runFullClose(command,raw);
     else if(dispatch.type==='EXEC_CANCEL_ENTRY')ok=await runCancelEntry(command,raw,dispatch);
+    else if(dispatch.type==='EXEC_OPEN_MARKET_POSITION')ok=await runMarketEntry(command,raw,dispatch);
     else if(dispatch.type==='EXEC_UPDATE_EXIT'||dispatch.type==='EXEC_UPDATE_PROTECTION'){
       ok=await runProtectiveUpdate(command,raw,dispatch);
     }else{
