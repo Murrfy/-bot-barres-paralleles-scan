@@ -51,3 +51,19 @@ test('phased real entry can only be driven by the 24/7 engine principal',()=>{
   assert.match(entryApi,/code:'ENTRY_ENGINE_REQUIRED'/);
   assert.doesNotMatch(entryApi,/findCoveringEntryProtection/);
 });
+
+
+test('lost prepared MAX-LOSS cancels the pending LIMIT before generic fail-closed',()=>{
+  const target=worker.indexOf('pendingEntryProtectionLossTargets(data.report)');
+  const cancel=worker.indexOf('cancelPendingEntriesMissingPreparedProtection(data.report)',target);
+  const orphan=worker.indexOf('orphanZenithCleanupOrders(data.report)',target);
+  const maxLossRepair=worker.indexOf('missingMaxLossRepairTarget(data.report)',target);
+  assert.ok(target>=0&&cancel>target&&orphan>cancel&&maxLossRepair>cancel);
+  assert.match(worker,/type:'EXEC_CANCEL_ENTRY'[\s\S]*clientOrderId:target\.entryClientOrderId/);
+  assert.match(worker,/ENTRY_PROTECTION_LOSS_FILL_RACE/);
+  assert.match(worker,/Never close the position here/);
+  assert.doesNotMatch(
+    worker.slice(target,Math.max(orphan,maxLossRepair)),
+    /emergency-stop|PANIC STOP|EXEC_CLOSE_POSITION/
+  );
+});
