@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
-import { protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
+import { protectionOnlyMismatchTarget, protectiveRepairTarget, pendingEntryProtectionLossCancelAllowed } from '../lib/protective-command.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
 
@@ -157,14 +157,18 @@ function protectiveModeReason(mode){
   if(normalized==='RUNNING'||normalized==='PAUSE_PENDING')return '';
   return 'MASTER_PAUSED';
 }
-function executionReadiness(runtimeState,report,masterDeviceId,repairTarget=''){
+function executionReadiness(runtimeState,report,masterDeviceId,repairTarget='',pendingEntryCancelRecovery=false){
   const age=Date.now()-Number(runtimeState?.updatedAt||0);
   if(!runtimeState?.data||String(runtimeState?.masterDeviceId||'')!==String(masterDeviceId))return 'MASTER_RUNTIME_WRONG_DEVICE';
   if(!Number.isFinite(age)||age<0||age>30000)return 'MASTER_RUNTIME_STALE';
   const data=runtimeState.data;
   if(String(data.executionMode||data.mode||'').toUpperCase()!=='REAL')return 'MASTER_RUNTIME_NOT_REAL';
   const stream=data.userStream;
-  if(!stream||stream.connected!==true||stream.ready!==true||stream.failClosed!==false||stream.needsReconciliation!==false)return 'USER_STREAM_NOT_READY';
+  if(!stream||stream.connected!==true)return 'USER_STREAM_NOT_READY';
+  if(pendingEntryCancelRecovery!==true&&
+     (stream.ready!==true||stream.failClosed!==false||stream.needsReconciliation!==false)){
+    return 'USER_STREAM_NOT_READY';
+  }
 
   const reportAge=Date.now()-Number(report?.observedAt||0);
   if(!report||report.version!==2||!Array.isArray(report.reasons))return 'BINANCE_RECONCILIATION_MISMATCH';
@@ -174,6 +178,10 @@ function executionReadiness(runtimeState,report,masterDeviceId,repairTarget=''){
 
   const clean=report.status==='CLEAN_REAL'&&report.failClosed===false&&report.reasons.length===0;
   if(clean)return '';
+
+  // Narrow recovery exception: a fresh, exact reconciliation proves that one still-open
+  // entry LIMIT lost its prepared MAX-LOSS. Only canceling that exact entry is allowed.
+  if(pendingEntryCancelRecovery===true)return '';
 
   const target=String(repairTarget||'').toUpperCase();
   if(target&&protectionOnlyMismatchTarget(report)===target)return '';
@@ -237,7 +245,16 @@ export default async function handler(req,res){
     direction:req.body?.direction,
     closeAll:req.body?.closeAll,
   });
-  const readinessReason=executionReadiness(runtimeState,report,master.deviceId,repairTarget);
+  const pendingEntryCancelRecovery=type==='EXEC_CANCEL_ENTRY'&&pendingEntryProtectionLossCancelAllowed(report,{
+    symbol:req.body?.symbol,
+    clientOrderId:req.body?.clientOrderId,
+  });
+  if(pendingEntryCancelRecovery&&String(master?.principal||'')!=='engine'){
+    return send(res,423,{ok:false,code:'ENTRY_PROTECTION_RECOVERY_ENGINE_REQUIRED',writeAttempted:false});
+  }
+  const readinessReason=executionReadiness(
+    runtimeState,report,master.deviceId,repairTarget,pendingEntryCancelRecovery
+  );
   if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
 
   const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED);
