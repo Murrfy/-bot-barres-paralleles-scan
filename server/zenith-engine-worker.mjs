@@ -1514,6 +1514,21 @@ async function reconcile(secondPass=false){
       return false;
     }
 
+    const pendingProtectionLoss=pendingEntryProtectionLossTargets(data.report);
+    if(pendingProtectionLoss.length){
+      if(secondPass){
+        await invalidateStream('ENTRY_PROTECTION_LOSS_CANCEL_RECONCILIATION_FAILED');
+        return false;
+      }
+      const recovered=await cancelPendingEntriesMissingPreparedProtection(data.report);
+      if(!recovered.handled)return false;
+      // Whether cancellation won or the LIMIT filled first, re-read Binance immediately.
+      // A filled race is handed to MAX-LOSS repair; an actual cancellation becomes inert.
+      stream.reconcileBusy=false;
+      await sleep(100);
+      return reconcile(true);
+    }
+
     const orphanTargets=orphanZenithCleanupOrders(data.report);
     if(orphanTargets.length){
       if(secondPass){
