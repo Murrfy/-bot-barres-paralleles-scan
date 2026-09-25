@@ -128,6 +128,8 @@ jobs:
         run: node --test scripts/test-entry-symbol-config-wiring.mjs
       - name: Test real entry execution rate limit
         run: node --test scripts/test-entry-execution-rate-limit.mjs
+      - name: Test explicit real MARKET instant buy
+        run: node --test scripts/test-real-market-instant-buy.mjs
       - name: Test atomic final real-entry dispatch gate
         run: node --test scripts/test-entry-dispatch-final-gate.mjs
       - name: Test Binance trading-key permission revalidation before real entry
