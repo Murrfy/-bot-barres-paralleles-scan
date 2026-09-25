@@ -1839,6 +1839,25 @@ async function repairMissingMaxLoss(report){
   return {handled:true,repaired:true,reason:'AUTO_MAX_LOSS_REPAIRED'};
 }
 
+function authorizedMaxLossOverlapReport(report){
+  if(!report||report.version!==2||report.status!=='MISMATCH'||report.failClosed!==true)return null;
+  const reasons=Array.isArray(report.reasons)?report.reasons.map(x=>String(x||'')):[];
+  if(reasons.length!==1||reasons[0]!=='AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION')return null;
+  const diff=report.differences&&typeof report.differences==='object'?report.differences:{};
+  const edits=Array.isArray(diff.authorizedPendingMaxLossEdits)?diff.authorizedPendingMaxLossEdits.filter(Boolean):[];
+  if(edits.length!==1)return null;
+  const edit=edits[0];
+  const target=`${String(edit.symbol||'').toUpperCase()}:${String(edit.direction||'').toUpperCase()}`;
+  const ambiguous=Array.isArray(diff.ambiguousMaxLossProtections)
+    ?diff.ambiguousMaxLossProtections.map(x=>String(x||'').toUpperCase()).filter(Boolean):[];
+  if(ambiguous.length!==1||ambiguous[0]!==target)return null;
+  if((Array.isArray(diff.missingMaxLossProtections)&&diff.missingMaxLossProtections.length)||
+     (Array.isArray(diff.unsafeMaxLossProtections)&&diff.unsafeMaxLossProtections.length)||
+     (Array.isArray(diff.configuredMaxLossUnavailable)&&diff.configuredMaxLossUnavailable.length))return null;
+  if(!String(edit.commandId||'')||!String(edit.previousClientAlgoId||'')||!String(edit.newClientAlgoId||''))return null;
+  return edit;
+}
+
 async function reconcile(secondPass=false){
   if(stream.reconcileBusy||!runtime.leaseActive)return false;
   const ws=stream.ws;
@@ -1863,6 +1882,25 @@ async function reconcile(secondPass=false){
       stream.reconcileBusy=false;
       await sleep(100);
       return reconcile(true);
+    }
+
+    const maxLossOverlap=authorizedMaxLossOverlapReport(data.report);
+    if(maxLossOverlap){
+      if(stream.state?.needsReconciliation===true){
+        stream.state=markUserStreamReconciled(stream.state,{
+          observedAt:Number(data.report.observedAt||Date.now()),
+          runtimeHash:String(data.report.runtimeDataHash||data.report.runtimeHash||''),
+        });
+        stream.lastError='MAX_LOSS_REPLACEMENT_IN_PROGRESS';
+        runtime.error='MAX_LOSS_REPLACEMENT_IN_PROGRESS';
+        await publishRuntime();
+        stream.reconcileBusy=false;
+        await sleep(50);
+        return reconcile(true);
+      }
+      stream.lastError='MAX_LOSS_REPLACEMENT_IN_PROGRESS';
+      runtime.error='MAX_LOSS_REPLACEMENT_IN_PROGRESS';
+      return userStreamReady(stream.state);
     }
 
     const orphanTargets=orphanZenithCleanupOrders(data.report);
@@ -2446,6 +2484,14 @@ async function runProtectiveUpdate(command,raw,dispatch){
   if(maxLoss||progressive){
     newClientId=await placeNew({deferReconcile:maxLoss});
     if(!newClientId)return false;
+    if(maxLoss){
+      const overlapReady=await awaitReconciliation();
+      if(overlapReady!==true||userStreamReady(stream.state)!==true){
+        await failCommand(raw,'MAX_LOSS_SAFE_OVERLAP_RECONCILIATION_FAILED');
+        execution.lastError='MAX_LOSS_SAFE_OVERLAP_RECONCILIATION_FAILED';
+        return false;
+      }
+    }
     if(!(await cancelOld(newClientId)))return false;
   }else{
     if(!(await cancelOld()))return false;
