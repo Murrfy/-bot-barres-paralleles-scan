@@ -109,8 +109,8 @@ for (const file of ['index.html','master-admin.html','master-standby.html','cont
   if (!html.includes('localStorage.removeItem(')) fail(`${file} must purge migrated legacy credentials after authenticated session bootstrap`);
 }
 
-if (!index.includes('simulation uniquement')) {
-  fail('index.html must keep the visible simulation-only marker until real trading is deliberately released');
+if (!index.includes('réel uniquement') || index.includes('simulation uniquement')) {
+  fail('index.html must expose the real-only trading mode and must not present simulation as an operating mode');
 }
 if (!index.includes('startBinanceAccountReadOnly()')) {
   fail('index.html must keep Binance read-only account refresh');
@@ -128,8 +128,9 @@ if (!index.includes('protectionValidationError') ||
 if (!index.includes("normalExit:'LIMIT_EXACT_GTC'") ||
     !index.includes("protectiveExit:'LIMIT_IOC_ADAPTIVE'") ||
     !index.includes("primaryPriceMatch:'OPPONENT'") ||
-    !index.includes("fallback:'MARKET_LAST_RESORT'")) {
-  fail('Zenith must keep LIMIT-first exit execution policy with market only as last resort');
+    !index.includes("fallback:'LIMIT_ONLY'") ||
+    index.includes("MARKET_LAST_RESORT")) {
+  fail('Zenith exits must remain LIMIT-only with no MARKET fallback');
 }
 for (const file of ['index.html','master-admin.html','master-standby.html','controller-status.html']) {
   const html=fs.readFileSync(file,'utf8');
@@ -410,8 +411,11 @@ if (!protectiveExecute.includes("'FULL_CLOSE_QUANTITY_REQUIRED'") ||
 }
 
 const protectiveCloseState = fs.readFileSync('lib/protective-close-state.mjs','utf8');
-for (const required of ["OPPONENT_5","OPPONENT_10","MARKET_LAST_RESORT","safeToRetry","inconsistentFilled","terminalSeen"]) {
+for (const required of ["OPPONENT_5","OPPONENT_10","OPPONENT_20","safeToRetry","inconsistentFilled","terminalSeen"]) {
   if (!protectiveCloseState.includes(required)) fail(`protective close state invariant missing: ${required}`);
+}
+if (protectiveCloseState.includes('MARKET_LAST_RESORT')) {
+  fail('protective close state must never include a MARKET fallback');
 }
 
 const orderIntent = fs.readFileSync('lib/order-intent.mjs', 'utf8');
@@ -960,15 +964,15 @@ if (!index.includes("role==='master'") ||
   fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
 }
 
-if (!index.includes('function realExecutionActiveForLocalSimulation()') ||
-    !index.includes('function localSimulationEntryAllowed()') ||
-    !index.includes("masterRuntimeState.realExecutionArmed===true") ||
-    !index.includes("masterControlState.realExecutionArmed===true") ||
-    !index.includes("simulationPositions=executionMode==='REAL'?[]:clone(openPositions)") ||
-    !index.includes("const activePositions=executionMode==='REAL'") ||
-    !index.includes("if(!localSimulationEntryAllowed())") ||
-    !index.includes('Zenith ne créera jamais une position locale fictive')) {
-  fail('armed REAL execution must never create or publish simulated positions as if they were Binance positions');
+if (!index.includes('function renderPositions(){return false}') ||
+    !index.includes('function createPosition(s,entry,source)') ||
+    !index.includes('Simulation supprimée') ||
+    !index.includes('return null') ||
+    !index.includes('function closePosition()') ||
+    !index.includes('return false') ||
+    index.includes('<button id="resetSimBtn"') ||
+    index.includes('Positions actives — simulation')) {
+  fail('real-only Zenith must not expose, create, close, or render simulated positions');
 }
 if (!index.includes('masterExecutionCycle') ||
     !index.includes("masterRuntimeApi('command-next','POST'") ||
@@ -978,9 +982,10 @@ if (!index.includes('masterExecutionCycle') ||
     !index.includes("fetch('/api/binance-protective-execute'") ||
     !index.includes('evaluateFullProtectiveClose') ||
     !index.includes('PROTECTIVE_CLOSE_ATTEMPTS') ||
-    !index.includes('MARKET_CLOSE_NOT_CONFIRMED') ||
-    !index.includes("setInterval(masterExecutionCycle,750)")) {
-  fail('iPad MASTER must confirm protective closes from live inventory, escalate LIMIT-first, and never ACK on dispatch alone');
+    !index.includes('PROTECTIVE_CLOSE_ATTEMPTS_EXHAUSTED') ||
+    !index.includes("setInterval(masterExecutionCycle,750)") ||
+    index.includes('MARKET_CLOSE_NOT_CONFIRMED')) {
+  fail('legacy MASTER close flow must confirm live inventory and remain LIMIT-only without ACK on dispatch alone');
 }
 if (!sync.includes('deferReason') || !sync.includes('requestedDelayMs') || !sync.includes('Math.min(30000')) {
   fail('MASTER command requeue must support bounded retry backoff without extending command expiry');
@@ -1082,9 +1087,8 @@ if (!masterAdmin.includes('panicBtn') || !masterAdmin.includes('clearPanicBtn') 
 if (!index.includes('escapeHtml') || !index.includes('escapeHtml(h.reason)') || !index.includes('escapeHtml(p.symbol)')) {
   fail('dynamic trading UI strings must be HTML-escaped');
 }
-if (!index.includes('data-refresh="${escapeHtml(p.symbol)}"') ||
-    !index.includes('data-close="${escapeHtml(p.symbol)}"')) {
-  fail('dynamic position symbols must be escaped inside HTML data attributes');
+if (index.includes('data-refresh="${p.symbol}"') || index.includes('data-close="${p.symbol}"')) {
+  fail('unescaped dynamic position symbols must never be inserted into HTML data attributes');
 }
 
 const vercelConfig = JSON.parse(fs.readFileSync('vercel.json', 'utf8'));
