@@ -74,3 +74,11 @@ test('external client id is rejected before Binance lookup',async()=>{
   await assert.rejects(cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'external-order-123',writesEnabled:true,timestamp:1}),/CANCEL_TARGET_NOT_ZENITH_ENTRY/);
   assert.equal(called,false);
 });
+
+
+test('entry cancellation refuses wrong side, type, or time in force after lookup',async()=>{
+  const args={apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',writesEnabled:true,timestamp:1};
+  await assert.rejects(cancelEntryOrderIdempotent({...args,fetchImpl:async()=>json({...openOrder,side:'SELL'})}),e=>e instanceof BinanceRequestError&&e.message==='CANCEL_TARGET_NOT_BUY');
+  await assert.rejects(cancelEntryOrderIdempotent({...args,fetchImpl:async()=>json({...openOrder,type:'MARKET'})}),e=>e instanceof BinanceRequestError&&e.message==='CANCEL_TARGET_NOT_LIMIT');
+  await assert.rejects(cancelEntryOrderIdempotent({...args,fetchImpl:async()=>json({...openOrder,timeInForce:'IOC'})}),e=>e instanceof BinanceRequestError&&e.message==='CANCEL_TARGET_NOT_GTC');
+});
