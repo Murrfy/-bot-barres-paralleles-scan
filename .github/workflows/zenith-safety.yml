@@ -110,6 +110,18 @@ jobs:
         run: node --test scripts/test-command-requeue-revoke-fence.mjs
       - name: Test real-entry risk preflight
         run: node --test scripts/test-entry-preflight.mjs
+      - name: Test persistent real-entry watch
+        run: node --test scripts/test-entry-watch.mjs
+      - name: Test fenced real-entry watch persistence
+        run: node --test scripts/test-entry-watch-persistence.mjs
+      - name: Test prepared entry MAX-LOSS plan
+        run: node --test scripts/test-entry-protection-plan.mjs
+      - name: Test pending entry protection-loss recovery
+        run: node --test scripts/test-entry-protection-loss-cancel.mjs
+      - name: Test pending entry cancel execution fence
+        run: node --test scripts/test-entry-protection-loss-execute.mjs
+      - name: Test Render protected real-entry wiring
+        run: node --test scripts/test-engine-watched-entry-wiring.mjs
       - name: Test verified Binance symbol configuration
         run: node --test scripts/test-binance-symbol-config.mjs
       - name: Test Binance symbol-config real-entry wiring
