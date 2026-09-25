@@ -114,6 +114,10 @@ jobs:
         run: node --test scripts/test-entry-preflight.mjs
       - name: Test persistent real-entry watch
         run: node --test scripts/test-entry-watch.mjs
+      - name: Test delayed entry current price and not-started outcome
+        run: node --test scripts/test-entry-watch-slot-outcome.mjs
+      - name: Test write-ahead entry submit recovery
+        run: node --test scripts/test-entry-submit-writeahead.mjs
       - name: Test delayed entry slot outcome
         run: node --test scripts/test-entry-watch-slot-outcome.mjs
       - name: Test fenced real-entry watch persistence
