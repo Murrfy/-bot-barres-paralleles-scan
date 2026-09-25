@@ -387,22 +387,196 @@ export default async function handler(req,res){
       return send(res,409,{ok:false,code:e?.message||'ENTRY_PLAN_INVALID',writeAttempted:false});
     }
 
-    const protection=findCoveringEntryProtection(latest.runtimeState,{
-      symbol,side,quantity:Number(plan.params.quantity),limitPrice,
-    });
-    if(protection.ready!==true){
+    const writesEnabled=Boolean(
+      REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED
+    );
+
+    if(phaseProvided&&String(master?.principal||'')!=='engine'){
       return send(res,423,{
         ok:false,
-        code:'ENTRY_PROTECTION_NOT_ARMED',
-        reason:protection.reason||'ENTRY_PROTECTION_NOT_ARMED',
+        code:'ENTRY_ENGINE_REQUIRED',
         writeAttempted:false,
         plan,
       });
     }
 
-    const writesEnabled=Boolean(
-      REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED
-    );
+    if(phase==='PREPARE_PROTECTION'){
+      let protectionPlan;
+      try{
+        const normalized=preflight.evaluation.normalized||{};
+        protectionPlan=buildEntryProtectionPlan({
+          commandId,
+          symbol,
+          side,
+          quantity:Number(plan.params.quantity),
+          limitPrice,
+          maxLoss,
+          priceFilter:{
+            tickSize:normalized.priceTickSize,
+            minPrice:normalized.minPrice,
+            maxPrice:normalized.maxPrice,
+          },
+        });
+      }catch(e){
+        return send(res,409,{ok:false,code:e?.message||'ENTRY_PROTECTION_PLAN_INVALID',writeAttempted:false,plan});
+      }
+
+      const [controllerRevisionRaw,engineInstanceRaw]=await Promise.all([
+        redis(['GET',KEY_CONTROLLER_REV]),
+        redis(['GET',KEY_ENGINE_INSTANCE]),
+      ]);
+      const controllerRevision=Number(controllerRevisionRaw||0);
+      const engineInstanceId=String(engineInstanceRaw||'');
+      const at=Date.now();
+      const existing=await readEntryTransition(commandId);
+      if(existing){
+        const checked=normalizeEntryTransition(existing,{now:at});
+        if(!checked.ok){
+          return send(res,409,{ok:false,code:checked.reason||'ENTRY_TRANSITION_INVALID',writeAttempted:false});
+        }
+        if(!entryTransitionMatchesRequest(checked.transition,{
+          symbol,side,quantity:Number(plan.params.quantity),limitPrice,maxLoss
+        })){
+          return send(res,409,{ok:false,code:'ENTRY_TRANSITION_REQUEST_MISMATCH',writeAttempted:false});
+        }
+      }
+      const createdAt=Number(existing?.createdAt||at);
+      const transitionDraft={
+        version:1,
+        state:String(existing?.state||'PROTECTION_PREPARED').toUpperCase()==='ENTRY_SUBMITTED'
+          ?'ENTRY_SUBMITTED':'PROTECTION_PREPARED',
+        commandId,
+        symbol,
+        side,
+        direction:side==='BUY'?'LONG':'SHORT',
+        quantity:Number(plan.params.quantity),
+        limitPrice,
+        maxLossUsd:maxLoss,
+        protectionTriggerPrice:protectionPlan.triggerPrice,
+        protectionClientAlgoId:protectionPlan.algoPlan.params.clientAlgoId,
+        entryClientOrderId:String(existing?.entryClientOrderId||''),
+        createdAt,
+        expiresAt:Number(existing?.expiresAt||createdAt+120000),
+        validatedAt:at,
+        controllerRevision,
+        masterDeviceId:String(master.deviceId||''),
+        masterRoleEpoch:String(master.roleIssuedAt||''),
+        engineInstanceId,
+      };
+      const checked=normalizeEntryTransition(transitionDraft,{now:at});
+      if(!checked.ok){
+        return send(res,409,{ok:false,code:checked.reason||'ENTRY_TRANSITION_INVALID',writeAttempted:false});
+      }
+
+      if(!writesEnabled){
+        return send(res,423,{
+          ok:false,
+          code:'REAL_ENTRY_WRITE_LOCKED',
+          realTradingEnabled:REAL_TRADING_ENABLED,
+          binanceWriteEnabled:BINANCE_WRITE_ENABLED,
+          pairingDisabled:PAIRING_DISABLED,
+          realEntryWriteEnabled:REAL_ENTRY_WRITE_ENABLED,
+          writeAttempted:false,
+          plan,
+          protectionPlan,
+        });
+      }
+
+      const dispatchGate=await finalEntryDispatchGate(master.deviceId,master.roleIssuedAt,latest.armRaw);
+      if(!dispatchGate.ok){
+        return send(res,423,{
+          ok:false,
+          code:'ENTRY_PROTECTION_COMMIT_BLOCKED',
+          reason:dispatchGate.reason,
+          writeAttempted:false,
+          plan,
+          protectionPlan,
+        });
+      }
+
+      const protectionResult=await placeAlgoOrderIdempotent({
+        apiKey,
+        secret,
+        algoParams:protectionPlan.algoPlan.params,
+        writesEnabled:true,
+        timestamp:preflight.serverTime,
+      });
+      await writeEntryTransition(commandId,checked.transition);
+      await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+        at:Date.now(),
+        kind:'BINANCE_ENTRY_PROTECTION_PREPARED',
+        deviceId:master.deviceId,
+        commandId,
+        symbol,
+        side,
+        limitPrice,
+        quantity:Number(plan.params.quantity),
+        maxLoss,
+        triggerPrice:protectionPlan.triggerPrice,
+        clientAlgoId:protectionPlan.algoPlan.params.clientAlgoId,
+        disposition:protectionResult.disposition,
+        writeAttempted:protectionResult.writeAttempted===true,
+      })]);
+      await redis(['LTRIM',KEY_AUDIT,'0','199']);
+
+      return send(res,200,{
+        ok:true,
+        phase:'PROTECTION_PREPARED',
+        plan,
+        protectionPlan,
+        result:protectionResult,
+        transition:checked.transition,
+        confirmationRequired:true,
+      });
+    }
+
+    let protection=null;
+    let storedTransition=null;
+    if(phaseProvided){
+      const rawTransition=await readEntryTransition(commandId);
+      const checked=normalizeEntryTransition(rawTransition,{now:Date.now()});
+      if(!checked.ok){
+        return send(res,423,{
+          ok:false,
+          code:'ENTRY_PROTECTION_TRANSITION_REQUIRED',
+          reason:checked.reason||'ENTRY_TRANSITION_MISSING',
+          writeAttempted:false,
+          plan,
+        });
+      }
+      storedTransition=checked.transition;
+      if(!entryTransitionMatchesRequest(storedTransition,{
+        symbol,side,quantity:Number(plan.params.quantity),limitPrice,maxLoss
+      })){
+        return send(res,409,{ok:false,code:'ENTRY_TRANSITION_REQUEST_MISMATCH',writeAttempted:false,plan});
+      }
+      const exactOrder=(Array.isArray(latest.runtimeState?.data?.binanceOrders)?latest.runtimeState.data.binanceOrders:[])
+        .find(order=>transitionProtectionMatches(order,storedTransition));
+      if(!exactOrder){
+        return send(res,423,{
+          ok:false,
+          code:'ENTRY_PROTECTION_NOT_STREAM_CONFIRMED',
+          writeAttempted:false,
+          plan,
+          transition:storedTransition,
+        });
+      }
+      protection={ready:true,order:exactOrder};
+    }else{
+      protection=findCoveringEntryProtection(latest.runtimeState,{
+        symbol,side,quantity:Number(plan.params.quantity),limitPrice,
+      });
+      if(protection.ready!==true){
+        return send(res,423,{
+          ok:false,
+          code:'ENTRY_PROTECTION_NOT_ARMED',
+          reason:protection.reason||'ENTRY_PROTECTION_NOT_ARMED',
+          writeAttempted:false,
+          plan,
+        });
+      }
+    }
+
     if(!writesEnabled){
       return send(res,423,{
         ok:false,
@@ -433,9 +607,8 @@ export default async function handler(req,res){
       });
     }
 
-    // The Redis gate above is the linearization point for entry dispatch versus PANIC/revoke.
-    // If PANIC/revoke wins first, this request cannot reach Binance. If this gate wins first,
-    // the entry is already committed for dispatch and all later calls remain idempotent.
+    // The Redis gate above is the linearization point for entry dispatch versus a manual
+    // PANIC/revoke. The MAX-LOSS is already confirmed before this standard LIMIT is sent.
     const result=await placeStandardOrderIdempotent({
       apiKey,
       secret,
@@ -443,6 +616,27 @@ export default async function handler(req,res){
       writesEnabled:true,
       timestamp:preflight.serverTime,
     });
+
+    if(storedTransition){
+      const submitted={
+        ...storedTransition,
+        state:'ENTRY_SUBMITTED',
+        entryClientOrderId:plan.params.newClientOrderId,
+        validatedAt:Date.now(),
+      };
+      const checked=normalizeEntryTransition(submitted,{now:Date.now()});
+      if(!checked.ok){
+        return send(res,500,{
+          ok:false,
+          code:'ENTRY_TRANSITION_SUBMIT_STATE_INVALID',
+          reason:checked.reason,
+          writeAttempted:result.writeAttempted===true,
+          ambiguous:true,
+        });
+      }
+      await writeEntryTransition(commandId,checked.transition);
+      storedTransition=checked.transition;
+    }
 
     await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
       at:Date.now(),
@@ -462,8 +656,10 @@ export default async function handler(req,res){
 
     return send(res,200,{
       ok:true,
+      phase:'ENTRY_SUBMITTED',
       plan,
       protection:protection.order,
+      transition:storedTransition,
       result,
       confirmationRequired:true,
     });
