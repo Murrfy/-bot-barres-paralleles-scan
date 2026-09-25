@@ -31,7 +31,7 @@ const { commandTypeAllowed, commandExpired, executionGate, deferredCommandPayloa
   Buffer.from(source + '\nexport { commandTypeAllowed, commandExpired, executionGate, deferredCommandPayload, commandRawStatus };').toString('base64')
 );
 
-test('only audited protective command types are accepted', () => {
+test('only audited protective commands plus explicit instant MARKET buy are accepted', () => {
   for (const type of [
     'UPDATE_EXIT',
     'UPDATE_PROTECTION',
@@ -41,9 +41,10 @@ test('only audited protective command types are accepted', () => {
     'EXEC_UPDATE_PROTECTION',
     'EXEC_CLOSE_POSITION',
     'EXEC_CANCEL_ENTRY',
+    'EXEC_OPEN_MARKET_POSITION',
   ]) assert.equal(commandTypeAllowed(type), true, type);
 
-  for (const type of ['OPEN_POSITION', 'EXEC_OPEN_POSITION', 'BUY', 'EXEC_BUY', 'UNKNOWN']) {
+  for (const type of ['OPEN_POSITION', 'EXEC_OPEN_POSITION', 'BUY', 'EXEC_BUY', 'EXEC_OPEN_LIMIT_POSITION', 'UNKNOWN']) {
     assert.equal(commandTypeAllowed(type), false, type);
   }
 });
