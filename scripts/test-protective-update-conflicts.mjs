@@ -118,7 +118,8 @@ test('server enforces the configured MAX-LOSS cap, not only the global $400 ceil
   const source=fs.readFileSync('api/binance-protective-update-execute.js','utf8');
   assert.match(source,/KEY_CONTROLLER_STATE/);
   assert.match(source,/configuredMaxLossUsd\(state\.controllerState,update\.symbol\)/);
-  assert.match(source,/Math\.min\(configuredMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
+  assert.match(source,/const allowedMaxLoss=activeEdit\?requestedMaxLoss:configuredMaxLoss/);
+  assert.match(source,/Math\.min\(allowedMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
   assert.match(source,/MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT/);
   assert.match(source,/CONFIGURED_MAX_LOSS_UNAVAILABLE/);
 });
