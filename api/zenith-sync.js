@@ -1029,7 +1029,6 @@ const PAUSE_PENDING_ALLOWED_COMMANDS = new Set([
   'EXEC_UPDATE_PROTECTION',
   'EXEC_CLOSE_POSITION',
   'EXEC_CANCEL_ENTRY',
-  'EXEC_OPEN_MARKET_POSITION',
 ]);
 
 function commandAllowedDuringPausePending(type) {
@@ -1045,6 +1044,7 @@ const ALLOWED_COMMAND_TYPES = new Set([
   'EXEC_UPDATE_PROTECTION',
   'EXEC_CLOSE_POSITION',
   'EXEC_CANCEL_ENTRY',
+  'EXEC_OPEN_MARKET_POSITION',
 ]);
 
 const PROTECTIVE_EXEC_COMMANDS = new Set([
@@ -1072,7 +1072,7 @@ function execClosePayloadStatus(payload) {
   return { ok:true, symbol, direction, quantity, exitMode, closeAll:true };
 }
 
-function execMarketOpenPayloadStatus(payload) {
+function execMarketOpenPayloadStatus(payload, now = Date.now()) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok:false, reason:'PAYLOAD_OBJECT_REQUIRED' };
   const symbol = String(payload.symbol || '').toUpperCase();
   const side = String(payload.side || '').toUpperCase();
@@ -1084,10 +1084,12 @@ function execMarketOpenPayloadStatus(payload) {
   if (!/^[A-Z0-9]{3,30}$/.test(symbol)) return { ok:false, reason:'SYMBOL_INVALID' };
   if (side !== 'BUY') return { ok:false, reason:'MARKET_ENTRY_BUY_ONLY' };
   if (orderType !== 'MARKET') return { ok:false, reason:'MARKET_ENTRY_TYPE_REQUIRED' };
-  if (!(margin > 0)) return { ok:false, reason:'MARGIN_INVALID' };
-  if (!(leverage > 0)) return { ok:false, reason:'LEVERAGE_INVALID' };
-  if (!(maxLoss > 0)) return { ok:false, reason:'MAX_LOSS_INVALID' };
+  if (!(margin > 0) || margin > REAL_RISK_LIMITS.maxMarginUsdt) return { ok:false, reason:'MARGIN_INVALID' };
+  if (!(leverage > 0) || leverage > REAL_RISK_LIMITS.maxLeverage) return { ok:false, reason:'LEVERAGE_INVALID' };
+  if (!(maxLoss > 0) || maxLoss > REAL_RISK_LIMITS.maxLossUsd) return { ok:false, reason:'MAX_LOSS_INVALID' };
   if (!Number.isFinite(requestedAt) || requestedAt <= 0) return { ok:false, reason:'REQUESTED_AT_INVALID' };
+  const age = Number(now) - requestedAt;
+  if (!Number.isFinite(age) || age < -5000 || age > 30000) return { ok:false, reason:'MARKET_ENTRY_REQUEST_STALE' };
   return { ok:true, symbol, side, orderType, margin, leverage, maxLoss, requestedAt };
 }
 
@@ -4348,7 +4350,7 @@ export default async function handler(req, res) {
         id: crypto.randomUUID(),
         clientCommandId,
         createdAt,
-        expiresAt: createdAt + COMMAND_MAX_AGE_MS,
+        expiresAt: createdAt + (type === 'EXEC_OPEN_MARKET_POSITION' ? 15 * 1000 : COMMAND_MAX_AGE_MS),
         deviceId: device.deviceId,
         type,
         payload,
@@ -4473,6 +4475,13 @@ export default async function handler(req, res) {
       }
       if (String(command.type || '').toUpperCase() === 'EXEC_CLOSE_POSITION') {
         const payloadStatus = execClosePayloadStatus(command.payload);
+        if (!payloadStatus.ok) {
+          await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason }, device);
+          return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
+        }
+      }
+      if (String(command.type || '').toUpperCase() === 'EXEC_OPEN_MARKET_POSITION') {
+        const payloadStatus = execMarketOpenPayloadStatus(command.payload);
         if (!payloadStatus.ok) {
           await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason }, device);
           return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
