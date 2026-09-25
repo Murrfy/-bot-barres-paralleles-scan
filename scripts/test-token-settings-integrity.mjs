@@ -106,3 +106,42 @@ test('global defaults stay visible and are copied only by explicit action',()=>{
   assert.match(fill,/Défauts risque : marge ISOLÉE/);
   assert.match(html,/\$\('saveBotDefaultsBtn'\)\.onclick=saveSelectedAsDefaults/);
 });
+
+
+test('live Binance positions are treated as active in token settings',()=>{
+  const helpers=block('function controllerRealPositionBySymbol(symbol)','function masterRealPositionBySymbol(symbol)');
+  assert.match(helpers,/binanceAccount\.positions/);
+  assert.match(helpers,/Math\.abs\(n\(p\?\.positionAmt\?\?p\?\.quantity,0\)\)>0/);
+  assert.match(helpers,/anyActivePositionBySymbol\(symbol\)/);
+  const locks=block('function setTokenFieldsEnabled()','function updateTokenPreview()');
+  assert.match(locks,/realActive=controllerRealPositionBySymbol\(selectedSymbol\)/);
+  assert.match(locks,/\['tExactBuy','tExactBuyPrice','tMaxLoss'\]/);
+  assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]/);
+  assert.match(locks,/Position réelle ACTIVE/);
+  const futures=block('async function saveFutures()','function readBotSettings()');
+  assert.match(futures,/anyActivePositionBySymbol\(s\)/);
+});
+
+test('active real target changes are centralized then queued through protected Binance update',()=>{
+  const realSave=block('async function saveRealActiveTokenSettings','async function saveToken()');
+  assert.match(realSave,/!inv\.managedMaxLoss\|\|inv\.maxLossConflict/);
+  assert.match(realSave,/inv\.progressiveConflict/);
+  assert.match(realSave,/buildRealProtectionLevels\(\{position,targetProfitUsd:manualTarget,maxLossUsd:currentMaxLoss,priceFilter\}\)/);
+  assert.match(realSave,/await syncControllerCloudStateNow\(\)/);
+  assert.match(realSave,/queueRealProtectiveUpdate\(position,'EXIT',\{wantedPrice:wantedExit,fromSettings:true\}\)/);
+  assert.match(realSave,/if\(!queued\)[\s\S]*previousOwn[\s\S]*syncControllerCloudStateNow/);
+  assert.match(realSave,/protectionStages:nextProtections/);
+});
+
+test('protected real update accepts a precomputed settings price and reports queue success',()=>{
+  const queue=block('async function queueRealProtectiveUpdate(position,kind,options={})','function renderRealEntryOrders()');
+  assert.match(queue,/wanted=parsePrice\(options\?\.wantedPrice,0\)/);
+  assert.match(queue,/if\(!\(wanted>0\)\)\{[\s\S]*prompt/);
+  assert.match(queue,/realProtectiveUpdatePending\.set/);
+  assert.match(queue,/setTimeout\(\(\)=>refreshBinanceAccount\(\),1000\);[\s\S]*return true/);
+});
+
+test('instant buy and reset are blocked by either local or live Binance activity',()=>{
+  assert.match(html,/function tokenDefaults\(\)[\s\S]*anyActivePositionBySymbol\(selectedSymbol\)/);
+  assert.match(html,/async function instantBuySelected\(\)[\s\S]*anyActivePositionBySymbol\(s\)/);
+});
