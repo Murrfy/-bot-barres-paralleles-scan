@@ -2,10 +2,11 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { buildEntryOrderPlan } from '../lib/order-intent.mjs';
 import { buildEntryProtectionPlan } from '../lib/entry-protection-plan.mjs';
-import { placeStandardOrderIdempotent } from '../lib/binance-order-writer.mjs';
+import { placeStandardOrderIdempotent, signedBinanceRequest, BinanceRequestError } from '../lib/binance-order-writer.mjs';
 import { placeAlgoOrderIdempotent } from '../lib/binance-algo-writer.mjs';
 import { findCoveringEntryProtection } from '../lib/entry-protection-gate.mjs';
 import { normalizeEntryTransition, transitionProtectionMatches } from '../lib/entry-transition.mjs';
+import { planEntrySymbolConfiguration } from '../lib/binance-symbol-config.mjs';
 import { runLiveEntryPreflight } from './binance-entry-preflight.js';
 import { validateExecutionArmRecord, executionReadiness } from './binance-protective-execute.js';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
@@ -168,6 +169,93 @@ async function fetchBinanceTradingApiPermissions(apiKey,secret){
     method:'GET',
     headers:{'X-MBX-APIKEY':apiKey},
   });
+}
+
+function firstForSymbol(value,symbol){
+  const rows=Array.isArray(value)?value:[value];
+  return rows.find(row=>String(row?.symbol||'').toUpperCase()===String(symbol||'').toUpperCase())||null;
+}
+
+async function readEntrySymbolConfiguration({apiKey,secret,symbol,timestamp}){
+  const [symbolConfigRaw,positions,standardOrders,algoOrders]=await Promise.all([
+    signedBinanceRequest({
+      apiKey,secret,path:'/fapi/v1/symbolConfig',method:'GET',timestamp,params:{symbol}
+    }),
+    signedBinanceRequest({
+      apiKey,secret,path:'/fapi/v3/positionRisk',method:'GET',timestamp,params:{symbol}
+    }),
+    signedBinanceRequest({
+      apiKey,secret,path:'/fapi/v1/openOrders',method:'GET',timestamp,params:{symbol}
+    }),
+    signedBinanceRequest({
+      apiKey,secret,path:'/fapi/v1/openAlgoOrders',method:'GET',timestamp,
+      params:{symbol,algoType:'CONDITIONAL'}
+    }),
+  ]);
+  return {
+    symbolConfig:firstForSymbol(symbolConfigRaw,symbol),
+    positions:Array.isArray(positions)?positions:[],
+    standardOrders:Array.isArray(standardOrders)?standardOrders:[],
+    algoOrders:Array.isArray(algoOrders)?algoOrders:[],
+  };
+}
+
+async function ensureEntrySymbolConfiguration({
+  apiKey,secret,symbol,leverage,timestamp,writesEnabled,master,armRaw,
+}={}){
+  let snapshot=await readEntrySymbolConfiguration({apiKey,secret,symbol,timestamp});
+  let plan=planEntrySymbolConfiguration({
+    symbol,
+    desiredLeverage:leverage,
+    ...snapshot,
+  });
+  if(!plan.ok)return {ok:false,reason:plan.reason,plan,writeAttempted:false};
+  if(!plan.needsMutation)return {ok:true,changed:false,plan,writeAttempted:false};
+
+  if(!writesEnabled)return {ok:false,reason:'REAL_ENTRY_WRITE_LOCKED',plan,writeAttempted:false};
+  const gate=await finalEntryDispatchGate(master.deviceId,master.roleIssuedAt,armRaw);
+  if(!gate.ok)return {ok:false,reason:gate.reason,plan,writeAttempted:false};
+
+  let wrote=false;
+  if(plan.needsMarginType){
+    try{
+      await signedBinanceRequest({
+        apiKey,secret,path:'/fapi/v1/marginType',method:'POST',timestamp,
+        params:{symbol,marginType:'ISOLATED'}
+      });
+      wrote=true;
+    }catch(error){
+      // -4046 = already in requested margin type. Re-read below instead of trusting the error text.
+      if(!(error instanceof BinanceRequestError)||Number(error.code)!==-4046)throw error;
+    }
+  }
+  if(plan.needsLeverage){
+    await signedBinanceRequest({
+      apiKey,secret,path:'/fapi/v1/leverage',method:'POST',timestamp:timestamp+1,
+      params:{symbol,leverage:Number(leverage)}
+    });
+    wrote=true;
+  }
+
+  snapshot=await readEntrySymbolConfiguration({
+    apiKey,secret,symbol,timestamp:timestamp+2
+  });
+  plan=planEntrySymbolConfiguration({
+    symbol,
+    desiredLeverage:leverage,
+    ...snapshot,
+  });
+  if(!plan.ok||plan.needsMutation){
+    return {
+      ok:false,
+      reason:plan.reason==='SYMBOL_CONFIGURATION_READY'
+        ?'SYMBOL_CONFIGURATION_NOT_CONFIRMED'
+        :plan.reason,
+      plan,
+      writeAttempted:wrote,
+    };
+  }
+  return {ok:true,changed:wrote,plan,writeAttempted:wrote};
 }
 
 async function readExecutionState(){
