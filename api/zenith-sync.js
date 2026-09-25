@@ -562,10 +562,48 @@ function replacementKey(code) {
   return `${PREFIX}:controller-replacement:${sha256(normalizeReplacementCode(code))}`;
 }
 
+function commandTerminalResultKey(commandId) {
+  return `${PREFIX}:command:done:${String(commandId || '__none__')}`;
+}
+
+async function writeCommandTerminalResult(command, status, reason = '') {
+  const commandId = String(command?.id || '');
+  if (!commandId) return false;
+  const record = {
+    commandId,
+    clientCommandId: String(command?.clientCommandId || ''),
+    type: String(command?.type || '').toUpperCase(),
+    deviceId: String(command?.deviceId || ''),
+    status: String(status || '').toUpperCase(),
+    reason: String(reason || ''),
+    at: Date.now(),
+  };
+  await redis([
+    'SET',
+    commandTerminalResultKey(commandId),
+    JSON.stringify(record),
+    'EX',
+    String(COMMAND_DEDUPE_TTL_SECONDS),
+  ]);
+  return true;
+}
+
 async function pushDeadLetter(entry) {
   const raw = typeof entry === 'string' ? entry : JSON.stringify(entry);
   await redis(['LPUSH', KEY_DEAD, raw]);
   await redis(['LTRIM', KEY_DEAD, '0', String(DEAD_LETTER_MAX - 1)]);
+
+  if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+    let command = null;
+    try { command = JSON.parse(String(entry.raw || '')); } catch {}
+    if (command?.id) {
+      await writeCommandTerminalResult(
+        command,
+        'FAIL',
+        String(entry.rejectedReason || 'COMMAND_REJECTED')
+      );
+    }
+  }
 }
 
 async function quarantineCommandsForDevice(deviceId) {
@@ -1801,8 +1839,18 @@ async function removeProcessingAtomic(raw, device) {
   ]));
 }
 
-async function completeProcessingCommandAtomic(raw, commandId, device) {
-  const doneKey = `${PREFIX}:command:done:${commandId || '__none__'}`;
+async function completeProcessingCommandAtomic(raw, command, device) {
+  const commandId = String(command?.id || '');
+  const doneKey = commandTerminalResultKey(commandId);
+  const doneValue = JSON.stringify({
+    commandId,
+    clientCommandId: String(command?.clientCommandId || ''),
+    type: String(command?.type || '').toUpperCase(),
+    deviceId: String(command?.deviceId || ''),
+    status: 'ACK',
+    reason: '',
+    at: Date.now(),
+  });
   const script = [
     "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
     "if registered ~= ARGV[2] then return -1 end",
@@ -1827,8 +1875,8 @@ async function completeProcessingCommandAtomic(raw, commandId, device) {
     String(device?.deviceId || ''),
     String(Number(device?.createdAt || 0)),
     commandId ? '1' : '0',
-    String(Date.now()),
-    String(60 * 60 * 24 * 30),
+    doneValue,
+    String(COMMAND_DEDUPE_TTL_SECONDS),
   ]));
 }
 
@@ -4257,6 +4305,40 @@ export default async function handler(req, res) {
       return send(res, 200, { ok: true, state: snapshot });
     }
 
+    if (action === 'command-status' && req.method === 'GET') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+      const commandId = String(req.query?.commandId || '').trim();
+      if (!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)) {
+        return send(res, 400, { ok:false, code:'COMMAND_ID_INVALID' });
+      }
+      const raw = await redis(['GET', commandTerminalResultKey(commandId)]);
+      if (!raw) {
+        return send(res, 200, { ok:true, commandId, status:'PENDING' });
+      }
+      let result = null;
+      try { result = JSON.parse(raw); } catch {}
+      if (!result || typeof result !== 'object') {
+        return send(res, 200, { ok:true, commandId, status:'PENDING', legacy:true });
+      }
+      if (String(result.deviceId || '') !== String(device.deviceId || '')) {
+        return send(res, 404, { ok:false, code:'COMMAND_RESULT_NOT_FOUND' });
+      }
+      const status = String(result.status || '').toUpperCase();
+      if (!['ACK','FAIL'].includes(status)) {
+        return send(res, 200, { ok:true, commandId, status:'PENDING' });
+      }
+      return send(res, 200, {
+        ok:true,
+        commandId,
+        status,
+        reason:String(result.reason || ''),
+        type:String(result.type || ''),
+        clientCommandId:String(result.clientCommandId || ''),
+        at:Number(result.at || 0),
+      });
+    }
+
     if (action === 'command' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller']);
       if (!device) return;
@@ -4892,7 +4974,7 @@ export default async function handler(req, res) {
         await redis(['LTRIM', KEY_AUDIT, '0', '199']);
       }
 
-      const completed = await completeProcessingCommandAtomic(raw, commandId, device);
+      const completed = await completeProcessingCommandAtomic(raw, command, device);
       if (completed < 0) {
         clearDeviceSessionCookie(res);
         return send(res, 409, {
