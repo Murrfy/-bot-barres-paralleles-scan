@@ -555,8 +555,8 @@ function reconcileRealProtectiveUpdatePending(){
   if(!(realProtectiveUpdatePending instanceof Map)||!realProtectiveUpdatePending.size)return;
   const positions=Array.isArray(binanceAccount.positions)?binanceAccount.positions:[];
   for(const [key,pending] of [...realProtectiveUpdatePending.entries()]){
-    if(String(pending?.kind||'').toUpperCase()==='MAX_LOSS'&&Number.isFinite(n(pending?.maxLossUsd,NaN))){
-      if(pending.commandId)void checkRealTrackedCommandStatus(key,pending);
+    if((String(pending?.kind||'').toUpperCase()==='MAX_LOSS'&&Number.isFinite(n(pending?.maxLossUsd,NaN)))||pending?.activeConfig){
+      if(pending.commandId||pending.clientCommandId)void checkRealTrackedCommandStatus(key,pending);
       continue;
     }
     const position=positions.find(p=>String(p?.symbol||'').toUpperCase()===String(pending?.symbol||'').toUpperCase());
@@ -627,7 +627,11 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
   try{
     const mod=await loadControllerRealCommandModule();
     if(normalizedKind==='EXIT'){
-      command=mod.buildControllerUpdateExitCommand(position,wanted,inv.managedExit?.clientOrderId||'');
+      const activeConfig=options?.activeConfig&&typeof options.activeConfig==='object'?clone(options.activeConfig):null;
+      const configDigest=activeConfig?(await sha256Hex(stableStringify(activeConfig))).slice(0,20):'';
+      command=mod.buildControllerUpdateExitCommand(
+        position,wanted,inv.managedExit?.clientOrderId||'',activeConfig,configDigest
+      );
     }else{
       const previous=normalizedKind==='PROGRESSIVE'
         ?inv.managedProgressive?.clientAlgoId||''
@@ -651,6 +655,7 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
   const grossNote=(options?.auto===true||options?.fromSettings===true)?'\nCalcul brut sur variation de prix, hors frais/funding/slippage.':'';
   if(!confirm(`ARGENT RÉEL — Confirmer ${position.symbol} ?\n\n${label} : ${price(wanted)}\n${warning}${grossNote}`))return;
 
+  const trackedConfig=options?.activeConfig&&typeof options.activeConfig==='object'?clone(options.activeConfig):null;
   realProtectiveUpdatePending.set(key,{
     symbol:String(position.symbol||''),
     kind:normalizedKind,
@@ -658,9 +663,11 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
     at:Date.now(),
     ...(normalizedKind==='MAX_LOSS'&&Number.isFinite(n(options?.maxLossUsd,NaN))
       ?{maxLossUsd:n(options.maxLossUsd),clientCommandId:String(command?.clientCommandId||'')}
-      :{})
+      :trackedConfig
+        ?{activeConfig:trackedConfig,clientCommandId:String(command?.clientCommandId||'')}
+        :{})
   });
-  if(normalizedKind==='MAX_LOSS'&&Number.isFinite(n(options?.maxLossUsd,NaN)))persistRealProtectiveUpdatePending();
+  if((normalizedKind==='MAX_LOSS'&&Number.isFinite(n(options?.maxLossUsd,NaN)))||trackedConfig)persistRealProtectiveUpdatePending();
   renderRealPositions();
   try{
     const r=await fetch('/api/zenith-sync?action=command',{
@@ -671,9 +678,12 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.reason||q?.error||('HTTP '+r.status));
     const pending=realProtectiveUpdatePending.get(key);
-    if(pending&&normalizedKind==='MAX_LOSS'&&Number.isFinite(n(pending.maxLossUsd,NaN))){
+    const trackedPending=Boolean(pending&&(
+      (normalizedKind==='MAX_LOSS'&&Number.isFinite(n(pending.maxLossUsd,NaN)))||pending.activeConfig
+    ));
+    if(trackedPending){
       const commandId=String(q.commandId||'');
-      if(!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId))throw new Error('MAX_LOSS_COMMAND_ID_MISSING');
+      if(!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId))throw new Error('TRACKED_COMMAND_ID_MISSING');
       pending.commandId=commandId;
       persistRealProtectiveUpdatePending();
       setTimeout(()=>void checkRealTrackedCommandStatus(key,pending),750);
@@ -684,10 +694,13 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
     return true;
   }catch(e){
     const pending=realProtectiveUpdatePending.get(key);
-    if(normalizedKind==='MAX_LOSS'&&pending&&Number.isFinite(n(pending.maxLossUsd,NaN))&&/^[A-Za-z0-9._:-]{8,128}$/.test(String(pending.clientCommandId||''))){
+    const trackedPending=Boolean(pending&&(
+      (normalizedKind==='MAX_LOSS'&&Number.isFinite(n(pending.maxLossUsd,NaN)))||pending.activeConfig
+    ));
+    if(trackedPending&&/^[A-Za-z0-9._:-]{8,128}$/.test(String(pending.clientCommandId||''))){
       persistRealProtectiveUpdatePending();
       pending.lastError=String(e?.message||'ENVOI_INDETERMINE');
-      setStatus(`${position.symbol} : réponse d’envoi MAX-LOSS indéterminée — Zenith vérifie la commande serveur, sans la renvoyer.`,true);
+      setStatus(`${position.symbol} : réponse d’envoi indéterminée — Zenith vérifie la commande serveur existante, sans la renvoyer.`,true);
       setTimeout(()=>void checkRealTrackedCommandStatus(key,pending),750);
       return false;
     }
