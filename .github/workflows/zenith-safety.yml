@@ -40,6 +40,8 @@ jobs:
         run: node --test scripts/test-audit-secret-hygiene.mjs
       - name: Check Binance read API syntax
         run: node --check api/binance-read.js
+      - name: Check Binance real history API syntax
+        run: node --check api/binance-trade-history.js
       - name: Check Binance reconciliation API syntax
         run: node --check api/binance-reconcile.js
       - name: Check Binance entry preflight API syntax
@@ -224,6 +226,10 @@ jobs:
         run: node --test scripts/test-binance-read-algo-details.mjs
       - name: Test Binance read anti-abuse rate limit
         run: node --test scripts/test-binance-read-rate-limit.mjs
+      - name: Test Binance real trade history
+        run: node --test scripts/test-binance-trade-history.mjs
+      - name: Test Binance real history API and UI wiring
+        run: node --test scripts/test-binance-trade-history-wiring.mjs
       - name: Test idempotent Binance order writer
         run: node --test scripts/test-binance-order-writer.mjs
       - name: Test shared Binance write backoff
