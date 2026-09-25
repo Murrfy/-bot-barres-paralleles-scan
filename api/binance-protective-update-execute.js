@@ -27,6 +27,7 @@ const KEY_RECONCILE_LAST=`${PREFIX}:reconcile:last`;
 const KEY_AUDIT=`${PREFIX}:audit`;
 const KEY_REAL_EXECUTION_ARMED=`${PREFIX}:safety:real-execution-armed`;
 const KEY_MASTER_MODE=`${PREFIX}:master-mode`;
+const KEY_CONTROLLER_STATE=`${PREFIX}:controller-state`;
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -142,14 +143,25 @@ async function requireFinalProtectiveMaster(res,master){
   return false;
 }
 async function readState(){
-  const [runtimeRaw,reportRaw,armRaw,modeRaw]=await Promise.all([
+  const [runtimeRaw,reportRaw,armRaw,modeRaw,controllerRaw]=await Promise.all([
     redis(['GET',KEY_STATE]),redis(['GET',KEY_RECONCILE_LAST]),
     redis(['GET',KEY_REAL_EXECUTION_ARMED]),redis(['GET',KEY_MASTER_MODE]),
+    redis(['GET',KEY_CONTROLLER_STATE]),
   ]);
   return {
     runtimeState:parseJson(runtimeRaw),report:parseJson(reportRaw),
     armRecord:parseJson(armRaw),masterMode:String(modeRaw||'PAUSED').toUpperCase(),
+    controllerState:parseJson(controllerRaw),
   };
+}
+function configuredMaxLossUsd(controllerState,symbol){
+  const data=controllerState?.data&&typeof controllerState.data==='object'?controllerState.data:null;
+  if(!data)return NaN;
+  const sym=String(symbol||'').toUpperCase();
+  const token=data.tokenSettings&&typeof data.tokenSettings==='object'?data.tokenSettings[sym]:null;
+  const global=data.settings&&typeof data.settings==='object'?data.settings:null;
+  const value=n(token?.maxLoss,n(global?.maxLoss,NaN));
+  return value>0?value:NaN;
 }
 function runtimePosition(runtimeState,symbol,direction){
   const list=Array.isArray(runtimeState?.data?.binancePositions)?runtimeState.data.binancePositions:[];
@@ -427,17 +439,28 @@ export default async function handler(req,res){
     const position=runtimePosition(state.runtimeState,update.symbol,update.direction);
     const live=validateUpdateAgainstLivePosition(update,position);
     if(type==='EXEC_UPDATE_PROTECTION'&&update.protectionKind==='MAX_LOSS'){
+      const configuredMaxLoss=configuredMaxLossUsd(state.controllerState,update.symbol);
+      if(!(configuredMaxLoss>0)){
+        return send(res,423,{ok:false,code:'CONFIGURED_MAX_LOSS_UNAVAILABLE',writeAttempted:false});
+      }
       try{
-        validateMaxLossTrigger({
+        const checked=validateMaxLossTrigger({
           position,
           triggerPrice:update.triggerPrice,
-          hardMaxLossUsd:REAL_RISK_LIMITS.maxLossUsd,
+          hardMaxLossUsd:Math.min(configuredMaxLoss,REAL_RISK_LIMITS.maxLossUsd),
         });
+        if(checked.impliedLossUsd>configuredMaxLoss+1e-8){
+          return send(res,409,{
+            ok:false,code:'MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT',
+            impliedLossUsd:checked.impliedLossUsd,configuredMaxLossUsd:configuredMaxLoss,writeAttempted:false
+          });
+        }
       }catch(e){
         return send(res,409,{
           ok:false,
-          code:e?.message||'MAX_LOSS_TRIGGER_INVALID',
+          code:e?.message==='MAX_LOSS_EXCEEDS_SERVER_LIMIT'?'MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT':(e?.message||'MAX_LOSS_TRIGGER_INVALID'),
           impliedLossUsd:Number.isFinite(Number(e?.impliedLossUsd))?Number(e.impliedLossUsd):null,
+          configuredMaxLossUsd:configuredMaxLoss,
           hardMaxLossUsd:REAL_RISK_LIMITS.maxLossUsd,
           writeAttempted:false,
         });
