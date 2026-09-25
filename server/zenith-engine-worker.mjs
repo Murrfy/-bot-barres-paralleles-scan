@@ -1113,7 +1113,8 @@ async function ensureAutomaticTargetForPosition(position){
     }
 
     const live=activePlan.live;
-    const commandId=`auto-target-${live.symbol}-${live.direction}-${live.lifecycleAt||0}`;
+    const targetIdentity=sha256Hex(`${live.quantity}|${activePlan.targetPrice}`).slice(0,12);
+    const commandId=`auto-target-${live.symbol}-${live.direction}-${live.lifecycleAt||0}-${targetIdentity}`;
     const body={
       type:'EXEC_UPDATE_EXIT',phase:'PLACE_NEW',commandId,
       symbol:live.symbol,direction:live.direction,quantity:live.quantity,
