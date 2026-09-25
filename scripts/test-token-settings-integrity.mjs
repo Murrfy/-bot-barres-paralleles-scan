@@ -79,8 +79,8 @@ test('active-position gain target persists and recalculates the active target pr
 
 test('active target changes resize protections without discarding already reached stages',()=>{
   const sync=block('function syncProtectionsToTarget(target)','function fillToken()');
-  assert.match(sync,/const active=openBySymbol\(selectedSymbol\)/);
-  assert.match(sync,/minCount=active\?reachedProtectionCount\(merged,active\.maxProfit\):0/);
+  assert.match(sync,/localActive=openBySymbol\(selectedSymbol\),realActive=controllerRealPositionBySymbol\(selectedSymbol\)/);
+  assert.match(sync,/minCount=localActive\?reachedProtectionCount\(merged,localActive\.maxProfit\):realActive\?\(Array\.isArray\(saved\)\?saved\.length:0\):0/);
   assert.match(sync,/renderProtectionEditor\(merged,target,minCount\)/);
   const protections=block('function protectionsForTarget(stages,target,minCount=0)','function applyProtectionVisibility()');
   assert.match(protections,/Math\.max\(protectionCountForTarget\(target\),Math\.max\(0,Math\.floor\(n\(minCount,0\)\)\)\)/);
@@ -105,4 +105,53 @@ test('global defaults stay visible and are copied only by explicit action',()=>{
   const fill=block('function fillBot()','function setTokenFieldsEnabled()');
   assert.match(fill,/Défauts risque : marge ISOLÉE/);
   assert.match(html,/\$\('saveBotDefaultsBtn'\)\.onclick=saveSelectedAsDefaults/);
+});
+
+
+test('live Binance positions lock unsafe token controls on the iPhone',()=>{
+  const helpers=block('function controllerRealPositionBySymbol(symbol)','function masterRealPositionBySymbol(symbol)');
+  assert.match(helpers,/binanceAccount\.positions/);
+  assert.match(helpers,/anyActivePositionBySymbol\(symbol\)/);
+  const locks=block('function setTokenFieldsEnabled()','function updateTokenPreview()');
+  assert.match(locks,/realActive=controllerRealPositionBySymbol\(selectedSymbol\)/);
+  assert.match(locks,/\['tExactBuy','tExactBuyPrice','tMaxLoss'\]/);
+  assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]/);
+  assert.match(locks,/Position réelle ACTIVE/);
+  const futures=block('async function saveFutures()','function readBotSettings()');
+  assert.match(futures,/anyActivePositionBySymbol\(s\)/);
+  assert.match(html,/async function instantBuySelected\(\)[\s\S]*anyActivePositionBySymbol\(s\)/);
+  assert.match(html,/function tokenDefaults\(\)[\s\S]*anyActivePositionBySymbol\(selectedSymbol\)/);
+});
+
+test('live Binance target preview uses actual entry quantity and direction',()=>{
+  const helpers=block('function controllerRealPositionBySymbol(symbol)','function masterRealPositionBySymbol(symbol)');
+  assert.match(helpers,/realPositionPnlAtPrice\(position,mark\)/);
+  assert.match(helpers,/realPositionPriceForPnl\(position,pnl\)/);
+  assert.match(helpers,/amount>0\?1:-1/);
+  const preview=block('function updateTokenPreview()','function protectionDraft()');
+  assert.match(preview,/realActive=controllerRealPositionBySymbol\(selectedSymbol\)/);
+  assert.match(preview,/realPositionPnlAtPrice\(realActive,sale\)/);
+  assert.match(preview,/realPositionPriceForPnl\(realActive,target\)/);
+});
+
+test('live Binance target edits synchronize central state before protected exit replacement',()=>{
+  const realSave=block('async function saveRealActiveTokenSettings','async function saveToken()');
+  assert.match(realSave,/!inv\.managedMaxLoss\|\|inv\.maxLossConflict/);
+  assert.match(realSave,/inv\.progressiveConflict/);
+  assert.match(realSave,/buildRealProtectionLevels\(\{position,targetProfitUsd:manualTarget,maxLossUsd:currentMaxLoss,priceFilter\}\)/);
+  assert.match(realSave,/tokenSettings\[s\]=\{\.\.\.old,targetProfit:manualTarget,manualTargetProfit:manualTarget,protectionStages:nextProtections/);
+  assert.match(realSave,/const centralOk=await syncControllerCloudStateNow\(\)/);
+  assert.match(realSave,/queueRealProtectiveUpdate\(position,'EXIT',\{wantedPrice:wantedExit,fromSettings:true\}\)/);
+  assert.match(realSave,/if\(!queued\)[\s\S]*previousOwn[\s\S]*syncControllerCloudStateNow/);
+  const queue=block('async function queueRealProtectiveUpdate(position,kind,options={})','function renderRealEntryOrders()');
+  assert.match(queue,/wanted=parsePrice\(options\?\.wantedPrice,0\)/);
+  assert.match(queue,/realProtectiveUpdatePending\.set/);
+  assert.match(queue,/setTimeout\(\(\)=>refreshBinanceAccount\(\),1000\);[\s\S]*return true/);
+});
+
+test('live protection editor never shrinks below the currently stored stage count',()=>{
+  const sync=block('function syncProtectionsToTarget(target)','function fillToken()');
+  assert.match(sync,/realActive\?\(Array\.isArray\(saved\)\?saved\.length:0\):0/);
+  const fill=block('function fillToken()','async function saveFutures()');
+  assert.match(fill,/realActive\?\(Array\.isArray\(shownProtections\)\?shownProtections\.length:0\):0/);
 });
