@@ -638,34 +638,22 @@ export default async function handler(req,res){
         writeAttempted:false,plan,protection:exactOrder,
       });
     }
-    const submittedIntent={
-      ...storedTransition,state:'ENTRY_SUBMITTED',
-      entryClientOrderId:plan.params.newClientOrderId,validatedAt:Date.now(),
-    };
-    const checkedSubmittedIntent=normalizeEntryTransition(submittedIntent,{now:Date.now()});
-    if(!checkedSubmittedIntent.ok){
-      return send(res,500,{
-        ok:false,code:'ENTRY_TRANSITION_SUBMIT_STATE_INVALID',
-        reason:checkedSubmittedIntent.reason,writeAttempted:false,ambiguous:false,
-      });
-    }
-
-    // Write-ahead fence: persist the exact deterministic LIMIT identity before Binance POST.
-    // If the engine dies after Binance accepts the order, reconciliation can still prove
-    // that this exact LIMIT belongs to the prepared MAX-LOSS transition.
-    await writeEntryTransition(commandId,checkedSubmittedIntent.transition);
-    storedTransition=checkedSubmittedIntent.transition;
-    await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
-      at:Date.now(),kind:'BINANCE_ENTRY_ORDER_INTENT_COMMITTED',
-      deviceId:master.deviceId,commandId,symbol,side,limitPrice,
-      quantity:Number(plan.params.quantity),clientOrderId:plan.params.newClientOrderId,
-      protectionClientAlgoId:storedTransition.protectionClientAlgoId,
-    })]);
-    await redis(['LTRIM',KEY_AUDIT,'0','199']);
-
     const result=await placeStandardOrderIdempotent({
       apiKey,secret,orderParams:plan.params,writesEnabled:true,timestamp:preflight.serverTime,
     });
+    const submitted={
+      ...storedTransition,state:'ENTRY_SUBMITTED',
+      entryClientOrderId:plan.params.newClientOrderId,validatedAt:Date.now(),
+    };
+    const checkedSubmitted=normalizeEntryTransition(submitted,{now:Date.now()});
+    if(!checkedSubmitted.ok){
+      return send(res,500,{
+        ok:false,code:'ENTRY_TRANSITION_SUBMIT_STATE_INVALID',
+        reason:checkedSubmitted.reason,writeAttempted:result.writeAttempted===true,ambiguous:true,
+      });
+    }
+    await writeEntryTransition(commandId,checkedSubmitted.transition);
+    storedTransition=checkedSubmitted.transition;
 
     await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
       at:Date.now(),kind:'BINANCE_ENTRY_ORDER_DISPATCH',
