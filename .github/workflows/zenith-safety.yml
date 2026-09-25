@@ -280,6 +280,8 @@ jobs:
         run: node --test scripts/test-active-maxloss-transition.mjs
       - name: Test ACKed active MAX-LOSS config refresh
         run: node --test scripts/test-active-maxloss-config-refresh.mjs
+      - name: Test confirmed active target and protection edits
+        run: node --test scripts/test-active-target-protection-confirmation.mjs
       - name: Test MASTER command worker routing
         run: node --test scripts/test-master-worker-routing.mjs
       - name: Test idempotent real entry cancellation
