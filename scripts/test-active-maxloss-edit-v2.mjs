@@ -44,7 +44,7 @@ test('controller command carries bounded requested MAX-LOSS and keeps it in dedu
 });
 
 test('iPhone commits active MAX-LOSS locally only from terminal server ACK metadata',()=>{
-  const status=block(html,'async function checkRealMaxLossCommandStatus','function reconcileRealProtectiveUpdatePending()');
+  const status=block(html,'async function checkRealTrackedCommandStatus','function reconcileRealProtectiveUpdatePending()');
   assert.match(status,/status==='ACK'/);
   assert.match(status,/q\.activeMaxLossCommitted===true/);
   assert.match(status,/controllerStateHash/);
@@ -56,27 +56,27 @@ test('iPhone commits active MAX-LOSS locally only from terminal server ACK metad
   assert.match(status,/saveLocalOnly\(\)/);
   assert.doesNotMatch(status,/syncControllerCloudStateNow\(\)/);
   const reconcileBlock=block(html,'function reconcileRealProtectiveUpdatePending()','async function queueRealProtectiveUpdate');
-  assert.match(reconcileBlock,/void checkRealMaxLossCommandStatus\(key,pending\)/);
+  assert.match(reconcileBlock,/void checkRealTrackedCommandStatus\(key,pending\)/);
   assert.match(reconcileBlock,/continue;/);
 });
 
 test('active MAX-LOSS submission identity survives iPhone reload without resending the command',()=>{
   assert.match(html,/ZENITH_REAL_PROTECTIVE_PENDING_KEY='zenith_real_protective_pending_v1'/);
-  const persist=block(html,'function persistRealProtectiveUpdatePending','async function checkRealMaxLossCommandStatus');
+  const persist=block(html,'function persistRealProtectiveUpdatePending','async function checkRealTrackedCommandStatus');
   assert.match(persist,/commandId/);
   assert.match(persist,/clientCommandId/);
   assert.match(persist,/maxLossUsd/);
   assert.match(persist,/localStorage\.setItem\(ZENITH_REAL_PROTECTIVE_PENDING_KEY/);
   assert.match(persist,/restoreRealProtectiveUpdatePending/);
-  const status=block(html,'async function checkRealMaxLossCommandStatus','function reconcileRealProtectiveUpdatePending()');
+  const status=block(html,'async function checkRealTrackedCommandStatus','function reconcileRealProtectiveUpdatePending()');
   assert.match(status,/clientCommandId=/);
   assert.match(status,/clientCommandId='\+encodeURIComponent/);
   assert.match(status,/status==='NOT_FOUND'/);
   assert.match(status,/pending\.commandId=resolvedCommandId/);
-  const queue=block(html,'async function queueRealProtectiveUpdate','function renderRealEntryOrders');
+  const queue=block(html,'async function queueRealProtectiveUpdate','async function queueRealActiveConfigUpdate');
   assert.match(queue,/clientCommandId:String\(command\?\.clientCommandId\|\|''\)/);
   assert.match(queue,/persistRealProtectiveUpdatePending\(\);[\s\S]*fetch\('\/api\/zenith-sync\?action=command'/);
-  assert.match(queue,/réponse d’envoi MAX-LOSS indéterminée/);
+  assert.match(queue,/réponse d’envoi indéterminée/);
   assert.doesNotMatch(queue,/ENVOI_INDETERMINE[\s\S]*fetch\('\/api\/zenith-sync\?action=command'/);
   assert.match(html,/load\(\);restoreRealProtectiveUpdatePending\(\)/);
 });
