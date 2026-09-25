@@ -11,13 +11,14 @@ function block(source,start,end){
   return source.slice(a,b);
 }
 
-test('engine accepts active config drift only when it is MAX-LOSS-only and still within margin',()=>{
-  const fn=block(worker,'function activeMaxLossOnlyConfigRefreshAllowed','async function syncControllerConfig');
+test('engine accepts active config drift only through the narrow safe token allowlist',()=>{
+  const fn=block(worker,'function activeSafeTokenConfigRefreshAllowed','async function syncControllerConfig');
   assert.match(fn,/\['settings','manualTokens','validated'\]/);
-  assert.match(fn,/delete beforeRest\.maxLoss;delete afterRest\.maxLoss/);
-  assert.match(fn,/delete beforeRest\.marginType;delete afterRest\.marginType/);
+  assert.match(fn,/safeMutable=new Set/);
+  assert.match(fn,/'maxLoss'.*'marginType'.*'targetProfit'.*'manualTargetProfit'.*'protectionStages'/s);
   assert.match(fn,/maxLoss>=2&&maxLoss<=REAL_RISK_LIMITS\.maxLossUsd/);
   assert.match(fn,/maxLoss>margin\+1e-8/);
+  assert.match(fn,/validActiveProtectionStages\(after\.protectionStages\)/);
   assert.match(fn,/ISOLATED/);
   assert.match(fn,/return changed===1/);
 });
@@ -25,7 +26,7 @@ test('engine accepts active config drift only when it is MAX-LOSS-only and still
 test('engine only applies that restricted drift after server already reports synchronized state',()=>{
   const fn=block(worker,'async function syncControllerConfig','async function loadAutoHighWater');
   assert.match(fn,/if\(data\.synchronized===true&&!localMatches\)/);
-  assert.match(fn,/activeMaxLossOnlyConfigRefreshAllowed\(runtime\.config,controllerState\.data\)/);
+  assert.match(fn,/activeSafeTokenConfigRefreshAllowed\(runtime\.config,controllerState\.data\)/);
   assert.match(fn,/ENGINE_LOCAL_CONFIG_DRIFT_ACTIVE/);
   assert.match(fn,/const applied=await applyControllerState\(controllerState\)/);
   assert.match(fn,/runtime\.appliedRevision=applied\.revision/);
