@@ -261,11 +261,20 @@ export default async function handler(req,res){
     const symbol=String(req.body?.symbol||'').toUpperCase();
     const clientOrderId=String(req.body?.clientOrderId||'');
     const commandId=String(req.body?.commandId||'');
-    if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!clientOrderId||clientOrderId.length>36){
-      return send(res,400,{ok:false,code:'CANCEL_ENTRY_REQUEST_INVALID',writeAttempted:false});
+    if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!/^zth-ENT-[a-f0-9]{24}$/i.test(clientOrderId)){
+      return send(res,400,{ok:false,code:'CANCEL_TARGET_NOT_ZENITH_ENTRY',writeAttempted:false});
     }
     const liveOrder=runtimeEntryOrder(runtimeState,symbol,clientOrderId);
     if(!liveOrder)return send(res,409,{ok:false,code:'ENTRY_ORDER_NOT_OPEN',writeAttempted:false});
+    if(String(liveOrder.side||'').toUpperCase()!=='BUY'){
+      return send(res,409,{ok:false,code:'CANCEL_TARGET_NOT_BUY',writeAttempted:false});
+    }
+    if(String(liveOrder.type||'').toUpperCase()!=='LIMIT'){
+      return send(res,409,{ok:false,code:'CANCEL_TARGET_NOT_LIMIT',writeAttempted:false});
+    }
+    if(String(liveOrder.timeInForce||'').toUpperCase()!=='GTC'){
+      return send(res,409,{ok:false,code:'CANCEL_TARGET_NOT_GTC',writeAttempted:false});
+    }
     if(liveOrder.reduceOnly===true||liveOrder.reduceOnly==='true'){
       return send(res,409,{ok:false,code:'CANCEL_TARGET_IS_REDUCE_ONLY',writeAttempted:false});
     }
