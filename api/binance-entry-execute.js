@@ -520,9 +520,9 @@ export default async function handler(req,res){
         code:Number(e?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
         retryAfterSeconds:retryAfter,
         binanceStatus:Number(e?.status)||0,
-        binanceCode:e?.code??null,
+        binanceCode:e?.binanceCode??(typeof e?.code==='number'?e.code:null),
         ambiguous:false,
-        writeAttempted:false,
+        writeAttempted:e?.writeAttempted===true,
       });
     }
     const internalCode=String(e?.code||e?.message||'');
