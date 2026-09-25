@@ -4507,6 +4507,15 @@ export default async function handler(req, res) {
         "local roleIssuedAt = tonumber(redis.call('GET', KEYS[5]) or '0') or 0",
         "local sessionCreatedAt = tonumber(ARGV[5]) or 0",
         "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return {-3, tostring(roleIssuedAt), ''} end",
+        "if redis.call('LLEN', KEYS[6]) > 0 or redis.call('LLEN', KEYS[7]) > 0 then",
+        "  local currentRaw = redis.call('GET', KEYS[1])",
+        "  local currentRev = 0",
+        "  if currentRaw then",
+        "    local ok, current = pcall(cjson.decode, currentRaw)",
+        "    if ok and current and current['revision'] then currentRev = tonumber(current['revision']) or 0 end",
+        "  end",
+        "  return {-5, tostring(currentRev), currentRaw or ''}",
+        "end",
         "local currentRaw = redis.call('GET', KEYS[1])",
         "local currentRev = 0",
         "if currentRaw then",
@@ -4531,9 +4540,10 @@ export default async function handler(req, res) {
       ].join('\n');
 
       const result = await redis([
-        'EVAL', script, '5',
+        'EVAL', script, '7',
         KEY_CONTROLLER_STATE, KEY_CONTROLLER_REV, KEY_AUDIT,
         KEY_CONTROLLER_DEVICE, roleAssignmentKey(PREFIX, 'controller'),
+        KEY_PENDING, KEY_PROCESSING,
         String(expectedRevision),
         JSON.stringify(snapshotTemplate),
         JSON.stringify(auditTemplate),
@@ -4555,6 +4565,16 @@ export default async function handler(req, res) {
       }
       if (resultCode === -4) {
         return send(res, 500, { ok: false, code: 'CONTROLLER_STATE_REVISION_SERIALIZATION_FAILED' });
+      }
+      if (resultCode === -5) {
+        let state = null;
+        try { state = rawState ? JSON.parse(rawState) : null; } catch {}
+        return send(res, 409, {
+          ok:false,
+          code:'CONTROLLER_STATE_COMMAND_IN_FLIGHT',
+          currentRevision,
+          state,
+        });
       }
 
       let state = null;
