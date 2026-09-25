@@ -17,6 +17,8 @@ test('watch arms above buy then triggers once on downward crossing',()=>{
   r=evaluateEntryWatchTick({definition:def,state:r.state,price:100,eventId:2,eventTime:1200,allowTrigger:true});
   assert.equal(r.action,'TRIGGER');
   assert.equal(r.state.triggeredAt,1200);
+  assert.equal(r.signal.limitPrice,100);
+  assert.equal(r.signal.delayedCurrentPrice,false);
   assert.equal(
     evaluateEntryWatchTick({definition:def,state:r.state,price:99,eventId:3,eventTime:1300,allowTrigger:true}).action,
     'ALREADY_TRIGGERED'
@@ -30,10 +32,13 @@ test('crossing without a free real slot enters a persistent 50-second pending wi
   assert.equal(r.state.pendingUntil,52100);
   assert.equal(r.state.triggeredAt,0);
 
-  r=evaluateEntryWatchTick({definition:def,state:r.state,price:99,eventId:12,eventTime:3000,allowTrigger:true});
+  r=evaluateEntryWatchTick({definition:def,state:r.state,price:103,eventId:12,eventTime:3000,allowTrigger:true});
   assert.equal(r.action,'TRIGGER');
   assert.equal(r.state.pendingUntil,0);
   assert.equal(r.state.triggeredAt,3000);
+  assert.equal(r.signal.limitPrice,103);
+  assert.equal(r.signal.observedPrice,103);
+  assert.equal(r.signal.delayedCurrentPrice,true);
 });
 
 test('pending window expires instead of buying late',()=>{
