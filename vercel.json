@@ -3,6 +3,9 @@
     "api/binance-read.js": {
       "maxDuration": 10
     },
+    "api/binance-history.js": {
+      "maxDuration": 30
+    },
     "api/binance-reconcile.js": {
       "maxDuration": 30
     },
