@@ -17,6 +17,7 @@ const REDIS_TOKEN =
   process.env.KV_REST_API_TOKEN;
 
 const PREFIX = 'zenith:v1';
+const KEY_CONTROLLER_STATE = `${PREFIX}:controller-state`;
 const ENTRY_PREFLIGHT_HTTP_RATE_LIMIT_PER_MINUTE = 6;
 
 function send(res, status, body) {
@@ -152,6 +153,19 @@ function firstForSymbol(value, symbol) {
   return rows.find(x => String(x?.symbol || '').toUpperCase() === symbol) || null;
 }
 
+export async function readConfiguredMaxActivePositions() {
+  const raw = await redis(['GET', KEY_CONTROLLER_STATE]);
+  let state = null;
+  try { state = raw ? JSON.parse(raw) : null; } catch {}
+  const value = Number(state?.data?.settings?.maxActive);
+  if (!Number.isInteger(value) || value < 1 || value > REAL_RISK_LIMITS.maxActivePositions) {
+    const e = new Error('MAX_ACTIVE_CONFIG_INVALID');
+    e.code = 'MAX_ACTIVE_CONFIG_INVALID';
+    throw e;
+  }
+  return value;
+}
+
 export async function runLiveEntryPreflight({
   apiKey,
   secret,
@@ -160,6 +174,7 @@ export async function runLiveEntryPreflight({
   leverage,
   maxLoss,
   requestedPrice = 0,
+  maxActivePositions = REAL_RISK_LIMITS.maxActivePositions,
 } = {}) {
   if (!apiKey || !secret) throw new Error('BINANCE_CREDENTIALS_REQUIRED');
   const sym = String(symbol || '').trim().toUpperCase();
@@ -191,8 +206,8 @@ export async function runLiveEntryPreflight({
     signedGet('/fapi/v1/positionSide/dual', apiKey, secret, serverTime),
     signedGet('/fapi/v3/account', apiKey, secret, serverTime),
     signedGet('/fapi/v3/positionRisk', apiKey, secret, serverTime),
-    signedGet('/fapi/v1/openOrders', apiKey, secret, serverTime, { symbol: sym }),
-    signedGet('/fapi/v1/openAlgoOrders', apiKey, secret, serverTime, { symbol: sym, algoType: 'CONDITIONAL' }),
+    signedGet('/fapi/v1/openOrders', apiKey, secret, serverTime),
+    signedGet('/fapi/v1/openAlgoOrders', apiKey, secret, serverTime, { algoType: 'CONDITIONAL' }),
   ]);
 
   const symbolInfo = (Array.isArray(exchangeInfo?.symbols) ? exchangeInfo.symbols : [])
@@ -217,6 +232,7 @@ export async function runLiveEntryPreflight({
     standardOrders,
     algoOrders,
     availableBalanceUsdt: number(usdt?.availableBalance, number(account?.availableBalance, -1)),
+    maxActivePositions,
   });
 
   return {
@@ -284,6 +300,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    const maxActivePositions = await readConfiguredMaxActivePositions();
     const result = await runLiveEntryPreflight({
       apiKey,
       secret,
@@ -292,6 +309,7 @@ export default async function handler(req, res) {
       leverage,
       maxLoss,
       requestedPrice,
+      maxActivePositions,
     });
     return send(res, 200, {
       ok: true,
