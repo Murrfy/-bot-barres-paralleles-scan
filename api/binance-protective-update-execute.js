@@ -534,6 +534,43 @@ export default async function handler(req,res){
     const filterReason=priceFilterReason(info,checkedPrice);
     if(filterReason)return send(res,409,{ok:false,code:filterReason,writeAttempted:false});
 
+    if(type==='EXEC_UPDATE_EXIT'&&req.body?.activeConfig&&typeof req.body.activeConfig==='object'&&!Array.isArray(req.body.activeConfig)){
+      const activeConfig=req.body.activeConfig;
+      const targetProfit=n(activeConfig.targetProfit,NaN);
+      const manualTarget=n(activeConfig.manualTargetProfit,NaN);
+      const exactEnabled=activeConfig.exactSaleEnabled===true;
+      const exactPrice=n(activeConfig.exactSalePrice,0);
+      if(!(targetProfit>0)||!(manualTarget>0)||Math.abs(targetProfit-manualTarget)>1e-8){
+        return send(res,409,{ok:false,code:'ACTIVE_TARGET_CONFIG_INVALID',writeAttempted:false});
+      }
+      if(exactEnabled){
+        if(!(exactPrice>0)||Math.abs(exactPrice-update.targetPrice)>Math.max(1e-9,Math.abs(update.targetPrice)*1e-10)){
+          return send(res,409,{ok:false,code:'ACTIVE_EXACT_SALE_PRICE_MISMATCH',writeAttempted:false});
+        }
+      }else{
+        if(exactPrice!==0){
+          return send(res,409,{ok:false,code:'ACTIVE_EXACT_SALE_PRICE_MUST_BE_ZERO',writeAttempted:false});
+        }
+        const priceFilter=(Array.isArray(info?.filters)?info.filters:[]).find(f=>f?.filterType==='PRICE_FILTER')||{};
+        const tick=n(priceFilter.tickSize,NaN);
+        if(!(tick>0)){
+          return send(res,409,{ok:false,code:'PRICE_TICK_REQUIRED',writeAttempted:false});
+        }
+        const actualTargetProfit=update.direction==='LONG'
+          ?(update.targetPrice-live.entryPrice)*live.liveQuantity
+          :(live.entryPrice-update.targetPrice)*live.liveQuantity;
+        const allowedRounding=tick*live.liveQuantity+1e-8;
+        if(actualTargetProfit+1e-8<targetProfit||actualTargetProfit-targetProfit>allowedRounding){
+          return send(res,409,{
+            ok:false,code:'ACTIVE_TARGET_PRICE_PROFIT_MISMATCH',
+            requestedTargetProfitUsd:targetProfit,
+            actualTargetProfitUsd:Number.isFinite(actualTargetProfit)?actualTargetProfit:null,
+            writeAttempted:false
+          });
+        }
+      }
+    }
+
     let result=null,plan=null;
     if(type==='EXEC_UPDATE_EXIT'){
       const expectedSide=sideForDirection(update.direction);
