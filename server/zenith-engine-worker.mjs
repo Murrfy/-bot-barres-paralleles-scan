@@ -15,6 +15,7 @@ import {
   buildMasterCommandDispatch,
   orphanZenithCleanupOrders,
   protectionOnlyMismatchTarget,
+  missingMaxLossRepairTarget,
 } from '../lib/master-command-dispatch.mjs';
 import {
   streamPositionQuantity,
@@ -546,12 +547,11 @@ async function ensurePriceFilter(symbol){
   return autoProtection.priceFilters.get(key)||null;
 }
 
-async function assertAutoProtectionPanic(reason){
-  autoProtection.lastError=String(reason||'AUTO_PROTECTION_FAIL_CLOSED');
-  try{
-    await syncApi('emergency-stop',{method:'POST',body:{}});
-  }catch{}
-  await invalidateStream(autoProtection.lastError).catch(()=>{});
+async function failClosedAutoProtection(reason){
+  const code=String(reason||'AUTO_PROTECTION_FAIL_CLOSED');
+  autoProtection.lastError=code;
+  runtime.error=code;
+  await invalidateStream(code).catch(()=>{});
 }
 
 async function executeAutoProgressive(plan){
@@ -577,7 +577,7 @@ async function executeAutoProgressive(plan){
   if(!placed.response.ok||placed.data?.ok!==true){
     const reason='AUTO_PLACE_'+String(placed.data?.code||placed.data?.reason||('HTTP_'+placed.response.status));
     if(placed.data?.writeAttempted===true||placed.data?.ambiguous===true||placed.data?.result?.ambiguous===true){
-      await assertAutoProtectionPanic(reason+'_AMBIGUOUS');
+      await failClosedAutoProtection(reason+'_AMBIGUOUS');
     }else{
       autoProtection.lastError=reason;
     }
@@ -586,12 +586,12 @@ async function executeAutoProgressive(plan){
 
   const clientId=String(placed.data?.plan?.params?.clientAlgoId||'');
   if(!clientId){
-    await assertAutoProtectionPanic('AUTO_NEW_PROTECTION_ID_MISSING');
+    await failClosedAutoProtection('AUTO_NEW_PROTECTION_ID_MISSING');
     return false;
   }
   const order=await waitForStreamOrder({kind:'ALGO',clientId,terminal:false},3500);
   if(!order){
-    await assertAutoProtectionPanic('AUTO_NEW_PROTECTION_NOT_STREAM_CONFIRMED');
+    await failClosedAutoProtection('AUTO_NEW_PROTECTION_NOT_STREAM_CONFIRMED');
     return false;
   }
   if(String(order?.type||'').toUpperCase()!=='STOP'||
@@ -600,13 +600,13 @@ async function executeAutoProgressive(plan){
      !realNumberMatches(order?.triggerPrice,level.triggerPrice)||
      !realNumberMatches(order?.price,level.limitPrice)||
      (order?.priceMatch&&String(order.priceMatch).toUpperCase()!=='NONE')){
-    await assertAutoProtectionPanic('AUTO_NEW_PROTECTION_IDENTITY_MISMATCH');
+    await failClosedAutoProtection('AUTO_NEW_PROTECTION_IDENTITY_MISMATCH');
     return false;
   }
 
   await publishRuntime();
   if(await awaitReconciliation()!==true){
-    await assertAutoProtectionPanic('AUTO_POST_PLACE_RECONCILIATION_FAILED');
+    await failClosedAutoProtection('AUTO_POST_PLACE_RECONCILIATION_FAILED');
     return false;
   }
 
@@ -615,7 +615,7 @@ async function executeAutoProgressive(plan){
       ...body,phase:'CANCEL_OLD',newClientAlgoId:clientId
     });
     if(!canceled.response.ok||canceled.data?.ok!==true){
-      await assertAutoProtectionPanic(
+      await failClosedAutoProtection(
         'AUTO_CANCEL_'+String(canceled.data?.code||canceled.data?.reason||('HTTP_'+canceled.response.status))
       );
       return false;
@@ -627,11 +627,11 @@ async function executeAutoProgressive(plan){
       terminal?.status||canceled.data?.result?.algoOrder?.algoStatus||''
     ).toUpperCase();
     if(!['CANCELED','EXPIRED','REJECTED'].includes(terminalStatus)){
-      await assertAutoProtectionPanic('AUTO_OLD_PROTECTION_CANCEL_NOT_CONFIRMED');
+      await failClosedAutoProtection('AUTO_OLD_PROTECTION_CANCEL_NOT_CONFIRMED');
       return false;
     }
     if(await awaitReconciliation()!==true){
-      await assertAutoProtectionPanic('AUTO_POST_CANCEL_RECONCILIATION_FAILED');
+      await failClosedAutoProtection('AUTO_POST_CANCEL_RECONCILIATION_FAILED');
       return false;
     }
   }
@@ -795,12 +795,12 @@ async function recoverMissedAggTrades(symbol){
       await sleep(40);
     }
     if(pages>=25){
-      await assertAutoProtectionPanic('MARK_RECOVERY_PARTIAL_'+wanted);
+      await failClosedAutoProtection('MARK_RECOVERY_PARTIAL_'+wanted);
       return false;
     }
     return true;
   }catch(error){
-    await assertAutoProtectionPanic(
+    await failClosedAutoProtection(
       'MARK_RECOVERY_FAILED_'+cleanReason(error?.message||'BINANCE_PUBLIC_RECOVERY','BINANCE_PUBLIC_RECOVERY')
     );
     return false;
@@ -870,7 +870,7 @@ async function processMarkPayload(payload){
   if(markStream.recovering.has(symbol)){
     const queued=markStream.pendingAggTrades.get(symbol)||[];
     if(queued.length>=1000){
-      await assertAutoProtectionPanic('MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol);
+      await failClosedAutoProtection('MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol);
       return false;
     }
     queued.push(row);
@@ -1071,20 +1071,16 @@ function repairPriceFilters(){
   return Object.fromEntries([...autoProtection.priceFilters.entries()].map(([symbol,filter])=>[symbol,clone(filter)]));
 }
 
-async function assertRepairPanic(reason){
+async function markMaxLossRepairFailure(reason){
   const code=String(reason||'AUTO_MAX_LOSS_REPAIR_FAIL_CLOSED');
-  try{
-    const panic=await syncApi('emergency-stop',{method:'POST',body:{}});
-    if(!panic.response.ok||panic.data?.ok!==true){
-      throw new Error(panic.data?.code||('HTTP_'+panic.response.status));
-    }
-  }catch(error){
-    logError('AUTO_MAX_LOSS_PANIC_FAILED',error,{reason:code});
-  }
+  runtime.error=code;
+  stream.lastError=code;
+  await publishRuntime().catch(()=>{});
+  scheduleReconcile(1500);
+  return code;
 }
-
 async function repairMissingMaxLoss(report){
-  const exactTarget=protectionOnlyMismatchTarget(report);
+  const exactTarget=missingMaxLossRepairTarget(report);
   if(!exactTarget)return {handled:false,repaired:false,reason:'NO_EXACT_REPAIR_TARGET'};
 
   const symbol=String(exactTarget.split(':')[0]||'').toUpperCase();
@@ -1103,12 +1099,11 @@ async function repairMissingMaxLoss(report){
   });
 
   if(plan.action==='NONE')return {handled:false,repaired:false,reason:plan.reason};
-  await assertRepairPanic('AUTO_MAX_LOSS_REPAIR_'+String(plan.reason||'REQUIRED'));
 
   if(plan.action!=='REPAIR'){
-    const reason='AUTO_MAX_LOSS_REPAIR_'+String(plan.reason||'BLOCKED');
-    await invalidateStream(reason);
-    runtime.error=reason;
+    const reason=await markMaxLossRepairFailure(
+      'AUTO_MAX_LOSS_REPAIR_'+String(plan.reason||'BLOCKED')
+    );
     return {handled:true,repaired:false,reason};
   }
 
@@ -1128,8 +1123,7 @@ async function repairMissingMaxLoss(report){
     const reason='AUTO_MAX_LOSS_REPAIR_PLACE_'+String(
       placed.data?.code||placed.data?.reason||placed.data?.error||('HTTP_'+placed.response.status)
     );
-    await invalidateStream(reason);
-    runtime.error=reason;
+    await markMaxLossRepairFailure(reason);
     return {handled:true,repaired:false,reason};
   }
 
@@ -1232,13 +1226,10 @@ async function reconcile(secondPass=false){
       return reconcile(true);
     }
 
-    const repairTarget=protectionOnlyMismatchTarget(data.report);
+    const repairTarget=missingMaxLossRepairTarget(data.report);
     if(repairTarget){
       if(secondPass){
-        const reason='AUTO_MAX_LOSS_REPAIR_RECONCILIATION_FAILED';
-        await assertRepairPanic(reason);
-        await invalidateStream(reason);
-        runtime.error=reason;
+        await markMaxLossRepairFailure('AUTO_MAX_LOSS_REPAIR_RECONCILIATION_FAILED');
         return false;
       }
       const repair=await repairMissingMaxLoss(data.report);
