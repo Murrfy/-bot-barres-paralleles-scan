@@ -70,6 +70,8 @@ jobs:
         run: node --test scripts/test-entry-transition-reconcile-wiring.mjs
       - name: Test write-ahead entry restart recovery
         run: node --test scripts/test-entry-writeahead-recovery.mjs
+      - name: Test pending entry transition expiry safety
+        run: node --test scripts/test-entry-transition-expiry-safety.mjs
       - name: Test fail-closed reconciliation attempt fence
         run: node --test scripts/test-reconciliation-attempt-fence.mjs
       - name: Test orphan protection cleanup safety
