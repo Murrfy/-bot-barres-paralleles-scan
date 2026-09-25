@@ -318,8 +318,8 @@ export default async function handler(req,res){
   }
 
   const exitMode=String(req.body?.exitMode||'PROTECTIVE_IOC').toUpperCase();
-  if(!['PROTECTIVE_IOC','MARKET_LAST_RESORT'].includes(exitMode)){
-    return send(res,400,{ok:false,code:'EXIT_MODE_INVALID',writeAttempted:false});
+  if(exitMode!=='PROTECTIVE_IOC'){
+    return send(res,400,{ok:false,code:'EXIT_MODE_LIMIT_REQUIRED',writeAttempted:false});
   }
 
   let plan;
