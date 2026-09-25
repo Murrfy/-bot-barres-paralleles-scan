@@ -5,7 +5,11 @@ import { planEntrySymbolConfiguration } from '../lib/binance-symbol-config.mjs';
 function config(overrides={}){
   return {
     symbol:'BTCUSDT',
+    desiredMargin:500,
     desiredLeverage:7,
+    bracketInfo:{symbol:'BTCUSDT',brackets:[
+      {bracket:1,initialLeverage:10,notionalFloor:0,notionalCap:10000}
+    ]},
     symbolConfig:{symbol:'BTCUSDT',marginType:'ISOLATED',leverage:7},
     positions:[],
     standardOrders:[],
@@ -63,4 +67,41 @@ test('configuration is never changed while any symbol order exists',()=>{
 
 test('server leverage cap remains 10 even if Binance supports more',()=>{
   assert.throws(()=>planEntrySymbolConfiguration(config({desiredLeverage:11})),/LEVERAGE_OVER_SERVER_CAP/);
+});
+
+
+test('selected amount and leverage are rejected before mutation when Binance bracket is exceeded',()=>{
+  const plan=planEntrySymbolConfiguration(config({
+    desiredMargin:1000,
+    desiredLeverage:10,
+    bracketInfo:{symbol:'BTCUSDT',brackets:[
+      {bracket:1,initialLeverage:5,notionalFloor:0,notionalCap:20000}
+    ]},
+    symbolConfig:{symbol:'BTCUSDT',marginType:'ISOLATED',leverage:5},
+  }));
+  assert.equal(plan.ok,false);
+  assert.equal(plan.reason,'LEVERAGE_BRACKET_EXCEEDED');
+  assert.equal(plan.desiredNotional,10000);
+  assert.equal(plan.bracketMaxLeverage,5);
+});
+
+test('selected amount determines the applicable Binance leverage bracket',()=>{
+  const plan=planEntrySymbolConfiguration(config({
+    desiredMargin:800,
+    desiredLeverage:10,
+    bracketInfo:{symbol:'BTCUSDT',brackets:[
+      {bracket:1,initialLeverage:10,notionalFloor:0,notionalCap:5000},
+      {bracket:2,initialLeverage:8,notionalFloor:5000,notionalCap:20000}
+    ]},
+  }));
+  assert.equal(plan.ok,false);
+  assert.equal(plan.reason,'LEVERAGE_BRACKET_EXCEEDED');
+  assert.equal(plan.desiredNotional,8000);
+  assert.equal(plan.bracketMaxLeverage,8);
+});
+
+test('missing Binance leverage bracket fails closed',()=>{
+  assert.throws(()=>planEntrySymbolConfiguration(config({
+    bracketInfo:{symbol:'BTCUSDT',brackets:[]},
+  })),/LEVERAGE_BRACKET_UNAVAILABLE/);
 });
