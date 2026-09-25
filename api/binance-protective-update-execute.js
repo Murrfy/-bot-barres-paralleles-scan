@@ -456,6 +456,25 @@ export default async function handler(req,res){
         return send(res,423,{ok:false,code:'CONFIGURED_MAX_LOSS_UNAVAILABLE',writeAttempted:false});
       }
       if(activeEdit){
+        if(!update.previousClientAlgoId){
+          return send(res,409,{ok:false,code:'PREVIOUS_MAX_LOSS_ID_REQUIRED',writeAttempted:false});
+        }
+        const previousMaxLoss=findAlgo(state.runtimeState,update.symbol,update.previousClientAlgoId);
+        const previousTrigger=n(previousMaxLoss?.triggerPrice??previousMaxLoss?.stopPrice,NaN);
+        const previousImpliedLoss=update.direction==='LONG'
+          ?(live.entryPrice-previousTrigger)*live.liveQuantity
+          :(previousTrigger-live.entryPrice)*live.liveQuantity;
+        if(!previousMaxLoss||
+           !/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(previousMaxLoss?.clientAlgoId||''))||
+           String(previousMaxLoss?.type||'').toUpperCase()!=='STOP_MARKET'||
+           !bool(previousMaxLoss?.closePosition)||
+           String(previousMaxLoss?.side||'').toUpperCase()!==sideForDirection(update.direction)||
+           String(previousMaxLoss?.positionSide||'BOTH').toUpperCase()!=='BOTH'||
+           !(previousTrigger>0)||
+           !(previousImpliedLoss>=0)||
+           previousImpliedLoss>configuredMaxLoss+1e-8){
+          return send(res,409,{ok:false,code:'PREVIOUS_MAX_LOSS_IDENTITY_MISMATCH',writeAttempted:false});
+        }
         const configuredMargin=configuredMarginUsd(state.controllerState,update.symbol);
         if(!(configuredMargin>0)){
           return send(res,423,{ok:false,code:'CONFIGURED_MARGIN_UNAVAILABLE',writeAttempted:false});
@@ -565,7 +584,15 @@ export default async function handler(req,res){
         const newId=String(req.body?.newClientAlgoId||'');
         const confirmedNew=findAlgo(state.runtimeState,update.symbol,newId);
         if(update.protectionKind==='MAX_LOSS'){
-          if(!newId||!confirmedNew||String(confirmedNew.type||'').toUpperCase()!=='STOP_MARKET'||!bool(confirmedNew.closePosition)){
+          const confirmedTrigger=n(confirmedNew?.triggerPrice??confirmedNew?.stopPrice,NaN);
+          if(!newId||!confirmedNew||
+             !/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(confirmedNew?.clientAlgoId||''))||
+             String(confirmedNew.type||'').toUpperCase()!=='STOP_MARKET'||
+             !bool(confirmedNew.closePosition)||
+             String(confirmedNew.side||'').toUpperCase()!==sideForDirection(update.direction)||
+             String(confirmedNew.positionSide||'BOTH').toUpperCase()!=='BOTH'||
+             !Number.isFinite(confirmedTrigger)||
+             Math.abs(confirmedTrigger-update.triggerPrice)>Math.max(1e-9,Math.abs(update.triggerPrice)*1e-10)){
             return send(res,423,{ok:false,code:'NEW_MAX_LOSS_PROTECTION_NOT_CONFIRMED',writeAttempted:false});
           }
         }else{
