@@ -50,3 +50,20 @@ test('changed profit targets drive the protection ladder and invalid exact loss 
   assert.match(html,/function protectionCountForTarget\(target\)/);
   assert.match(html,/arm:105\+i\*100,floor:100\+i\*100/);
 });
+
+test('real exposure locks token and Futures settings',()=>{
+  assert.match(html,/function accountRealPositionBySymbol\(symbol\)/);
+  assert.match(html,/function accountRealEntryOrderBySymbol\(symbol\)/);
+  assert.match(html,/realActive\|\|realEntry/);
+  assert.match(html,/Position RÉELLE active/);
+  assert.match(html,/Entrée RÉELLE en attente/);
+  assert.match(html,/Futures verrouillé pendant une position ou une entrée RÉELLE/);
+});
+
+test('stored legacy risk settings are clamped to current real caps',()=>{
+  assert.match(html,/settings\.margin=Math\.min\(1000/);
+  assert.match(html,/settings\.leverage=clamp\(n\(settings\.leverage,10\),1,10\)/);
+  assert.match(html,/settings\.maxActive=clamp\(Math\.round\(n\(settings\.maxActive,3\)\),1,3\)/);
+  assert.match(html,/t\.margin=Math\.min\(1000/);
+  assert.match(html,/t\.leverage=clamp\(n\(t\?\.leverage,settings\.leverage\),1,10\)/);
+});
