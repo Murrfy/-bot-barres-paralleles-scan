@@ -474,9 +474,12 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
   }
   const label=normalizedKind==='EXIT'?'objectif de sortie'
     :normalizedKind==='PROGRESSIVE'?'seuil de protection gain':'seuil de perte maximale';
-  const raw=prompt(`ARGENT RÉEL — ${position.symbol}\nNouveau ${label} (prix Binance) :${autoNote}`,current>0?String(current):'');
-  if(raw===null)return;
-  const wanted=parsePrice(raw,0);
+  let wanted=parsePrice(options?.wantedPrice,0);
+  if(!(wanted>0)){
+    const raw=prompt(`ARGENT RÉEL — ${position.symbol}\nNouveau ${label} (prix Binance) :${autoNote}`,current>0?String(current):'');
+    if(raw===null)return false;
+    wanted=parsePrice(raw,0);
+  }
   if(!(wanted>0))return setStatus(`${position.symbol} : prix réel invalide.`,true);
 
   let command,key;
@@ -501,7 +504,7 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
     :normalizedKind==='PROGRESSIVE'
       ?'Zenith remplacera la protection gain en conservant la protection MAX-LOSS de secours.'
       :'Zenith confirmera la nouvelle protection MAX-LOSS avant de retirer l’ancienne.';
-  const grossNote=options?.auto===true?'\nCalcul brut sur variation de prix, hors frais/funding/slippage.':'';
+  const grossNote=(options?.auto===true||options?.fromSettings===true)?'\nCalcul brut sur variation de prix, hors frais/funding/slippage.':'';
   if(!confirm(`ARGENT RÉEL — Confirmer ${position.symbol} ?\n\n${label} : ${price(wanted)}\n${warning}${grossNote}`))return;
 
   realProtectiveUpdatePending.set(key,{symbol:String(position.symbol||''),kind:normalizedKind,price:wanted,at:Date.now()});
@@ -516,10 +519,12 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
     if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.reason||q?.error||('HTTP '+r.status));
     setStatus(`${position.symbol} : ${label} réel mis en file MASTER. Zenith attend les confirmations Binance avant ACK.`);
     setTimeout(()=>refreshBinanceAccount(),1000);
+    return true;
   }catch(e){
     realProtectiveUpdatePending.delete(key);
     renderRealPositions();
     setStatus(`${position.symbol} : modification réelle NON envoyée — ${String(e?.message||'erreur')}.`,true);
+    return false;
   }
 }
 function renderRealEntryOrders(){
