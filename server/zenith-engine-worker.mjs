@@ -22,6 +22,7 @@ import {
   PROTECTIVE_CLOSE_ATTEMPTS,
 } from '../lib/protective-close-state.mjs';
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
+import { buildRealProtectionLevels } from '../lib/real-protection-levels.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
 const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
@@ -551,6 +552,130 @@ async function assertAutoProtectionPanic(reason){
     await syncApi('emergency-stop',{method:'POST',body:{}});
   }catch{}
   await invalidateStream(autoProtection.lastError).catch(()=>{});
+}
+
+async function repairMissingMaxLoss(report,repairTarget){
+  const target=String(repairTarget||'').toUpperCase();
+  const ambiguous=Array.isArray(report?.differences?.ambiguousMaxLossProtections)
+    ?report.differences.ambiguousMaxLossProtections.map(x=>String(x||'').toUpperCase()):[];
+  if(ambiguous.includes(target)){
+    await assertAutoProtectionPanic('AMBIGUOUS_MAX_LOSS_PROTECTION_'+target.replace(/[^A-Z0-9]+/g,'_'));
+    return false;
+  }
+
+  const missing=Array.isArray(report?.differences?.missingMaxLossProtections)
+    ?report.differences.missingMaxLossProtections.map(x=>String(x||'').toUpperCase()):[];
+  if(!missing.includes(target)){
+    await assertAutoProtectionPanic('MAX_LOSS_REPAIR_TARGET_INVALID_'+target.replace(/[^A-Z0-9]+/g,'_'));
+    return false;
+  }
+
+  const split=target.lastIndexOf(':');
+  if(split<=0){
+    await assertAutoProtectionPanic('MAX_LOSS_REPAIR_TARGET_MALFORMED');
+    return false;
+  }
+  const symbol=target.slice(0,split);
+  const direction=target.slice(split+1);
+  if(!['LONG','SHORT'].includes(direction)){
+    await assertAutoProtectionPanic('MAX_LOSS_REPAIR_DIRECTION_INVALID');
+    return false;
+  }
+
+  const projection=streamProjection();
+  const position=(projection.binancePositions||[]).find(row=>{
+    if(String(row?.symbol||'').toUpperCase()!==symbol)return false;
+    const amount=n(row?.positionAmt??row?.quantity,0);
+    if(Math.abs(amount)<=0)return false;
+    return (amount<0?'SHORT':'LONG')===direction;
+  });
+  if(!position){
+    await assertAutoProtectionPanic('MAX_LOSS_REPAIR_POSITION_MISSING_'+symbol);
+    return false;
+  }
+
+  const tokenSettings=runtime.config?.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const globalSettings=runtime.config?.settings&&typeof runtime.config.settings==='object'
+    ?runtime.config.settings:{};
+  const tokenCfg=tokenSettings[symbol]&&typeof tokenSettings[symbol]==='object'?tokenSettings[symbol]:{};
+  const maxLossUsd=n(tokenCfg.maxLoss,n(globalSettings.maxLoss,NaN));
+  const targetProfitUsd=n(
+    tokenCfg.manualTargetProfit,
+    n(tokenCfg.targetProfit,n(globalSettings.targetProfit,NaN))
+  );
+  if(!(maxLossUsd>0)||maxLossUsd>REAL_RISK_LIMITS.maxLossUsd+1e-9||!(targetProfitUsd>0)){
+    await assertAutoProtectionPanic('MAX_LOSS_REPAIR_CONFIG_INVALID_'+symbol);
+    return false;
+  }
+
+  const priceFilter=await ensurePriceFilter(symbol);
+  if(!priceFilter){
+    await assertAutoProtectionPanic('MAX_LOSS_REPAIR_PRICE_FILTER_UNAVAILABLE_'+symbol);
+    return false;
+  }
+
+  let levels;
+  try{
+    levels=buildRealProtectionLevels({
+      position,
+      targetProfitUsd,
+      maxLossUsd,
+      priceFilter,
+      hardMaxLossUsd:REAL_RISK_LIMITS.maxLossUsd,
+    });
+  }catch(error){
+    await assertAutoProtectionPanic(
+      'MAX_LOSS_REPAIR_LEVEL_INVALID_'+cleanReason(error?.message||'LEVEL','LEVEL')
+    );
+    return false;
+  }
+
+  const quantity=Math.abs(n(position?.positionAmt??position?.quantity,0));
+  const lifecycle=Math.max(0,Math.floor(n(
+    position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,Date.now()
+  )));
+  const commandId=`auto-repair-max-${symbol}-${direction}-${lifecycle}`.slice(0,128);
+  const body={
+    type:'EXEC_UPDATE_PROTECTION',
+    commandId,
+    symbol,
+    direction,
+    quantity,
+    triggerPrice:levels.maxLossTriggerPrice,
+    limitPrice:0,
+    protectionKind:'MAX_LOSS',
+    phase:'PLACE_NEW',
+  };
+
+  const placed=await callProtectiveUpdateExecute(body);
+  if(!placed.response.ok||placed.data?.ok!==true){
+    const reason=String(placed.data?.code||placed.data?.reason||('HTTP_'+placed.response.status));
+    await assertAutoProtectionPanic('MAX_LOSS_REPAIR_PLACE_'+cleanReason(reason,'FAILED'));
+    return false;
+  }
+
+  const clientId=String(placed.data?.plan?.params?.clientAlgoId||'');
+  if(!clientId){
+    await assertAutoProtectionPanic('MAX_LOSS_REPAIR_ID_MISSING');
+    return false;
+  }
+  const order=await waitForStreamOrder({kind:'ALGO',clientId,terminal:false},3500);
+  const expectedSide=direction==='LONG'?'SELL':'BUY';
+  if(!order||
+     String(order?.symbol||'').toUpperCase()!==symbol||
+     String(order?.side||'').toUpperCase()!==expectedSide||
+     String(order?.positionSide||'BOTH').toUpperCase()!=='BOTH'||
+     String(order?.type||'').toUpperCase()!=='STOP_MARKET'||
+     !(order?.closePosition===true||order?.closePosition==='true')||
+     !realNumberMatches(order?.triggerPrice??order?.stopPrice,levels.maxLossTriggerPrice)){
+    await assertAutoProtectionPanic('MAX_LOSS_REPAIR_NOT_STREAM_CONFIRMED_'+symbol);
+    return false;
+  }
+
+  await publishRuntime().catch(()=>{});
+  runtime.error='';
+  return true;
 }
 
 async function executeAutoProgressive(plan){
@@ -1141,7 +1266,17 @@ async function reconcile(secondPass=false){
         return reconcile(true);
       }
     }
-    runtime.error=repairTarget?'PROTECTION_REPAIR_REQUIRED':'';
+
+    if(repairTarget){
+      runtime.error='PROTECTION_REPAIR_REQUIRED';
+      const repaired=await repairMissingMaxLoss(data.report,repairTarget);
+      if(!repaired)return false;
+      stream.reconcileBusy=false;
+      return reconcile(true);
+    }
+
+    runtime.error='';
+    stream.lastError='';
     await pruneAutoHighWater().catch(()=>{});
     return userStreamReady(stream.state);
   }catch(error){
@@ -1522,7 +1657,7 @@ async function runFullClose(command,raw){
 
   const initialQuantity=currentQuantity;
   const policies=String(payload.exitMode||'PROTECTIVE_IOC').toUpperCase()==='MARKET_LAST_RESORT'
-    ?[PROTECTIVE_CLOSE_ATTEMPTS[3]]
+    ?[PROTECTIVE_CLOSE_ATTEMPTS.at(-1)]
     :PROTECTIVE_CLOSE_ATTEMPTS;
 
   let lastClientOrderId='';
