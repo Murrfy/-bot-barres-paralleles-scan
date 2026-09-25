@@ -579,6 +579,10 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
   }
   const inv=realProtectionInventory(position);
   const normalizedKind=String(kind||'').toUpperCase();
+  const blockingKinds=['EXIT','PROGRESSIVE','MAX_LOSS','ACTIVE_CONFIG'];
+  if(blockingKinds.some(pendingKind=>realProtectiveUpdatePending.has(realUpdatePendingKey(position,pendingKind)))){
+    return setStatus(`${position.symbol} : une modification active est déjà en attente de confirmation.`,true);
+  }
   if(normalizedKind==='EXIT'&&inv.exitConflict){
     return setStatus(`${position.symbol} : objectif réel non modifié — ordre concurrent non identifié avec certitude.`,true);
   }
@@ -725,6 +729,10 @@ async function queueRealActiveConfigUpdate(position,activeConfig){
   if(!activeConfig||typeof activeConfig!=='object'||Array.isArray(activeConfig)){
     return setStatus(`${position.symbol} : réglages actifs invalides.`,true);
   }
+  const blockingKinds=['EXIT','PROGRESSIVE','MAX_LOSS','ACTIVE_CONFIG'];
+  if(blockingKinds.some(pendingKind=>realProtectiveUpdatePending.has(realUpdatePendingKey(position,pendingKind)))){
+    return setStatus(`${position.symbol} : une modification active est déjà en attente de confirmation.`,true);
+  }
 
   let command,key;
   try{
@@ -819,11 +827,13 @@ function renderRealPositions(){
     const exitPending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'EXIT'));
     const progressivePending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'PROGRESSIVE'));
     const maxLossPending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'MAX_LOSS'));
+    const activeConfigPending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'ACTIVE_CONFIG'));
+    const anySettingPending=exitPending||progressivePending||maxLossPending||activeConfigPending;
     const baseAllowed=controller&&side==='BOTH'&&qty>0&&!closePending;
     const closeAllowed=baseAllowed;
-    const exitAllowed=baseAllowed&&emergencyReady&&!inv.exitConflict&&!exitPending;
-    const progressiveAllowed=baseAllowed&&emergencyReady&&!inv.progressiveConflict&&!progressivePending;
-    const maxLossAllowed=baseAllowed&&!inv.maxLossConflict&&!maxLossPending;
+    const exitAllowed=baseAllowed&&emergencyReady&&!inv.exitConflict&&!anySettingPending;
+    const progressiveAllowed=baseAllowed&&emergencyReady&&!inv.progressiveConflict&&!anySettingPending;
+    const maxLossAllowed=baseAllowed&&!inv.maxLossConflict&&!anySettingPending;
 
     const targetText=inv.exitConflict?'CONFLIT / EXTERNE'
       :inv.managedExit?price(inv.managedExit.price):'AUCUN';
