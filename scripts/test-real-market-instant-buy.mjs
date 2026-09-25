@@ -69,9 +69,9 @@ test('central queue accepts explicit MARKET only in RUNNING and expires it quick
 test('entry API MARKET path bypasses LIMIT transition but keeps final dispatch gate',()=>{
   const source=fs.readFileSync('api/binance-entry-execute.js','utf8');
   const market=source.indexOf('if(marketEntry){');
-  const transition=source.indexOf('const rawTransition=await readEntryTransition');
-  assert.ok(market>=0&&transition>market);
-  const block=source.slice(market,transition);
+  const limitPrepare=source.indexOf("if(phase==='PREPARE_PROTECTION')",market);
+  assert.ok(market>=0&&limitPrepare>market);
+  const block=source.slice(market,limitPrepare);
   assert.match(block,/finalEntryDispatchGate/);
   assert.match(block,/placeStandardOrderIdempotent/);
   assert.match(block,/BINANCE_MARKET_ENTRY_DISPATCH/);
