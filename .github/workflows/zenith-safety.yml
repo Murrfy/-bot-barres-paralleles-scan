@@ -110,6 +110,8 @@ jobs:
         run: node --test scripts/test-command-requeue-revoke-fence.mjs
       - name: Test real-entry risk preflight
         run: node --test scripts/test-entry-preflight.mjs
+      - name: Test safe per-token Binance Futures configuration
+        run: node --test scripts/test-binance-symbol-config.mjs
       - name: Test real entry execution rate limit
         run: node --test scripts/test-entry-execution-rate-limit.mjs
       - name: Test atomic final real-entry dispatch gate
