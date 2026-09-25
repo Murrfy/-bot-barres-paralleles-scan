@@ -21,6 +21,7 @@ function request(){
     headers:{cookie:'__Host-zenith_device=master-token',host:'zenith.test','x-forwarded-proto':'https',origin:'https://zenith.test'},
     body:{
       type:'EXEC_OPEN_POSITION',
+      phase:'PREPARE_PROTECTION',
       commandId:'cmd-rate-test-001',
       symbol:'BTCUSDT',
       side:'BUY',
