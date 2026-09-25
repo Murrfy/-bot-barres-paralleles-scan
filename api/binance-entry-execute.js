@@ -295,6 +295,7 @@ export default async function handler(req,res){
   const leverage=Number(req.body?.leverage);
   const maxLoss=Number(req.body?.maxLoss);
   const limitPrice=Number(req.body?.limitPrice);
+  const requestedAt=Number(req.body?.requestedAt);
 
   if(String(master?.principal||'')!=='engine'){
     return send(res,423,{ok:false,code:'ENTRY_ENGINE_REQUIRED',writeAttempted:false});
@@ -309,7 +310,8 @@ export default async function handler(req,res){
     (marketEntry?side==='BUY':['BUY','SELL'].includes(side)) &&
     (marketEntry?orderType==='MARKET':orderType==='LIMIT') &&
     margin>0&&leverage>0&&maxLoss>0 &&
-    (marketEntry||limitPrice>0)
+    (marketEntry||limitPrice>0) &&
+    (!marketEntry||(Number.isFinite(requestedAt)&&requestedAt>0&&Date.now()-requestedAt>=-5000&&Date.now()-requestedAt<=30000))
   );
   if(!requestValid){
     return send(res,400,{ok:false,code:phaseProvided?'ENTRY_EXECUTION_REQUEST_INVALID':'ENTRY_PHASE_REQUIRED',writeAttempted:false});
@@ -465,6 +467,49 @@ export default async function handler(req,res){
       });
     }catch(e){
       return send(res,409,{ok:false,code:e?.message||'ENTRY_PLAN_INVALID',writeAttempted:false});
+    }
+
+    if(marketEntry){
+      if(!writesEnabled){
+        return send(res,423,{
+          ok:false,code:'REAL_ENTRY_WRITE_LOCKED',
+          realTradingEnabled:REAL_TRADING_ENABLED,binanceWriteEnabled:BINANCE_WRITE_ENABLED,
+          pairingDisabled:PAIRING_DISABLED,realEntryWriteEnabled:REAL_ENTRY_WRITE_ENABLED,
+          writeAttempted:false,plan,
+        });
+      }
+      const dispatchGate=await finalEntryDispatchGate(
+        master.deviceId,master.roleIssuedAt,latest.armRaw,latest.armRecord?.controllerRevision
+      );
+      if(!dispatchGate.ok){
+        return send(res,423,{
+          ok:false,code:'MARKET_ENTRY_COMMIT_BLOCKED',reason:dispatchGate.reason,
+          writeAttempted:false,plan,
+        });
+      }
+      const result=await placeStandardOrderIdempotent({
+        apiKey,secret,orderParams:plan.params,writesEnabled:true,timestamp:preflight.serverTime,
+      });
+      const order=result?.order||{};
+      const status=String(order?.status||'').toUpperCase();
+      const executedQty=Number(order?.executedQty||order?.cumQty||0);
+      const avgPrice=Number(order?.avgPrice||0);
+      await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+        at:Date.now(),kind:'BINANCE_MARKET_ENTRY_DISPATCH',
+        deviceId:master.deviceId,commandId,symbol,side,
+        quantity:Number(plan.params.quantity),clientOrderId:plan.params.newClientOrderId,
+        status,executedQty:Number.isFinite(executedQty)?executedQty:0,
+        avgPrice:Number.isFinite(avgPrice)?avgPrice:0,
+        disposition:result.disposition,writeAttempted:result.writeAttempted===true,
+        maxLossPendingExactFill:true,
+      })]);
+      await redis(['LTRIM',KEY_AUDIT,'0','199']);
+      return send(res,200,{
+        ok:true,phase:'MARKET_ENTRY_SUBMITTED',plan,result,
+        fillConfirmed:status==='FILLED'&&executedQty>0,
+        confirmationRequired:true,
+        maxLossRepairRequired:true,
+      });
     }
 
     if(phase==='PREPARE_PROTECTION'){
