@@ -161,3 +161,28 @@ test('live preflight reads all open entry orders so pending symbols reserve slot
   assert.match(source,/signedGet\('\/fapi\/v1\/openAlgoOrders', apiKey, secret, serverTime, \{ algoType: 'CONDITIONAL' \}\)/);
   assert.match(source,/maxActivePositions = await readConfiguredMaxActivePositions\(\)/);
 });
+
+
+test('TradFi perpetuals such as IBMUSDT are accepted by the real-entry policy', () => {
+  const symbolInfo=structuredClone(base().symbolInfo);
+  symbolInfo.symbol='IBMUSDT';
+  symbolInfo.contractType='TRADIFI_PERPETUAL';
+  const symbolConfig={...base().symbolConfig,symbol:'IBMUSDT'};
+  const bracketInfo={...base().bracketInfo,symbol:'IBMUSDT'};
+  const r=evaluateEntryRisk(base({symbol:'IBMUSDT',symbolInfo,symbolConfig,bracketInfo}));
+  assert.equal(r.reasons.includes('SYMBOL_NOT_USDT_PERPETUAL'),false);
+});
+
+test('new Binance special perpetual families remain eligible without code changes', () => {
+  const symbolInfo=structuredClone(base().symbolInfo);
+  symbolInfo.contractType='NEWCLASS_PERPETUAL';
+  const r=evaluateEntryRisk(base({symbolInfo}));
+  assert.equal(r.reasons.includes('SYMBOL_NOT_USDT_PERPETUAL'),false);
+});
+
+test('delivery contracts are not mistaken for perpetual contracts', () => {
+  const symbolInfo=structuredClone(base().symbolInfo);
+  symbolInfo.contractType='CURRENT_QUARTER';
+  const r=evaluateEntryRisk(base({symbolInfo}));
+  assert.ok(r.reasons.includes('SYMBOL_NOT_USDT_PERPETUAL'));
+});
