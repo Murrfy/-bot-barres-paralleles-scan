@@ -794,7 +794,7 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
         })),
         missingProtectionPendingEntries: transitionMissingProtectionPendingEntries,
         entryMissingPreparedProtections: transitionEntryMissingPreparedProtections,
-        expiredProtectionOnly: transitionState.expiredProtectionOnly.map(row => ({
+        expiredProtectionOnly: (Array.isArray(transitionState.expiredProtectionOnly)?transitionState.expiredProtectionOnly:[]).map(row => ({
           commandId:row.commandId,
           symbol:row.symbol,
           direction:row.direction,
@@ -802,7 +802,7 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
           entryClientOrderId:row.entryClientOrderId,
           expiresAt:row.expiresAt,
         })),
-        prunableExpired: transitionState.prunableExpired.map(row => ({
+        prunableExpired: (Array.isArray(transitionState.prunableExpired)?transitionState.prunableExpired:[]).map(row => ({
           commandId:row.commandId,
           symbol:row.symbol,
           direction:row.direction,
