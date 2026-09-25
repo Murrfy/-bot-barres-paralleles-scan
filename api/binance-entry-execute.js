@@ -442,6 +442,62 @@ export default async function handler(req,res){
       });
     }
 
+    const writesEnabled=Boolean(
+      REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED
+    );
+
+    if(phaseProvided&&String(master?.principal||'')!=='engine'){
+      return send(res,423,{
+        ok:false,
+        code:'ENTRY_ENGINE_REQUIRED',
+        writeAttempted:false,
+      });
+    }
+
+    if(phase==='PREPARE_PROTECTION'&&phaseProvided){
+      let configured;
+      try{
+        configured=await ensureEntrySymbolConfiguration({
+          apiKey,
+          secret,
+          symbol,
+          leverage,
+          timestamp:Date.now(),
+          writesEnabled,
+          master,
+          armRaw:before.armRaw,
+        });
+      }catch(error){
+        const retryAfter=binanceBackoffSecondsFromError(error);
+        if(retryAfter>0){
+          try{await registerBinanceWriteBackoff(redis,error)}catch{}
+          res.setHeader('Retry-After',String(retryAfter));
+          return send(res,429,{
+            ok:false,
+            code:Number(error?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
+            retryAfterSeconds:retryAfter,
+            writeAttempted:false,
+          });
+        }
+        return send(res,409,{
+          ok:false,
+          code:'SYMBOL_CONFIGURATION_FAILED',
+          reason:String(error?.message||'SYMBOL_CONFIGURATION_FAILED'),
+          ambiguous:error?.ambiguous===true,
+          writeAttempted:error?.ambiguous===true,
+        });
+      }
+      if(configured.ok!==true){
+        return send(res,423,{
+          ok:false,
+          code:'SYMBOL_CONFIGURATION_NOT_READY',
+          reason:configured.reason,
+          configuration:configured.plan,
+          writeAttempted:configured.writeAttempted===true,
+        });
+      }
+    }
+
     const preflight=await runLiveEntryPreflight({
       apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:limitPrice,
     });
@@ -473,19 +529,6 @@ export default async function handler(req,res){
       });
     }catch(e){
       return send(res,409,{ok:false,code:e?.message||'ENTRY_PLAN_INVALID',writeAttempted:false});
-    }
-
-    const writesEnabled=Boolean(
-      REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED
-    );
-
-    if(phaseProvided&&String(master?.principal||'')!=='engine'){
-      return send(res,423,{
-        ok:false,
-        code:'ENTRY_ENGINE_REQUIRED',
-        writeAttempted:false,
-        plan,
-      });
     }
 
     if(phase==='PREPARE_PROTECTION'){
