@@ -5002,6 +5002,13 @@ export default async function handler(req, res) {
           return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
         }
       }
+      if (['EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION'].includes(String(command.type || '').toUpperCase())) {
+        const payloadStatus = execUpdatePayloadStatus(String(command.type || '').toUpperCase(), command.payload);
+        if (!payloadStatus.ok) {
+          await rejectClaimedCommand(raw, 'COMMAND_PAYLOAD_INVALID', { payloadReason:payloadStatus.reason }, device);
+          return send(res, 200, { ok:true, command:null, payloadRejected:true, payloadReason:payloadStatus.reason, recovery });
+        }
+      }
 
       if (commandExpired(command)) {
         await rejectClaimedCommand(raw, 'COMMAND_EXPIRED', {
