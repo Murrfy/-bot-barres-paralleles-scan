@@ -2105,11 +2105,7 @@ async function prepareActiveConfigControllerCommit(command, payloadStatus, devic
   const currentExactSaleEnabled = currentToken.exactSaleEnabled === true;
   const currentExactSalePrice = currentExactSaleEnabled ? Number(currentToken.exactSalePrice || 0) : 0;
 
-  if (commandType === 'EXEC_UPDATE_EXIT') {
-    if (stableStringify(validated.activeConfig.protectionStages) !== stableStringify(currentProtections)) {
-      const e = new Error('ACTIVE_EXIT_CANNOT_CHANGE_PROTECTIONS'); e.code = 'ACTIVE_EXIT_CANNOT_CHANGE_PROTECTIONS'; throw e;
-    }
-  } else {
+  if (commandType === 'EXEC_UPDATE_ACTIVE_CONFIG') {
     if (!numberMatches(validated.activeConfig.targetProfit, currentTarget) ||
         !numberMatches(validated.activeConfig.manualTargetProfit, currentTarget) ||
         validated.activeConfig.exactSaleEnabled !== currentExactSaleEnabled ||
