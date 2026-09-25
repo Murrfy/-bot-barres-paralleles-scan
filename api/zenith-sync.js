@@ -1204,7 +1204,6 @@ function activeConfigStatus(value) {
   if (exactSaleEnabled && !(exactSalePrice > 0)) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_REQUIRED' };
   if (!Number.isFinite(exactSalePrice) || exactSalePrice < 0) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_INVALID' };
   if (!exactSaleEnabled && exactSalePrice !== 0) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_MUST_BE_ZERO' };
-  if (!exactSaleEnabled && exactSalePrice !== 0) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_MUST_BE_ZERO' };
   if (exactSaleSource !== 'settings') return { ok:false, reason:'ACTIVE_EXACT_SALE_SOURCE_INVALID' };
   const stages = activeProtectionStagesStatus(value.protectionStages);
   if (!stages.ok) return stages;
