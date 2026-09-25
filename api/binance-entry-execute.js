@@ -3,7 +3,7 @@ import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, r
 import { buildEntryOrderPlan } from '../lib/order-intent.mjs';
 import { placeStandardOrderIdempotent } from '../lib/binance-order-writer.mjs';
 import { findCoveringEntryProtection } from '../lib/entry-protection-gate.mjs';
-import { runLiveEntryPreflight } from './binance-entry-preflight.js';
+import { runLiveEntryPreflight, readConfiguredMaxActivePositions } from './binance-entry-preflight.js';
 import { validateExecutionArmRecord, executionReadiness } from './binance-protective-execute.js';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
@@ -17,6 +17,7 @@ const KEY_AUDIT=`${PREFIX}:audit`;
 const KEY_REAL_EXECUTION_ARMED=`${PREFIX}:safety:real-execution-armed`;
 const KEY_MASTER_MODE=`${PREFIX}:master-mode`;
 const KEY_EMERGENCY_STOP=`${PREFIX}:safety:emergency-stop`;
+const KEY_CONTROLLER_STATE=`${PREFIX}:controller-state`;
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -182,7 +183,7 @@ async function readExecutionState(){
   };
 }
 
-async function finalEntryDispatchGate(masterDeviceId,masterRoleEpoch,expectedArmRaw){
+async function finalEntryDispatchGate(masterDeviceId,masterRoleEpoch,expectedArmRaw,expectedControllerRevision){
   const script=[
     "local registered = tostring(redis.call('GET', KEYS[1]) or '')",
     "if registered ~= ARGV[1] then return -1 end",
@@ -196,19 +197,26 @@ async function finalEntryDispatchGate(masterDeviceId,masterRoleEpoch,expectedArm
     "if arm ~= ARGV[3] then return -5 end",
     "local roleEpoch = tostring(redis.call('GET', KEYS[6]) or '')",
     "if roleEpoch ~= ARGV[2] then return -6 end",
+    "local controllerRaw = redis.call('GET', KEYS[7])",
+    "if not controllerRaw then return -7 end",
+    "local ok, controller = pcall(cjson.decode, controllerRaw)",
+    "if not ok or not controller then return -7 end",
+    "if tonumber(controller['revision'] or 0) ~= tonumber(ARGV[4]) then return -7 end",
     "return 1"
   ].join('\n');
   const result=Number(await redis([
-    'EVAL',script,'6',
+    'EVAL',script,'7',
     KEY_MASTER_DEVICE,
     KEY_MASTER,
     KEY_MASTER_MODE,
     KEY_EMERGENCY_STOP,
     KEY_REAL_EXECUTION_ARMED,
     roleAssignmentKey(PREFIX,'master'),
+    KEY_CONTROLLER_STATE,
     String(masterDeviceId||''),
     String(masterRoleEpoch||''),
     String(expectedArmRaw||''),
+    String(expectedControllerRevision||0),
   ]));
   return {
     ok:result===1,
@@ -224,7 +232,9 @@ async function finalEntryDispatchGate(masterDeviceId,masterRoleEpoch,expectedArm
               ?'REAL_EXECUTION_ARM_CHANGED_DURING_ENTRY'
               :result===-6
                 ?'MASTER_ROLE_EPOCH_CHANGED_DURING_ENTRY'
-                :'ENTRY_DISPATCH_GATE_FAILED',
+                :result===-7
+                  ?'CONTROLLER_CONFIG_CHANGED_DURING_ENTRY'
+                  :'ENTRY_DISPATCH_GATE_FAILED',
   };
 }
 
@@ -325,8 +335,9 @@ export default async function handler(req,res){
       });
     }
 
+    const maxActivePositions=await readConfiguredMaxActivePositions();
     const preflight=await runLiveEntryPreflight({
-      apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:limitPrice,
+      apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:limitPrice,maxActivePositions,
     });
     if(preflight.evaluation.ready!==true){
       return send(res,409,{
@@ -391,7 +402,8 @@ export default async function handler(req,res){
     const dispatchGate=await finalEntryDispatchGate(
       master.deviceId,
       master.roleIssuedAt,
-      latest.armRaw
+      latest.armRaw,
+      latest.armRecord?.controllerRevision
     );
     if(!dispatchGate.ok){
       return send(res,423,{
