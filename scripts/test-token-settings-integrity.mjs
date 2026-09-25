@@ -155,3 +155,13 @@ test('live protection editor never shrinks below the currently stored stage coun
   const fill=block('function fillToken()','async function saveFutures()');
   assert.match(fill,/realActive\?\(Array\.isArray\(shownProtections\)\?shownProtections\.length:0\):0/);
 });
+
+
+test('exchange universe includes TradFi and future special USDT perpetuals',()=>{
+  const universe=block('function isUsdMPerpetualContract(s)','function ruleNum(o,...keys)');
+  assert.match(universe,/type==='PERPETUAL'\|\|type\.endsWith\('_PERPETUAL'\)/);
+  assert.match(universe,/s\?\.quoteAsset==='USDT'/);
+  assert.match(universe,/s\?\.status==='TRADING'/);
+  assert.match(universe,/if\(!isUsdMPerpetualContract\(s\)\)continue/);
+  assert.match(html,/function addManualToken\(\)[\s\S]*exchangeMap\.has\(symbol\)/);
+});
