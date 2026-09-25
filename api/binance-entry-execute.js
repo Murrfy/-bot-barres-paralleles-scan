@@ -4,7 +4,6 @@ import { buildEntryOrderPlan } from '../lib/order-intent.mjs';
 import { buildEntryProtectionPlan } from '../lib/entry-protection-plan.mjs';
 import { placeStandardOrderIdempotent, signedBinanceRequest, BinanceRequestError } from '../lib/binance-order-writer.mjs';
 import { placeAlgoOrderIdempotent } from '../lib/binance-algo-writer.mjs';
-import { findCoveringEntryProtection } from '../lib/entry-protection-gate.mjs';
 import { normalizeEntryTransition, transitionProtectionMatches } from '../lib/entry-transition.mjs';
 import { planEntrySymbolConfiguration } from '../lib/binance-symbol-config.mjs';
 import { runLiveEntryPreflight } from './binance-entry-preflight.js';
@@ -379,6 +378,9 @@ export default async function handler(req,res){
   const maxLoss=Number(req.body?.maxLoss);
   const limitPrice=Number(req.body?.limitPrice);
 
+  if(!phaseProvided){
+    return send(res,400,{ok:false,code:'ENTRY_PHASE_REQUIRED',writeAttempted:false});
+  }
   if(type!=='EXEC_OPEN_POSITION' ||
       !['PREPARE_PROTECTION','SUBMIT_ENTRY'].includes(phase) ||
       !/^[A-Za-z0-9._:-]{8,128}$/.test(commandId) ||
@@ -452,7 +454,7 @@ export default async function handler(req,res){
       REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED
     );
 
-    if(phaseProvided&&String(master?.principal||'')!=='engine'){
+    if(String(master?.principal||'')!=='engine'){
       return send(res,423,{
         ok:false,
         code:'ENTRY_ENGINE_REQUIRED',
@@ -670,50 +672,35 @@ export default async function handler(req,res){
 
     let protection=null;
     let storedTransition=null;
-    if(phaseProvided){
-      const rawTransition=await readEntryTransition(commandId);
-      const checked=normalizeEntryTransition(rawTransition,{now:Date.now()});
-      if(!checked.ok){
-        return send(res,423,{
-          ok:false,
-          code:'ENTRY_PROTECTION_TRANSITION_REQUIRED',
-          reason:checked.reason||'ENTRY_TRANSITION_MISSING',
-          writeAttempted:false,
-          plan,
-        });
-      }
-      storedTransition=checked.transition;
-      if(!entryTransitionMatchesRequest(storedTransition,{
-        symbol,side,quantity:Number(plan.params.quantity),limitPrice,maxLoss
-      })){
-        return send(res,409,{ok:false,code:'ENTRY_TRANSITION_REQUEST_MISMATCH',writeAttempted:false,plan});
-      }
-      const exactOrder=(Array.isArray(latest.runtimeState?.data?.binanceOrders)?latest.runtimeState.data.binanceOrders:[])
-        .find(order=>transitionProtectionMatches(order,storedTransition));
-      if(!exactOrder){
-        return send(res,423,{
-          ok:false,
-          code:'ENTRY_PROTECTION_NOT_STREAM_CONFIRMED',
-          writeAttempted:false,
-          plan,
-          transition:storedTransition,
-        });
-      }
-      protection={ready:true,order:exactOrder};
-    }else{
-      protection=findCoveringEntryProtection(latest.runtimeState,{
-        symbol,side,quantity:Number(plan.params.quantity),limitPrice,
+    const rawTransition=await readEntryTransition(commandId);
+    const checkedTransition=normalizeEntryTransition(rawTransition,{now:Date.now()});
+    if(!checkedTransition.ok){
+      return send(res,423,{
+        ok:false,
+        code:'ENTRY_PROTECTION_TRANSITION_REQUIRED',
+        reason:checkedTransition.reason||'ENTRY_TRANSITION_MISSING',
+        writeAttempted:false,
+        plan,
       });
-      if(protection.ready!==true){
-        return send(res,423,{
-          ok:false,
-          code:'ENTRY_PROTECTION_NOT_ARMED',
-          reason:protection.reason||'ENTRY_PROTECTION_NOT_ARMED',
-          writeAttempted:false,
-          plan,
-        });
-      }
     }
+    storedTransition=checkedTransition.transition;
+    if(!entryTransitionMatchesRequest(storedTransition,{
+      symbol,side,quantity:Number(plan.params.quantity),limitPrice,maxLoss
+    })){
+      return send(res,409,{ok:false,code:'ENTRY_TRANSITION_REQUEST_MISMATCH',writeAttempted:false,plan});
+    }
+    const exactOrder=(Array.isArray(latest.runtimeState?.data?.binanceOrders)?latest.runtimeState.data.binanceOrders:[])
+      .find(order=>transitionProtectionMatches(order,storedTransition));
+    if(!exactOrder){
+      return send(res,423,{
+        ok:false,
+        code:'ENTRY_PROTECTION_NOT_STREAM_CONFIRMED',
+        writeAttempted:false,
+        plan,
+        transition:storedTransition,
+      });
+    }
+    protection={ready:true,order:exactOrder};
 
     if(!writesEnabled){
       return send(res,423,{
