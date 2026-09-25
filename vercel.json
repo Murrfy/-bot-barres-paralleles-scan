@@ -12,6 +12,9 @@
     "api/binance-entry-execute.js": {
       "maxDuration": 30
     },
+    "api/binance-entry-prepare.js": {
+      "maxDuration": 30
+    },
     "api/binance-protective-execute.js": {
       "maxDuration": 30
     },
