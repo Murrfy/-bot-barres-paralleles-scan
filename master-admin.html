@@ -43,7 +43,6 @@ button:disabled{opacity:.5}
     <button id="armRealBtn" disabled hidden>Armer l’exécution réelle</button>
     <button id="panicBtn" disabled>PANIC STOP</button>
     <button id="clearPanicBtn" disabled hidden>Réarmer la sécurité réelle</button>
-    <button id="revokeBtn" disabled hidden>Révoquer MASTER</button>
     <button id="replaceBtn" disabled hidden>Autoriser le remplacement de l’iPhone</button>
 
     <div id="status" class="status">Prêt. Si une position est active, la pause sera mise en attente jusqu’à la fermeture de la dernière position.</div>
@@ -70,8 +69,6 @@ function renderActions(){
   $('panicBtn').textContent=verifiedState?.emergencyStopActive===true?'PANIC STOP ACTIF':'PANIC STOP';
   $('clearPanicBtn').hidden=!(verifiedState?.emergencyStopActive===true&&verifiedState?.realTradingEnabled===true);
   $('clearPanicBtn').disabled=!valid||$('clearPanicBtn').hidden||mode!=='PAUSED'||verifiedState.masterLeaseActive!==true||verifiedState.masterSyncFailClosed||verifiedState.masterHeartbeatFresh!==true;
-  $('revokeBtn').hidden=adminRole!=='controller';
-  $('revokeBtn').disabled=!valid||adminRole!=='controller';
   $('replaceBtn').hidden=adminRole!=='master';
   $('replaceBtn').disabled=!valid||adminRole!=='master'||verifiedState.masterLeaseActive!==true;
 }
@@ -271,35 +268,6 @@ async function setMasterMode(action){
   }
 }
 
-async function revokeMaster(){
-  if(busy||checking||adminRole!=='controller'||!verifiedState)return;
-  if(!confirm('Révoquer le MASTER ? Cette action active PANIC, désarme le trading réel et invalide le MASTER. Si une position ou un ordre est encore actif, Zenith refusera la révocation jusqu’au drainage sécurisé.'))return;
-  const adminCode=$('adminCode').value;
-  if(!adminCode){setBox('status','Entre le code ADMIN MASTER.','err');return;}
-  busy=true;renderActions();$('adminCode').value='';
-  setBox('status','Révocation du MASTER après contrôles de sécurité…','warn');
-  try{
-    const r=await fetch('/api/zenith-sync?action=master-revoke',{
-      method:'POST',cache:'no-store',
-      headers:{'Content-Type':'application/json',Accept:'application/json'},
-      body:JSON.stringify({adminCode})
-    });
-    const q=await r.json().catch(()=>({}));
-    if(!r.ok||q?.ok!==true){
-      const blockers=Array.isArray(q?.blockers)&&q.blockers.length?' · '+q.blockers.join(', '):'';
-      if(q?.code==='MASTER_REVOKE_DRAIN_REQUIRED')throw new Error('PANIC actif ; révocation en attente du drainage sécurisé'+blockers);
-      throw new Error((q?.code||q?.error||('HTTP '+r.status))+blockers);
-    }
-    setBox('status',q?.alreadyRevoked?'MASTER déjà révoqué.':'MASTER révoqué : trading réel désarmé et PANIC maintenu.','ok');
-  }catch(e){
-    setBox('status','Révocation MASTER non terminée : '+String(e?.message||'erreur')+'.','err');
-  }finally{
-    $('adminCode').value='';
-    await verifyMaster();
-    busy=false;renderActions();
-  }
-}
-
 async function authorizeReplacement(){
   if(busy||checking||adminRole!=='master'||!verifiedState||verifiedState.masterLeaseActive!==true)return;
   const adminCode=$('adminCode').value;
@@ -348,7 +316,6 @@ $('engineReenableBtn').addEventListener('click',reenableEngine);
 $('armRealBtn').addEventListener('click',armRealExecution);
 $('panicBtn').addEventListener('click',panicStop);
 $('clearPanicBtn').addEventListener('click',clearPanic);
-$('revokeBtn').addEventListener('click',revokeMaster);
 $('replaceBtn').addEventListener('click',authorizeReplacement);
 // Enter never triggers an unrelated critical operation.
 document.addEventListener('visibilitychange',()=>{
