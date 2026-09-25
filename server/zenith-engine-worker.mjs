@@ -2112,6 +2112,65 @@ async function safeAckAfterReconcile(raw,executionProof,failureReason='EXECUTION
   }
 }
 
+async function safeAckActiveMaxLossAfterReconcile(raw,executionProof,body){
+  try{
+    const reconciled=await awaitReconciliation();
+    if(reconciled!==true||userStreamReady(stream.state)!==true)throw new Error('RECONCILIATION_NOT_READY');
+  }catch(error){
+    const reason='EXEC_MAX_LOSS_UPDATE_ACK_RETRY_'+String(error?.message||'RECONCILE');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+
+  let ack;
+  try{
+    ack=await ackCommand(raw,executionProof);
+  }catch(error){
+    const reason='EXEC_MAX_LOSS_UPDATE_ACK_RETRY_'+String(error?.message||'ACK');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+
+  if(ack?.activeMaxLossCommitted!==true){
+    runtime.synchronized=false;
+    runtime.error='ACTIVE_MAX_LOSS_ACK_CONFIG_NOT_COMMITTED';
+    await publishRuntime().catch(()=>{});
+    return false;
+  }
+
+  const symbol=String(ack.symbol||body?.symbol||'').toUpperCase();
+  const maxLossUsd=n(ack.maxLossUsd,NaN);
+  const revision=Math.max(0,n(ack.controllerRevision,0));
+  const expectedHash=String(ack.controllerStateHash||'');
+  if(!runtime.config||!symbol||!(maxLossUsd>=2&&maxLossUsd<=REAL_RISK_LIMITS.maxLossUsd)||
+     !(revision>0)||!expectedHash){
+    runtime.synchronized=false;
+    runtime.error='ACTIVE_MAX_LOSS_ACK_CONFIG_INVALID';
+    await publishRuntime().catch(()=>{});
+    return false;
+  }
+
+  const tokenSettings=runtime.config.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const current=tokenSettings[symbol]&&typeof tokenSettings[symbol]==='object'?tokenSettings[symbol]:{};
+  runtime.config={
+    ...runtime.config,
+    tokenSettings:{
+      ...tokenSettings,
+      [symbol]:{...current,maxLoss:maxLossUsd,marginType:'ISOLATED'},
+    },
+  };
+  const localHash=sha256Hex(stableStringify(runtime.config));
+  runtime.controllerRevision=revision;
+  runtime.appliedRevision=revision;
+  runtime.synchronized=localHash===expectedHash;
+  runtime.error=runtime.synchronized?'':'ACTIVE_MAX_LOSS_ACK_HASH_MISMATCH';
+  await publishRuntime().catch(()=>{});
+  return runtime.synchronized;
+}
+
 async function handleMutationFailure(raw,response,data,prefix){
   const reason=String(data?.code||data?.reason||data?.error||('HTTP_'+response.status));
   const ambiguous=data?.ambiguous===true||data?.result?.ambiguous===true;
@@ -2348,6 +2407,9 @@ async function runProtectiveUpdate(command,raw,dispatch){
     if(!(await cancelOld()))return false;
     newClientId=await placeNew();
     if(!newClientId)return false;
+  }
+  if(maxLoss&&Number.isFinite(n(body.maxLossUsd,NaN))){
+    return safeAckActiveMaxLossAfterReconcile(raw,{newClientId},body);
   }
   return safeAckAfterReconcile(raw,{newClientId},'EXEC_PROTECTIVE_UPDATE_ACK_RETRY');
 }
