@@ -177,9 +177,12 @@ function firstForSymbol(value,symbol){
 }
 
 async function readEntrySymbolConfiguration({apiKey,secret,symbol,timestamp}){
-  const [symbolConfigRaw,positions,standardOrders,algoOrders]=await Promise.all([
+  const [symbolConfigRaw,bracketRaw,positions,standardOrders,algoOrders]=await Promise.all([
     signedBinanceRequest({
       apiKey,secret,path:'/fapi/v1/symbolConfig',method:'GET',timestamp,params:{symbol}
+    }),
+    signedBinanceRequest({
+      apiKey,secret,path:'/fapi/v1/leverageBracket',method:'GET',timestamp,params:{symbol}
     }),
     signedBinanceRequest({
       apiKey,secret,path:'/fapi/v3/positionRisk',method:'GET',timestamp,params:{symbol}
@@ -194,6 +197,7 @@ async function readEntrySymbolConfiguration({apiKey,secret,symbol,timestamp}){
   ]);
   return {
     symbolConfig:firstForSymbol(symbolConfigRaw,symbol),
+    bracketInfo:firstForSymbol(bracketRaw,symbol),
     positions:Array.isArray(positions)?positions:[],
     standardOrders:Array.isArray(standardOrders)?standardOrders:[],
     algoOrders:Array.isArray(algoOrders)?algoOrders:[],
@@ -201,11 +205,12 @@ async function readEntrySymbolConfiguration({apiKey,secret,symbol,timestamp}){
 }
 
 async function ensureEntrySymbolConfiguration({
-  apiKey,secret,symbol,leverage,timestamp,writesEnabled,master,armRaw,
+  apiKey,secret,symbol,margin,leverage,timestamp,writesEnabled,master,armRaw,
 }={}){
   let snapshot=await readEntrySymbolConfiguration({apiKey,secret,symbol,timestamp});
   let plan=planEntrySymbolConfiguration({
     symbol,
+    desiredMargin:margin,
     desiredLeverage:leverage,
     ...snapshot,
   });
@@ -242,6 +247,7 @@ async function ensureEntrySymbolConfiguration({
   });
   plan=planEntrySymbolConfiguration({
     symbol,
+    desiredMargin:margin,
     desiredLeverage:leverage,
     ...snapshot,
   });
@@ -461,6 +467,7 @@ export default async function handler(req,res){
           apiKey,
           secret,
           symbol,
+          margin,
           leverage,
           timestamp:Date.now(),
           writesEnabled,
