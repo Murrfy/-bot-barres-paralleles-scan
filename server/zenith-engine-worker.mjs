@@ -2681,6 +2681,10 @@ async function runProtectiveUpdate(command,raw,dispatch){
     return clientId;
   }
 
+  if(type==='EXEC_UPDATE_EXIT'&&body.activeConfig){
+    if(!(await applyPendingProtectionTableBeforeConfigCommit(raw,body)))return false;
+  }
+
   let newClientId='';
   if(maxLoss||progressive){
     newClientId=await placeNew({deferReconcile:maxLoss});
@@ -2703,7 +2707,6 @@ async function runProtectiveUpdate(command,raw,dispatch){
     return safeAckActiveMaxLossAfterReconcile(raw,{newClientId},body);
   }
   if(type==='EXEC_UPDATE_EXIT'&&body.activeConfig){
-    if(!(await applyPendingProtectionTableBeforeConfigCommit(raw,body)))return false;
     return safeAckActiveConfigAfterReconcile(
       raw,{newClientId},body,'EXEC_ACTIVE_TARGET_CONFIG_ACK_RETRY'
     );
