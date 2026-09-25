@@ -188,6 +188,8 @@ jobs:
         run: node --test scripts/test-entry-protection-plan.mjs
       - name: Test 24/7 watched-entry wiring
         run: node --test scripts/test-engine-watched-entry-wiring.mjs
+      - name: Test pending-entry MAX-LOSS loss recovery
+        run: node --test scripts/test-entry-protection-loss-cancel.mjs
       - name: Test central managed emergency hard-cap ACK
         run: node --test scripts/test-central-emergency-cap.mjs
       - name: Test PANIC idempotent audit protection
