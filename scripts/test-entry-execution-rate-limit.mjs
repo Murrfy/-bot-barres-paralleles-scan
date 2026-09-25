@@ -18,7 +18,7 @@ function response(){
 function request(){
   return {
     method:'POST',
-    headers:{cookie:'__Host-zenith_device=master-token',host:'zenith.test','x-forwarded-proto':'https',origin:'https://zenith.test'},
+    headers:{cookie:'__Host-zenith_device=master-token',host:'zenith.test','x-forwarded-proto':'https',origin:'https://zenith.test','x-zenith-engine-instance':'engine-instance-rate-limit-0001'},
     body:{
       type:'EXEC_OPEN_POSITION',
       commandId:'cmd-rate-test-001',
@@ -41,11 +41,13 @@ function harness({rateCount=7,failRateBackend=false}={}){
       const c=JSON.parse(init.body);
       let result=null;
       if(c[0]==='GET'&&String(c[1]).includes(':device:')){
-        result=JSON.stringify({role:'master',deviceId:'master-1',createdAt:Date.now()});
+        result=JSON.stringify({role:'master',deviceId:'master-1',principal:'engine',engineInstanceId:'engine-instance-rate-limit-0001',createdAt:Date.now()});
       }else if(c[0]==='GET'&&c[1]==='zenith:v1:role-device:master'){
         result='master-1';
       }else if(c[0]==='GET'&&c[1]==='zenith:v1:master'){
         result='master-1';
+      }else if(c[0]==='GET'&&c[1]==='zenith:v1:engine-instance'){
+        result='engine-instance-rate-limit-0001';
       }else if(c[0]==='EVAL'&&String(c[3]||'').includes(':rate:entry-execution:')){
         if(failRateBackend)return new Response('{}',{status:503});
         result=rateCount;
