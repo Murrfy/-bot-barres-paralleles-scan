@@ -130,3 +130,25 @@ test('history API discovers symbols first and calls userTrades with mandatory sy
   assert.match(source,/BINANCE_HISTORY_WINDOW_TRUNCATED/);
   assert.doesNotMatch(source,/method:'POST'.*fapi\/v1\/order/s);
 });
+
+
+test('UI history is Binance-real only and never displays protection level numbers',()=>{
+  const html=fs.readFileSync('index.html','utf8');
+  const start=html.indexOf('function renderHistory(){');
+  const end=html.indexOf('function applyTheme()',start);
+  assert.ok(start>=0&&end>start);
+  const block=html.slice(start,end);
+  assert.match(block,/binanceHistory\.history/);
+  assert.match(block,/grossRealizedPnl/);
+  assert.match(block,/commissionUsdt/);
+  assert.match(block,/fundingUsdt/);
+  assert.match(block,/netUsdt/);
+  assert.doesNotMatch(block,/Niveau|Protection|level/i);
+  assert.ok(html.includes('id="refreshHistoryBtn"'));
+  assert.equal(html.includes('id="resetClosedBtn"'),false);
+  assert.match(html,/Historique réel Binance/);
+  assert.match(html,/Achat exécuté/);
+  assert.match(html,/Vente exécutée/);
+  assert.match(html,/Net encaissé/);
+  assert.ok(html.trimEnd().endsWith('</html>'));
+});
