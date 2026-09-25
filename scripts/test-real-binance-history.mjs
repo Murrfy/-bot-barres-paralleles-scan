@@ -29,7 +29,7 @@ test('closed Zenith LONG uses actual fills, commissions and funding for exact ne
   assert.equal(r.entryPrice,100);
   assert.equal(r.exitPrice,110);
   assert.equal(r.grossRealizedPnl,10);
-  assert.equal(r.commissionUsdt,.084);
+  assert.ok(Math.abs(r.commissionUsdt-.084)<1e-12);
   assert.equal(r.fundingUsdt,-.2);
   assert.ok(Math.abs(r.netUsdt-9.716)<1e-12);
   assert.equal(r.exactNetUsdt,true);
@@ -134,7 +134,7 @@ test('history API discovers symbols first and calls userTrades with mandatory sy
 
 test('UI history is Binance-real only and never displays protection level numbers',()=>{
   const html=fs.readFileSync('index.html','utf8');
-  const start=html.indexOf('function renderHistory(){');
+  const start=html.indexOf('function historyCommissionText');
   const end=html.indexOf('function applyTheme()',start);
   assert.ok(start>=0&&end>start);
   const block=html.slice(start,end);
