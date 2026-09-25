@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { evaluateEntryRisk, REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
 function base(overrides = {}) {
@@ -151,4 +152,12 @@ test('limit reference price must remain inside Binance PRICE_FILTER bounds', () 
   const r = evaluateEntryRisk(base({ referencePrice: 70000, symbolInfo }));
   assert.equal(r.ready, false);
   assert.ok(r.reasons.includes('PRICE_ABOVE_EXCHANGE_MAX'));
+});
+
+
+test('live preflight reads all open entry orders so pending symbols reserve slots', () => {
+  const source=fs.readFileSync('api/binance-entry-preflight.js','utf8');
+  assert.match(source,/signedGet\('\/fapi\/v1\/openOrders', apiKey, secret, serverTime\)/);
+  assert.match(source,/signedGet\('\/fapi\/v1\/openAlgoOrders', apiKey, secret, serverTime, \{ algoType: 'CONDITIONAL' \}\)/);
+  assert.match(source,/maxActivePositions = await readConfiguredMaxActivePositions\(\)/);
 });
