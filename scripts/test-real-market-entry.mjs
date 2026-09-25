@@ -79,8 +79,12 @@ test('central ACK independently requires live MARKET position and configured MAX
   const sync=fs.readFileSync('api/zenith-sync.js','utf8');
   assert.match(sync,/if \(commandType === 'EXEC_OPEN_MARKET_POSITION'\)/);
   assert.match(sync,/EXECUTION_ACK_MARKET_POSITION_MISMATCH/);
+  assert.match(sync,/readiness\.report\?\.certifiedPositions/);
+  assert.match(sync,/EXECUTION_ACK_REST_POSITION_MISMATCH/);
   assert.match(sync,/EXECUTION_ACK_MARGIN_NOT_ISOLATED/);
   assert.match(sync,/EXECUTION_ACK_AUTO_ADD_MARGIN_ENABLED/);
+  assert.match(sync,/EXECUTION_ACK_AUTO_ADD_MARGIN_UNKNOWN/);
+  assert.match(sync,/certifiedPosition\?\.isAutoAddMargin !== false/);
   assert.match(sync,/EXECUTION_ACK_EMERGENCY_PROTECTION_MISSING/);
   assert.match(sync,/EXECUTION_ACK_MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT/);
   assert.match(sync,/kind:'EXEC_MARKET_ENTRY_CONFIRMED'/);
@@ -98,4 +102,12 @@ test('iPhone instant-buy path queues real MARKET only and never creates a local 
   assert.match(fn,/realMarketEntryPending/);
   assert.match(fn,/ARGENT RÉEL — ACHAT IMMÉDIAT MARKET/);
   assert.doesNotMatch(fn,/createPosition\(/);
+});
+
+
+test('reconciliation report certifies auto-add margin from Binance REST',()=>{
+  const reconcile=fs.readFileSync('api/binance-reconcile.js','utf8');
+  assert.match(reconcile,/certifiedPositions:actualPositions\.map/);
+  assert.match(reconcile,/isAutoAddMargin:p\.isAutoAddMargin===true/);
+  assert.match(reconcile,/isAutoAddMargin:position\.isAutoAddMargin/);
 });
