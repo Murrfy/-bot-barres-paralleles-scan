@@ -1372,12 +1372,12 @@ async function ensureMarkPriceStream(){
 }
 
 function streamProjection(){
-  return runtimeInventoryFromUserStream(stream.state,runtime.realExecutionArmed?'REAL':'SIMULATION');
+  return runtimeInventoryFromUserStream(stream.state,'REAL');
 }
 
 function runtimeSnapshot(){
   const projection=streamProjection();
-  const executionMode=runtime.realExecutionArmed?'REAL':'SIMULATION';
+  const executionMode='REAL';
   return {
     executionMode,
     mode:executionMode,
