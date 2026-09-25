@@ -1203,6 +1203,7 @@ function activeConfigStatus(value) {
   if (Math.abs(targetProfit - manualTargetProfit) > 1e-8) return { ok:false, reason:'ACTIVE_TARGETS_MUST_MATCH' };
   if (exactSaleEnabled && !(exactSalePrice > 0)) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_REQUIRED' };
   if (!Number.isFinite(exactSalePrice) || exactSalePrice < 0) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_INVALID' };
+  if (!exactSaleEnabled && exactSalePrice !== 0) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_MUST_BE_ZERO' };
   if (exactSaleSource !== 'settings') return { ok:false, reason:'ACTIVE_EXACT_SALE_SOURCE_INVALID' };
   const stages = activeProtectionStagesStatus(value.protectionStages);
   if (!stages.ok) return stages;
@@ -2096,6 +2097,27 @@ async function prepareActiveConfigControllerCommit(command, payloadStatus, devic
   if (String(currentToken.marginType || settings.marginType || 'ISOLATED').toUpperCase() !== 'ISOLATED') {
     const e = new Error('CONFIGURED_MARGIN_TYPE_INVALID'); e.code = 'CONFIGURED_MARGIN_TYPE_INVALID'; throw e;
   }
+
+  const currentProtections = Array.isArray(currentToken.protectionStages)
+    ? currentToken.protectionStages
+    : Array.isArray(settings.protectionStages) ? settings.protectionStages : [];
+  const currentTarget = Number(currentToken.manualTargetProfit ?? currentToken.targetProfit ?? settings.targetProfit);
+  const currentExactSaleEnabled = currentToken.exactSaleEnabled === true;
+  const currentExactSalePrice = currentExactSaleEnabled ? Number(currentToken.exactSalePrice || 0) : 0;
+
+  if (commandType === 'EXEC_UPDATE_EXIT') {
+    if (stableStringify(validated.activeConfig.protectionStages) !== stableStringify(currentProtections)) {
+      const e = new Error('ACTIVE_EXIT_CANNOT_CHANGE_PROTECTIONS'); e.code = 'ACTIVE_EXIT_CANNOT_CHANGE_PROTECTIONS'; throw e;
+    }
+  } else {
+    if (!numberMatches(validated.activeConfig.targetProfit, currentTarget) ||
+        !numberMatches(validated.activeConfig.manualTargetProfit, currentTarget) ||
+        validated.activeConfig.exactSaleEnabled !== currentExactSaleEnabled ||
+        !numberMatches(validated.activeConfig.exactSalePrice, currentExactSalePrice)) {
+      const e = new Error('ACTIVE_PROTECTIONS_CANNOT_CHANGE_TARGET'); e.code = 'ACTIVE_PROTECTIONS_CANNOT_CHANGE_TARGET'; throw e;
+    }
+  }
+
   const nextToken = {
     ...currentToken,
     ...validated.activeConfig,
