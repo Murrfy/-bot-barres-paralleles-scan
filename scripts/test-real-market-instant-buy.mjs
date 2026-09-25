@@ -61,7 +61,7 @@ test('central queue accepts explicit MARKET only in RUNNING and expires it quick
   const allowBlock=source.slice(allowStart,protectiveStart);
   assert.doesNotMatch(pauseBlock,/EXEC_OPEN_MARKET_POSITION/);
   assert.match(allowBlock,/EXEC_OPEN_MARKET_POSITION/);
-  assert.match(source,/type === 'EXEC_OPEN_MARKET_POSITION' \? 15 \* 1000 : COMMAND_MAX_AGE_MS/);
+  assert.match(source,/type === 'EXEC_OPEN_MARKET_POSITION' \? 30 \* 1000 : COMMAND_MAX_AGE_MS/);
   assert.match(source,/MARKET_ENTRY_REQUEST_STALE/);
   assert.match(source,/age > 30000/);
 });
