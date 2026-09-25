@@ -413,11 +413,25 @@ function persistRealProtectiveUpdatePending(){
   try{
     const now=Date.now(),rows=[];
     for(const [key,pending] of realProtectiveUpdatePending.entries()){
-      if(String(pending?.kind||'').toUpperCase()!=='MAX_LOSS')continue;
-      const commandId=String(pending?.commandId||''),clientCommandId=String(pending?.clientCommandId||''),maxLossUsd=n(pending?.maxLossUsd,NaN),at=n(pending?.at,0);
+      const kind=String(pending?.kind||'').toUpperCase();
+      const tracked=kind==='MAX_LOSS'||Boolean(pending?.activeConfig);
+      if(!tracked)continue;
+      const commandId=String(pending?.commandId||''),clientCommandId=String(pending?.clientCommandId||''),at=n(pending?.at,0);
       const hasServerId=/^[A-Za-z0-9._:-]{8,128}$/.test(commandId),hasClientId=/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId);
-      if((!hasServerId&&!hasClientId)||!(maxLossUsd>=2&&maxLossUsd<=400)||!(at>0)||now-at>30*24*60*60*1000)continue;
-      rows.push({key,symbol:String(pending?.symbol||'').toUpperCase(),kind:'MAX_LOSS',price:n(pending?.price,NaN),maxLossUsd,commandId:hasServerId?commandId:'',clientCommandId:hasClientId?clientCommandId:'',at});
+      const maxLossUsd=n(pending?.maxLossUsd,NaN);
+      if((!hasServerId&&!hasClientId)||!(at>0)||now-at>30*24*60*60*1000)continue;
+      if(kind==='MAX_LOSS'&&!(maxLossUsd>=2&&maxLossUsd<=400))continue;
+      rows.push({
+        key,
+        symbol:String(pending?.symbol||'').toUpperCase(),
+        kind,
+        price:n(pending?.price,NaN),
+        ...(kind==='MAX_LOSS'?{maxLossUsd}:{}),
+        ...(pending?.activeConfig?{activeConfig:clone(pending.activeConfig)}:{}),
+        commandId:hasServerId?commandId:'',
+        clientCommandId:hasClientId?clientCommandId:'',
+        at
+      });
     }
     localStorage.setItem(ZENITH_REAL_PROTECTIVE_PENDING_KEY,JSON.stringify(rows));
   }catch(_){}
@@ -427,16 +441,27 @@ function restoreRealProtectiveUpdatePending(){
     const now=Date.now(),rows=JSON.parse(localStorage.getItem(ZENITH_REAL_PROTECTIVE_PENDING_KEY)||'[]');
     if(!Array.isArray(rows))return;
     for(const row of rows){
-      const key=String(row?.key||''),symbol=String(row?.symbol||'').toUpperCase(),commandId=String(row?.commandId||''),clientCommandId=String(row?.clientCommandId||''),maxLossUsd=n(row?.maxLossUsd,NaN),at=n(row?.at,0),priceValue=n(row?.price,NaN);
+      const key=String(row?.key||''),symbol=String(row?.symbol||'').toUpperCase(),kind=String(row?.kind||'').toUpperCase();
+      const commandId=String(row?.commandId||''),clientCommandId=String(row?.clientCommandId||''),at=n(row?.at,0),priceValue=n(row?.price,NaN);
       const hasServerId=/^[A-Za-z0-9._:-]{8,128}$/.test(commandId),hasClientId=/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId);
-      if(!/^[A-Z0-9]{3,30}:(?:LONG|SHORT):MAX_LOSS$/.test(key)||!/^[A-Z0-9]{3,30}$/.test(symbol)||
-         (!hasServerId&&!hasClientId)||!(maxLossUsd>=2&&maxLossUsd<=400)||!(at>0)||now-at>30*24*60*60*1000)continue;
-      realProtectiveUpdatePending.set(key,{symbol,kind:'MAX_LOSS',price:priceValue,maxLossUsd,commandId:hasServerId?commandId:'',clientCommandId:hasClientId?clientCommandId:'',at,checking:false});
+      const maxLossUsd=n(row?.maxLossUsd,NaN),activeConfig=row?.activeConfig&&typeof row.activeConfig==='object'&&!Array.isArray(row.activeConfig)?row.activeConfig:null;
+      const tracked=kind==='MAX_LOSS'||Boolean(activeConfig);
+      if(!tracked||!/^[A-Z0-9]{3,30}:(?:LONG|SHORT):(?:MAX_LOSS|EXIT|ACTIVE_CONFIG)$/.test(key)||!/^[A-Z0-9]{3,30}$/.test(symbol)||
+         (!hasServerId&&!hasClientId)||!(at>0)||now-at>30*24*60*60*1000)continue;
+      if(kind==='MAX_LOSS'&&!(maxLossUsd>=2&&maxLossUsd<=400))continue;
+      realProtectiveUpdatePending.set(key,{
+        symbol,kind,price:priceValue,
+        ...(kind==='MAX_LOSS'?{maxLossUsd}:{}),
+        ...(activeConfig?{activeConfig:clone(activeConfig)}:{}),
+        commandId:hasServerId?commandId:'',
+        clientCommandId:hasClientId?clientCommandId:'',
+        at,checking:false
+      });
     }
     persistRealProtectiveUpdatePending();
   }catch(_){}
 }
-async function checkRealMaxLossCommandStatus(key,pending){
+async function checkRealTrackedCommandStatus(key,pending){
   if(!pending||pending.checking===true)return;
   const commandId=String(pending.commandId||''),clientCommandId=String(pending.clientCommandId||'');
   const hasServerId=/^[A-Za-z0-9._:-]{8,128}$/.test(commandId),hasClientId=/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId);
@@ -446,9 +471,7 @@ async function checkRealMaxLossCommandStatus(key,pending){
     const query=hasServerId
       ?'commandId='+encodeURIComponent(commandId)
       :'clientCommandId='+encodeURIComponent(clientCommandId);
-    const r=await fetch('/api/zenith-sync?action=command-status&'+query,{
-      cache:'no-store',headers:{Accept:'application/json'}
-    });
+    const r=await fetch('/api/zenith-sync?action=command-status&'+query,{cache:'no-store',headers:{Accept:'application/json'}});
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
     if(realProtectiveUpdatePending.get(key)!==pending)return;
@@ -457,55 +480,72 @@ async function checkRealMaxLossCommandStatus(key,pending){
       pending.commandId=resolvedCommandId;
       persistRealProtectiveUpdatePending();
     }
-    const status=String(q.status||'PENDING').toUpperCase();
+    const status=String(q.status||'PENDING').toUpperCase(),symbol=String(pending.symbol||'').toUpperCase();
     if(status==='NOT_FOUND'){
       realProtectiveUpdatePending.delete(key);
       persistRealProtectiveUpdatePending();
-      if(selectedSymbol===String(pending.symbol||'').toUpperCase())fillToken();
+      if(selectedSymbol===symbol)fillToken();
       renderRealPositions();
-      setStatus(String(pending.symbol||'')+' : commande perte MAX non enregistrée par le serveur — ancien réglage conservé.',true);
+      setStatus(symbol+' : commande active non enregistrée par le serveur — ancien réglage conservé.',true);
       return;
     }
     if(status==='ACK'){
-      const symbol=String(pending.symbol||'').toUpperCase(),confirmedLoss=n(q.maxLossUsd,NaN),wantedLoss=n(pending.maxLossUsd,NaN),revision=Math.max(0,n(q.controllerRevision,0)),serverStateHash=String(q.controllerStateHash||'');
+      const revision=Math.max(0,n(q.controllerRevision,0)),serverStateHash=String(q.controllerStateHash||'');
+      if(String(pending.kind||'').toUpperCase()==='MAX_LOSS'){
+        const confirmedLoss=n(q.maxLossUsd,NaN),wantedLoss=n(pending.maxLossUsd,NaN),old=tokenSettings[symbol]||{};
+        const nextTokenSettings={...tokenSettings,[symbol]:{...old,maxLoss:confirmedLoss,marginType:'ISOLATED'}};
+        const localStateHash=Number.isFinite(confirmedLoss)?await sha256Hex(stableStringify(controllerCloudStatePayload(nextTokenSettings))):'';
+        const ackValid=q.activeMaxLossCommitted===true&&String(q.symbol||'').toUpperCase()===symbol&&
+          Number.isFinite(confirmedLoss)&&realNumberMatches(confirmedLoss,wantedLoss)&&revision>0&&
+          serverStateHash&&localStateHash===serverStateHash;
+        if(!ackValid){
+          pending.lastError='ACTIVE_MAX_LOSS_ACK_INVALID';
+          setStatus(symbol+' : ACK MAX-LOSS incohérent avec l’état central — réglage local NON modifié.',true);
+          return;
+        }
+        tokenSettings=nextTokenSettings;
+        localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(revision));
+        controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
+        saveLocalOnly();
+        realProtectiveUpdatePending.delete(key);persistRealProtectiveUpdatePending();
+        if(selectedSymbol===symbol)fillToken();renderRealPositions();refreshMasterControls();
+        setStatus(symbol+' réel : nouvelle perte MAX -'+confirmedLoss.toFixed(2)+' $ confirmée par Binance et enregistrée.');
+        return;
+      }
+
+      const returnedConfig=q.activeConfig&&typeof q.activeConfig==='object'&&!Array.isArray(q.activeConfig)?q.activeConfig:null;
+      const wantedConfig=pending.activeConfig&&typeof pending.activeConfig==='object'?pending.activeConfig:null;
       const old=tokenSettings[symbol]||{};
-      const nextTokenSettings={...tokenSettings,[symbol]:{...old,maxLoss:confirmedLoss,marginType:'ISOLATED'}};
-      const localStateHash=Number.isFinite(confirmedLoss)
-        ?await sha256Hex(stableStringify(controllerCloudStatePayload(nextTokenSettings)))
-        :'';
-      const ackValid=q.activeMaxLossCommitted===true&&String(q.symbol||'').toUpperCase()===symbol&&
-        Number.isFinite(confirmedLoss)&&realNumberMatches(confirmedLoss,wantedLoss)&&revision>0&&
-        serverStateHash&&localStateHash===serverStateHash;
+      const nextTokenSettings=returnedConfig?{...tokenSettings,[symbol]:{...old,...returnedConfig,marginType:'ISOLATED'}}:null;
+      const localStateHash=nextTokenSettings?await sha256Hex(stableStringify(controllerCloudStatePayload(nextTokenSettings))):'';
+      const ackValid=q.activeConfigCommitted===true&&String(q.symbol||'').toUpperCase()===symbol&&
+        returnedConfig&&wantedConfig&&stableStringify(returnedConfig)===stableStringify(wantedConfig)&&
+        revision>0&&serverStateHash&&localStateHash===serverStateHash;
       if(!ackValid){
-        pending.lastError='ACTIVE_MAX_LOSS_ACK_INVALID';
-        setStatus(symbol+' : ACK MAX-LOSS incohérent avec l’état central — réglage local NON modifié.',true);
+        pending.lastError='ACTIVE_CONFIG_ACK_INVALID';
+        setStatus(symbol+' : ACK réglages actifs incohérent avec l’état central — réglage local NON modifié.',true);
         return;
       }
       tokenSettings=nextTokenSettings;
       localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(revision));
       controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
       saveLocalOnly();
-      realProtectiveUpdatePending.delete(key);
-      persistRealProtectiveUpdatePending();
-      if(selectedSymbol===symbol)fillToken();
-      renderRealPositions();
-      refreshMasterControls();
-      setStatus(symbol+' réel : nouvelle perte MAX -'+confirmedLoss.toFixed(2)+' $ confirmée par Binance et enregistrée.');
+      realProtectiveUpdatePending.delete(key);persistRealProtectiveUpdatePending();
+      if(selectedSymbol===symbol)fillToken();renderRealPositions();refreshMasterControls();
+      setStatus(symbol+' réel : objectif/protections confirmés par le serveur et enregistrés.');
       return;
     }
     if(status==='FAIL'){
-      realProtectiveUpdatePending.delete(key);
-      persistRealProtectiveUpdatePending();
-      if(selectedSymbol===String(pending.symbol||'').toUpperCase())fillToken();
-      renderRealPositions();
-      setStatus(String(pending.symbol||'')+' : modification perte MAX refusée/échouée — ancien réglage conservé ('+String(q.reason||'échec')+').',true);
+      realProtectiveUpdatePending.delete(key);persistRealProtectiveUpdatePending();
+      if(selectedSymbol===symbol)fillToken();renderRealPositions();
+      setStatus(symbol+' : modification active refusée/échouée — ancien réglage conservé ('+String(q.reason||'échec')+').',true);
       return;
     }
     pending.lastError='';
   }catch(e){
     pending.lastError=String(e?.message||'COMMAND_STATUS_UNAVAILABLE');
     if(Date.now()-n(pending.at,Date.now())>180000){
-      setStatus(String(pending.symbol||'')+' : confirmation serveur MAX-LOSS indisponible — réglage local non modifié.',true);
+      setStatus(String(pending.symbol||'')+' : confirmation serveur indisponible — ancien réglage conservé.',true);
     }
   }finally{
     if(realProtectiveUpdatePending.get(key)===pending)pending.checking=false;
@@ -516,7 +556,7 @@ function reconcileRealProtectiveUpdatePending(){
   const positions=Array.isArray(binanceAccount.positions)?binanceAccount.positions:[];
   for(const [key,pending] of [...realProtectiveUpdatePending.entries()]){
     if(String(pending?.kind||'').toUpperCase()==='MAX_LOSS'&&Number.isFinite(n(pending?.maxLossUsd,NaN))){
-      if(pending.commandId)void checkRealMaxLossCommandStatus(key,pending);
+      if(pending.commandId)void checkRealTrackedCommandStatus(key,pending);
       continue;
     }
     const position=positions.find(p=>String(p?.symbol||'').toUpperCase()===String(pending?.symbol||'').toUpperCase());
@@ -636,8 +676,8 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
       if(!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId))throw new Error('MAX_LOSS_COMMAND_ID_MISSING');
       pending.commandId=commandId;
       persistRealProtectiveUpdatePending();
-      setTimeout(()=>void checkRealMaxLossCommandStatus(key,pending),750);
-      setTimeout(()=>void checkRealMaxLossCommandStatus(key,pending),2500);
+      setTimeout(()=>void checkRealTrackedCommandStatus(key,pending),750);
+      setTimeout(()=>void checkRealTrackedCommandStatus(key,pending),2500);
     }
     setStatus(`${position.symbol} : ${label} réel mis en file MASTER. Zenith attend les confirmations Binance avant ACK.`);
     setTimeout(()=>refreshBinanceAccount(),1000);
@@ -648,7 +688,7 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
       persistRealProtectiveUpdatePending();
       pending.lastError=String(e?.message||'ENVOI_INDETERMINE');
       setStatus(`${position.symbol} : réponse d’envoi MAX-LOSS indéterminée — Zenith vérifie la commande serveur, sans la renvoyer.`,true);
-      setTimeout(()=>void checkRealMaxLossCommandStatus(key,pending),750);
+      setTimeout(()=>void checkRealTrackedCommandStatus(key,pending),750);
       return false;
     }
     realProtectiveUpdatePending.delete(key);
@@ -2889,7 +2929,7 @@ $('adminCodeCancel').onclick=()=>closeAdminCodeModal(null);$('adminCodeConfirm')
 $('masterAuthorizeBtn').onclick=controllerAuthorizeMaster;$('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('masterRevokeBtn').onclick=controllerRevokeMaster;$('panicClearBtn').onclick=controllerClearPanic;
 $('refreshHistoryBtn').onclick=()=>refreshBinanceHistory();
 document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio();if(controllerIdentity.role==='master')syncMasterWakeLock(true)},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){syncMasterWakeLock(true);masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
-load();restoreRealProtectiveUpdatePending();applyTheme();renderAll();for(const [key,pending] of realProtectiveUpdatePending.entries())void checkRealMaxLossCommandStatus(key,pending);ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startBinanceHistory();startControllerIdentityCheck();
+load();restoreRealProtectiveUpdatePending();applyTheme();renderAll();for(const [key,pending] of realProtectiveUpdatePending.entries())void checkRealTrackedCommandStatus(key,pending);ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startBinanceHistory();startControllerIdentityCheck();
 </script>
 </body>
 </html>
