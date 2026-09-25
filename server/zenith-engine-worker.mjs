@@ -25,7 +25,7 @@ import {
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
 import { planAutomaticTargetExit } from '../lib/auto-target-exit.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
-import { pendingEntryProtectionLossTargets, pendingEntryWriteAheadRecoveryTargets } from '../lib/protective-command.mjs';
+import { pendingEntryProtectionLossTargets, pendingEntryWriteAheadRecoveryTargets, expiredEntryOrphanProtections } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import {
   entryWatchDefinition,
@@ -2154,6 +2154,8 @@ async function reconcile(secondPass=false){
         await invalidateStream('ORPHAN_CLEANUP_RECONCILIATION_FAILED');
         return false;
       }
+      const expiredEntryOrphans=expiredEntryOrphanProtections(data.report);
+      let expiredEntryStateChanged=false;
       for(const target of orphanTargets){
         const body={
           type:'EXEC_CLEAN_ORPHAN_PROTECTION',
@@ -2184,7 +2186,29 @@ async function reconcile(secondPass=false){
           await invalidateStream('ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED');
           return false;
         }
+        const expiredEntry=expiredEntryOrphans.find(row=>
+          target.orderClass==='ALGO'&&
+          row.symbol===target.symbol&&
+          row.protectionClientAlgoId===target.clientAlgoId
+        );
+        if(expiredEntry){
+          const watchState=entryWatch.states.get(expiredEntry.symbol);
+          const watchConfig=watchedEntryConfig(expiredEntry.symbol);
+          if(watchState&&watchConfig&&autoEntryCommandId(watchConfig)===expiredEntry.commandId){
+            watchState.triggeredAt=0;
+            watchState.pendingUntil=0;
+            watchState.blockedAt=Date.now();
+            entryWatch.states.set(expiredEntry.symbol,watchState);
+            expiredEntryStateChanged=true;
+          }
+          log('EXPIRED_ENTRY_ORPHAN_PROTECTION_CLEANED',{
+            symbol:expiredEntry.symbol,
+            commandId:expiredEntry.commandId,
+            protectionClientAlgoId:expiredEntry.protectionClientAlgoId,
+          });
+        }
       }
+      if(expiredEntryStateChanged)await persistEntryWatchStateNow().catch(()=>false);
       await publishRuntime();
       stream.reconcileBusy=false;
       return reconcile(true);

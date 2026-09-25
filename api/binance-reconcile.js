@@ -794,6 +794,20 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
         })),
         missingProtectionPendingEntries: transitionMissingProtectionPendingEntries,
         entryMissingPreparedProtections: transitionEntryMissingPreparedProtections,
+        expiredProtectionOnly: (Array.isArray(transitionState.expiredProtectionOnly)?transitionState.expiredProtectionOnly:[]).map(row => ({
+          commandId:row.commandId,
+          symbol:row.symbol,
+          direction:row.direction,
+          protectionClientAlgoId:row.protectionClientAlgoId,
+          entryClientOrderId:row.entryClientOrderId,
+          expiresAt:row.expiresAt,
+        })),
+        prunableExpired: (Array.isArray(transitionState.prunableExpired)?transitionState.prunableExpired:[]).map(row => ({
+          commandId:row.commandId,
+          symbol:row.symbol,
+          direction:row.direction,
+          expiresAt:row.expiresAt,
+        })),
         invalidReasons: transitionState.invalid.map(row => String(row.reason || 'ENTRY_TRANSITION_INVALID')),
         expired: transitionState.expired.length,
         missingProtections: transitionState.missingProtections,
@@ -1163,6 +1177,22 @@ export default async function handler(req, res) {
       error.code = error.message;
       throw error;
     }
+    let prunedEntryTransitions=0;
+    if (report.failClosed === false) {
+      const prunable = Array.isArray(report?.differences?.entryTransitions?.prunableExpired)
+        ? report.differences.entryTransitions.prunableExpired : [];
+      try {
+        for (const row of prunable) {
+          const commandId = String(row?.commandId || '');
+          if (!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)) continue;
+          prunedEntryTransitions += Number(await redis(['HDEL', KEY_ENTRY_TRANSITIONS, commandId])) || 0;
+        }
+      } catch {
+        // Garbage collection is non-authoritative. A later reconciliation retries it.
+        prunedEntryTransitions = 0;
+      }
+    }
+
     await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
       at: observedAt,
       kind: 'BINANCE_RECONCILIATION',
@@ -1172,10 +1202,11 @@ export default async function handler(req, res) {
       failClosed: report.failClosed,
       reasons: report.reasons,
       reportHash,
+      prunedEntryTransitions,
     })]);
     await redis(['LTRIM', KEY_AUDIT, '0', '199']);
 
-    return send(res, 200, { ok: true, report: stored });
+    return send(res, 200, { ok: true, report: stored, prunedEntryTransitions });
   } catch (e) {
     // The IN_PROGRESS marker already invalidated older CLEAN reports. Replace it
     // with UNAVAILABLE only if this request still owns the same reconciliation attempt.
