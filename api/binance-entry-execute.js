@@ -11,6 +11,7 @@ import { normalizeEntryTransition, transitionProtectionMatches } from '../lib/en
 import { runLiveEntryPreflight, readConfiguredMaxActivePositions } from './binance-entry-preflight.js';
 import { validateExecutionArmRecord, executionReadiness } from './binance-protective-execute.js';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
+import { pendingEntryWriteAheadRecoveryAllowed } from '../lib/protective-command.mjs';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
 
 const PREFIX='zenith:v1';
@@ -245,12 +246,12 @@ async function finalEntryDispatchGate(masterDeviceId,masterRoleEpoch,expectedArm
   };
 }
 
-function entryReadinessReason(state,masterDeviceId){
+function entryReadinessReason(state,masterDeviceId,pendingEntryRecovery=false){
   if(state.masterMode!=='RUNNING')return state.masterMode==='PAUSE_PENDING'?'MASTER_PAUSE_PENDING':'MASTER_PAUSED';
   if(state.emergencyStopActive)return 'EMERGENCY_STOP_ACTIVE';
   const armReason=validateExecutionArmRecord(state.armRecord,masterDeviceId);
   if(armReason)return armReason;
-  return executionReadiness(state.runtimeState,state.report,masterDeviceId);
+  return executionReadiness(state.runtimeState,state.report,masterDeviceId,'',pendingEntryRecovery===true);
 }
 
 function near(a,b){
@@ -357,7 +358,11 @@ export default async function handler(req,res){
 
   try{
     const before=await readExecutionState();
-    const beforeReason=entryReadinessReason(before,master.deviceId);
+    const pendingEntryRecovery=Boolean(
+      phase==='SUBMIT_ENTRY'&&
+      pendingEntryWriteAheadRecoveryAllowed(before.report,{commandId,symbol,side,limitPrice,maxLoss})
+    );
+    const beforeReason=entryReadinessReason(before,master.deviceId,pendingEntryRecovery);
     if(beforeReason)return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:beforeReason,writeAttempted:false});
 
     let apiPermissions=null;
@@ -455,7 +460,11 @@ export default async function handler(req,res){
     }
 
     const latest=await readExecutionState();
-    const latestReason=entryReadinessReason(latest,master.deviceId);
+    const latestRecovery=Boolean(
+      phase==='SUBMIT_ENTRY'&&
+      pendingEntryWriteAheadRecoveryAllowed(latest.report,{commandId,symbol,side,limitPrice,maxLoss})
+    );
+    const latestReason=entryReadinessReason(latest,master.deviceId,latestRecovery);
     if(latestReason)return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:latestReason,writeAttempted:false});
 
     let plan;

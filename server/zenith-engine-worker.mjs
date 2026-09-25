@@ -25,7 +25,7 @@ import {
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
 import { planAutomaticTargetExit } from '../lib/auto-target-exit.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
-import { pendingEntryProtectionLossTargets } from '../lib/protective-command.mjs';
+import { pendingEntryProtectionLossTargets, pendingEntryWriteAheadRecoveryTargets } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import {
   entryWatchDefinition,
@@ -1799,6 +1799,109 @@ async function markMaxLossRepairFailure(reason){
   scheduleReconcile(1500);
   return code;
 }
+async function waitForWriteAheadEntryEvidence(target,timeoutMs=5000){
+  const deadline=Date.now()+Math.max(500,n(timeoutMs,5000));
+  let lastOrder=null;
+  while(Date.now()<deadline){
+    lastOrder=streamStandardOrderByClientId(target.entryClientOrderId);
+    if(lastOrder){
+      const status=String(lastOrder?.status||'').toUpperCase();
+      if(['NEW','PARTIALLY_FILLED','FILLED'].includes(status))return {kind:'ORDER',order:lastOrder};
+      if(['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status)){
+        return {kind:'TERMINAL_UNSAFE',order:lastOrder};
+      }
+    }
+    const position=streamLongPosition(target.symbol);
+    if(position){
+      const liveQty=Math.abs(n(position?.positionAmt??position?.quantity,0));
+      if(realNumberMatches(liveQty,target.quantity))return {kind:'POSITION',position};
+      return {kind:'POSITION_MISMATCH',position};
+    }
+    await sleep(100);
+  }
+  return lastOrder?{kind:'UNKNOWN_ORDER',order:lastOrder}:null;
+}
+
+async function recoverPendingEntryWriteAhead(report){
+  const targets=pendingEntryWriteAheadRecoveryTargets(report);
+  if(!targets.length)return {handled:false,recovered:false,count:0,reason:'NO_WRITEAHEAD_ENTRY_RECOVERY'};
+  if(!runtime.synchronized||!runtime.heartbeatFresh||runtime.mode!=='RUNNING'||runtime.realExecutionArmed!==true){
+    return {handled:true,recovered:false,count:0,reason:'ENTRY_WRITEAHEAD_RUNTIME_NOT_READY'};
+  }
+
+  let count=0;
+  for(const target of targets){
+    const config=watchedEntryConfig(target.symbol);
+    if(!config||target.side!=='BUY'||target.direction!=='LONG'){
+      return {handled:true,recovered:false,count,reason:'ENTRY_WRITEAHEAD_CONFIG_UNAVAILABLE'};
+    }
+    if(autoEntryCommandId(config)!==target.commandId||
+       !realNumberMatches(config.maxLoss,target.maxLossUsd)){
+      return {handled:true,recovered:false,count,reason:'ENTRY_WRITEAHEAD_CONFIG_MISMATCH'};
+    }
+
+    const submitted=await callEntryExecute({
+      type:'EXEC_OPEN_POSITION',
+      phase:'SUBMIT_ENTRY',
+      commandId:target.commandId,
+      symbol:target.symbol,
+      side:target.side,
+      orderType:'LIMIT',
+      margin:config.margin,
+      leverage:config.leverage,
+      maxLoss:target.maxLossUsd,
+      limitPrice:target.limitPrice,
+    });
+    if(!submitted.response.ok||submitted.data?.ok!==true){
+      const reason='ENTRY_WRITEAHEAD_SUBMIT_'+String(
+        submitted.data?.code||submitted.data?.reason||('HTTP_'+submitted.response.status)
+      );
+      entryWatch.lastError=reason;
+      runtime.error=reason;
+      scheduleReconcile(750);
+      return {handled:true,recovered:false,count,reason};
+    }
+
+    const returnedId=String(submitted.data?.plan?.params?.newClientOrderId||'');
+    if(returnedId!==target.entryClientOrderId){
+      const reason='ENTRY_WRITEAHEAD_CLIENT_ID_MISMATCH';
+      await invalidateStream(reason);
+      return {handled:true,recovered:false,count,reason};
+    }
+    const returnedOrder=submitted.data?.result?.order||{};
+    const returnedStatus=String(returnedOrder?.status||'').toUpperCase();
+    if(['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(returnedStatus)){
+      const reason='ENTRY_WRITEAHEAD_EXISTING_ORDER_TERMINAL_'+returnedStatus;
+      await invalidateStream(reason);
+      return {handled:true,recovered:false,count,reason};
+    }
+
+    const evidence=await waitForWriteAheadEntryEvidence(target,5000);
+    if(!evidence||['TERMINAL_UNSAFE','POSITION_MISMATCH','UNKNOWN_ORDER'].includes(evidence.kind)){
+      const reason='ENTRY_WRITEAHEAD_EVIDENCE_'+String(evidence?.kind||'MISSING');
+      await invalidateStream(reason);
+      return {handled:true,recovered:false,count,reason};
+    }
+
+    count++;
+    log('ENTRY_WRITEAHEAD_RECOVERED',{
+      symbol:target.symbol,
+      commandId:target.commandId,
+      entryClientOrderId:target.entryClientOrderId,
+      protectionClientAlgoId:target.protectionClientAlgoId,
+      limitPrice:target.limitPrice,
+      quantity:target.quantity,
+      evidence:evidence.kind,
+      disposition:String(submitted.data?.result?.disposition||''),
+    });
+  }
+
+  await publishRuntime();
+  entryWatch.lastError='';
+  runtime.error='';
+  return {handled:true,recovered:true,count,reason:'ENTRY_WRITEAHEAD_RECOVERED'};
+}
+
 async function cancelPendingEntriesMissingPreparedProtection(report){
   const targets=pendingEntryProtectionLossTargets(report);
   if(!targets.length)return {handled:false,canceled:0,filledRace:false,reason:'NO_PENDING_ENTRY_PROTECTION_LOSS'};
@@ -2002,6 +2105,19 @@ async function reconcile(secondPass=false){
       if(!recovered.handled)return false;
       stream.reconcileBusy=false;
       await sleep(100);
+      return reconcile(true);
+    }
+
+    const writeAheadRecovery=pendingEntryWriteAheadRecoveryTargets(data.report);
+    if(writeAheadRecovery.length){
+      if(secondPass){
+        await invalidateStream('ENTRY_WRITEAHEAD_RECOVERY_RECONCILIATION_FAILED');
+        return false;
+      }
+      const recovered=await recoverPendingEntryWriteAhead(data.report);
+      if(!recovered.handled||!recovered.recovered)return false;
+      stream.reconcileBusy=false;
+      await sleep(150);
       return reconcile(true);
     }
 
