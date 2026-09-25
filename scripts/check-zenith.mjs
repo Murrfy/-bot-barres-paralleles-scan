@@ -410,8 +410,11 @@ if (!protectiveExecute.includes("'FULL_CLOSE_QUANTITY_REQUIRED'") ||
 }
 
 const protectiveCloseState = fs.readFileSync('lib/protective-close-state.mjs','utf8');
-for (const required of ["OPPONENT_5","OPPONENT_10","MARKET_LAST_RESORT","safeToRetry","inconsistentFilled","terminalSeen"]) {
+for (const required of ["priceMatch:'OPPONENT'","OPPONENT_5","MARKET_LAST_RESORT","safeToRetry","inconsistentFilled","terminalSeen"]) {
   if (!protectiveCloseState.includes(required)) fail(`protective close state invariant missing: ${required}`);
+}
+if (protectiveCloseState.includes('OPPONENT_10') || protectiveCloseState.includes('OPPONENT_20')) {
+  fail('protective close state must not depend on currently removed Binance OPPONENT_10/OPPONENT_20 modes');
 }
 
 const orderIntent = fs.readFileSync('lib/order-intent.mjs', 'utf8');
