@@ -2377,7 +2377,9 @@ function updateTokenPreview(){
   if(targetEl.dataset.exactAuto!=='1')targetEl.dataset.manualTarget=targetEl.value||settings.targetProfit;
   const manual=n(targetEl.dataset.manualTarget,settings.targetProfit),entry=active?n(active.entryPrice):buy,both=entry>0&&sale>0,profit=both?exactProfitFor(entry,sale,base):null;
   if(!active&&both&&profit!=null){targetEl.value=profit.toFixed(2);targetEl.dataset.exactAuto='1'}else if(!active){if(targetEl.dataset.exactAuto==='1')targetEl.value=manual;targetEl.dataset.exactAuto='0'}else{targetEl.dataset.exactAuto='0'}
-  const target=active?n(active.baseTargetProfit,n(active.targetProfit,settings.targetProfit)):(both&&profit!=null?profit:n(targetEl.value,settings.targetProfit)),goal=sale||(entry?priceForPnl(entry,notional(base),target):0);$('tTargetPreview').value=goal?price(goal):'—';$('tExactProfit').textContent=profit==null?'Bénéfice prévu : —':`Bénéfice prévu : ${money(profit)} · calculé avec ${active?'le prix d’achat réel':'les deux prix déterminés'}`;setTokenFieldsEnabled()
+  const target=active?n(active.baseTargetProfit,n(active.targetProfit,settings.targetProfit)):(both&&profit!=null?profit:n(targetEl.value,settings.targetProfit));
+  if(!active&&!validated[selectedSymbol])syncProtectionsToTarget(Math.max(0,target));
+  const goal=sale||(entry?priceForPnl(entry,notional(base),target):0);$('tTargetPreview').value=goal?price(goal):'—';$('tExactProfit').textContent=profit==null?'Bénéfice prévu : —':`Bénéfice prévu : ${money(profit)} · calculé avec ${active?'le prix d’achat réel':'les deux prix déterminés'}`;setTokenFieldsEnabled()
 }
 function protectionDraft(){const els=[...($('protectionEditor')?.querySelectorAll('.protectionItem')||[])];return els.map((_,i)=>{const d=defaultProtection(i);return{enabled:$(`tProtect${i+1}`)?.checked!==false,arm:Math.max(0,n($(`tProtect${i+1}Arm`)?.value,d.arm)),floor:Math.max(0,n($(`tProtect${i+1}Floor`)?.value,d.floor))}})}
 function protectionValidationError(stages){
@@ -2427,6 +2429,7 @@ async function saveToken(){
   }
   const buyEnabled=$('tExactBuy').checked,buyPrice=Math.max(0,parsePrice($('tExactBuyPrice').value)),saleEnabled=$('tExactSale').checked,salePrice=Math.max(0,parsePrice($('tExactSalePrice').value)),manual=Math.max(0,n($('tTarget').dataset.manualTarget,settings.targetProfit)),shown=Math.max(0,n($('tTarget').value,manual));
   if(buyEnabled&&!(buyPrice>0))return setStatus('Entre un prix d’achat déterminé supérieur à 0.',true);if(saleEnabled&&!(salePrice>0))return setStatus('Entre un prix de vente déterminé supérieur à 0.',true);
+  if(buyEnabled&&saleEnabled&&salePrice<=buyPrice)return setStatus('Le prix de vente déterminé doit être supérieur au prix d’achat déterminé.',true);
   const market=n(lastPrices.get(s));if(buyEnabled&&market>0&&buyPrice>=market)return setStatus(`Le BUY Limit ${price(buyPrice)} doit être sous le prix actuel ${price(market)}. Pour acheter maintenant, utilise « Achat immédiat ».`,true);if(buyEnabled&&market>0&&(buyPrice>market*100||buyPrice<market/100))return setStatus(`Prix d’achat incohérent avec Binance (${price(market)}). Vérifie la décimale.`,true);
   const buyRuleErr=buyEnabled?validateLimitPrice(s,buyPrice,'Prix d’achat'):'';if(buyRuleErr)return setStatus(`${s} : ${buyRuleErr}.`,true);const saleRuleErr=saleEnabled?validateLimitPrice(s,salePrice,'Prix de vente'):'';if(saleRuleErr)return setStatus(`${s} : ${saleRuleErr}.`,true);
   tokenSettings[s]={...old,enabled:true,targetProfit:shown,manualTargetProfit:manual,protectionStages:protections,maxLoss:requestedMaxLoss,exactBuyEnabled:buyEnabled,exactBuyPrice:buyPrice,exactBuySource:'settings',exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings',marginType:'ISOLATED'};
