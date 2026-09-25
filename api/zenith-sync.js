@@ -4443,13 +4443,24 @@ export default async function handler(req, res) {
     if (action === 'command-status' && req.method === 'GET') {
       const device = await requireDevice(req, res, ['controller']);
       if (!device) return;
-      const commandId = String(req.query?.commandId || '').trim();
-      if (!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)) {
+      let commandId = String(req.query?.commandId || '').trim();
+      const clientCommandId = String(req.query?.clientCommandId || '').trim();
+      if (commandId && !/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)) {
         return send(res, 400, { ok:false, code:'COMMAND_ID_INVALID' });
+      }
+      if (!commandId) {
+        if (!/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId)) {
+          return send(res, 400, { ok:false, code:'COMMAND_IDENTIFIER_REQUIRED' });
+        }
+        const dedupeKey = `${PREFIX}:command:client:${device.deviceId}:${sha256(clientCommandId)}`;
+        commandId = String(await redis(['GET', dedupeKey]) || '');
+        if (!commandId) {
+          return send(res, 200, { ok:true, clientCommandId, commandId:'', status:'NOT_FOUND' });
+        }
       }
       const raw = await redis(['GET', commandTerminalResultKey(commandId)]);
       if (!raw) {
-        return send(res, 200, { ok:true, commandId, status:'PENDING' });
+        return send(res, 200, { ok:true, commandId, clientCommandId, status:'PENDING' });
       }
       let result = null;
       try { result = JSON.parse(raw); } catch {}
@@ -4469,7 +4480,7 @@ export default async function handler(req, res) {
         status,
         reason:String(result.reason || ''),
         type:String(result.type || ''),
-        clientCommandId:String(result.clientCommandId || ''),
+        clientCommandId:String(result.clientCommandId || clientCommandId || ''),
         at:Number(result.at || 0),
         activeMaxLossCommitted:result.activeMaxLossCommitted===true,
         controllerRevision:Math.max(0,Number(result.controllerRevision || 0)),
