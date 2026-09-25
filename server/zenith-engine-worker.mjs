@@ -1637,9 +1637,13 @@ async function runFullClose(command,raw){
   }
 
   const initialQuantity=currentQuantity;
-  const policies=String(payload.exitMode||'PROTECTIVE_IOC').toUpperCase()==='MARKET_LAST_RESORT'
-    ?[PROTECTIVE_CLOSE_ATTEMPTS[3]]
-    :PROTECTIVE_CLOSE_ATTEMPTS;
+  const requestedExitMode=String(payload.exitMode||'PROTECTIVE_IOC').toUpperCase();
+  if(requestedExitMode!=='PROTECTIVE_IOC'){
+    await failCommand(raw,'EXIT_MODE_LIMIT_REQUIRED');
+    execution.lastError='EXIT_MODE_LIMIT_REQUIRED';
+    return false;
+  }
+  const policies=PROTECTIVE_CLOSE_ATTEMPTS;
 
   let lastClientOrderId='';
   for(const policy of policies){
@@ -1693,15 +1697,10 @@ async function runFullClose(command,raw){
 
     const outcome=await waitForFullCloseState({
       symbol,direction,beforeQuantity:currentQuantity,clientOrderId:lastClientOrderId,
-    },policy.exitMode==='MARKET_LAST_RESORT'?4000:2500);
+    },2500);
 
     if(outcome.confirmed&&outcome.streamReady){
       return safeAckFullClose(raw,initialQuantity,lastClientOrderId,false);
-    }
-    if(policy.exitMode==='MARKET_LAST_RESORT'){
-      await failCommand(raw,'MARKET_CLOSE_NOT_CONFIRMED');
-      execution.lastError='MARKET_CLOSE_NOT_CONFIRMED';
-      return false;
     }
     if(!outcome.safeToRetry){
       const reason=outcome.inconsistentFilled
