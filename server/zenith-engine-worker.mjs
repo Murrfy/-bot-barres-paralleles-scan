@@ -22,6 +22,7 @@ import {
   PROTECTIVE_CLOSE_ATTEMPTS,
 } from '../lib/protective-close-state.mjs';
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
+import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
 const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
@@ -1066,6 +1067,116 @@ async function callProtectiveUpdateExecute(body){
   return binanceApi('/api/binance-protective-update-execute',{method:'POST',body});
 }
 
+function repairPriceFilters(){
+  return Object.fromEntries([...autoProtection.priceFilters.entries()].map(([symbol,filter])=>[symbol,clone(filter)]));
+}
+
+async function assertRepairPanic(reason){
+  const code=String(reason||'AUTO_MAX_LOSS_REPAIR_FAIL_CLOSED');
+  try{
+    const panic=await syncApi('emergency-stop',{method:'POST',body:{}});
+    if(!panic.response.ok||panic.data?.ok!==true){
+      throw new Error(panic.data?.code||('HTTP_'+panic.response.status));
+    }
+  }catch(error){
+    logError('AUTO_MAX_LOSS_PANIC_FAILED',error,{reason:code});
+  }
+}
+
+async function repairMissingMaxLoss(report){
+  const exactTarget=protectionOnlyMismatchTarget(report);
+  if(!exactTarget)return {handled:false,repaired:false,reason:'NO_EXACT_REPAIR_TARGET'};
+
+  const symbol=String(exactTarget.split(':')[0]||'').toUpperCase();
+  const reasons=Array.isArray(report?.reasons)?report.reasons.map(x=>String(x||'')):[];
+  if(reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION')){
+    await ensurePriceFilter(symbol).catch(()=>null);
+  }
+
+  const projection=streamProjection();
+  const plan=buildMaxLossRepairPlan({
+    report,
+    positions:Array.isArray(projection.binancePositions)?projection.binancePositions:[],
+    tokenSettings:runtime.config?.tokenSettings||{},
+    settings:runtime.config?.settings||{},
+    priceFilters:repairPriceFilters(),
+  });
+
+  if(plan.action==='NONE')return {handled:false,repaired:false,reason:plan.reason};
+  await assertRepairPanic('AUTO_MAX_LOSS_REPAIR_'+String(plan.reason||'REQUIRED'));
+
+  if(plan.action!=='REPAIR'){
+    const reason='AUTO_MAX_LOSS_REPAIR_'+String(plan.reason||'BLOCKED');
+    await invalidateStream(reason);
+    runtime.error=reason;
+    return {handled:true,repaired:false,reason};
+  }
+
+  const body={
+    type:'EXEC_UPDATE_PROTECTION',
+    commandId:`auto-maxloss-repair-${plan.symbol}-${plan.direction}-${plan.lifecycleAt||0}`,
+    symbol:plan.symbol,
+    direction:plan.direction,
+    quantity:plan.quantity,
+    triggerPrice:plan.triggerPrice,
+    protectionKind:'MAX_LOSS',
+    phase:'PLACE_NEW',
+  };
+
+  const placed=await callProtectiveUpdateExecute(body);
+  if(!placed.response.ok||placed.data?.ok!==true){
+    const reason='AUTO_MAX_LOSS_REPAIR_PLACE_'+String(
+      placed.data?.code||placed.data?.reason||placed.data?.error||('HTTP_'+placed.response.status)
+    );
+    await invalidateStream(reason);
+    runtime.error=reason;
+    return {handled:true,repaired:false,reason};
+  }
+
+  const clientId=String(
+    placed.data?.plan?.params?.clientAlgoId||
+    placed.data?.plan?.params?.newClientOrderId||
+    ''
+  );
+  if(!clientId){
+    const reason='AUTO_MAX_LOSS_REPAIR_CLIENT_ID_MISSING';
+    await invalidateStream(reason);
+    runtime.error=reason;
+    return {handled:true,repaired:false,reason};
+  }
+
+  const order=await waitForStreamOrder({kind:'ALGO',clientId,terminal:false},3500);
+  const expectedSide=plan.direction==='LONG'?'SELL':'BUY';
+  const valid=Boolean(
+    order&&
+    String(order?.symbol||'').toUpperCase()===plan.symbol&&
+    String(order?.side||'').toUpperCase()===expectedSide&&
+    String(order?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
+    String(order?.type||'').toUpperCase()==='STOP_MARKET'&&
+    (order?.closePosition===true||order?.closePosition==='true')&&
+    !(order?.reduceOnly===true||order?.reduceOnly==='true')&&
+    realNumberMatches(order?.triggerPrice??order?.stopPrice,plan.triggerPrice)&&
+    /^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId||clientId))
+  );
+  if(!valid){
+    const reason='AUTO_MAX_LOSS_REPAIR_NOT_STREAM_CONFIRMED';
+    await invalidateStream(reason);
+    runtime.error=reason;
+    return {handled:true,repaired:false,reason};
+  }
+
+  await publishRuntime();
+  log('AUTO_MAX_LOSS_REPAIRED',{
+    symbol:plan.symbol,
+    direction:plan.direction,
+    maxLossUsd:plan.maxLossUsd,
+    triggerPrice:plan.triggerPrice,
+  });
+  runtime.error='';
+  stream.lastError='';
+  return {handled:true,repaired:true,reason:'AUTO_MAX_LOSS_REPAIRED'};
+}
+
 async function reconcile(secondPass=false){
   if(stream.reconcileBusy||!runtime.leaseActive)return false;
   const ws=stream.ws;
@@ -1122,6 +1233,22 @@ async function reconcile(secondPass=false){
     }
 
     const repairTarget=protectionOnlyMismatchTarget(data.report);
+    if(repairTarget){
+      if(secondPass){
+        const reason='AUTO_MAX_LOSS_REPAIR_RECONCILIATION_FAILED';
+        await assertRepairPanic(reason);
+        await invalidateStream(reason);
+        runtime.error=reason;
+        return false;
+      }
+      const repair=await repairMissingMaxLoss(data.report);
+      if(repair.handled){
+        if(!repair.repaired)return false;
+        stream.reconcileBusy=false;
+        return reconcile(true);
+      }
+    }
+
     const acceptable=data.report.failClosed===false||Boolean(repairTarget);
     if(!acceptable){
       const reason=String(data.report?.reasons?.[0]||'BINANCE_RECONCILIATION_MISMATCH');
