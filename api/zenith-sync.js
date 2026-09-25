@@ -1029,6 +1029,7 @@ const PAUSE_PENDING_ALLOWED_COMMANDS = new Set([
   'EXEC_UPDATE_PROTECTION',
   'EXEC_CLOSE_POSITION',
   'EXEC_CANCEL_ENTRY',
+  'EXEC_OPEN_MARKET_POSITION',
 ]);
 
 function commandAllowedDuringPausePending(type) {
@@ -1069,6 +1070,25 @@ function execClosePayloadStatus(payload) {
   if (payload.closeAll !== true) return { ok:false, reason:'CLOSE_ALL_REQUIRED' };
   if (exitMode !== 'PROTECTIVE_IOC') return { ok:false, reason:'EXIT_MODE_LIMIT_REQUIRED' };
   return { ok:true, symbol, direction, quantity, exitMode, closeAll:true };
+}
+
+function execMarketOpenPayloadStatus(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok:false, reason:'PAYLOAD_OBJECT_REQUIRED' };
+  const symbol = String(payload.symbol || '').toUpperCase();
+  const side = String(payload.side || '').toUpperCase();
+  const orderType = String(payload.orderType || '').toUpperCase();
+  const margin = Number(payload.margin);
+  const leverage = Number(payload.leverage);
+  const maxLoss = Number(payload.maxLoss);
+  const requestedAt = Number(payload.requestedAt);
+  if (!/^[A-Z0-9]{3,30}$/.test(symbol)) return { ok:false, reason:'SYMBOL_INVALID' };
+  if (side !== 'BUY') return { ok:false, reason:'MARKET_ENTRY_BUY_ONLY' };
+  if (orderType !== 'MARKET') return { ok:false, reason:'MARKET_ENTRY_TYPE_REQUIRED' };
+  if (!(margin > 0)) return { ok:false, reason:'MARGIN_INVALID' };
+  if (!(leverage > 0)) return { ok:false, reason:'LEVERAGE_INVALID' };
+  if (!(maxLoss > 0)) return { ok:false, reason:'MAX_LOSS_INVALID' };
+  if (!Number.isFinite(requestedAt) || requestedAt <= 0) return { ok:false, reason:'REQUESTED_AT_INVALID' };
+  return { ok:true, symbol, side, orderType, margin, leverage, maxLoss, requestedAt };
 }
 
 function runtimeClosePositionQuantity(runtimeState, symbol, direction) {
@@ -4306,6 +4326,12 @@ export default async function handler(req, res) {
       }
       if (type === 'EXEC_CLOSE_POSITION') {
         const payloadStatus = execClosePayloadStatus(payload);
+        if (!payloadStatus.ok) {
+          return send(res, 400, { ok:false, code:'COMMAND_PAYLOAD_INVALID', reason:payloadStatus.reason });
+        }
+      }
+      if (type === 'EXEC_OPEN_MARKET_POSITION') {
+        const payloadStatus = execMarketOpenPayloadStatus(payload);
         if (!payloadStatus.ok) {
           return send(res, 400, { ok:false, code:'COMMAND_PAYLOAD_INVALID', reason:payloadStatus.reason });
         }
