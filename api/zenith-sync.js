@@ -570,7 +570,7 @@ async function writeCommandTerminalResult(command, status, reason = '') {
   const commandId = String(command?.id || '');
   if (!commandId) return false;
   const record = {
-    commandId: normalizedCommandId,
+    commandId,
     clientCommandId: String(command?.clientCommandId || ''),
     type: String(command?.type || '').toUpperCase(),
     deviceId: String(command?.deviceId || ''),
