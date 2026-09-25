@@ -175,3 +175,15 @@ test('a jump can select protection level 100 without truncation',()=>{
   assert.equal(selected.armProfitUsd,10005);
   assert.equal(selected.protectedProfitUsd,10000);
 });
+
+
+test('one hundred configured protection levels select level 100 after a direct profit jump',()=>{
+  const stages=Array.from({length:100},(_,i)=>({
+    enabled:true,
+    arm:105+i*100,
+    floor:100+i*100,
+  }));
+  const selected=highestReachedProtectionStage(stages,10050);
+  assert.equal(selected.armProfitUsd,10005);
+  assert.equal(selected.protectedProfitUsd,10000);
+});
