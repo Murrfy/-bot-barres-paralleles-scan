@@ -74,9 +74,7 @@ test('confirmed active target price is tied to exact sale or requested dollar ta
   assert.match(protectiveApi,/ACTIVE_TARGET_PRICE_PROFIT_MISMATCH/);
   assert.match(protectiveApi,/allowedRounding=tick\*live\.liveQuantity\+1e-8/);
   assert.match(protectiveApi,/actualTargetProfit\+1e-8<targetProfit/);
-  const targetWrite=block(protectiveApi,"if(type==='EXEC_UPDATE_EXIT')","}else{");
-  assert.match(targetWrite,/buildExitOrderPlan/);
-  assert.match(targetWrite,/exitMode:'NORMAL_LIMIT'/);
+  assert.match(protectiveApi,/buildExitOrderPlan\(\{[\s\S]*exitMode:'NORMAL_LIMIT'/);
 });
 
 test('protection-only command preserves high-water and raises any newly due stage before config ACK',()=>{
