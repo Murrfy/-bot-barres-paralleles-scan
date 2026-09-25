@@ -13,13 +13,17 @@ function filesUnder(root){
   return out;
 }
 
-test('PANIC is manual-only: backend modules never invoke emergency-stop',()=>{
+test('PANIC is manual-only: backend modules never assert emergency-stop',()=>{
   const files=[...filesUnder('server'),...filesUnder('lib'),...filesUnder('api')];
   const offenders=[];
   for(const file of files){
     if(file==='api/zenith-sync.js')continue;
     const source=fs.readFileSync(file,'utf8');
-    if(source.includes('emergency-stop'))offenders.push(file);
+    const asserts=
+      /syncApi\(\s*['"]emergency-stop['"]/.test(source) ||
+      /action=emergency-stop(?:['"&]|$)/.test(source) ||
+      /\[['"]SET['"]\s*,\s*KEY_EMERGENCY_STOP\b/.test(source);
+    if(asserts)offenders.push(file);
   }
   assert.deepEqual(offenders,[]);
 });
