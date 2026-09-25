@@ -19,7 +19,7 @@ test('engine accepts active config drift only when it is MAX-LOSS-only and still
   assert.match(fn,/maxLoss>=2&&maxLoss<=REAL_RISK_LIMITS\.maxLossUsd/);
   assert.match(fn,/maxLoss>margin\+1e-8/);
   assert.match(fn,/ISOLATED/);
-  assert.match(fn,/return changed>0/);
+  assert.match(fn,/return changed===1/);
 });
 
 test('engine only applies that restricted drift after server already reports synchronized state',()=>{
