@@ -246,7 +246,7 @@ let cursorSaveTimer=null;
 let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,positions:[],standardOrders:[],algoOrders:[],openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
 let binanceHistory={connected:false,history:[],totals:{gain:0,loss:0,net:0},generatedAt:0,lastOk:0,error:''},binanceHistoryTimer=null;
 let controllerRealCommandModule=null,controllerRealProtectionModule=null,realClosePending=new Set(),realCancelPending=new Set(),realProtectiveUpdatePending=new Map(),realMarketEntryPending=new Set();
-const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1';
+const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_MASTER_APPLIED_REV_KEY='zenith_master_applied_revision_v1',ZENITH_REAL_PROTECTIVE_PENDING_KEY='zenith_real_protective_pending_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
 let masterControlState={mode:'',masterRegistered:false,masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,realExecutionArmed:false,error:''};
@@ -409,10 +409,116 @@ function realUpdatePendingKey(position,kind){
   const amount=n(position?.positionAmt,0);
   return `${symbol}:${amount>=0?'LONG':'SHORT'}:${String(kind||'').toUpperCase()}`;
 }
+function persistRealProtectiveUpdatePending(){
+  try{
+    const now=Date.now(),rows=[];
+    for(const [key,pending] of realProtectiveUpdatePending.entries()){
+      if(String(pending?.kind||'').toUpperCase()!=='MAX_LOSS')continue;
+      const commandId=String(pending?.commandId||''),clientCommandId=String(pending?.clientCommandId||''),maxLossUsd=n(pending?.maxLossUsd,NaN),at=n(pending?.at,0);
+      const hasServerId=/^[A-Za-z0-9._:-]{8,128}$/.test(commandId),hasClientId=/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId);
+      if((!hasServerId&&!hasClientId)||!(maxLossUsd>=2&&maxLossUsd<=400)||!(at>0)||now-at>30*24*60*60*1000)continue;
+      rows.push({key,symbol:String(pending?.symbol||'').toUpperCase(),kind:'MAX_LOSS',price:n(pending?.price,NaN),maxLossUsd,commandId:hasServerId?commandId:'',clientCommandId:hasClientId?clientCommandId:'',at});
+    }
+    localStorage.setItem(ZENITH_REAL_PROTECTIVE_PENDING_KEY,JSON.stringify(rows));
+  }catch(_){}
+}
+function restoreRealProtectiveUpdatePending(){
+  try{
+    const now=Date.now(),rows=JSON.parse(localStorage.getItem(ZENITH_REAL_PROTECTIVE_PENDING_KEY)||'[]');
+    if(!Array.isArray(rows))return;
+    for(const row of rows){
+      const key=String(row?.key||''),symbol=String(row?.symbol||'').toUpperCase(),commandId=String(row?.commandId||''),clientCommandId=String(row?.clientCommandId||''),maxLossUsd=n(row?.maxLossUsd,NaN),at=n(row?.at,0),priceValue=n(row?.price,NaN);
+      const hasServerId=/^[A-Za-z0-9._:-]{8,128}$/.test(commandId),hasClientId=/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId);
+      if(!/^[A-Z0-9]{3,30}:(?:LONG|SHORT):MAX_LOSS$/.test(key)||!/^[A-Z0-9]{3,30}$/.test(symbol)||
+         (!hasServerId&&!hasClientId)||!(maxLossUsd>=2&&maxLossUsd<=400)||!(at>0)||now-at>30*24*60*60*1000)continue;
+      realProtectiveUpdatePending.set(key,{symbol,kind:'MAX_LOSS',price:priceValue,maxLossUsd,commandId:hasServerId?commandId:'',clientCommandId:hasClientId?clientCommandId:'',at,checking:false});
+    }
+    persistRealProtectiveUpdatePending();
+  }catch(_){}
+}
+async function checkRealMaxLossCommandStatus(key,pending){
+  if(!pending||pending.checking===true)return;
+  const commandId=String(pending.commandId||''),clientCommandId=String(pending.clientCommandId||'');
+  const hasServerId=/^[A-Za-z0-9._:-]{8,128}$/.test(commandId),hasClientId=/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId);
+  if(!hasServerId&&!hasClientId)return;
+  pending.checking=true;
+  try{
+    const query=hasServerId
+      ?'commandId='+encodeURIComponent(commandId)
+      :'clientCommandId='+encodeURIComponent(clientCommandId);
+    const r=await fetch('/api/zenith-sync?action=command-status&'+query,{
+      cache:'no-store',headers:{Accept:'application/json'}
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    if(realProtectiveUpdatePending.get(key)!==pending)return;
+    const resolvedCommandId=String(q.commandId||'');
+    if(!hasServerId&&/^[A-Za-z0-9._:-]{8,128}$/.test(resolvedCommandId)){
+      pending.commandId=resolvedCommandId;
+      persistRealProtectiveUpdatePending();
+    }
+    const status=String(q.status||'PENDING').toUpperCase();
+    if(status==='NOT_FOUND'){
+      realProtectiveUpdatePending.delete(key);
+      persistRealProtectiveUpdatePending();
+      if(selectedSymbol===String(pending.symbol||'').toUpperCase())fillToken();
+      renderRealPositions();
+      setStatus(String(pending.symbol||'')+' : commande perte MAX non enregistrée par le serveur — ancien réglage conservé.',true);
+      return;
+    }
+    if(status==='ACK'){
+      const symbol=String(pending.symbol||'').toUpperCase(),confirmedLoss=n(q.maxLossUsd,NaN),wantedLoss=n(pending.maxLossUsd,NaN),revision=Math.max(0,n(q.controllerRevision,0)),serverStateHash=String(q.controllerStateHash||'');
+      const old=tokenSettings[symbol]||{};
+      const nextTokenSettings={...tokenSettings,[symbol]:{...old,maxLoss:confirmedLoss,marginType:'ISOLATED'}};
+      const localStateHash=Number.isFinite(confirmedLoss)
+        ?await sha256Hex(stableStringify(controllerCloudStatePayload(nextTokenSettings)))
+        :'';
+      const ackValid=q.activeMaxLossCommitted===true&&String(q.symbol||'').toUpperCase()===symbol&&
+        Number.isFinite(confirmedLoss)&&realNumberMatches(confirmedLoss,wantedLoss)&&revision>0&&
+        serverStateHash&&localStateHash===serverStateHash;
+      if(!ackValid){
+        pending.lastError='ACTIVE_MAX_LOSS_ACK_INVALID';
+        setStatus(symbol+' : ACK MAX-LOSS incohérent avec l’état central — réglage local NON modifié.',true);
+        return;
+      }
+      tokenSettings=nextTokenSettings;
+      localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(revision));
+      controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
+      saveLocalOnly();
+      realProtectiveUpdatePending.delete(key);
+      persistRealProtectiveUpdatePending();
+      if(selectedSymbol===symbol)fillToken();
+      renderRealPositions();
+      refreshMasterControls();
+      setStatus(symbol+' réel : nouvelle perte MAX -'+confirmedLoss.toFixed(2)+' $ confirmée par Binance et enregistrée.');
+      return;
+    }
+    if(status==='FAIL'){
+      realProtectiveUpdatePending.delete(key);
+      persistRealProtectiveUpdatePending();
+      if(selectedSymbol===String(pending.symbol||'').toUpperCase())fillToken();
+      renderRealPositions();
+      setStatus(String(pending.symbol||'')+' : modification perte MAX refusée/échouée — ancien réglage conservé ('+String(q.reason||'échec')+').',true);
+      return;
+    }
+    pending.lastError='';
+  }catch(e){
+    pending.lastError=String(e?.message||'COMMAND_STATUS_UNAVAILABLE');
+    if(Date.now()-n(pending.at,Date.now())>180000){
+      setStatus(String(pending.symbol||'')+' : confirmation serveur MAX-LOSS indisponible — réglage local non modifié.',true);
+    }
+  }finally{
+    if(realProtectiveUpdatePending.get(key)===pending)pending.checking=false;
+  }
+}
 function reconcileRealProtectiveUpdatePending(){
   if(!(realProtectiveUpdatePending instanceof Map)||!realProtectiveUpdatePending.size)return;
   const positions=Array.isArray(binanceAccount.positions)?binanceAccount.positions:[];
   for(const [key,pending] of [...realProtectiveUpdatePending.entries()]){
+    if(String(pending?.kind||'').toUpperCase()==='MAX_LOSS'&&Number.isFinite(n(pending?.maxLossUsd,NaN))){
+      if(pending.commandId)void checkRealMaxLossCommandStatus(key,pending);
+      continue;
+    }
     const position=positions.find(p=>String(p?.symbol||'').toUpperCase()===String(pending?.symbol||'').toUpperCase());
     if(!position){realProtectiveUpdatePending.delete(key);continue}
     const inv=realProtectionInventory(position),wanted=n(pending?.price,NaN);
@@ -486,7 +592,10 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
       const previous=normalizedKind==='PROGRESSIVE'
         ?inv.managedProgressive?.clientAlgoId||''
         :inv.managedMaxLoss?.clientAlgoId||'';
-      command=mod.buildControllerUpdateProtectionCommand(position,wanted,normalizedKind,previous);
+      command=mod.buildControllerUpdateProtectionCommand(
+        position,wanted,normalizedKind,previous,
+        normalizedKind==='MAX_LOSS'?n(options?.maxLossUsd,NaN):NaN
+      );
     }
     key=realUpdatePendingKey(position,normalizedKind);
   }catch(e){
@@ -502,7 +611,16 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
   const grossNote=(options?.auto===true||options?.fromSettings===true)?'\nCalcul brut sur variation de prix, hors frais/funding/slippage.':'';
   if(!confirm(`ARGENT RÉEL — Confirmer ${position.symbol} ?\n\n${label} : ${price(wanted)}\n${warning}${grossNote}`))return;
 
-  realProtectiveUpdatePending.set(key,{symbol:String(position.symbol||''),kind:normalizedKind,price:wanted,at:Date.now()});
+  realProtectiveUpdatePending.set(key,{
+    symbol:String(position.symbol||''),
+    kind:normalizedKind,
+    price:wanted,
+    at:Date.now(),
+    ...(normalizedKind==='MAX_LOSS'&&Number.isFinite(n(options?.maxLossUsd,NaN))
+      ?{maxLossUsd:n(options.maxLossUsd),clientCommandId:String(command?.clientCommandId||'')}
+      :{})
+  });
+  if(normalizedKind==='MAX_LOSS'&&Number.isFinite(n(options?.maxLossUsd,NaN)))persistRealProtectiveUpdatePending();
   renderRealPositions();
   try{
     const r=await fetch('/api/zenith-sync?action=command',{
@@ -512,11 +630,29 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
     });
     const q=await r.json().catch(()=>({}));
     if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.reason||q?.error||('HTTP '+r.status));
+    const pending=realProtectiveUpdatePending.get(key);
+    if(pending&&normalizedKind==='MAX_LOSS'&&Number.isFinite(n(pending.maxLossUsd,NaN))){
+      const commandId=String(q.commandId||'');
+      if(!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId))throw new Error('MAX_LOSS_COMMAND_ID_MISSING');
+      pending.commandId=commandId;
+      persistRealProtectiveUpdatePending();
+      setTimeout(()=>void checkRealMaxLossCommandStatus(key,pending),750);
+      setTimeout(()=>void checkRealMaxLossCommandStatus(key,pending),2500);
+    }
     setStatus(`${position.symbol} : ${label} réel mis en file MASTER. Zenith attend les confirmations Binance avant ACK.`);
     setTimeout(()=>refreshBinanceAccount(),1000);
     return true;
   }catch(e){
+    const pending=realProtectiveUpdatePending.get(key);
+    if(normalizedKind==='MAX_LOSS'&&pending&&Number.isFinite(n(pending.maxLossUsd,NaN))&&/^[A-Za-z0-9._:-]{8,128}$/.test(String(pending.clientCommandId||''))){
+      persistRealProtectiveUpdatePending();
+      pending.lastError=String(e?.message||'ENVOI_INDETERMINE');
+      setStatus(`${position.symbol} : réponse d’envoi MAX-LOSS indéterminée — Zenith vérifie la commande serveur, sans la renvoyer.`,true);
+      setTimeout(()=>void checkRealMaxLossCommandStatus(key,pending),750);
+      return false;
+    }
     realProtectiveUpdatePending.delete(key);
+    persistRealProtectiveUpdatePending();
     renderRealPositions();
     setStatus(`${position.symbol} : modification réelle NON envoyée — ${String(e?.message||'erreur')}.`,true);
     return false;
@@ -2107,10 +2243,12 @@ function startMasterRuntimeLoop(){
   if(!masterRuntimeTimer)masterRuntimeTimer=setInterval(masterRuntimeCycle,8000);
 }
 
-function controllerCloudStatePayload(){
+function controllerCloudStatePayload(tokenSettingsSource=tokenSettings){
+  const controlSettings=clone(settings);
+  for(const key of ['theme','sound','vibrate','showProtections'])delete controlSettings[key];
   return {
-    settings:clone(settings),
-    tokenSettings:clone(normalizeRecordBlock(tokenSettings)),
+    settings:controlSettings,
+    tokenSettings:clone(normalizeRecordBlock(tokenSettingsSource)),
     manualTokens:clone(normalizeRecordBlock(manualTokens)),
     validated:clone(normalizeRecordBlock(validated))
   };
@@ -2361,7 +2499,8 @@ function trackedSymbols(){
   }
   return out;
 }
-function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify({settings,tokenSettings,manualTokens,validated,revalidateBlock,missedSignals,openPositions,history,dismissed,selectedSymbol}));scheduleControllerCloudStateSync()}
+function saveLocalOnly(){localStorage.setItem(STORAGE_KEY,JSON.stringify({settings,tokenSettings,manualTokens,validated,revalidateBlock,missedSignals,openPositions,history,dismissed,selectedSymbol}))}
+function save(){saveLocalOnly();scheduleControllerCloudStateSync()}
 function load(){try{const x=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');if(!x)return;settings={...clone(DEFAULTS),...x.settings};if(n(x.settings?.margin)===100)settings.margin=1000;if(n(x.settings?.targetProfit)===40)settings.targetProfit=3000;if(n(x.settings?.maxLoss)===40)settings.maxLoss=400;settings.maxLoss=Math.min(400,Math.max(2,n(settings.maxLoss,400)));settings.marginType='ISOLATED';settings.protectionStages=normalizeProtections(settings.protectionStages,settings.targetProfit);tokenSettings=normalizeRecordBlock(x.tokenSettings);for(const t of Object.values(tokenSettings)){if(n(t?.targetProfit)===40&&n(t?.manualTargetProfit,40)===40){t.targetProfit=3000;t.manualTargetProfit=3000}if(n(t?.maxLoss)===40)t.maxLoss=400;t.maxLoss=Math.min(400,Math.max(2,n(t?.maxLoss,settings.maxLoss)));if(Array.isArray(t?.protectionStages)&&t.protectionStages.length===9)t.protectionStages=normalizeProtections(t.protectionStages,n(t.manualTargetProfit,n(t.targetProfit,settings.targetProfit)))};manualTokens=normalizeRecordBlock(x.manualTokens);validated=normalizeRecordBlock(x.validated);revalidateBlock=normalizeRecordBlock(x.revalidateBlock);missedSignals=normalizeRecordBlock(x.missedSignals);openPositions=[];history=[];dismissed=x.dismissed||{};selectedSymbol=x.selectedSymbol||'';for(const [s,r] of Object.entries(manualTokens))if(n(r?.last)>0)lastPrices.set(s,n(r.last));for(const p of openPositions){if(!(n(p.openedAt)>0))p.openedAt=n(p.startedAt,n(p.createdAt,Date.now()));if(!(n(p.baseTargetProfit)>0))p.baseTargetProfit=Math.max(1,n(tokenSettings[p.symbol]?.manualTargetProfit,n(tokenSettings[p.symbol]?.targetProfit,settings.targetProfit)));if(n(p.entryPrice)>0)lastPrices.set(p.symbol,n(p.entryPrice));if(Number.isFinite(+p.lastAggId))lastAggIds.set(p.symbol,+p.lastAggId);if(Number.isFinite(+p.lastAggTime))lastAggTimes.set(p.symbol,+p.lastAggTime);p.marginType='ISOLATED';p.protectionStages=normalizeProtections(p.protectionStages,n(p.baseTargetProfit,n(p.targetProfit,settings.targetProfit)));p.protectionFloorActive=0;for(const st of p.protectionStages)if(st.enabled&&n(p.maxProfit)>=st.arm)p.protectionFloorActive=Math.max(n(p.protectionFloorActive),st.floor);if(!history.some(h=>h.symbol===p.symbol&&(h.status==='OPEN'||h.closedAt==null)&&n(h.openedAt)===n(p.openedAt)))history.push({symbol:p.symbol,entryPrice:p.entryPrice,exitPrice:null,pnl:null,reason:'ACHAT',openedAt:p.openedAt,closedAt:null,status:'OPEN'})}for(const [s,v] of Object.entries(validated)){if(Number.isFinite(+v?.lastAggId))lastAggIds.set(s,+v.lastAggId);if(Number.isFinite(+v?.lastAggTime))lastAggTimes.set(s,+v.lastAggTime)}expireWaitingSignals()}catch(_){}}
 async function jf(path){const r=await fetch(API+path,{cache:'no-store'});if(!r.ok)throw new Error(`Binance ${r.status}`);return r.json()}
 function isUsdMPerpetualContract(s){const type=String(s?.contractType||'').toUpperCase();return s?.quoteAsset==='USDT'&&s?.status==='TRADING'&&(type==='PERPETUAL'||type.endsWith('_PERPETUAL'))}
@@ -2432,12 +2571,18 @@ function setTokenFieldsEnabled(){
     return;
   }
   if(active){
-    ['tExactBuy','tExactBuyPrice','tMaxLoss'].forEach(id=>$(id).disabled=true);
+    ['tExactBuy','tExactBuyPrice'].forEach(id=>$(id).disabled=true);
     ['tExactSale','tExactSalePrice','tTarget'].forEach(id=>$(id).disabled=false);
+    const maxLossPending=Boolean(realActive&&realProtectiveUpdatePending.get(realUpdatePendingKey(realActive,'MAX_LOSS'))?.maxLossUsd);
+    $('tMaxLoss').disabled=!realActive||maxLossPending;
     protectionEls.forEach(el=>el.disabled=false);
     $('saveTokenBtn').disabled=false;$('instantBuyBtn').disabled=true;$('tokenDefaultsBtn').disabled=true;$('devalidateBtn').disabled=true;
     $('fMargin').disabled=true;$('fLev').disabled=true;$('saveFuturesBtn').disabled=true;
-    lock.hidden=false;lock.textContent=realActive?'Position réelle ACTIVE : objectif de gain, prix déterminé de VENTE et protections modifiables. Achat, marge, levier et perte MAX restent verrouillés.':'Position active : objectif de gain, prix déterminé de VENTE et protections modifiables. Achat, marge, levier et perte MAX restent verrouillés.';
+    lock.hidden=false;lock.textContent=realActive
+      ?maxLossPending
+        ?'Position réelle ACTIVE : modification perte MAX en attente de confirmation Binance/serveur. Achat, marge et levier restent verrouillés.'
+        :'Position réelle ACTIVE : objectif de gain, prix déterminé de VENTE, protections et perte MAX modifiables. Achat, marge et levier restent verrouillés.'
+      :'Position active : objectif de gain, prix déterminé de VENTE et protections modifiables. Achat, marge, levier et perte MAX restent verrouillés.';
     return;
   }
   ['tExactBuy','tExactBuyPrice','tExactSale','tExactSalePrice','tMaxLoss'].forEach(id=>$(id).disabled=false);
@@ -2473,8 +2618,8 @@ function reachedProtectionCount(stages,maxProfit){let count=0;for(let i=0;i<(Arr
 function renderProtectionEditor(stages,target=3000,minCount=0){const arr=protectionsForTarget(stages,target,minCount),head=`<div class="protectionHead"><span class="armHead">ATTEINT</span><span class="floorHead">PROTÉGÉ</span></div>`,item=(st,i)=>`<div class="protectionItem" title="Protection ${i+1} : +${st.arm} → +${st.floor}"><input id="tProtect${i+1}" type="checkbox" ${st.enabled?'checked':''} aria-label="Activer protection ${i+1}"><span class="protectionNum">${i+1}</span><input id="tProtect${i+1}Arm" type="number" min="0" step="0.1" inputmode="decimal" value="${st.arm}" aria-label="Gain atteint protection ${i+1}"><span class="protectionArrow">→</span><input id="tProtect${i+1}Floor" type="number" min="0" step="0.1" inputmode="decimal" value="${st.floor}" aria-label="Gain protégé protection ${i+1}"></div>`;const mid=Math.ceil(arr.length/2);$('protectionEditor').innerHTML=`<div class="protectionGrid"><div class="protectionColumn">${head}${arr.slice(0,mid).map((st,j)=>item(st,j)).join('')}</div><div class="protectionColumn">${head}${arr.slice(mid).map((st,j)=>item(st,mid+j)).join('')}</div></div>`;const hint=$('protectionHint');if(hint){const last=arr.length?arr[arr.length-1]:null;hint.textContent=arr.length?`${arr.length} protections affichées pour un objectif de +${money(n(target)).replace('$','').trim()} $ : +105→+100 jusqu’à +${last.arm}→+${last.floor}. Décimales acceptées avec un point (ex. 7.8). En réel, PROTÉGÉ est un seuil de déclenchement, pas un P&L garanti. Si l’objectif augmente, Zenith ajoute automatiquement les protections utiles par tranche de 100 $.`:`Aucune protection par tranche de 100 $ n’est possible sous cet objectif.`}}
 function applyProtectionVisibility(){const cb=$('showProtectionsToggle'),details=$('protectionDetails');if(!cb||!details)return;cb.checked=settings.showProtections!==false;details.hidden=!cb.checked}
 function syncProtectionsToTarget(target){if(!selectedSymbol)return;const localActive=openBySymbol(selectedSymbol),realActive=controllerRealPositionBySymbol(selectedSymbol),active=localActive||realActive;if(validated[selectedSymbol]&&!active)return;const current=protectionDraft(),saved=localActive?.protectionStages||tokenSettings[selectedSymbol]?.protectionStages||settings.protectionStages,merged=current.length?current:saved,minCount=localActive?reachedProtectionCount(merged,localActive.maxProfit):realActive?(Array.isArray(saved)?saved.length:0):0;renderProtectionEditor(merged,target,minCount);setTokenFieldsEnabled()}
-function fillToken(){const s=selectedSymbol,has=!!s;$('tokenNoSelection').hidden=has;$('tokenSettingsWrap').hidden=!has;applyProtectionVisibility();$('settingsSymbol').textContent=s||'—';$('selectedSymbolLabel').textContent=s||'—';$('selectedPriceLabel').textContent=`Prix : ${s?price(lastPrices.get(s)):'—'}`;renderSelectedCurrentPrice();if(!has){fillFutures();return}const localActive=openBySymbol(s),realActive=controllerRealPositionBySymbol(s),active=localActive||realActive,t=tokenSettings[s]||{},c={...settings,...t},manual=localActive?n(localActive.baseTargetProfit,n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit))):n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit));$('tTarget').value=manual;$('tTarget').dataset.manualTarget=manual;$('tTarget').dataset.exactAuto='0';const shownProtections=localActive?.protectionStages||t.protectionStages||settings.protectionStages,minCount=localActive?reachedProtectionCount(shownProtections,localActive.maxProfit):realActive?(Array.isArray(shownProtections)?shownProtections.length:0):0;renderProtectionEditor(shownProtections,manual,minCount);$('tMaxLoss').value=n(localActive?.maxLoss,n(t.maxLoss,settings.maxLoss));$('tExactBuy').checked=!!t.exactBuyEnabled;$('tExactBuyPrice').value=n(t.exactBuyPrice)||'';$('tExactSale').checked=!!t.exactSaleEnabled;$('tExactSalePrice').value=n(t.exactSalePrice)||'';$('devalidateBtn').disabled=!validated[s];$('tokenCloseNowBtn').disabled=!localActive;$('instantBuyBtn').disabled=!!active||openPositions.length>=settings.maxActive;fillFutures();updateTokenPreview()}
-async function saveFutures(){const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);if(anyActivePositionBySymbol(s))return setStatus(`${s} est actif : marge et levier sont verrouillés. Seuls l’objectif de gain, le prix déterminé de VENTE et les protections peuvent être modifiés.`,true);if(validated[s])return setStatus(`${s} est surveillé : annule d’abord l’achat surveillé avant de modifier ses paramètres.`,true);const old=tokenSettings[s]||{},margin=Math.max(1,n($('fMargin').value,settings.margin)),leverage=Math.round(n($('fLev').value,settings.leverage));if(!(margin>=1&&margin<=1000))return setStatus('La marge doit être comprise entre 1 $ et 1 000 $.',true);if(leverage<1||leverage>10)return setStatus('Le levier doit être compris entre x1 et x10.',true);try{await ensureExchange();if(!(n(lastPrices.get(s))>0))await currentMarketPrice(s)}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}const d=futuresDraft(s,margin,leverage,'LIMIT');if(!d.ok)return setStatus(`${s} : réglage refusé par les limites Binance — ${d.error}.`,true);const buy=tokenExactBuy(s),sale=tokenExactSale(s),buyErr=buy>0?validateLimitPrice(s,buy,'Prix d’achat'):'';if(buyErr)return setStatus(`${s} : ${buyErr}.`,true);const saleErr=sale>0?validateLimitPrice(s,sale,'Prix de vente'):'';if(saleErr)return setStatus(`${s} : ${saleErr}.`,true);tokenSettings[s]={...old,enabled:true,margin,leverage,marginType:'ISOLATED',binanceQty:d.qty,binanceEffectiveNotional:d.effectiveNotional};const active=openBySymbol(s);if(active){active.margin=margin;active.leverage=leverage;active.marginType='ISOLATED';active.notional=d.effectiveNotional||margin*leverage;active.binanceQty=d.qty;active.stopExitPrice=priceForPnl(active.entryPrice,active.notional,-active.maxLoss);if(active.manualSaleTarget&&n(active.targetPrice)>active.entryPrice)active.targetProfit=exactProfitFor(active.entryPrice,active.targetPrice,{margin:active.notional/leverage,leverage});else active.targetPrice=priceForPnl(active.entryPrice,active.notional,active.targetProfit)}save();renderAll();setStatus(`${s} : Futures enregistré — ISOLÉE $${margin.toFixed(2)}, x${leverage}, quantité Binance ${d.qty}, notionnel effectif ≈ $${d.effectiveNotional.toFixed(2)}.`)}
+function fillToken(){const s=selectedSymbol,has=!!s;$('tokenNoSelection').hidden=has;$('tokenSettingsWrap').hidden=!has;applyProtectionVisibility();$('settingsSymbol').textContent=s||'—';$('selectedSymbolLabel').textContent=s||'—';$('selectedPriceLabel').textContent=`Prix : ${s?price(lastPrices.get(s)):'—'}`;renderSelectedCurrentPrice();if(!has){fillFutures();return}const localActive=openBySymbol(s),realActive=controllerRealPositionBySymbol(s),active=localActive||realActive,t=tokenSettings[s]||{},c={...settings,...t},manual=localActive?n(localActive.baseTargetProfit,n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit))):n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit));$('tTarget').value=manual;$('tTarget').dataset.manualTarget=manual;$('tTarget').dataset.exactAuto='0';const shownProtections=localActive?.protectionStages||t.protectionStages||settings.protectionStages,minCount=localActive?reachedProtectionCount(shownProtections,localActive.maxProfit):realActive?(Array.isArray(shownProtections)?shownProtections.length:0):0;renderProtectionEditor(shownProtections,manual,minCount);const pendingMaxLoss=realActive?realProtectiveUpdatePending.get(realUpdatePendingKey(realActive,'MAX_LOSS')):null;$('tMaxLoss').value=Number.isFinite(n(pendingMaxLoss?.maxLossUsd,NaN))?n(pendingMaxLoss.maxLossUsd):n(localActive?.maxLoss,n(t.maxLoss,settings.maxLoss));$('tExactBuy').checked=!!t.exactBuyEnabled;$('tExactBuyPrice').value=n(t.exactBuyPrice)||'';$('tExactSale').checked=!!t.exactSaleEnabled;$('tExactSalePrice').value=n(t.exactSalePrice)||'';$('devalidateBtn').disabled=!validated[s];$('tokenCloseNowBtn').disabled=!localActive;$('instantBuyBtn').disabled=!!active||openPositions.length>=settings.maxActive;fillFutures();updateTokenPreview()}
+async function saveFutures(){const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);if(anyActivePositionBySymbol(s))return setStatus(`${s} est actif : marge et levier sont verrouillés. L’objectif de gain, le prix déterminé de VENTE, les protections et la perte MAX peuvent être modifiés.`,true);if(validated[s])return setStatus(`${s} est surveillé : annule d’abord l’achat surveillé avant de modifier ses paramètres.`,true);const old=tokenSettings[s]||{},margin=Math.max(1,n($('fMargin').value,settings.margin)),leverage=Math.round(n($('fLev').value,settings.leverage));if(!(margin>=1&&margin<=1000))return setStatus('La marge doit être comprise entre 1 $ et 1 000 $.',true);if(leverage<1||leverage>10)return setStatus('Le levier doit être compris entre x1 et x10.',true);try{await ensureExchange();if(!(n(lastPrices.get(s))>0))await currentMarketPrice(s)}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}const d=futuresDraft(s,margin,leverage,'LIMIT');if(!d.ok)return setStatus(`${s} : réglage refusé par les limites Binance — ${d.error}.`,true);const buy=tokenExactBuy(s),sale=tokenExactSale(s),buyErr=buy>0?validateLimitPrice(s,buy,'Prix d’achat'):'';if(buyErr)return setStatus(`${s} : ${buyErr}.`,true);const saleErr=sale>0?validateLimitPrice(s,sale,'Prix de vente'):'';if(saleErr)return setStatus(`${s} : ${saleErr}.`,true);tokenSettings[s]={...old,enabled:true,margin,leverage,marginType:'ISOLATED',binanceQty:d.qty,binanceEffectiveNotional:d.effectiveNotional};const active=openBySymbol(s);if(active){active.margin=margin;active.leverage=leverage;active.marginType='ISOLATED';active.notional=d.effectiveNotional||margin*leverage;active.binanceQty=d.qty;active.stopExitPrice=priceForPnl(active.entryPrice,active.notional,-active.maxLoss);if(active.manualSaleTarget&&n(active.targetPrice)>active.entryPrice)active.targetProfit=exactProfitFor(active.entryPrice,active.targetPrice,{margin:active.notional/leverage,leverage});else active.targetPrice=priceForPnl(active.entryPrice,active.notional,active.targetProfit)}save();renderAll();setStatus(`${s} : Futures enregistré — ISOLÉE $${margin.toFixed(2)}, x${leverage}, quantité Binance ${d.qty}, notionnel effectif ≈ $${d.effectiveNotional.toFixed(2)}.`)}
 function readBotSettings(){return{maxActive:clamp(Math.round(n($('bMaxActive').value,settings.maxActive||3)),1,3),theme:$('bTheme').value==='light'?'light':'dark',sound:$('bSound').checked,vibrate:$('bVibrate').checked}}
 function applyBotSettings(message='Réglages BOT enregistrés.'){const next=readBotSettings(),themeChanged=next.theme!==settings.theme,soundEnabled=next.sound&&!settings.sound;settings={...settings,...next};save();if(themeChanged)applyTheme();if(soundEnabled)ensureAudio();renderKpis();fillBot();if(selectedSymbol)fillToken();setStatus(message)}
 function saveBot(){const wantsVibrate=$('bVibrate').checked;applyBotSettings('Réglages BOT enregistrés.');if(wantsVibrate&&!('vibrate' in navigator))setStatus('Réglages BOT enregistrés. La vibration est activée dans Zenith, mais ce navigateur ne prend pas en charge la vibration.',true)}
@@ -2502,31 +2647,72 @@ async function saveRealActiveTokenSettings(s,position,old,protections){
   const inv=realProtectionInventory(position);
   if(!inv.managedMaxLoss||inv.maxLossConflict)return setStatus(s+' : modification refusée — aucune MAX-LOSS Zenith unique et confirmée.',true);
   if(inv.progressiveConflict)return setStatus(s+' : protections non modifiées — protection gain concurrente ou externe détectée.',true);
+
   const saleEnabled=$('tExactSale').checked,salePrice=Math.max(0,parsePrice($('tExactSalePrice').value));
   const manualTarget=Math.max(0,n($('tTarget').dataset.manualTarget,n($('tTarget').value,n(old.manualTargetProfit,n(old.targetProfit,settings.targetProfit)))));
+  const currentMaxLoss=n(old.maxLoss,settings.maxLoss);
+  const requestedMaxLoss=n($('tMaxLoss').value,currentMaxLoss);
+  const configuredMargin=Math.max(0,n(old.margin,settings.margin));
+
   if(!(manualTarget>0))return setStatus('Objectif de gain invalide : entre un montant supérieur à 0 $.',true);
+  if(!(requestedMaxLoss>=2&&requestedMaxLoss<=400))return setStatus('Perte maximale invalide : entre 2 $ et 400 $.',true);
+  if(!(configuredMargin>0))return setStatus('Perte maximale non modifiée : marge configurée indisponible.',true);
+  if(requestedMaxLoss>configuredMargin)return setStatus('Perte maximale invalide : elle ne peut pas dépasser la marge prévue du jeton ('+configuredMargin.toFixed(2)+' $).',true);
   if(saleEnabled&&!(salePrice>0))return setStatus('Entre un prix de vente déterminé supérieur à 0.',true);
   const saleRuleErr=saleEnabled?validateLimitPrice(s,salePrice,'Prix de vente'):'';
   if(saleRuleErr)return setStatus(s+' : '+saleRuleErr+'.',true);
-  const currentMaxLoss=n(old.maxLoss,settings.maxLoss);
-  let wantedExit=saleEnabled?salePrice:0;
-  if(!wantedExit){
-    try{
-      const rules=symbolRules(s),priceFilter=rules?.filters?.PRICE_FILTER;
-      if(!priceFilter)throw new Error('PRICE_FILTER_REQUIRED');
-      const mod=await loadControllerRealProtectionModule();
-      const levels=mod.buildRealProtectionLevels({position,targetProfitUsd:manualTarget,maxLossUsd:currentMaxLoss,priceFilter});
-      wantedExit=n(levels.targetPrice,0);
-    }catch(e){return setStatus(s+' : recalcul objectif réel refusé — '+String(e?.message||'calcul impossible')+'.',true)}
+
+  let wantedExit=saleEnabled?salePrice:0,wantedMaxLoss=0;
+  try{
+    const rules=symbolRules(s),priceFilter=rules?.filters?.PRICE_FILTER;
+    if(!priceFilter)throw new Error('PRICE_FILTER_REQUIRED');
+    const mod=await loadControllerRealProtectionModule();
+    const levels=mod.buildRealProtectionLevels({
+      position,
+      targetProfitUsd:manualTarget,
+      maxLossUsd:requestedMaxLoss,
+      priceFilter
+    });
+    if(!wantedExit)wantedExit=n(levels.targetPrice,0);
+    wantedMaxLoss=n(levels.maxLossTriggerPrice,0);
+  }catch(e){
+    return setStatus(s+' : recalcul réel refusé — '+String(e?.message||'calcul impossible')+'.',true);
   }
+  if(!(wantedMaxLoss>0))return setStatus(s+' : seuil MAX-LOSS Binance invalide.',true);
+
   const previousTarget=n(old.manualTargetProfit,n(old.targetProfit,settings.targetProfit));
   const targetChanged=Math.abs(previousTarget-manualTarget)>1e-8||Boolean(old.exactSaleEnabled)!==saleEnabled||(saleEnabled&&!realNumberMatches(n(old.exactSalePrice,0),salePrice));
   const oldProtections=normalizeProtections(old.protectionStages||settings.protectionStages,null);
   const nextProtections=normalizeProtections(protections,null);
   const protectionsChanged=stableStringify(oldProtections)!==stableStringify(nextProtections);
-  if(!targetChanged&&!protectionsChanged)return setStatus(s+' réel : aucune modification à appliquer.');
+  const maxLossChanged=Math.abs(currentMaxLoss-requestedMaxLoss)>1e-8;
+
+  if(!targetChanged&&!protectionsChanged&&!maxLossChanged)return setStatus(s+' réel : aucune modification à appliquer.');
+
+  if(maxLossChanged){
+    const pendingKey=realUpdatePendingKey(position,'MAX_LOSS');
+    if(realProtectiveUpdatePending.has(pendingKey)){
+      return setStatus(s+' : une modification de perte MAX est déjà en attente de confirmation.',true);
+    }
+    if(targetChanged||protectionsChanged){
+      return setStatus(s+' : pour sécuriser la confirmation, modifie la perte MAX séparément de l’objectif/protections puis enregistre.',true);
+    }
+    const queued=await queueRealProtectiveUpdate(position,'MAX_LOSS',{
+      wantedPrice:wantedMaxLoss,
+      maxLossUsd:requestedMaxLoss,
+      fromSettings:true
+    });
+    if(!queued){
+      fillToken();
+      return;
+    }
+    renderAll();
+    setStatus(s+' réel : nouvelle perte MAX -'+requestedMaxLoss.toFixed(2)+' $ envoyée. Ancien réglage conservé jusqu’à ACK Binance/serveur.');
+    return;
+  }
+
   const hadOwn=Object.prototype.hasOwnProperty.call(tokenSettings,s),previousOwn=hadOwn?clone(tokenSettings[s]):null;
-  tokenSettings[s]={...old,targetProfit:manualTarget,manualTargetProfit:manualTarget,protectionStages:nextProtections,exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings',marginType:'ISOLATED'};
+  tokenSettings[s]={...old,targetProfit:manualTarget,manualTargetProfit:manualTarget,protectionStages:nextProtections,exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings',maxLoss:currentMaxLoss,marginType:'ISOLATED'};
   save();
   const centralOk=await syncControllerCloudStateNow();
   if(!centralOk){
@@ -2582,7 +2768,7 @@ async function saveToken(){
   save();syncRealtime();renderAll();setStatus(buyEnabled?`${s} validé : ajouté à la liste et surveillé pour achat à ${price(buyPrice)}.`:`${s} enregistré sans surveillance : il n’est pas ajouté à la liste.`)
 }
 function devalidateSelected(){const s=selectedSymbol;if(!s)return;delete validated[s];delete missedSignals[s];delete revalidateBlock[s];delete manualTokens[s];save();syncRealtime();renderAll();setStatus(`${s} : surveillance annulée, retiré de la liste.`)}
-function tokenDefaults(){if(!selectedSymbol)return;if(anyActivePositionBySymbol(selectedSymbol))return setStatus(`${selectedSymbol} est actif : réinitialisation interdite. Seuls l’objectif de gain, le prix déterminé de VENTE et les protections peuvent être modifiés.`,true);if(validated[selectedSymbol])return setStatus(`${selectedSymbol} est surveillé : annule d’abord l’achat surveillé.`,true);delete tokenSettings[selectedSymbol];delete validated[selectedSymbol];delete revalidateBlock[selectedSymbol];delete missedSignals[selectedSymbol];delete manualTokens[selectedSymbol];save();syncRealtime();renderAll();setStatus(`${selectedSymbol} revenu aux réglages par défaut.`)}
+function tokenDefaults(){if(!selectedSymbol)return;if(anyActivePositionBySymbol(selectedSymbol))return setStatus(`${selectedSymbol} est actif : réinitialisation interdite. L’objectif de gain, le prix déterminé de VENTE, les protections et la perte MAX peuvent être modifiés.`,true);if(validated[selectedSymbol])return setStatus(`${selectedSymbol} est surveillé : annule d’abord l’achat surveillé.`,true);delete tokenSettings[selectedSymbol];delete validated[selectedSymbol];delete revalidateBlock[selectedSymbol];delete missedSignals[selectedSymbol];delete manualTokens[selectedSymbol];save();syncRealtime();renderAll();setStatus(`${selectedSymbol} revenu aux réglages par défaut.`)}
 function positionCfg(s){const c=cfg(s);return{margin:n(c.margin),leverage:n(c.leverage),marginType:'ISOLATED',notional:notional(c),binanceQty:n(c.binanceQty),binanceEffectiveNotional:n(c.binanceEffectiveNotional),targetProfit:n(c.targetProfit),maxLoss:n(c.maxLoss),protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit)))}}
 function createPosition(s,entry,source){
   setStatus('Simulation supprimée : Zenith n’ouvrira jamais une position fictive. L’ordre doit être confirmé par Binance.',true);
@@ -2698,12 +2884,12 @@ $('manualTokenAddBtn').onclick=addManualToken;$('manualTokenInput').addEventList
 // Les réglages BOT restent en brouillon tant que « Enregistrer BOT » n’est pas validé.
 // Aucun changement de Position max / Jour-Nuit / Son / Vibration n’est appliqué automatiquement.
 ['fMargin','fLev'].forEach(id=>$(id).addEventListener('input',()=>{if(!selectedSymbol)return;const m=Math.max(1,n($('fMargin').value,settings.margin)),l=clamp(n($('fLev').value,settings.leverage),1,10),d=futuresDraft(selectedSymbol,m,l,'LIMIT');$('fSummary').textContent=`Marge : ISOLÉE · Notionnel demandé : $${(m*l).toFixed(2)}${d.qty>0?` · effectif ≈ $${d.effectiveNotional.toFixed(2)}`:''}`;$('fLimits').textContent=limitsText(selectedSymbol,m,l);updateTokenPreview()}));['tExactBuyPrice','tExactSalePrice'].forEach(id=>$(id).addEventListener('input',updateTokenPreview));$('tTarget').addEventListener('input',()=>{if($('tTarget').dataset.exactAuto!=='1'){$('tTarget').dataset.manualTarget=$('tTarget').value;syncProtectionsToTarget(Math.max(0,n($('tTarget').value,settings.targetProfit)))}updateTokenPreview()});['tExactBuy','tExactSale'].forEach(id=>$(id).addEventListener('change',updateTokenPreview));
-$('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();save()});
+$('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();saveLocalOnly()});
 $('adminCodeCancel').onclick=()=>closeAdminCodeModal(null);$('adminCodeConfirm').onclick=submitAdminCodeModal;$('adminCodeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submitAdminCodeModal()}else if(e.key==='Escape'){e.preventDefault();closeAdminCodeModal(null)}});$('adminCodeModal').addEventListener('pointerdown',e=>{if(e.target===e.currentTarget)closeAdminCodeModal(null)});
 $('masterAuthorizeBtn').onclick=controllerAuthorizeMaster;$('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('masterRevokeBtn').onclick=controllerRevokeMaster;$('panicClearBtn').onclick=controllerClearPanic;
 $('refreshHistoryBtn').onclick=()=>refreshBinanceHistory();
 document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio();if(controllerIdentity.role==='master')syncMasterWakeLock(true)},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){syncMasterWakeLock(true);masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
-load();applyTheme();renderAll();ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startBinanceHistory();startControllerIdentityCheck();
+load();restoreRealProtectiveUpdatePending();applyTheme();renderAll();for(const [key,pending] of realProtectiveUpdatePending.entries())void checkRealMaxLossCommandStatus(key,pending);ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startBinanceHistory();startControllerIdentityCheck();
 </script>
 </body>
 </html>

@@ -62,8 +62,9 @@ test('watched tokens freeze settings while active positions keep only safe contr
   const locks=block('function setTokenFieldsEnabled()','function updateTokenPreview()');
   assert.match(locks,/Achat surveillé : paramètres verrouillés/);
   assert.match(locks,/\['tExactBuy','tExactBuyPrice','tExactSale','tExactSalePrice','tTarget','tMaxLoss'\]/);
-  assert.match(locks,/Position active : objectif de gain, prix déterminé de VENTE et protections modifiables/);
-  assert.match(locks,/\['tExactBuy','tExactBuyPrice','tMaxLoss'\]/);
+  assert.match(locks,/Position réelle ACTIVE : objectif de gain, prix déterminé de VENTE, protections et perte MAX modifiables/);
+  assert.match(locks,/\['tExactBuy','tExactBuyPrice'\]/);
+  assert.match(locks,/\$\('tMaxLoss'\)\.disabled=!realActive\|\|maxLossPending/);
   assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]/);
   assert.match(locks,/\$\('fMargin'\)\.disabled=true;\$\('fLev'\)\.disabled=true/);
 });
@@ -94,9 +95,12 @@ test('global risk defaults can be updated without overwriting per-token override
   assert.match(saveDefaults,/settings=\{\.\.\.settings,margin,leverage,marginType:'ISOLATED',targetProfit:target,maxLoss,protectionStages:clone\(protections\)\}/);
   assert.doesNotMatch(saveDefaults,/tokenSettings\s*=/);
   assert.match(saveDefaults,/maxLoss>margin/);
-  const cloud=block('function controllerCloudStatePayload()','async function syncControllerCloudStateNow()');
-  assert.match(cloud,/settings:clone\(settings\)/);
-  assert.match(cloud,/tokenSettings:clone\(normalizeRecordBlock\(tokenSettings\)\)/);
+  const cloud=block('function controllerCloudStatePayload(','async function syncControllerCloudStateNow()');
+  assert.match(cloud,/const controlSettings=clone\(settings\)/);
+  assert.match(cloud,/settings:controlSettings/);
+  assert.match(cloud,/for\(const key of \['theme','sound','vibrate','showProtections'\]\)delete controlSettings\[key\]/);
+  assert.match(cloud,/function controllerCloudStatePayload\(tokenSettingsSource=tokenSettings\)/);
+  assert.match(cloud,/tokenSettings:clone\(normalizeRecordBlock\(tokenSettingsSource\)\)/);
 });
 
 test('global defaults stay visible and are copied only by explicit action',()=>{
@@ -114,7 +118,8 @@ test('live Binance positions lock unsafe token controls on the iPhone',()=>{
   assert.match(helpers,/anyActivePositionBySymbol\(symbol\)/);
   const locks=block('function setTokenFieldsEnabled()','function updateTokenPreview()');
   assert.match(locks,/realActive=controllerRealPositionBySymbol\(selectedSymbol\)/);
-  assert.match(locks,/\['tExactBuy','tExactBuyPrice','tMaxLoss'\]/);
+  assert.match(locks,/\['tExactBuy','tExactBuyPrice'\]/);
+  assert.match(locks,/\$\('tMaxLoss'\)\.disabled=!realActive\|\|maxLossPending/);
   assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]/);
   assert.match(locks,/Position réelle ACTIVE/);
   const futures=block('async function saveFutures()','function readBotSettings()');
@@ -142,7 +147,7 @@ test('live Binance target edits synchronize central state before protected exit 
   const realSave=block('async function saveRealActiveTokenSettings','async function saveToken()');
   assert.match(realSave,/!inv\.managedMaxLoss\|\|inv\.maxLossConflict/);
   assert.match(realSave,/inv\.progressiveConflict/);
-  assert.match(realSave,/buildRealProtectionLevels\(\{position,targetProfitUsd:manualTarget,maxLossUsd:currentMaxLoss,priceFilter\}\)/);
+  assert.match(realSave,/buildRealProtectionLevels\(\{[\s\S]*position,[\s\S]*targetProfitUsd:manualTarget,[\s\S]*maxLossUsd:requestedMaxLoss,[\s\S]*priceFilter[\s\S]*\}\)/);
   assert.match(realSave,/tokenSettings\[s\]=\{\.\.\.old,targetProfit:manualTarget,manualTargetProfit:manualTarget,protectionStages:nextProtections/);
   assert.match(realSave,/const centralOk=await syncControllerCloudStateNow\(\)/);
   assert.match(realSave,/queueRealProtectiveUpdate\(position,'EXIT',\{wantedPrice:wantedExit,fromSettings:true\}\)/);

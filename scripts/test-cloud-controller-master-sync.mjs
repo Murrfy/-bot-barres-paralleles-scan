@@ -16,7 +16,8 @@ test('legacy array-shaped controller records are normalized before cloud sync',(
   assert.match(html,/tokenSettings=normalizeRecordBlock\(x\.tokenSettings\)/);
   assert.match(html,/manualTokens=normalizeRecordBlock\(x\.manualTokens\)/);
   assert.match(html,/validated=normalizeRecordBlock\(x\.validated\)/);
-  assert.match(html,/tokenSettings:clone\(normalizeRecordBlock\(tokenSettings\)\)/);
+  assert.match(html,/function controllerCloudStatePayload\(tokenSettingsSource=tokenSettings\)/);
+  assert.match(html,/tokenSettings:clone\(normalizeRecordBlock\(tokenSettingsSource\)\)/);
   assert.match(html,/manualTokens:clone\(normalizeRecordBlock\(manualTokens\)\)/);
   assert.match(html,/validated:clone\(normalizeRecordBlock\(validated\)\)/);
 });

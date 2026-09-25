@@ -106,6 +106,8 @@ jobs:
         run: node --test scripts/test-current-price-reference.mjs
       - name: Test command queue safety
         run: node --test scripts/test-command-safety.mjs
+      - name: Test controller command terminal status
+        run: node --test scripts/test-command-terminal-status.mjs
       - name: Test atomic command requeue revoke fence
         run: node --test scripts/test-command-requeue-revoke-fence.mjs
       - name: Test real-entry risk preflight
@@ -212,6 +214,10 @@ jobs:
         run: node --test scripts/test-maxloss-status-ui.mjs
       - name: Test per-token settings integrity
         run: node --test scripts/test-token-settings-integrity.mjs
+      - name: Test protection table visibility toggle
+        run: node --test scripts/test-protection-visibility-toggle.mjs
+      - name: Test active real MAX-LOSS edit confirmation
+        run: node --test scripts/test-active-maxloss-edit-v2.mjs
       - name: Test real-only UI and limit-only sells
         run: node --test scripts/test-real-only-ui.mjs
       - name: Test real Binance net history
@@ -268,6 +274,10 @@ jobs:
         run: node --test scripts/test-maxloss-hard-cap-wiring.mjs
       - name: Test controller MAX-LOSS UI cap
         run: node --test scripts/test-maxloss-ui-cap.mjs
+      - name: Test active MAX-LOSS transition fence
+        run: node --test scripts/test-active-maxloss-transition.mjs
+      - name: Test ACKed active MAX-LOSS config refresh
+        run: node --test scripts/test-active-maxloss-config-refresh.mjs
       - name: Test MASTER command worker routing
         run: node --test scripts/test-master-worker-routing.mjs
       - name: Test idempotent real entry cancellation

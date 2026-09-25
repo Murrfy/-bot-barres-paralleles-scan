@@ -387,6 +387,42 @@ async function applyControllerState(controllerState){
   return {revision,stateHash};
 }
 
+function activeMaxLossOnlyConfigRefreshAllowed(currentConfig,nextConfig){
+  if(!currentConfig||typeof currentConfig!=='object'||!nextConfig||typeof nextConfig!=='object')return false;
+  for(const key of ['settings','manualTokens','validated']){
+    if(stableStringify(currentConfig[key]||{})!==stableStringify(nextConfig[key]||{}))return false;
+  }
+
+  const currentTokens=currentConfig.tokenSettings&&typeof currentConfig.tokenSettings==='object'
+    ?currentConfig.tokenSettings:{};
+  const nextTokens=nextConfig.tokenSettings&&typeof nextConfig.tokenSettings==='object'
+    ?nextConfig.tokenSettings:{};
+  const symbols=[...new Set([...Object.keys(currentTokens),...Object.keys(nextTokens)])].sort();
+  let changed=0;
+
+  for(const symbol of symbols){
+    const before=currentTokens[symbol]&&typeof currentTokens[symbol]==='object'?currentTokens[symbol]:null;
+    const after=nextTokens[symbol]&&typeof nextTokens[symbol]==='object'?nextTokens[symbol]:null;
+    if(!before||!after)return false;
+    if(stableStringify(before)===stableStringify(after))continue;
+
+    const beforeRest={...before};
+    const afterRest={...after};
+    delete beforeRest.maxLoss;delete afterRest.maxLoss;
+    delete beforeRest.marginType;delete afterRest.marginType;
+    if(stableStringify(beforeRest)!==stableStringify(afterRest))return false;
+
+    const maxLoss=n(after.maxLoss,NaN);
+    const margin=n(after.margin,n(nextConfig?.settings?.margin,NaN));
+    if(!(maxLoss>=2&&maxLoss<=REAL_RISK_LIMITS.maxLossUsd))return false;
+    if(!(margin>0)||maxLoss>margin+1e-8)return false;
+    if(String(after.marginType||'ISOLATED').toUpperCase()!=='ISOLATED')return false;
+    changed+=1;
+  }
+
+  return changed===1;
+}
+
 async function syncControllerConfig(){
   if(!runtime.leaseActive)return false;
   const {response,data}=await syncApi('master-config-status');
@@ -417,9 +453,17 @@ async function syncControllerConfig(){
   if(data.synchronized===true&&!localMatches){
     const activity=data.activity||{};
     if(n(activity.activePositions)>0||n(activity.openOrders)>0){
-      runtime.synchronized=false;
-      runtime.error='ENGINE_LOCAL_CONFIG_DRIFT_ACTIVE';
-      return false;
+      if(!activeMaxLossOnlyConfigRefreshAllowed(runtime.config,controllerState.data)){
+        runtime.synchronized=false;
+        runtime.error='ENGINE_LOCAL_CONFIG_DRIFT_ACTIVE';
+        return false;
+      }
+      const applied=await applyControllerState(controllerState);
+      runtime.appliedRevision=applied.revision;
+      runtime.controllerRevision=applied.revision;
+      runtime.synchronized=true;
+      runtime.error='';
+      return true;
     }
   }
 
@@ -1795,6 +1839,25 @@ async function repairMissingMaxLoss(report){
   return {handled:true,repaired:true,reason:'AUTO_MAX_LOSS_REPAIRED'};
 }
 
+function authorizedMaxLossOverlapReport(report){
+  if(!report||report.version!==2||report.status!=='MISMATCH'||report.failClosed!==true)return null;
+  const reasons=Array.isArray(report.reasons)?report.reasons.map(x=>String(x||'')):[];
+  if(reasons.length!==1||reasons[0]!=='AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION')return null;
+  const diff=report.differences&&typeof report.differences==='object'?report.differences:{};
+  const edits=Array.isArray(diff.authorizedPendingMaxLossEdits)?diff.authorizedPendingMaxLossEdits.filter(Boolean):[];
+  if(edits.length!==1)return null;
+  const edit=edits[0];
+  const target=`${String(edit.symbol||'').toUpperCase()}:${String(edit.direction||'').toUpperCase()}`;
+  const ambiguous=Array.isArray(diff.ambiguousMaxLossProtections)
+    ?diff.ambiguousMaxLossProtections.map(x=>String(x||'').toUpperCase()).filter(Boolean):[];
+  if(ambiguous.length!==1||ambiguous[0]!==target)return null;
+  if((Array.isArray(diff.missingMaxLossProtections)&&diff.missingMaxLossProtections.length)||
+     (Array.isArray(diff.unsafeMaxLossProtections)&&diff.unsafeMaxLossProtections.length)||
+     (Array.isArray(diff.configuredMaxLossUnavailable)&&diff.configuredMaxLossUnavailable.length))return null;
+  if(!String(edit.commandId||'')||!String(edit.previousClientAlgoId||'')||!String(edit.newClientAlgoId||''))return null;
+  return edit;
+}
+
 async function reconcile(secondPass=false){
   if(stream.reconcileBusy||!runtime.leaseActive)return false;
   const ws=stream.ws;
@@ -1819,6 +1882,25 @@ async function reconcile(secondPass=false){
       stream.reconcileBusy=false;
       await sleep(100);
       return reconcile(true);
+    }
+
+    const maxLossOverlap=authorizedMaxLossOverlapReport(data.report);
+    if(maxLossOverlap){
+      if(stream.state?.needsReconciliation===true){
+        stream.state=markUserStreamReconciled(stream.state,{
+          observedAt:Number(data.report.observedAt||Date.now()),
+          runtimeHash:String(data.report.runtimeDataHash||data.report.runtimeHash||''),
+        });
+        stream.lastError='MAX_LOSS_REPLACEMENT_IN_PROGRESS';
+        runtime.error='MAX_LOSS_REPLACEMENT_IN_PROGRESS';
+        await publishRuntime();
+        stream.reconcileBusy=false;
+        await sleep(50);
+        return reconcile(true);
+      }
+      stream.lastError='MAX_LOSS_REPLACEMENT_IN_PROGRESS';
+      runtime.error='MAX_LOSS_REPLACEMENT_IN_PROGRESS';
+      return userStreamReady(stream.state);
     }
 
     const orphanTargets=orphanZenithCleanupOrders(data.report);
@@ -2112,6 +2194,65 @@ async function safeAckAfterReconcile(raw,executionProof,failureReason='EXECUTION
   }
 }
 
+async function safeAckActiveMaxLossAfterReconcile(raw,executionProof,body){
+  try{
+    const reconciled=await awaitReconciliation();
+    if(reconciled!==true||userStreamReady(stream.state)!==true)throw new Error('RECONCILIATION_NOT_READY');
+  }catch(error){
+    const reason='EXEC_MAX_LOSS_UPDATE_ACK_RETRY_'+String(error?.message||'RECONCILE');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+
+  let ack;
+  try{
+    ack=await ackCommand(raw,executionProof);
+  }catch(error){
+    const reason='EXEC_MAX_LOSS_UPDATE_ACK_RETRY_'+String(error?.message||'ACK');
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+
+  if(ack?.activeMaxLossCommitted!==true){
+    runtime.synchronized=false;
+    runtime.error='ACTIVE_MAX_LOSS_ACK_CONFIG_NOT_COMMITTED';
+    await publishRuntime().catch(()=>{});
+    return false;
+  }
+
+  const symbol=String(ack.symbol||body?.symbol||'').toUpperCase();
+  const maxLossUsd=n(ack.maxLossUsd,NaN);
+  const revision=Math.max(0,n(ack.controllerRevision,0));
+  const expectedHash=String(ack.controllerStateHash||'');
+  if(!runtime.config||!symbol||!(maxLossUsd>=2&&maxLossUsd<=REAL_RISK_LIMITS.maxLossUsd)||
+     !(revision>0)||!expectedHash){
+    runtime.synchronized=false;
+    runtime.error='ACTIVE_MAX_LOSS_ACK_CONFIG_INVALID';
+    await publishRuntime().catch(()=>{});
+    return false;
+  }
+
+  const tokenSettings=runtime.config.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const current=tokenSettings[symbol]&&typeof tokenSettings[symbol]==='object'?tokenSettings[symbol]:{};
+  runtime.config={
+    ...runtime.config,
+    tokenSettings:{
+      ...tokenSettings,
+      [symbol]:{...current,maxLoss:maxLossUsd,marginType:'ISOLATED'},
+    },
+  };
+  const localHash=sha256Hex(stableStringify(runtime.config));
+  runtime.controllerRevision=revision;
+  runtime.appliedRevision=revision;
+  runtime.synchronized=localHash===expectedHash;
+  runtime.error=runtime.synchronized?'':'ACTIVE_MAX_LOSS_ACK_HASH_MISMATCH';
+  await publishRuntime().catch(()=>{});
+  return runtime.synchronized;
+}
+
 async function handleMutationFailure(raw,response,data,prefix){
   const reason=String(data?.code||data?.reason||data?.error||('HTTP_'+response.status));
   const ambiguous=data?.ambiguous===true||data?.result?.ambiguous===true;
@@ -2343,11 +2484,22 @@ async function runProtectiveUpdate(command,raw,dispatch){
   if(maxLoss||progressive){
     newClientId=await placeNew({deferReconcile:maxLoss});
     if(!newClientId)return false;
+    if(maxLoss){
+      const overlapReady=await awaitReconciliation();
+      if(overlapReady!==true||userStreamReady(stream.state)!==true){
+        await failCommand(raw,'MAX_LOSS_SAFE_OVERLAP_RECONCILIATION_FAILED');
+        execution.lastError='MAX_LOSS_SAFE_OVERLAP_RECONCILIATION_FAILED';
+        return false;
+      }
+    }
     if(!(await cancelOld(newClientId)))return false;
   }else{
     if(!(await cancelOld()))return false;
     newClientId=await placeNew();
     if(!newClientId)return false;
+  }
+  if(maxLoss&&Number.isFinite(n(body.maxLossUsd,NaN))){
+    return safeAckActiveMaxLossAfterReconcile(raw,{newClientId},body);
   }
   return safeAckAfterReconcile(raw,{newClientId},'EXEC_PROTECTIVE_UPDATE_ACK_RETRY');
 }
