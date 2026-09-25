@@ -32,6 +32,20 @@ test('active target and protection settings remain unchanged locally and central
   assert.ok(status.indexOf('tokenSettings=nextTokenSettings')>status.indexOf('const ackValid='));
 });
 
+test('pending active edit blocks parallel setting buttons but never blocks full close',()=>{
+  const render=block(html,'function renderRealPositions()','async function refreshBinanceAccount');
+  assert.match(render,/activeConfigPending/);
+  assert.match(render,/anySettingPending=exitPending\|\|progressivePending\|\|maxLossPending\|\|activeConfigPending/);
+  assert.match(render,/const closeAllowed=baseAllowed/);
+  assert.match(render,/exitAllowed=baseAllowed&&emergencyReady&&!inv\.exitConflict&&!anySettingPending/);
+  assert.match(render,/progressiveAllowed=baseAllowed&&emergencyReady&&!inv\.progressiveConflict&&!anySettingPending/);
+  assert.match(render,/maxLossAllowed=baseAllowed&&!inv\.maxLossConflict&&!anySettingPending/);
+
+  const queue=block(html,'async function queueRealProtectiveUpdate','async function queueRealActiveConfigUpdate');
+  assert.match(queue,/blockingKinds=\['EXIT','PROGRESSIVE','MAX_LOSS','ACTIVE_CONFIG'\]/);
+  assert.match(queue,/une modification active est déjà en attente de confirmation/);
+});
+
 test('tracked active edit survives reload and ambiguous network response without command resend',()=>{
   const pending=block(html,'function persistRealProtectiveUpdatePending','function reconcileRealProtectiveUpdatePending()');
   assert.match(pending,/clientCommandId/);
