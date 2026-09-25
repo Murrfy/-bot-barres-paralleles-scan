@@ -93,14 +93,16 @@ test('last-resort exit is reduce-only market',()=>{
   assert.equal(p.params.reduceOnly,'true');
 });
 
-test('protective IOC accepts audited OPPONENT escalation values only',()=>{
-  for (const priceMatch of ['OPPONENT','OPPONENT_5','OPPONENT_10','OPPONENT_20']) {
+test('protective IOC accepts only currently supported audited OPPONENT modes',()=>{
+  for (const priceMatch of ['OPPONENT','OPPONENT_5']) {
     const p=buildExitOrderPlan({commandId:'cmd-12345678',symbol:'BTCUSDT',direction:'LONG',quantity:0.02,exitMode:'PROTECTIVE_IOC',priceMatch});
     assert.equal(p.params.priceMatch,priceMatch);
     assert.equal(p.params.timeInForce,'IOC');
     assert.equal('price' in p.params,false);
   }
-  assert.throws(()=>buildExitOrderPlan({commandId:'cmd-12345678',symbol:'BTCUSDT',direction:'LONG',quantity:0.02,exitMode:'PROTECTIVE_IOC',priceMatch:'QUEUE'}),/PRICE_MATCH_INVALID/);
+  for (const priceMatch of ['OPPONENT_10','OPPONENT_20','QUEUE']) {
+    assert.throws(()=>buildExitOrderPlan({commandId:'cmd-12345678',symbol:'BTCUSDT',direction:'LONG',quantity:0.02,exitMode:'PROTECTIVE_IOC',priceMatch}),/PRICE_MATCH_INVALID/);
+  }
 });
 
 

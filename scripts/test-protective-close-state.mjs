@@ -59,9 +59,11 @@ test('short one-way position quantity is read from signed amount',()=>{
 
 test('escalation remains LIMIT-first and uses market only as last resort',()=>{
   assert.deepEqual(PROTECTIVE_CLOSE_ATTEMPTS.map(x=>x.exitMode),[
-    'PROTECTIVE_IOC','PROTECTIVE_IOC','PROTECTIVE_IOC','MARKET_LAST_RESORT'
+    'PROTECTIVE_IOC','PROTECTIVE_IOC','MARKET_LAST_RESORT'
   ]);
-  assert.deepEqual(PROTECTIVE_CLOSE_ATTEMPTS.slice(0,3).map(x=>x.priceMatch),[
-    'OPPONENT','OPPONENT_5','OPPONENT_10'
+  assert.deepEqual(PROTECTIVE_CLOSE_ATTEMPTS.slice(0,2).map(x=>x.priceMatch),[
+    'OPPONENT','OPPONENT_5'
   ]);
+  assert.equal(PROTECTIVE_CLOSE_ATTEMPTS.at(-1).priceMatch,'');
+  assert.equal(PROTECTIVE_CLOSE_ATTEMPTS.some(x=>x.priceMatch==='OPPONENT_10'),false);
 });
