@@ -40,7 +40,19 @@ test('Binance execution independently enforces requested MAX-LOSS and configured
   const fn=block(execute,"if(type==='EXEC_UPDATE_PROTECTION'&&update.protectionKind==='MAX_LOSS')","const emergency=");
   assert.match(fn,/requestedMaxLoss=n\(update\.maxLossUsd,NaN\)/);
   assert.match(fn,/allowedMaxLoss=activeEdit\?requestedMaxLoss:configuredMaxLoss/);
+  assert.match(fn,/PREVIOUS_MAX_LOSS_ID_REQUIRED/);
+  assert.match(fn,/PREVIOUS_MAX_LOSS_IDENTITY_MISMATCH/);
   assert.match(fn,/configuredMarginUsd\(state\.controllerState,update\.symbol\)/);
   assert.match(fn,/MAX_LOSS_EXCEEDS_CONFIGURED_MARGIN/);
   assert.match(fn,/Math\.min\(allowedMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
+});
+
+test('active MAX-LOSS cancellation requires the exact newly confirmed Zenith stop',()=>{
+  const fn=block(execute,"if(phase==='CANCEL_OLD')","}else{\n        const allowedIds");
+  assert.match(fn,/NEW_MAX_LOSS_PROTECTION_NOT_CONFIRMED/);
+  assert.match(fn,/\^zth-MAX-/);
+  assert.match(fn,/STOP_MARKET/);
+  assert.match(fn,/closePosition/);
+  assert.match(fn,/sideForDirection\(update\.direction\)/);
+  assert.match(fn,/confirmedTrigger-update\.triggerPrice/);
 });
