@@ -464,4 +464,4 @@ export default async function handler(req,res){
   }
 }
 
-export { entryReadinessReason };
+export { entryReadinessReason, fetchBinanceTradingApiPermissions, binanceApiPermissionBlockers };
