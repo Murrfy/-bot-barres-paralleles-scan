@@ -165,3 +165,17 @@ test('special TradFi and future perpetual symbols remain discoverable in Futures
   assert.match(exchange,/if\(!isUsdMPerpetualContract\(s\)\)continue/);
   assert.match(html,/function addManualToken\(\)[\s\S]*exchangeMap\.has\(symbol\)/);
 });
+
+
+test('real-only UI exposes no simulation controls or local fake position path',()=>{
+  assert.doesNotMatch(html,/<button[^>]+id="resetSimBtn"/);
+  assert.doesNotMatch(html,/Positions actives — simulation/);
+  assert.doesNotMatch(html,/simulation uniquement/);
+  assert.match(html,/argent réel uniquement|réel uniquement/);
+  const create=block('function createPosition(s,entry,source)','function closePosition');
+  assert.match(create,/Simulation supprimée/);
+  assert.match(create,/return null/);
+  const close=block('function closePosition','async function currentMarketPrice');
+  assert.match(close,/Simulation supprimée/);
+  assert.match(close,/return false/);
+});
