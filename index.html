@@ -2612,31 +2612,72 @@ async function saveRealActiveTokenSettings(s,position,old,protections){
   const inv=realProtectionInventory(position);
   if(!inv.managedMaxLoss||inv.maxLossConflict)return setStatus(s+' : modification refusée — aucune MAX-LOSS Zenith unique et confirmée.',true);
   if(inv.progressiveConflict)return setStatus(s+' : protections non modifiées — protection gain concurrente ou externe détectée.',true);
+
   const saleEnabled=$('tExactSale').checked,salePrice=Math.max(0,parsePrice($('tExactSalePrice').value));
   const manualTarget=Math.max(0,n($('tTarget').dataset.manualTarget,n($('tTarget').value,n(old.manualTargetProfit,n(old.targetProfit,settings.targetProfit)))));
+  const currentMaxLoss=n(old.maxLoss,settings.maxLoss);
+  const requestedMaxLoss=n($('tMaxLoss').value,currentMaxLoss);
+  const configuredMargin=Math.max(0,n(old.margin,settings.margin));
+
   if(!(manualTarget>0))return setStatus('Objectif de gain invalide : entre un montant supérieur à 0 $.',true);
+  if(!(requestedMaxLoss>=2&&requestedMaxLoss<=400))return setStatus('Perte maximale invalide : entre 2 $ et 400 $.',true);
+  if(!(configuredMargin>0))return setStatus('Perte maximale non modifiée : marge configurée indisponible.',true);
+  if(requestedMaxLoss>configuredMargin)return setStatus('Perte maximale invalide : elle ne peut pas dépasser la marge prévue du jeton ('+configuredMargin.toFixed(2)+' $).',true);
   if(saleEnabled&&!(salePrice>0))return setStatus('Entre un prix de vente déterminé supérieur à 0.',true);
   const saleRuleErr=saleEnabled?validateLimitPrice(s,salePrice,'Prix de vente'):'';
   if(saleRuleErr)return setStatus(s+' : '+saleRuleErr+'.',true);
-  const currentMaxLoss=n(old.maxLoss,settings.maxLoss);
-  let wantedExit=saleEnabled?salePrice:0;
-  if(!wantedExit){
-    try{
-      const rules=symbolRules(s),priceFilter=rules?.filters?.PRICE_FILTER;
-      if(!priceFilter)throw new Error('PRICE_FILTER_REQUIRED');
-      const mod=await loadControllerRealProtectionModule();
-      const levels=mod.buildRealProtectionLevels({position,targetProfitUsd:manualTarget,maxLossUsd:currentMaxLoss,priceFilter});
-      wantedExit=n(levels.targetPrice,0);
-    }catch(e){return setStatus(s+' : recalcul objectif réel refusé — '+String(e?.message||'calcul impossible')+'.',true)}
+
+  let wantedExit=saleEnabled?salePrice:0,wantedMaxLoss=0;
+  try{
+    const rules=symbolRules(s),priceFilter=rules?.filters?.PRICE_FILTER;
+    if(!priceFilter)throw new Error('PRICE_FILTER_REQUIRED');
+    const mod=await loadControllerRealProtectionModule();
+    const levels=mod.buildRealProtectionLevels({
+      position,
+      targetProfitUsd:manualTarget,
+      maxLossUsd:requestedMaxLoss,
+      priceFilter
+    });
+    if(!wantedExit)wantedExit=n(levels.targetPrice,0);
+    wantedMaxLoss=n(levels.maxLossTriggerPrice,0);
+  }catch(e){
+    return setStatus(s+' : recalcul réel refusé — '+String(e?.message||'calcul impossible')+'.',true);
   }
+  if(!(wantedMaxLoss>0))return setStatus(s+' : seuil MAX-LOSS Binance invalide.',true);
+
   const previousTarget=n(old.manualTargetProfit,n(old.targetProfit,settings.targetProfit));
   const targetChanged=Math.abs(previousTarget-manualTarget)>1e-8||Boolean(old.exactSaleEnabled)!==saleEnabled||(saleEnabled&&!realNumberMatches(n(old.exactSalePrice,0),salePrice));
   const oldProtections=normalizeProtections(old.protectionStages||settings.protectionStages,null);
   const nextProtections=normalizeProtections(protections,null);
   const protectionsChanged=stableStringify(oldProtections)!==stableStringify(nextProtections);
-  if(!targetChanged&&!protectionsChanged)return setStatus(s+' réel : aucune modification à appliquer.');
+  const maxLossChanged=Math.abs(currentMaxLoss-requestedMaxLoss)>1e-8;
+
+  if(!targetChanged&&!protectionsChanged&&!maxLossChanged)return setStatus(s+' réel : aucune modification à appliquer.');
+
+  if(maxLossChanged){
+    const pendingKey=realUpdatePendingKey(position,'MAX_LOSS');
+    if(realProtectiveUpdatePending.has(pendingKey)){
+      return setStatus(s+' : une modification de perte MAX est déjà en attente de confirmation.',true);
+    }
+    if(targetChanged||protectionsChanged){
+      return setStatus(s+' : pour sécuriser la confirmation, modifie la perte MAX séparément de l’objectif/protections puis enregistre.',true);
+    }
+    const queued=await queueRealProtectiveUpdate(position,'MAX_LOSS',{
+      wantedPrice:wantedMaxLoss,
+      maxLossUsd:requestedMaxLoss,
+      fromSettings:true
+    });
+    if(!queued){
+      fillToken();
+      return;
+    }
+    renderAll();
+    setStatus(s+' réel : nouvelle perte MAX -'+requestedMaxLoss.toFixed(2)+' $ envoyée. Ancien réglage conservé jusqu’à ACK Binance/serveur.');
+    return;
+  }
+
   const hadOwn=Object.prototype.hasOwnProperty.call(tokenSettings,s),previousOwn=hadOwn?clone(tokenSettings[s]):null;
-  tokenSettings[s]={...old,targetProfit:manualTarget,manualTargetProfit:manualTarget,protectionStages:nextProtections,exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings',marginType:'ISOLATED'};
+  tokenSettings[s]={...old,targetProfit:manualTarget,manualTargetProfit:manualTarget,protectionStages:nextProtections,exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings',maxLoss:currentMaxLoss,marginType:'ISOLATED'};
   save();
   const centralOk=await syncControllerCloudStateNow();
   if(!centralOk){
