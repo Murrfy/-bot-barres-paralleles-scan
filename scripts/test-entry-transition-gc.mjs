@@ -84,7 +84,8 @@ test('only exact expired-entry orphan protection is associated with not-started 
 });
 
 test('reconcile API prunes only clean-report inert transition ids and never invalid records',()=>{
-  assert.match(reconcileApi,/prunableExpired: transitionState\.prunableExpired\.map/);
+  assert.match(reconcileApi,/prunableExpired: \(Array\.isArray\(transitionState\.prunableExpired\)\?transitionState\.prunableExpired:\[\]\)\.map/);
+  assert.match(reconcileApi,/expiredProtectionOnly: \(Array\.isArray\(transitionState\.expiredProtectionOnly\)\?transitionState\.expiredProtectionOnly:\[\]\)\.map/);
   assert.match(reconcileApi,/if \(report\.failClosed === false\)/);
   assert.match(reconcileApi,/redis\(\['HDEL', KEY_ENTRY_TRANSITIONS, commandId\]\)/);
   assert.match(reconcileApi,/Garbage collection is non-authoritative/);
