@@ -109,3 +109,24 @@ test('limit reference price must remain inside Binance PRICE_FILTER bounds', () 
   assert.equal(r.ready, false);
   assert.ok(r.reasons.includes('PRICE_ABOVE_EXCHANGE_MAX'));
 });
+
+
+test('two active positions plus one pending entry block a fourth slot', () => {
+  const positions = ['ETHUSDT','BNBUSDT'].map(symbol => ({symbol, positionAmt:'1'}));
+  const standardOrders = [{symbol:'SOLUSDT',side:'BUY',type:'LIMIT',reduceOnly:false}];
+  const r = evaluateEntryRisk(base({ positions, standardOrders }));
+  assert.ok(r.reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'));
+  assert.equal(r.normalized.activePositions,2);
+  assert.equal(r.normalized.pendingEntrySymbols,1);
+  assert.equal(r.normalized.occupiedPositionSlots,3);
+});
+
+test('protective orders do not consume a position slot', () => {
+  const positions = ['ETHUSDT','BNBUSDT'].map(symbol => ({symbol, positionAmt:'1'}));
+  const algoOrders = [{
+    symbol:'ETHUSDT',side:'SELL',type:'STOP_MARKET',closePosition:true,reduceOnly:false
+  }];
+  const r = evaluateEntryRisk(base({ positions, algoOrders }));
+  assert.equal(r.normalized.occupiedPositionSlots,2);
+  assert.equal(r.reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'),false);
+});
