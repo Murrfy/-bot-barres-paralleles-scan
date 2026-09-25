@@ -91,6 +91,13 @@ const autoProtection={
   lastActionAt:0,
 };
 
+const entryWatch={
+  states:new Map(),
+  busySymbols:new Set(),
+  lastError:'',
+  lastActionAt:0,
+};
+
 const markStream={
   ws:null,
   generation:0,
