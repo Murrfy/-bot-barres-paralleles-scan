@@ -3612,6 +3612,8 @@ export default async function handler(req, res) {
         const lastAggId = Number(state.lastAggId ?? -1);
         const lastAggTime = Number(state.lastAggTime || 0);
         const suppressedCrossingAt = Number(state.suppressedCrossingAt || 0);
+        const pendingUntil = Number(state.pendingUntil || 0);
+        const blockedAt = Number(state.blockedAt || 0);
         const triggeredAt = Number(state.triggeredAt || 0);
         const identity = String(state.identity || '');
         if (state.version !== 1 ||
@@ -3623,13 +3625,15 @@ export default async function handler(req, res) {
             !Number.isSafeInteger(lastAggId) || lastAggId < -1 ||
             !Number.isSafeInteger(lastAggTime) || lastAggTime < 0 ||
             !Number.isSafeInteger(suppressedCrossingAt) || suppressedCrossingAt < 0 ||
+            !Number.isSafeInteger(pendingUntil) || pendingUntil < 0 ||
+            !Number.isSafeInteger(blockedAt) || blockedAt < 0 ||
             !Number.isSafeInteger(triggeredAt) || triggeredAt < 0) {
           return send(res, 400, { ok:false, code:'ENGINE_ENTRY_WATCH_STATE_INVALID' });
         }
         cleanStates[symbol] = {
           version:1,identity,symbol,buy,validatedAt,
           armedAbove:state.armedAbove,
-          lastPrice,lastAggId,lastAggTime,suppressedCrossingAt,triggeredAt,
+          lastPrice,lastAggId,lastAggTime,suppressedCrossingAt,pendingUntil,blockedAt,triggeredAt,
         };
       }
       const statesRaw = JSON.stringify(cleanStates);
