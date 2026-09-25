@@ -711,6 +711,75 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
     return false;
   }
 }
+async function queueRealActiveConfigUpdate(position,activeConfig){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
+    return setStatus('Modification réelle refusée : iPhone contrôleur non vérifié.',true);
+  }
+  const inv=realProtectionInventory(position);
+  if(!inv.managedMaxLoss||inv.maxLossConflict){
+    return setStatus(`${position.symbol} : protections non modifiées — aucune MAX-LOSS Zenith unique et confirmée.`,true);
+  }
+  if(inv.progressiveConflict){
+    return setStatus(`${position.symbol} : protections non modifiées — protection gain concurrente ou externe détectée.`,true);
+  }
+  if(!activeConfig||typeof activeConfig!=='object'||Array.isArray(activeConfig)){
+    return setStatus(`${position.symbol} : réglages actifs invalides.`,true);
+  }
+
+  let command,key;
+  try{
+    const mod=await loadControllerRealCommandModule();
+    const digest=(await sha256Hex(stableStringify(activeConfig))).slice(0,28);
+    command=mod.buildControllerActiveConfigCommand(position,clone(activeConfig),digest);
+    key=realUpdatePendingKey(position,'ACTIVE_CONFIG');
+  }catch(e){
+    return setStatus(`${position.symbol} : protections non modifiées — ${String(e?.message||'paramètres invalides')}.`,true);
+  }
+  if(realProtectiveUpdatePending.has(key))return false;
+  if(!confirm(`ARGENT RÉEL — Confirmer ${position.symbol} ?\n\nAppliquer le nouveau tableau de protections de gains.\nLe high-water déjà atteint est conservé et une protection déjà armée ne sera jamais abaissée.`))return false;
+
+  const pending={
+    symbol:String(position.symbol||''),
+    kind:'ACTIVE_CONFIG',
+    activeConfig:clone(activeConfig),
+    clientCommandId:String(command.clientCommandId||''),
+    at:Date.now(),
+  };
+  realProtectiveUpdatePending.set(key,pending);
+  persistRealProtectiveUpdatePending();
+  renderRealPositions();
+
+  try{
+    const r=await fetch('/api/zenith-sync?action=command',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify(command)
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.reason||q?.error||('HTTP '+r.status));
+    const commandId=String(q.commandId||'');
+    if(!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId))throw new Error('ACTIVE_CONFIG_COMMAND_ID_MISSING');
+    pending.commandId=commandId;
+    persistRealProtectiveUpdatePending();
+    setTimeout(()=>void checkRealTrackedCommandStatus(key,pending),750);
+    setTimeout(()=>void checkRealTrackedCommandStatus(key,pending),2500);
+    setStatus(`${position.symbol} réel : protections envoyées au serveur. Ancien réglage conservé jusqu’à ACK.`);
+    return true;
+  }catch(e){
+    if(/^[A-Za-z0-9._:-]{8,128}$/.test(String(pending.clientCommandId||''))){
+      pending.lastError=String(e?.message||'ENVOI_INDETERMINE');
+      persistRealProtectiveUpdatePending();
+      setStatus(`${position.symbol} : réponse d’envoi indéterminée — Zenith vérifie la commande existante, sans la renvoyer.`,true);
+      setTimeout(()=>void checkRealTrackedCommandStatus(key,pending),750);
+      return false;
+    }
+    realProtectiveUpdatePending.delete(key);
+    persistRealProtectiveUpdatePending();
+    renderRealPositions();
+    setStatus(`${position.symbol} : protections NON envoyées — ${String(e?.message||'erreur')}.`,true);
+    return false;
+  }
+}
 function renderRealEntryOrders(){
   const wrap=$('realEntryOrdersWrap');if(!wrap)return;
   if(!binanceAccount.connected){wrap.innerHTML='<div class="hint">Lecture Binance indisponible.</div>';return}
