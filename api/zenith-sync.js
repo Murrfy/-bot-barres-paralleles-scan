@@ -4614,6 +4614,99 @@ export default async function handler(req, res) {
       const commandId = String(command?.id || '');
       const commandType = String(command?.type || '').toUpperCase();
 
+      if (commandType === 'EXEC_OPEN_MARKET_POSITION') {
+        const payload = command?.payload || {};
+        const symbol = String(payload.symbol || '').toUpperCase();
+        const side = String(payload.side || '').toUpperCase();
+        const orderType = String(payload.orderType || '').toUpperCase();
+        const configuredMaxLoss = Number(payload.maxLoss);
+        const proof = req.body?.executionProof || {};
+        const clientOrderId = String(proof.clientOrderId || '');
+        const proofStatus = String(proof.status || '').toUpperCase();
+        const proofEntryPrice = Number(proof.entryPrice);
+        const proofQuantity = Number(proof.quantity);
+
+        if (!/^[A-Z0-9]{3,30}$/.test(symbol) ||
+            side !== 'BUY' ||
+            orderType !== 'MARKET' ||
+            !(configuredMaxLoss > 0) ||
+            configuredMaxLoss > REAL_RISK_LIMITS.maxLossUsd ||
+            !/^zth-ENT-[A-Za-z0-9._:-]+$/.test(clientOrderId) ||
+            proofStatus !== 'FILLED' ||
+            !(proofEntryPrice > 0) ||
+            !(proofQuantity > 0) ||
+            proof.maxLossConfirmed !== true ||
+            proof.reconciled !== true) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
+        }
+
+        const readiness = await freshConsistentReconciliation(device.deviceId);
+        if (!readiness.ok) {
+          return send(res, 409, {
+            ok:false,
+            code:'EXECUTION_ACK_RECONCILIATION_REQUIRED',
+            reason:readiness.reason,
+          });
+        }
+
+        const position = runtimePositionRecord(readiness.runtimeState, symbol, 'LONG');
+        const liveQuantity = Math.abs(Number(position?.positionAmt ?? position?.quantity ?? 0));
+        const liveEntryPrice = Number(position?.entryPrice || 0);
+        if (!position ||
+            !numberMatches(liveQuantity, proofQuantity) ||
+            !numberMatches(liveEntryPrice, proofEntryPrice)) {
+          return send(res, 409, {
+            ok:false,
+            code:'EXECUTION_ACK_MARKET_POSITION_MISMATCH',
+            liveQuantity,
+            liveEntryPrice,
+          });
+        }
+        if (String(position?.marginType || '').toUpperCase() !== 'ISOLATED') {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_MARGIN_NOT_ISOLATED' });
+        }
+        if (position?.isAutoAddMargin === true || String(position?.isAutoAddMargin || '').toLowerCase() === 'true') {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_AUTO_ADD_MARGIN_ENABLED' });
+        }
+
+        const protection = runtimeEmergencyProtection(
+          readiness.runtimeState,
+          symbol,
+          'LONG',
+          liveEntryPrice,
+          liveQuantity
+        );
+        if (!protection) {
+          return send(res, 409, { ok:false, code:'EXECUTION_ACK_EMERGENCY_PROTECTION_MISSING' });
+        }
+        const triggerPrice = Number(protection?.triggerPrice ?? protection?.stopPrice);
+        const impliedLossUsd = (liveEntryPrice - triggerPrice) * liveQuantity;
+        if (!(impliedLossUsd >= 0) || impliedLossUsd > configuredMaxLoss + 1e-8) {
+          return send(res, 409, {
+            ok:false,
+            code:'EXECUTION_ACK_MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT',
+            impliedLossUsd:Number.isFinite(impliedLossUsd)?impliedLossUsd:null,
+            configuredMaxLossUsd:configuredMaxLoss,
+          });
+        }
+
+        await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
+          at:Date.now(),
+          kind:'EXEC_MARKET_ENTRY_CONFIRMED',
+          commandId,
+          deviceId:device.deviceId,
+          symbol,
+          clientOrderId,
+          entryPrice:liveEntryPrice,
+          quantity:liveQuantity,
+          maxLossTriggerPrice:triggerPrice,
+          configuredMaxLossUsd:configuredMaxLoss,
+          impliedLossUsd,
+          reconciliationObservedAt:Number(readiness.report?.observedAt || 0),
+        })]);
+        await redis(['LTRIM', KEY_AUDIT, '0', '199']);
+      }
+
       if (commandType === 'EXEC_CANCEL_ENTRY') {
         const payload = command?.payload || {};
         const symbol = String(payload.symbol || '').toUpperCase();
