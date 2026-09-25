@@ -1495,6 +1495,77 @@ async function markMaxLossRepairFailure(reason){
   scheduleReconcile(1500);
   return code;
 }
+async function cancelPendingEntriesMissingPreparedProtection(report){
+  const targets=pendingEntryProtectionLossTargets(report);
+  if(!targets.length)return {handled:false,canceled:0,filledRace:false,reason:'NO_PENDING_ENTRY_PROTECTION_LOSS'};
+
+  let canceled=0;
+  let filledRace=false;
+  for(const target of targets){
+    const body={
+      type:'EXEC_CANCEL_ENTRY',
+      commandId:target.commandId,
+      symbol:target.symbol,
+      clientOrderId:target.entryClientOrderId,
+    };
+    const result=await callProtectiveExecute(body);
+    if(!result.response.ok||result.data?.ok!==true){
+      const reason='ENTRY_PROTECTION_LOSS_CANCEL_'+String(
+        result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status)
+      );
+      entryWatch.lastError=reason;
+      runtime.error=reason;
+      scheduleReconcile(500);
+      return {handled:true,canceled,filledRace,reason};
+    }
+
+    const disposition=String(result.data?.result?.disposition||'').toUpperCase();
+    const status=String(result.data?.result?.order?.status||'').toUpperCase();
+    if(disposition==='ALREADY_FILLED'||status==='FILLED'){
+      // Race: the LIMIT filled before cancellation won. Never close the position here.
+      // The next reconciliation hands the live position to the normal MAX-LOSS repair path.
+      filledRace=true;
+      log('ENTRY_PROTECTION_LOSS_FILL_RACE',{
+        symbol:target.symbol,
+        commandId:target.commandId,
+        clientOrderId:target.entryClientOrderId,
+      });
+      continue;
+    }
+
+    let terminalStatus=status;
+    if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus)){
+      const terminal=await waitForStreamOrder({
+        kind:'STANDARD',clientId:target.entryClientOrderId,terminal:true,
+      },3000);
+      terminalStatus=String(terminal?.status||terminalStatus||'').toUpperCase();
+    }
+    if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus)){
+      const reason='ENTRY_PROTECTION_LOSS_CANCEL_NOT_CONFIRMED';
+      entryWatch.lastError=reason;
+      runtime.error=reason;
+      scheduleReconcile(500);
+      return {handled:true,canceled,filledRace,reason};
+    }
+    canceled++;
+    log('ENTRY_CANCELED_AFTER_MAXLOSS_LOSS',{
+      symbol:target.symbol,
+      commandId:target.commandId,
+      clientOrderId:target.entryClientOrderId,
+      terminalStatus,
+    });
+  }
+
+  await publishRuntime().catch(()=>{});
+  entryWatch.lastError='';
+  return {
+    handled:true,
+    canceled,
+    filledRace,
+    reason:filledRace?'ENTRY_FILL_RACE_RECONCILE':'ENTRY_CANCELLED_AFTER_MAXLOSS_LOSS',
+  };
+}
+
 async function repairMissingMaxLoss(report){
   const exactTarget=missingMaxLossRepairTarget(report);
   if(!exactTarget)return {handled:false,repaired:false,reason:'NO_EXACT_REPAIR_TARGET'};
@@ -1596,6 +1667,19 @@ async function reconcile(secondPass=false){
       const reason=String(data?.code||('HTTP_'+response.status));
       await invalidateStream('BINANCE_RECONCILIATION_'+reason);
       return false;
+    }
+
+    const pendingProtectionLoss=pendingEntryProtectionLossTargets(data.report);
+    if(pendingProtectionLoss.length){
+      if(secondPass){
+        await invalidateStream('ENTRY_PROTECTION_LOSS_CANCEL_RECONCILIATION_FAILED');
+        return false;
+      }
+      const recovered=await cancelPendingEntriesMissingPreparedProtection(data.report);
+      if(!recovered.handled)return false;
+      stream.reconcileBusy=false;
+      await sleep(100);
+      return reconcile(true);
     }
 
     const orphanTargets=orphanZenithCleanupOrders(data.report);
