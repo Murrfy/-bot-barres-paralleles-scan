@@ -434,22 +434,22 @@ function reconcileRealProtectiveUpdatePending(){
 }
 async function queueRealProtectiveUpdate(position,kind,options={}){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
-    return setStatus('Modification réelle refusée : iPhone contrôleur non vérifié.',true);
+    setStatus('Modification réelle refusée : iPhone contrôleur non vérifié.',true);return false;
   }
   const inv=realProtectionInventory(position);
   const normalizedKind=String(kind||'').toUpperCase();
   if(normalizedKind==='EXIT'&&inv.exitConflict){
-    return setStatus(`${position.symbol} : objectif réel non modifié — ordre concurrent non identifié avec certitude.`,true);
+    setStatus(`${position.symbol} : objectif réel non modifié — ordre concurrent non identifié avec certitude.`,true);return false;
   }
   if(normalizedKind==='PROGRESSIVE'&&inv.progressiveConflict){
-    return setStatus(`${position.symbol} : protection gain non modifiée — protection concurrente non identifiée avec certitude.`,true);
+    setStatus(`${position.symbol} : protection gain non modifiée — protection concurrente non identifiée avec certitude.`,true);return false;
   }
   if(normalizedKind==='MAX_LOSS'&&inv.maxLossConflict){
-    return setStatus(`${position.symbol} : perte max non modifiée — plusieurs protections ou protection externe détectée.`,true);
+    setStatus(`${position.symbol} : perte max non modifiée — plusieurs protections ou protection externe détectée.`,true);return false;
   }
   if((normalizedKind==='EXIT'||normalizedKind==='PROGRESSIVE')&&
      (!inv.managedMaxLoss||inv.maxLossConflict)){
-    return setStatus(`${position.symbol} : modification refusée — aucune protection MAX-LOSS Zenith unique et confirmée.`,true);
+    setStatus(`${position.symbol} : modification refusée — aucune protection MAX-LOSS Zenith unique et confirmée.`,true);return false;
   }
 
   let current=normalizedKind==='EXIT'
@@ -460,7 +460,7 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
   let autoNote='';
   if(options?.auto===true){
     if(!['EXIT','MAX_LOSS'].includes(normalizedKind)){
-      return setStatus(`${position.symbol} : calcul automatique indisponible pour cette protection.`,true);
+      setStatus(`${position.symbol} : calcul automatique indisponible pour cette protection.`,true);return false;
     }
     try{
       const levels=await realAutomaticProtectionLevels(position);
@@ -469,15 +469,18 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
         ?`\nCalcul Zenith : objectif +${n(levels.targetProfitUsd).toFixed(2)} → ${price(current)}`
         :`\nCalcul Zenith : perte max -${n(levels.maxLossUsd).toFixed(2)} → ${price(current)}`;
     }catch(e){
-      return setStatus(`${position.symbol} : calcul automatique refusé — ${String(e?.message||'calcul impossible')}.`,true);
+      setStatus(`${position.symbol} : calcul automatique refusé — ${String(e?.message||'calcul impossible')}.`,true);return false;
     }
   }
   const label=normalizedKind==='EXIT'?'objectif de sortie'
     :normalizedKind==='PROGRESSIVE'?'seuil de protection gain':'seuil de perte maximale';
-  const raw=prompt(`ARGENT RÉEL — ${position.symbol}\nNouveau ${label} (prix Binance) :${autoNote}`,current>0?String(current):'');
-  if(raw===null)return;
-  const wanted=parsePrice(raw,0);
-  if(!(wanted>0))return setStatus(`${position.symbol} : prix réel invalide.`,true);
+  let wanted=parsePrice(options?.wantedPrice,0);
+  if(!(wanted>0)){
+    const raw=prompt(`ARGENT RÉEL — ${position.symbol}\nNouveau ${label} (prix Binance) :${autoNote}`,current>0?String(current):'');
+    if(raw===null)return false;
+    wanted=parsePrice(raw,0);
+  }
+  if(!(wanted>0)){setStatus(`${position.symbol} : prix réel invalide.`,true);return false}
 
   let command,key;
   try{
@@ -492,17 +495,17 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
     }
     key=realUpdatePendingKey(position,normalizedKind);
   }catch(e){
-    return setStatus(`${position.symbol} : modification réelle refusée — ${String(e?.message||'paramètres invalides')}.`,true);
+    setStatus(`${position.symbol} : modification réelle refusée — ${String(e?.message||'paramètres invalides')}.`,true);return false;
   }
-  if(realProtectiveUpdatePending.has(key))return;
+  if(realProtectiveUpdatePending.has(key)){setStatus(`${position.symbol} : une modification réelle ${label} est déjà en attente de confirmation Binance.`,true);return false}
 
   const warning=normalizedKind==='EXIT'
     ?'Zenith remplacera uniquement un objectif Zenith identifié. La protection MAX-LOSS restera obligatoire.'
     :normalizedKind==='PROGRESSIVE'
       ?'Zenith remplacera la protection gain en conservant la protection MAX-LOSS de secours.'
       :'Zenith confirmera la nouvelle protection MAX-LOSS avant de retirer l’ancienne.';
-  const grossNote=options?.auto===true?'\nCalcul brut sur variation de prix, hors frais/funding/slippage.':'';
-  if(!confirm(`ARGENT RÉEL — Confirmer ${position.symbol} ?\n\n${label} : ${price(wanted)}\n${warning}${grossNote}`))return;
+  const grossNote=(options?.auto===true||options?.fromSettings===true)?'\nCalcul brut sur variation de prix, hors frais/funding/slippage.':'';
+  if(!confirm(`ARGENT RÉEL — Confirmer ${position.symbol} ?\n\n${label} : ${price(wanted)}\n${warning}${grossNote}`))return false;
 
   realProtectiveUpdatePending.set(key,{symbol:String(position.symbol||''),kind:normalizedKind,price:wanted,at:Date.now()});
   renderRealPositions();
@@ -516,10 +519,12 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
     if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.reason||q?.error||('HTTP '+r.status));
     setStatus(`${position.symbol} : ${label} réel mis en file MASTER. Zenith attend les confirmations Binance avant ACK.`);
     setTimeout(()=>refreshBinanceAccount(),1000);
+    return true;
   }catch(e){
     realProtectiveUpdatePending.delete(key);
     renderRealPositions();
     setStatus(`${position.symbol} : modification réelle NON envoyée — ${String(e?.message||'erreur')}.`,true);
+    return false;
   }
 }
 function renderRealEntryOrders(){
