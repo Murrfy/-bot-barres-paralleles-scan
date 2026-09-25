@@ -121,7 +121,9 @@ test('live Binance positions lock unsafe token controls on the iPhone',()=>{
   assert.match(futures,/anyActivePositionBySymbol\(s\)/);
   const instant=block('async function instantBuySelected()','async function manualClose');
   assert.doesNotMatch(instant,/createPosition\(/);
-  assert.match(instant,/achat immédiat réel uniquement/i);
+  assert.match(instant,/buildControllerMarketEntryCommand/);
+  assert.match(instant,/\/api\/zenith-sync\?action=command/);
+  assert.match(instant,/ARGENT RÉEL — ACHAT IMMÉDIAT MARKET/);
   assert.match(html,/function tokenDefaults\(\)[\s\S]*anyActivePositionBySymbol\(selectedSymbol\)/);
 });
 
