@@ -274,6 +274,8 @@ jobs:
         run: node --test scripts/test-maxloss-ui-cap.mjs
       - name: Test active MAX-LOSS transition fence
         run: node --test scripts/test-active-maxloss-transition.mjs
+      - name: Test ACKed active MAX-LOSS config refresh
+        run: node --test scripts/test-active-maxloss-config-refresh.mjs
       - name: Test MASTER command worker routing
         run: node --test scripts/test-master-worker-routing.mjs
       - name: Test idempotent real entry cancellation
