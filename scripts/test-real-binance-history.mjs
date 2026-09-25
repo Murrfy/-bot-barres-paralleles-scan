@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { buildZenithClosedTradeHistory, mergeTradeHistory } from '../lib/real-trade-history.mjs';
+import { windowsFor, zenithHistorySymbols, uniqueRows } from '../api/binance-history.js';
 
 function order(orderId,clientOrderId,symbol='BTCUSDT'){
   return {symbol,orderId,clientOrderId};
@@ -111,4 +112,42 @@ test('history API is read-only and uses official Futures trade/order/income sour
   assert.match(source,/KEY_ARCHIVE/);
   assert.match(source,/BINANCE_HISTORY_WINDOW_TRUNCATED/);
   assert.doesNotMatch(source,/method:'POST'.*fapi\/v1\/order/s);
+});
+
+
+test('Binance userTrades discovery is symbol-scoped to Zenith entry symbols',()=>{
+  const symbols=zenithHistorySymbols([
+    {symbol:'BTCUSDT',orderId:1,clientOrderId:'zth-ENT-aaaaaaaaaaaaaaaaaaaaaaaa'},
+    {symbol:'ETHUSDT',orderId:2,clientOrderId:'manual-order'},
+    {symbol:'SOLUSDT',orderId:3,clientOrderId:'zth-EXI-bbbbbbbbbbbbbbbbbbbbbbbb'},
+    {symbol:'BTCUSDT',orderId:4,clientOrderId:'zth-ENT-cccccccccccccccccccccccc'},
+  ]);
+  assert.deepEqual(symbols,['BTCUSDT']);
+  const source=fs.readFileSync('api/binance-history.js','utf8');
+  assert.match(source,/signedGet\('\/fapi\/v1\/userTrades'[\s\S]*?\{\s*symbol,\.\.\.window,limit:1000\s*\}/);
+});
+
+test('history query windows do not overlap at inclusive Binance boundaries',()=>{
+  const now=30*24*60*60*1000;
+  const windows=windowsFor(now);
+  assert.ok(windows.length>1);
+  for(let i=1;i<windows.length;i++){
+    assert.equal(windows[i].startTime,windows[i-1].endTime+1);
+  }
+});
+
+test('history row de-duplication prevents boundary fills from being counted twice',()=>{
+  const rows=uniqueRows([
+    {symbol:'BTCUSDT',id:1,price:'100'},
+    {symbol:'BTCUSDT',id:1,price:'100'},
+    {symbol:'BTCUSDT',id:2,price:'101'},
+  ],row=>row.symbol+':'+row.id);
+  assert.deepEqual(rows.map(x=>x.id),[1,2]);
+});
+
+test('history API refreshes signed timestamps across multi-request retrieval',()=>{
+  const source=fs.readFileSync('api/binance-history.js','utf8');
+  assert.match(source,/const offset=serverTime-Date\.now\(\)/);
+  assert.match(source,/const signedNow=\(\)=>Date\.now\(\)\+offset/);
+  assert.doesNotMatch(source,/userTrades',apiKey,secret,serverTime,common/);
 });
