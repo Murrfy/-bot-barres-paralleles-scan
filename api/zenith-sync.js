@@ -2079,7 +2079,23 @@ async function prepareActiveConfigControllerCommit(command, payloadStatus, devic
 
   const symbol = String(payloadStatus.symbol || '').toUpperCase();
   const tokenSettings = data.tokenSettings && typeof data.tokenSettings === 'object' ? data.tokenSettings : {};
+  const settings = data.settings && typeof data.settings === 'object' ? data.settings : {};
   const currentToken = tokenSettings[symbol] && typeof tokenSettings[symbol] === 'object' ? tokenSettings[symbol] : {};
+  const margin = Number(currentToken.margin ?? settings.margin);
+  const maxLoss = Number(currentToken.maxLoss ?? settings.maxLoss);
+  const leverage = Number(currentToken.leverage ?? settings.leverage);
+  if (!(margin > 0) || margin > REAL_RISK_LIMITS.maxMarginUsdt) {
+    const e = new Error('CONFIGURED_MARGIN_INVALID'); e.code = 'CONFIGURED_MARGIN_INVALID'; throw e;
+  }
+  if (!(maxLoss >= 2) || maxLoss > REAL_RISK_LIMITS.maxLossUsd || maxLoss > margin + 1e-8) {
+    const e = new Error('CONFIGURED_MAX_LOSS_INVALID'); e.code = 'CONFIGURED_MAX_LOSS_INVALID'; throw e;
+  }
+  if (!(leverage >= 1) || leverage > REAL_RISK_LIMITS.maxLeverage) {
+    const e = new Error('CONFIGURED_LEVERAGE_INVALID'); e.code = 'CONFIGURED_LEVERAGE_INVALID'; throw e;
+  }
+  if (String(currentToken.marginType || settings.marginType || 'ISOLATED').toUpperCase() !== 'ISOLATED') {
+    const e = new Error('CONFIGURED_MARGIN_TYPE_INVALID'); e.code = 'CONFIGURED_MARGIN_TYPE_INVALID'; throw e;
+  }
   const nextToken = {
     ...currentToken,
     ...validated.activeConfig,
