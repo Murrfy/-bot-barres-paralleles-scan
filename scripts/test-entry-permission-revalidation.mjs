@@ -25,9 +25,10 @@ function request(){
       host:'zenith.test',
       'x-forwarded-proto':'https',
       origin:'https://zenith.test',
+      'x-zenith-engine-instance':'engine-instance-permission-test-0001',
     },
     body:{
-      type:'EXEC_OPEN_POSITION',commandId:'cmd-permission-001',symbol:'BTCUSDT',
+      type:'EXEC_OPEN_POSITION',phase:'PREPARE_PROTECTION',commandId:'cmd-permission-001',symbol:'BTCUSDT',
       side:'BUY',orderType:'LIMIT',margin:100,leverage:10,maxLoss:40,limitPrice:50000,
     },
   };
@@ -60,10 +61,11 @@ function harness({permission=safePermission(),permissionHttpStatus=200}={}){
       const cmd=JSON.parse(init.body);
       let result=null;
       if(cmd[0]==='GET'){
-        if(String(cmd[1]).includes(':device:')) result=JSON.stringify({role:'master',deviceId:'master-1',createdAt:Date.now()});
+        if(String(cmd[1]).includes(':device:')) result=JSON.stringify({role:'master',deviceId:'master-1',principal:'engine',engineInstanceId:'engine-instance-permission-test-0001',createdAt:Date.now()});
         else if(cmd[1]==='zenith:v1:role-device:master') result='master-1';
         else if(cmd[1]==='zenith:v1:role-issued-at:master') result=String(Date.now()-1000);
         else if(cmd[1]==='zenith:v1:master') result='master-1';
+        else if(cmd[1]==='zenith:v1:engine-instance') result='engine-instance-permission-test-0001';
         else if(cmd[1]==='zenith:v1:state') result=fx.runtime;
         else if(cmd[1]==='zenith:v1:reconcile:last') result=fx.report;
         else if(cmd[1]==='zenith:v1:safety:real-execution-armed') result=fx.arm;
