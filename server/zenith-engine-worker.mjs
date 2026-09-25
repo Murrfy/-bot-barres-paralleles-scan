@@ -926,6 +926,119 @@ async function failClosedAutoProtection(reason){
   await invalidateStream(code).catch(()=>{});
 }
 
+async function failClosedAutoTarget(reason){
+  const code='AUTO_TARGET_'+String(reason||'FAIL_CLOSED');
+  autoTarget.lastError=code;
+  runtime.error=code;
+  await invalidateStream(code).catch(()=>{});
+  return {ok:false,reason:code};
+}
+
+function configuredMaxLossForSymbol(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  const tokenSettings=runtime.config?.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const globalSettings=runtime.config?.settings&&typeof runtime.config.settings==='object'
+    ?runtime.config.settings:{};
+  const token=tokenSettings[wanted]&&typeof tokenSettings[wanted]==='object'?tokenSettings[wanted]:{};
+  const value=n(token.maxLoss,n(globalSettings.maxLoss,NaN));
+  return value>0?Math.min(value,REAL_RISK_LIMITS.maxLossUsd):NaN;
+}
+
+async function ensureAutomaticTargetForPosition(position){
+  const symbol=String(position?.symbol||'').toUpperCase();
+  if(!symbol||autoTarget.busySymbols.has(symbol))return {ok:true,changed:false,reason:'BUSY_OR_INVALID'};
+  if(!runtime.synchronized||!runtime.heartbeatFresh)return {ok:true,changed:false,reason:'RUNTIME_NOT_READY'};
+  if(!masterExecutionEligible({
+    role:'master',hidden:false,leaseActive:runtime.leaseActive,
+    realExecutionArmed:runtime.realExecutionArmed,
+    userStreamReady:userStreamReady(stream.state),mode:runtime.mode,
+  }))return {ok:true,changed:false,reason:'EXECUTION_NOT_ELIGIBLE'};
+
+  const projection=streamProjection();
+  const orders=Array.isArray(projection.binanceOrders)?projection.binanceOrders:[];
+  const configuredMaxLoss=configuredMaxLossForSymbol(symbol);
+  if(!(configuredMaxLoss>0))return failClosedAutoTarget('MAX_LOSS_CONFIG_UNAVAILABLE');
+  const maxLossConfirmed=uniqueManagedMaxLoss(position,orders,configuredMaxLoss);
+  const priceFilter=await ensurePriceFilter(symbol);
+  if(!priceFilter)return failClosedAutoTarget('PRICE_FILTER_UNAVAILABLE');
+
+  const tokenSettings=runtime.config?.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const globalSettings=runtime.config?.settings&&typeof runtime.config.settings==='object'
+    ?runtime.config.settings:{};
+  const plan=planAutomaticTargetExit({
+    position,currentOrders:orders,tokenSettings,settings:globalSettings,
+    priceFilter,maxLossConfirmed,
+  });
+
+  if(plan.action==='NONE'){
+    autoTarget.lastError='';
+    return {ok:true,changed:false,reason:plan.reason};
+  }
+  if(plan.action!=='PLACE')return failClosedAutoTarget(plan.reason||'PLAN_BLOCKED');
+
+  autoTarget.busySymbols.add(symbol);
+  try{
+    const live=plan.live;
+    const commandId=`auto-target-${live.symbol}-${live.direction}-${live.lifecycleAt||0}`;
+    const body={
+      type:'EXEC_UPDATE_EXIT',phase:'PLACE_NEW',commandId,
+      symbol:live.symbol,direction:live.direction,quantity:live.quantity,
+      targetPrice:plan.targetPrice,
+    };
+    const placed=await callProtectiveUpdateExecute(body);
+    if(!placed.response.ok||placed.data?.ok!==true){
+      const reason='PLACE_'+String(placed.data?.code||placed.data?.reason||('HTTP_'+placed.response.status));
+      if(placed.data?.writeAttempted===true||placed.data?.ambiguous===true||placed.data?.result?.ambiguous===true){
+        return failClosedAutoTarget(reason+'_AMBIGUOUS');
+      }
+      return failClosedAutoTarget(reason);
+    }
+
+    const clientId=String(placed.data?.plan?.params?.newClientOrderId||'');
+    if(!/^zth-EXI-[A-Za-z0-9._:-]+$/.test(clientId)){
+      return failClosedAutoTarget('CLIENT_ORDER_ID_INVALID');
+    }
+    const order=await waitForStreamOrder({kind:'STANDARD',clientId,terminal:false},3500);
+    const expectedSide=live.direction==='LONG'?'SELL':'BUY';
+    const remaining=n(order?.origQty,0)-n(order?.executedQty,0);
+    const valid=Boolean(
+      order&&
+      String(order?.symbol||'').toUpperCase()===live.symbol&&
+      String(order?.side||'').toUpperCase()===expectedSide&&
+      String(order?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
+      String(order?.type||'').toUpperCase()==='LIMIT'&&
+      String(order?.timeInForce||'').toUpperCase()==='GTC'&&
+      (order?.reduceOnly===true||order?.reduceOnly==='true')&&
+      realNumberMatches(order?.price,plan.targetPrice)&&
+      realNumberMatches(remaining,live.quantity)
+    );
+    if(!valid)return failClosedAutoTarget('ORDER_NOT_STREAM_CONFIRMED');
+
+    await publishRuntime();
+    autoTarget.lastError='';
+    autoTarget.lastActionAt=Date.now();
+    log('AUTO_TARGET_LIMIT_PLACED',{
+      symbol:live.symbol,direction:live.direction,quantity:live.quantity,
+      targetPrice:plan.targetPrice,targetSource:plan.targetSource,clientOrderId:clientId,
+    });
+    return {ok:true,changed:true,reason:'AUTO_TARGET_LIMIT_PLACED'};
+  }finally{
+    autoTarget.busySymbols.delete(symbol);
+  }
+}
+
+async function ensureAutomaticTargets(){
+  const positions=(streamProjection().binancePositions||[])
+    .filter(position=>Math.abs(n(position?.positionAmt??position?.quantity,0))>0);
+  for(const position of positions){
+    const result=await ensureAutomaticTargetForPosition(position);
+    if(result?.ok!==true||result?.changed===true)return result;
+  }
+  return {ok:true,changed:false,reason:'ALL_TARGETS_READY'};
+}
+
 async function executeAutoProgressive(plan){
   const live=plan.live,level=plan.level;
   const body={
