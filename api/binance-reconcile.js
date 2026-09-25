@@ -213,6 +213,11 @@ function normalizeActualPosition(p) {
     liquidationPrice: number(p.liquidationPrice),
     leverage: number(p.leverage),
     marginType: String(p.marginType || ''),
+    isAutoAddMargin:p.isAutoAddMargin===true||String(p.isAutoAddMargin||'').toLowerCase()==='true'
+      ?true
+      :p.isAutoAddMargin===false||String(p.isAutoAddMargin||'').toLowerCase()==='false'
+        ?false
+        :null,
     isolatedMargin: number(p.isolatedMargin),
     notional: number(p.notional),
     updateTime: number(p.updateTime),
@@ -867,6 +872,18 @@ export default async function handler(req, res) {
       latencyMs: Date.now() - started,
       deviceRole: device.role,
       attemptId,
+      certifiedPositions:actualPositions.map(position=>({
+        symbol:position.symbol,
+        direction:position.direction,
+        positionSide:position.positionSide,
+        positionAmt:position.positionAmt,
+        quantity:position.quantity,
+        entryPrice:position.entryPrice,
+        marginType:position.marginType,
+        isAutoAddMargin:position.isAutoAddMargin,
+        leverage:position.leverage,
+        updateTime:position.updateTime,
+      })),
       ...result,
     };
 
