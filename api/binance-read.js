@@ -253,6 +253,7 @@ export default async function handler(req, res) {
         liquidationPrice: p.liquidationPrice,
         leverage: p.leverage,
         marginType: p.marginType,
+        isAutoAddMargin: p.isAutoAddMargin === true || String(p.isAutoAddMargin || '').toLowerCase() === 'true',
         isolatedMargin: p.isolatedMargin,
         notional: p.notional,
         updateTime: p.updateTime,
