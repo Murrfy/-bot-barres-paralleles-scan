@@ -203,7 +203,7 @@ const API='https://fapi.binance.com';
 const DEFAULT_PROTECTIONS=Array.from({length:29},(_,i)=>({enabled:true,arm:105+i*100,floor:100+i*100}));
 function protectionCountForTarget(target){const t=Math.max(0,n(target,3000));return Math.max(0,Math.floor((t-106)/100)+1)}
 function defaultProtection(i){return{enabled:true,arm:105+i*100,floor:100+i*100}}
-const DEFAULTS={margin:1000,leverage:10,marginType:'ISOLATED',maxActive:3,targetProfit:3000,maxLoss:400,protectionStages:DEFAULT_PROTECTIONS,exitExecutionPolicy:{normalExit:'LIMIT_EXACT_GTC',protectiveExit:'LIMIT_IOC_ADAPTIVE',primaryPriceMatch:'OPPONENT',fallback:'MARKET_LAST_RESORT'},theme:'dark',sound:true,vibrate:true,showProtections:true};
+const DEFAULTS={margin:1000,leverage:10,marginType:'ISOLATED',maxActive:3,targetProfit:3000,maxLoss:400,protectionStages:DEFAULT_PROTECTIONS,exitExecutionPolicy:{normalExit:'LIMIT_EXACT_GTC',protectiveExit:'LIMIT_IOC_ADAPTIVE',primaryPriceMatch:'OPPONENT',fallback:'LIMIT_ONLY'},theme:'dark',sound:true,vibrate:true,showProtections:true};
 const $=id=>document.getElementById(id),n=(v,d=0)=>Number.isFinite(+v)?+v:d;
 const escapeHtml=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 function stableStringify(value){if(value===null||typeof value!=='object')return JSON.stringify(value);if(Array.isArray(value))return '['+value.map(item=>item===undefined?'null':stableStringify(item)).join(',')+']';const parts=[];for(const key of Object.keys(value).sort()){const encoded=stableStringify(value[key]);if(encoded!==undefined)parts.push(JSON.stringify(key)+':'+encoded)}return '{'+parts.join(',')+'}'}
@@ -1630,9 +1630,13 @@ async function runMasterFullClose(command,raw){
   }
 
   const initialQuantity=currentQuantity;
-  const policies=String(payload.exitMode||'PROTECTIVE_IOC').toUpperCase()==='MARKET_LAST_RESORT'
-    ? [closeModule.PROTECTIVE_CLOSE_ATTEMPTS[3]]
-    : closeModule.PROTECTIVE_CLOSE_ATTEMPTS;
+  const requestedExitMode=String(payload.exitMode||'PROTECTIVE_IOC').toUpperCase();
+  if(requestedExitMode!=='PROTECTIVE_IOC'){
+    await failMasterCommand(raw,'EXIT_MODE_LIMIT_REQUIRED');
+    masterExecution.lastError='EXIT_MODE_LIMIT_REQUIRED';
+    return false;
+  }
+  const policies=closeModule.PROTECTIVE_CLOSE_ATTEMPTS;
 
   let lastClientOrderId='';
   for(const policy of policies){
@@ -1680,15 +1684,10 @@ async function runMasterFullClose(command,raw){
 
     const outcome=await waitForFullCloseState({
       symbol,direction,beforeQuantity:currentQuantity,clientOrderId:lastClientOrderId
-    },policy.exitMode==='MARKET_LAST_RESORT'?4000:2500);
+    },2500);
 
     if(outcome.confirmed&&outcome.streamReady){
       return safeAckFullClose(raw,initialQuantity,lastClientOrderId,false);
-    }
-    if(policy.exitMode==='MARKET_LAST_RESORT'){
-      await failMasterCommand(raw,'MARKET_CLOSE_NOT_CONFIRMED');
-      masterExecution.lastError='MARKET_CLOSE_NOT_CONFIRMED';
-      return false;
     }
     if(!outcome.safeToRetry){
       const reason=outcome.inconsistentFilled
