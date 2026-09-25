@@ -4665,8 +4665,13 @@ export default async function handler(req, res) {
         if (String(position?.marginType || '').toUpperCase() !== 'ISOLATED') {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_MARGIN_NOT_ISOLATED' });
         }
-        if (position?.isAutoAddMargin === true || String(position?.isAutoAddMargin || '').toLowerCase() === 'true') {
-          return send(res, 409, { ok:false, code:'EXECUTION_ACK_AUTO_ADD_MARGIN_ENABLED' });
+        if (position?.isAutoAddMargin !== false) {
+          return send(res, 409, {
+            ok:false,
+            code:position?.isAutoAddMargin===true
+              ?'EXECUTION_ACK_AUTO_ADD_MARGIN_ENABLED'
+              :'EXECUTION_ACK_AUTO_ADD_MARGIN_UNKNOWN'
+          });
         }
 
         const protection = runtimeEmergencyProtection(
