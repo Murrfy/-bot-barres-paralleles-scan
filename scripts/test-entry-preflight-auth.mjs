@@ -17,15 +17,15 @@ function response() {
   };
 }
 
-function request() {
+function request(query = { symbol: '', margin: '', leverage: '', maxLoss: '' }) {
   return {
     method: 'GET',
     headers: { cookie: '__Host-zenith_device=test-device' },
-    query: { symbol: '', margin: '', leverage: '', maxLoss: '' },
+    query,
   };
 }
 
-function harness({ role = 'master', registered = 'master-1', lease = 'master-1', rateCount = 1 } = {}) {
+function harness({ role = 'master', registered = 'master-1', lease = 'master-1', rateCount = 1, controllerState = null } = {}) {
   const original = globalThis.fetch;
   let externalCalls = 0;
 
@@ -39,6 +39,8 @@ function harness({ role = 'master', registered = 'master-1', lease = 'master-1',
         result = registered;
       } else if (command[0] === 'GET' && command[1] === 'zenith:v1:master') {
         result = lease;
+      } else if (command[0] === 'GET' && command[1] === 'zenith:v1:controller-state') {
+        result = controllerState ? JSON.stringify(controllerState) : null;
       } else if (command[0] === 'EVAL') {
         result = rateCount;
       }
@@ -107,5 +109,17 @@ test('entry preflight HTTP rate limit blocks before any Binance request', async 
     assert.equal(res.body.code, 'ENTRY_PREFLIGHT_HTTP_RATE_LIMIT');
     assert.ok(Number(res.headers['Retry-After']) >= 1);
     assert.equal(h.externalCalls, 0);
+  } finally { h.restore(); }
+});
+
+
+test('valid preflight fails closed before Binance when central maxActive is missing', async () => {
+  const h = harness({ controllerState:null });
+  try {
+    const res = response();
+    await handler(request({symbol:'BTCUSDT',margin:'1000',leverage:'10',maxLoss:'400',price:'50000'}), res);
+    assert.equal(res.code,503);
+    assert.equal(res.body.code,'MAX_ACTIVE_CONFIG_INVALID');
+    assert.equal(h.externalCalls,0);
   } finally { h.restore(); }
 });
