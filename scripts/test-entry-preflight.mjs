@@ -109,3 +109,16 @@ test('limit reference price must remain inside Binance PRICE_FILTER bounds', () 
   assert.equal(r.ready, false);
   assert.ok(r.reasons.includes('PRICE_ABOVE_EXCHANGE_MAX'));
 });
+
+
+test('TradFi USDT perpetual contracts stay eligible (IBM-like)', () => {
+  const seed=base();
+  const symbolInfo=structuredClone(seed.symbolInfo);
+  symbolInfo.symbol='IBMUSDT';
+  symbolInfo.contractType='TRADIFI_PERPETUAL';
+  const symbolConfig={...seed.symbolConfig,symbol:'IBMUSDT'};
+  const bracketInfo={...seed.bracketInfo,symbol:'IBMUSDT'};
+  const r=evaluateEntryRisk(base({symbol:'IBMUSDT',symbolInfo,symbolConfig,bracketInfo}));
+  assert.equal(r.ready,true);
+  assert.ok(!r.reasons.includes('SYMBOL_NOT_USDT_PERPETUAL'));
+});

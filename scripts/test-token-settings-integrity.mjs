@@ -155,3 +155,11 @@ test('live protection editor never shrinks below the currently stored stage coun
   const fill=block('function fillToken()','async function saveFutures()');
   assert.match(fill,/realActive\?\(Array\.isArray\(shownProtections\)\?shownProtections\.length:0\):0/);
 });
+
+
+test('special TradFi perpetual symbols remain discoverable in Futures exchangeInfo',()=>{
+  const exchange=block('async function ensureExchange(force=false)','function ruleNum');
+  assert.match(exchange,/\['PERPETUAL','TRADIFI_PERPETUAL'\]\.includes\(s\.contractType\)/);
+  assert.match(exchange,/s\.quoteAsset!==\'USDT\'/);
+  assert.match(exchange,/s\.status!==\'TRADING\'/);
+});
