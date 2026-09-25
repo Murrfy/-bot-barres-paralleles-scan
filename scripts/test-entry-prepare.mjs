@@ -45,14 +45,14 @@ test('MAX-LOSS transition is committed before Binance protection write and non-a
 });
 
 test('stored transition identity must exactly match deterministic bundle before protection write',()=>{
-  const now=1000000;
+  const now=Date.now();
   const risk={ready:true,observedAt:now-100,normalized:{
     symbol:'BTCUSDT',margin:1000,leverage:10,maxLoss:400,referencePrice:50000,quantity:0.2,
     positionMode:'ONE_WAY',marginType:'ISOLATED',priceTickSize:0.1,minPrice:0.1,maxPrice:1000000,
   }};
   const bundle=buildPreparedEntryBundle({
     command:{id:'entry-prepare-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:50000,margin:1000,leverage:10,maxLoss:400,targetProfit:40},
-    riskSnapshot:risk,validatedAt:900000,controllerRevision:14,
+    riskSnapshot:risk,validatedAt:now-10000,controllerRevision:14,
     masterDeviceId:'zenith-server-engine-v1',masterRoleEpoch:'123',engineInstanceId:'engine-instance-test',now,
   });
   assert.equal(bundleMatchesTransition(bundle,bundle.transition),true);
