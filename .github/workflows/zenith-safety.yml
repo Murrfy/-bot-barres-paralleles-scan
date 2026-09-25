@@ -182,6 +182,8 @@ jobs:
         run: node --test scripts/test-order-intent.mjs
       - name: Test fail-closed entry protection gate
         run: node --test scripts/test-entry-protection-gate.mjs
+      - name: Test deterministic pre-entry MAX-LOSS plan
+        run: node --test scripts/test-entry-protection-plan.mjs
       - name: Test central managed emergency hard-cap ACK
         run: node --test scripts/test-central-emergency-cap.mjs
       - name: Test PANIC idempotent audit protection
