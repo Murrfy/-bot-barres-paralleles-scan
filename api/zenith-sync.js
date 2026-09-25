@@ -570,7 +570,7 @@ async function writeCommandTerminalResult(command, status, reason = '') {
   const commandId = String(command?.id || '');
   if (!commandId) return false;
   const record = {
-    commandId,
+    commandId: normalizedCommandId,
     clientCommandId: String(command?.clientCommandId || ''),
     type: String(command?.type || '').toUpperCase(),
     deviceId: String(command?.deviceId || ''),
@@ -1935,9 +1935,11 @@ async function prepareActiveMaxLossControllerCommit(command, payloadStatus, devi
   };
 }
 
-async function completeProcessingCommandAtomic(raw, command, device, controllerCommit = null) {
-  const commandId = String(command?.id || '');
-  const doneKey = commandTerminalResultKey(commandId);
+async function completeProcessingCommandAtomic(raw, commandId, device, controllerCommit = null) {
+  let command = null;
+  try { command = JSON.parse(String(raw || '')); } catch {}
+  const normalizedCommandId = String(commandId || command?.id || '');
+  const doneKey = commandTerminalResultKey(normalizedCommandId);
   const doneValue = JSON.stringify({
     commandId,
     clientCommandId: String(command?.clientCommandId || ''),
@@ -1999,7 +2001,7 @@ async function completeProcessingCommandAtomic(raw, command, device, controllerC
     raw,
     String(device?.deviceId || ''),
     String(Number(device?.createdAt || 0)),
-    commandId ? '1' : '0',
+    normalizedCommandId ? '1' : '0',
     doneValue,
     String(COMMAND_DEDUPE_TTL_SECONDS),
     controllerCommit ? '1' : '0',
@@ -5126,7 +5128,9 @@ export default async function handler(req, res) {
         await redis(['LTRIM', KEY_AUDIT, '0', '199']);
       }
 
-      const completed = await completeProcessingCommandAtomic(raw, command, device, controllerCompletion);
+      const completed = controllerCompletion
+        ? await completeProcessingCommandAtomic(raw, commandId, device, controllerCompletion)
+        : await completeProcessingCommandAtomic(raw, commandId, device);
       if (completed < 0) {
         if (completed === -4 || completed === -5 || completed === -6) {
           if (completed === -4) clearDeviceSessionCookie(res);
