@@ -36,9 +36,21 @@ test('EXEC_CLOSE_POSITION is full-close only and does not accept normal target o
   }),/EXIT_MODE_INVALID/);
 });
 
-test('real opening remains unimplemented while protective updates are dispatched',()=>{
+test('only explicit MARKET opening is dispatched; generic opening remains unsupported',()=>{
   const open=buildMasterCommandDispatch({id:'command-12345678',type:'EXEC_OPEN_POSITION',payload:{}});
   assert.equal(open.supported,false);
+
+  const market=buildMasterCommandDispatch({
+    id:'market-command-123',
+    type:'EXEC_OPEN_MARKET_POSITION',
+    payload:{symbol:'BTCUSDT',side:'BUY',orderType:'MARKET',margin:100,leverage:10,maxLoss:40,requestedAt:1800000000000}
+  });
+  assert.equal(market.supported,true);
+  assert.equal(market.endpoint,'/api/binance-entry-execute');
+  assert.equal(market.body.phase,'SUBMIT_MARKET_ENTRY');
+  assert.equal(market.body.orderType,'MARKET');
+  assert.equal(market.body.requestedAt,1800000000000);
+  assert.equal('limitPrice' in market.body,false);
 
   const exit=buildMasterCommandDispatch({
     id:'command-exit-1234',type:'EXEC_UPDATE_EXIT',
