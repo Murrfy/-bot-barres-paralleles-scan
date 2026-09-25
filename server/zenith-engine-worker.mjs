@@ -1877,6 +1877,14 @@ async function reconcile(secondPass=false){
         return reconcile(true);
       }
     }
+    const targetResult=await ensureAutomaticTargets();
+    if(targetResult?.ok!==true)return false;
+    if(targetResult?.changed===true){
+      stream.reconcileBusy=false;
+      await sleep(100);
+      return reconcile(true);
+    }
+
     runtime.error=repairTarget?'PROTECTION_REPAIR_REQUIRED':'';
     await pruneAutoHighWater().catch(()=>{});
     return userStreamReady(stream.state);
