@@ -24,6 +24,7 @@ const KEY_RECONCILE_LAST = `${PREFIX}:reconcile:last`;
 const KEY_AUDIT = `${PREFIX}:audit`;
 const KEY_ENTRY_TRANSITIONS = `${PREFIX}:entry-transitions`;
 const KEY_CONTROLLER_STATE = `${PREFIX}:controller-state`;
+const KEY_PROCESSING = `${PREFIX}:commands:processing`;
 const BINANCE_RECONCILE_RATE_LIMIT_PER_MINUTE = 30;
 const VERCEL_CONTROL_MUTATION_ALLOWED = !process.env.VERCEL_ENV ||
   process.env.VERCEL_ENV === 'development' ||
@@ -342,7 +343,68 @@ function configuredMaxLossUsd(controllerState, symbol) {
   return value > 0 ? Math.min(value, REAL_RISK_LIMITS.maxLossUsd) : NaN;
 }
 
-function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions, actualOrders) {
+function parseProcessingCommands(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const row of raw) {
+    try {
+      const parsed = typeof row === 'string' ? JSON.parse(row) : row;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) out.push(parsed);
+    } catch {}
+  }
+  return out;
+}
+
+function authorizedPendingMaxLossEdit(position, actualOrders, processingCommands, controllerState, masterDeviceId) {
+  const symbol = String(position?.symbol || '').toUpperCase();
+  const direction = String(position?.direction || '').toUpperCase();
+  const quantity = positionQty(position);
+  const controllerDeviceId = String(controllerState?.controllerDeviceId || '');
+  const now = Date.now();
+  const candidates = [];
+
+  for (const command of Array.isArray(processingCommands) ? processingCommands : []) {
+    if (String(command?.type || '').toUpperCase() !== 'EXEC_UPDATE_PROTECTION') continue;
+    if (String(command?.deviceId || '') !== controllerDeviceId || !controllerDeviceId) continue;
+    if (String(command?.claimedBy || '') !== String(masterDeviceId || '') || !masterDeviceId) continue;
+    const expiresAt = number(command?.expiresAt, NaN);
+    if (!(expiresAt > now)) continue;
+    const payload = command?.payload && typeof command.payload === 'object' ? command.payload : null;
+    if (!payload || String(payload.protectionKind || '').toUpperCase() !== 'MAX_LOSS') continue;
+    if (String(payload.symbol || '').toUpperCase() !== symbol) continue;
+    if (String(payload.direction || '').toUpperCase() !== direction) continue;
+    const requestedMaxLossUsd = number(payload.maxLossUsd, NaN);
+    const triggerPrice = number(payload.triggerPrice, NaN);
+    const commandQuantity = number(payload.quantity, NaN);
+    if (!(requestedMaxLossUsd >= 2 && requestedMaxLossUsd <= REAL_RISK_LIMITS.maxLossUsd)) continue;
+    if (!(triggerPrice > 0) || !(commandQuantity > 0) || Math.abs(commandQuantity - quantity) > 1e-12) continue;
+    const previousClientAlgoId = String(payload.previousClientAlgoId || '');
+    const expectedSide = direction === 'LONG' ? 'SELL' : 'BUY';
+    const matchingNew = (Array.isArray(actualOrders) ? actualOrders : []).find(order =>
+      String(order?.orderClass || '').toUpperCase() === 'ALGO' &&
+      String(order?.symbol || '').toUpperCase() === symbol &&
+      String(order?.positionSide || '').toUpperCase() === String(position?.positionSide || '').toUpperCase() &&
+      String(order?.side || '').toUpperCase() === expectedSide &&
+      String(order?.type || '').toUpperCase() === 'STOP_MARKET' &&
+      order?.closePosition === true &&
+      Boolean(zenithManagedOrderId(order)) &&
+      Math.abs(number(order?.triggerPrice ?? order?.stopPrice, NaN) - triggerPrice) <= Math.max(1e-9, Math.abs(triggerPrice) * 1e-10)
+    );
+    if (!matchingNew) continue;
+    candidates.push({
+      commandId:String(command?.id || ''),
+      symbol,
+      direction,
+      requestedMaxLossUsd,
+      triggerPrice,
+      previousClientAlgoId,
+      newClientAlgoId:String(matchingNew?.clientAlgoId || ''),
+    });
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions, actualOrders, processingCommands = [], masterDeviceId = '') {
   const unavailable = [];
   const exceeds = [];
   const missingConfiguredProtection = [];
@@ -350,7 +412,11 @@ function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions
   for (const position of Array.isArray(actualPositions) ? actualPositions : []) {
     const key = positionKey(position);
     const configuredMaxLoss = configuredMaxLossUsd(controllerState, position.symbol);
-    if (!(configuredMaxLoss > 0)) {
+    const pendingEdit = authorizedPendingMaxLossEdit(
+      position, actualOrders, processingCommands, controllerState, masterDeviceId
+    );
+    const effectiveMaxLoss = pendingEdit?.requestedMaxLossUsd || configuredMaxLoss;
+    if (!(effectiveMaxLoss > 0)) {
       unavailable.push(key);
       missingConfiguredProtection.push(key);
       continue;
@@ -379,7 +445,14 @@ function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions
         ? (entryPrice - trigger) * quantity
         : (trigger - entryPrice) * quantity;
 
-      if (impliedLossUsd > configuredMaxLoss + 1e-8) {
+      const clientAlgoId = String(order?.clientAlgoId || '');
+      const isPreviousPendingProtection = Boolean(
+        pendingEdit?.previousClientAlgoId && clientAlgoId === pendingEdit.previousClientAlgoId
+      );
+      const allowedForOrder = isPreviousPendingProtection && configuredMaxLoss > 0
+        ? configuredMaxLoss
+        : effectiveMaxLoss;
+      if (impliedLossUsd > allowedForOrder + 1e-8) {
         exceeds.push({
           key,
           symbol: position.symbol,
@@ -387,8 +460,9 @@ function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions
           triggerPrice: trigger,
           impliedLossUsd,
           configuredMaxLossUsd: configuredMaxLoss,
+          pendingRequestedMaxLossUsd: pendingEdit?.requestedMaxLossUsd || null,
           hardMaxLossUsd: REAL_RISK_LIMITS.maxLossUsd,
-          clientAlgoId: String(order?.clientAlgoId || ''),
+          clientAlgoId,
           algoId: String(order?.algoId || ''),
         });
         continue;
@@ -401,6 +475,11 @@ function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions
 
   if (!result?.differences || typeof result.differences !== 'object') result.differences = {};
   result.differences.configuredMaxLossUnavailable = [...new Set(unavailable)];
+  result.differences.authorizedPendingMaxLossEdits = (Array.isArray(actualPositions) ? actualPositions : [])
+    .map(position => authorizedPendingMaxLossEdit(
+      position, actualOrders, processingCommands, controllerState, masterDeviceId
+    ))
+    .filter(Boolean);
   if (exceeds.length) {
     const existingUnsafe = Array.isArray(result.differences.unsafeMaxLossProtections)
       ? result.differences.unsafeMaxLossProtections : [];
@@ -925,11 +1004,12 @@ export default async function handler(req, res) {
   }
 
   try {
-    const [time, runtimeRaw, entryTransitionRaw, controllerRaw] = await Promise.all([
+    const [time, runtimeRaw, entryTransitionRaw, controllerRaw, processingRaw] = await Promise.all([
       jsonFetch(`${BASE}/fapi/v1/time`),
       redis(['GET', KEY_STATE]),
       redis(['HGETALL', KEY_ENTRY_TRANSITIONS]),
       redis(['GET', KEY_CONTROLLER_STATE]),
+      redis(['LRANGE', KEY_PROCESSING, '0', '-1']),
     ]);
 
     const serverTime = number(time?.serverTime, NaN);
@@ -989,11 +1069,14 @@ export default async function handler(req, res) {
     const entryTransitions = parseEntryTransitionStore(entryTransitionRaw);
     let controllerState = null;
     try { controllerState = controllerRaw ? JSON.parse(controllerRaw) : null; } catch {}
+    const processingCommands = parseProcessingCommands(processingRaw);
     const result = enforceConfiguredMaxLossSafety(
       reconcile(runtimeState, actualPositions, actualOrders, entryTransitions),
       controllerState,
       actualPositions,
-      actualOrders
+      actualOrders,
+      processingCommands,
+      device.deviceId
     );
     const unsafePositionConfigs = actualPositions
       .filter(position =>
