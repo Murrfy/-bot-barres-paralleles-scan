@@ -179,3 +179,10 @@ test('real-only UI exposes no simulation controls or local fake position path',(
   assert.match(close,/Simulation supprimée/);
   assert.match(close,/return false/);
 });
+
+
+test('configured protection lists are never truncated by a lower calculated target count',()=>{
+  const normalize=block('function normalizeProtections(stages,target=3000)','function cfg(symbol)');
+  assert.match(normalize,/Math\.max\(protectionCountForTarget\(target\),src\.length\)/);
+  assert.doesNotMatch(normalize,/target==null/);
+});
