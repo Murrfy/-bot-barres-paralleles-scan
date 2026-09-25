@@ -99,7 +99,8 @@ test('global risk defaults can be updated without overwriting per-token override
   assert.match(cloud,/const controlSettings=clone\(settings\)/);
   assert.match(cloud,/settings:controlSettings/);
   assert.match(cloud,/for\(const key of \['theme','sound','vibrate','showProtections'\]\)delete controlSettings\[key\]/);
-  assert.match(cloud,/tokenSettings:clone\(normalizeRecordBlock\(tokenSettings\)\)/);
+  assert.match(cloud,/function controllerCloudStatePayload\(tokenSettingsSource=tokenSettings\)/);
+  assert.match(cloud,/tokenSettings:clone\(normalizeRecordBlock\(tokenSettingsSource\)\)/);
 });
 
 test('global defaults stay visible and are copied only by explicit action',()=>{
