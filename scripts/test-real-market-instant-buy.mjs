@@ -139,8 +139,10 @@ test('MARKET ACK requires explicit auto-add-margin false, never unknown',()=>{
   const inventory=fs.readFileSync('lib/master-runtime-inventory.mjs','utf8');
   const seed=fs.readFileSync('lib/user-stream-seed.mjs','utf8');
   const snapshot=fs.readFileSync('api/binance-runtime-snapshot.js','utf8');
-  assert.match(sync,/position\?\.isAutoAddMargin !== false/);
+  assert.match(sync,/readiness\.report\?\.certifiedPositions/);
+  assert.match(sync,/certifiedPosition\?\.isAutoAddMargin !== false/);
   assert.match(sync,/EXECUTION_ACK_AUTO_ADD_MARGIN_UNKNOWN/);
+  assert.match(sync,/EXECUTION_ACK_REST_POSITION_MISMATCH/);
   assert.match(snapshot,/isAutoAddMargin:p\.isAutoAddMargin===true\|\|String\(p\.isAutoAddMargin\|\|''\)\.toLowerCase\(\)==='true'/);
   assert.match(seed,/isAutoAddMargin:p\.isAutoAddMargin===true\?true:p\.isAutoAddMargin===false\?false:null/);
   assert.match(inventory,/isAutoAddMargin:p\.isAutoAddMargin===true\?true:p\.isAutoAddMargin===false\?false:null/);
@@ -152,4 +154,11 @@ test('instant-buy UI stays pending beyond the central 30-second command lifetime
   const end=html.indexOf('async function manualClose',start);
   const block=html.slice(start,end);
   assert.match(block,/\},32000\);/);
+});
+
+
+test('fresh Binance reconciliation exports certified auto-margin state',()=>{
+  const reconcile=fs.readFileSync('api/binance-reconcile.js','utf8');
+  assert.match(reconcile,/certifiedPositions:actualPositions\.map/);
+  assert.match(reconcile,/isAutoAddMargin:position\.isAutoAddMargin/);
 });
