@@ -138,6 +138,10 @@ jobs:
         run: node --test scripts/test-render-engine-blueprint.mjs
       - name: Test persistent engine protection high-water
         run: node --test scripts/test-engine-protection-high-water.mjs
+      - name: Test autonomous MAX-LOSS repair planning
+        run: node --test scripts/test-maxloss-auto-repair.mjs
+      - name: Test 24/7 MAX-LOSS repair wiring
+        run: node --test scripts/test-engine-maxloss-auto-repair-wiring.mjs
       - name: Test server progressive auto-protection
         run: node --test scripts/test-engine-worker-auto-protection.mjs
       - name: Test current Binance routed WebSocket endpoints
