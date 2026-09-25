@@ -157,9 +157,11 @@ test('live protection editor never shrinks below the currently stored stage coun
 });
 
 
-test('special TradFi perpetual symbols remain discoverable in Futures exchangeInfo',()=>{
-  const exchange=block('async function ensureExchange(force=false)','function ruleNum');
-  assert.match(exchange,/\['PERPETUAL','TRADIFI_PERPETUAL'\]\.includes\(s\.contractType\)/);
-  assert.match(exchange,/s\.quoteAsset!==\'USDT\'/);
-  assert.match(exchange,/s\.status!==\'TRADING\'/);
+test('special TradFi and future perpetual symbols remain discoverable in Futures exchangeInfo',()=>{
+  const exchange=block('function isUsdMPerpetualContract(s)','function ruleNum');
+  assert.match(exchange,/type==='PERPETUAL'\|\|type\.endsWith\('_PERPETUAL'\)/);
+  assert.match(exchange,/s\?\.quoteAsset==='USDT'/);
+  assert.match(exchange,/s\?\.status==='TRADING'/);
+  assert.match(exchange,/if\(!isUsdMPerpetualContract\(s\)\)continue/);
+  assert.match(html,/function addManualToken\(\)[\s\S]*exchangeMap\.has\(symbol\)/);
 });

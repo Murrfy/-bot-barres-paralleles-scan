@@ -37,13 +37,16 @@ test('final entry dispatch gate atomically revalidates MASTER, lease, mode, PANI
     "if panic ~= '0' then return -4 end",
     "if arm ~= ARGV[3] then return -5 end",
     "if roleEpoch ~= ARGV[2] then return -6 end",
-    "'EVAL',script,'6'",
+    "local controllerRaw = redis.call('GET', KEYS[7])",
+    "if tonumber(controller['revision'] or 0) ~= tonumber(ARGV[4]) then return -7 end",
+    "'EVAL',script,'7'",
     'KEY_MASTER_DEVICE',
     'KEY_MASTER',
     'KEY_MASTER_MODE',
     'KEY_EMERGENCY_STOP',
     'KEY_REAL_EXECUTION_ARMED',
     "roleAssignmentKey(PREFIX,'master')",
+    'KEY_CONTROLLER_STATE',
   ]) assert.ok(stateBlock.includes(required),required);
 });
 
@@ -67,6 +70,13 @@ test('final gate fails closed for PANIC/revoke races without weakening entry wri
     'EMERGENCY_STOP_ACTIVE',
     'REAL_EXECUTION_ARM_CHANGED_DURING_ENTRY',
     'MASTER_ROLE_EPOCH_CHANGED_DURING_ENTRY',
+    'CONTROLLER_CONFIG_CHANGED_DURING_ENTRY',
   ]) assert.ok(stateBlock.includes(reason),reason);
   assert.ok(handler.includes('REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&REAL_ENTRY_WRITE_ENABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED'));
+});
+
+
+test('real entry uses centrally stored maxActive instead of trusting the caller',()=>{
+  assert.ok(handler.includes('const maxActivePositions=await readConfiguredMaxActivePositions()'));
+  assert.ok(handler.includes('maxActivePositions,'));
 });

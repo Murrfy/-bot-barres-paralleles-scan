@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { evaluateEntryRisk, REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 
 function base(overrides = {}) {
@@ -71,6 +72,46 @@ test('three active positions block a fourth', () => {
   assert.ok(r.reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'));
 });
 
+
+test('configured maxActive=1 blocks a second real position', () => {
+  const positions = [{symbol:'ETHUSDT', positionAmt:'1'}];
+  const r = evaluateEntryRisk(base({ positions, maxActivePositions:1 }));
+  assert.equal(r.normalized.maxActivePositions,1);
+  assert.equal(r.normalized.occupiedPositionSlots,1);
+  assert.ok(r.reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'));
+});
+
+test('pending entry orders reserve real position slots across symbols', () => {
+  const r = evaluateEntryRisk(base({
+    maxActivePositions:2,
+    positions:[{symbol:'ETHUSDT',positionAmt:'1'}],
+    standardOrders:[{symbol:'SOLUSDT',side:'BUY',type:'LIMIT',reduceOnly:false,closePosition:false}],
+  }));
+  assert.equal(r.normalized.activePositions,1);
+  assert.equal(r.normalized.pendingEntrySlots,1);
+  assert.equal(r.normalized.occupiedPositionSlots,2);
+  assert.ok(r.reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'));
+});
+
+test('protective orders never consume a new position slot', () => {
+  const r = evaluateEntryRisk(base({
+    maxActivePositions:2,
+    positions:[{symbol:'ETHUSDT',positionAmt:'1'}],
+    algoOrders:[{symbol:'ETHUSDT',side:'SELL',type:'STOP_MARKET',closePosition:true,reduceOnly:false}],
+  }));
+  assert.equal(r.normalized.pendingEntrySlots,0);
+  assert.equal(r.normalized.occupiedPositionSlots,1);
+  assert.equal(r.reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'),false);
+});
+
+test('invalid configured maxActive fails closed instead of raising the server cap', () => {
+  const r = evaluateEntryRisk(base({ maxActivePositions:4 }));
+  assert.equal(r.ready,false);
+  assert.ok(r.reasons.includes('MAX_ACTIVE_CONFIG_INVALID'));
+  assert.equal(r.normalized.maxActivePositions,REAL_RISK_LIMITS.maxActivePositions);
+});
+
+
 test('existing target-symbol order blocks duplicate entry', () => {
   const r = evaluateEntryRisk(base({ standardOrders:[{symbol:'BTCUSDT'}] }));
   assert.ok(r.reasons.includes('SYMBOL_ORDER_ALREADY_OPEN'));
@@ -121,4 +162,25 @@ test('TradFi USDT perpetual contracts stay eligible (IBM-like)', () => {
   const r=evaluateEntryRisk(base({symbol:'IBMUSDT',symbolInfo,symbolConfig,bracketInfo}));
   assert.equal(r.ready,true);
   assert.ok(!r.reasons.includes('SYMBOL_NOT_USDT_PERPETUAL'));
+});
+
+test('live preflight reads all open entry orders so pending symbols reserve slots', () => {
+  const source=fs.readFileSync('api/binance-entry-preflight.js','utf8');
+  assert.match(source,/signedGet\('\/fapi\/v1\/openOrders', apiKey, secret, serverTime\)/);
+  assert.match(source,/signedGet\('\/fapi\/v1\/openAlgoOrders', apiKey, secret, serverTime, \{ algoType: 'CONDITIONAL' \}\)/);
+  assert.match(source,/maxActivePositions = await readConfiguredMaxActivePositions\(\)/);
+});
+
+test('new Binance special perpetual families remain eligible without code changes', () => {
+  const symbolInfo=structuredClone(base().symbolInfo);
+  symbolInfo.contractType='NEWCLASS_PERPETUAL';
+  const r=evaluateEntryRisk(base({symbolInfo}));
+  assert.equal(r.reasons.includes('SYMBOL_NOT_USDT_PERPETUAL'),false);
+});
+
+test('delivery contracts are not mistaken for perpetual contracts', () => {
+  const symbolInfo=structuredClone(base().symbolInfo);
+  symbolInfo.contractType='CURRENT_QUARTER';
+  const r=evaluateEntryRisk(base({symbolInfo}));
+  assert.ok(r.reasons.includes('SYMBOL_NOT_USDT_PERPETUAL'));
 });
