@@ -2694,15 +2694,19 @@ function setTokenFieldsEnabled(){
   }
   if(active){
     ['tExactBuy','tExactBuyPrice'].forEach(id=>$(id).disabled=true);
-    ['tExactSale','tExactSalePrice','tTarget'].forEach(id=>$(id).disabled=false);
+    const pendingKinds=realActive?['EXIT','PROGRESSIVE','MAX_LOSS','ACTIVE_CONFIG']:[];
+    const activeSettingPending=Boolean(realActive&&pendingKinds.some(kind=>realProtectiveUpdatePending.has(realUpdatePendingKey(realActive,kind))));
     const maxLossPending=Boolean(realActive&&realProtectiveUpdatePending.get(realUpdatePendingKey(realActive,'MAX_LOSS'))?.maxLossUsd);
-    $('tMaxLoss').disabled=!realActive||maxLossPending;
-    protectionEls.forEach(el=>el.disabled=false);
-    $('saveTokenBtn').disabled=false;$('instantBuyBtn').disabled=true;$('tokenDefaultsBtn').disabled=true;$('devalidateBtn').disabled=true;
+    ['tExactSale','tExactSalePrice','tTarget'].forEach(id=>$(id).disabled=activeSettingPending);
+    $('tMaxLoss').disabled=!realActive||activeSettingPending;
+    protectionEls.forEach(el=>el.disabled=activeSettingPending);
+    $('saveTokenBtn').disabled=activeSettingPending;$('instantBuyBtn').disabled=true;$('tokenDefaultsBtn').disabled=true;$('devalidateBtn').disabled=true;
     $('fMargin').disabled=true;$('fLev').disabled=true;$('saveFuturesBtn').disabled=true;
     lock.hidden=false;lock.textContent=realActive
-      ?maxLossPending
-        ?'Position réelle ACTIVE : modification perte MAX en attente de confirmation Binance/serveur. Achat, marge et levier restent verrouillés.'
+      ?activeSettingPending
+        ?maxLossPending
+          ?'Position réelle ACTIVE : modification perte MAX en attente de confirmation Binance/serveur. Tous les autres réglages actifs restent verrouillés.'
+          :'Position réelle ACTIVE : modification objectif/protection en attente de confirmation. Les autres réglages actifs restent verrouillés.'
         :'Position réelle ACTIVE : objectif de gain, prix déterminé de VENTE, protections et perte MAX modifiables. Achat, marge et levier restent verrouillés.'
       :'Position active : objectif de gain, prix déterminé de VENTE et protections modifiables. Achat, marge, levier et perte MAX restent verrouillés.';
     return;
@@ -2841,7 +2845,7 @@ async function saveRealActiveTokenSettings(s,position,old,protections){
     exactSalePrice:saleEnabled?salePrice:0,
     exactSaleSource:'settings'
   };
-  const pendingKinds=['EXIT','ACTIVE_CONFIG','MAX_LOSS'];
+  const pendingKinds=['EXIT','PROGRESSIVE','ACTIVE_CONFIG','MAX_LOSS'];
   if(pendingKinds.some(kind=>realProtectiveUpdatePending.has(realUpdatePendingKey(position,kind)))){
     return setStatus(s+' : une modification active est déjà en attente de confirmation.',true);
   }
