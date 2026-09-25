@@ -4662,13 +4662,25 @@ export default async function handler(req, res) {
             liveEntryPrice,
           });
         }
-        if (String(position?.marginType || '').toUpperCase() !== 'ISOLATED') {
+        const certifiedPosition=(Array.isArray(readiness.report?.certifiedPositions)
+          ?readiness.report.certifiedPositions:[]).find(row=>
+            String(row?.symbol||'').toUpperCase()===symbol&&
+            String(row?.direction||'').toUpperCase()==='LONG'
+          )||null;
+        const certifiedQty=Math.abs(Number(certifiedPosition?.positionAmt??certifiedPosition?.quantity??0));
+        const certifiedEntry=Number(certifiedPosition?.entryPrice||0);
+        if(!certifiedPosition||
+            !numberMatches(certifiedQty,liveQuantity)||
+            !numberMatches(certifiedEntry,liveEntryPrice)){
+          return send(res,409,{ok:false,code:'EXECUTION_ACK_REST_POSITION_MISMATCH'});
+        }
+        if (String(certifiedPosition?.marginType || '').toUpperCase() !== 'ISOLATED') {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_MARGIN_NOT_ISOLATED' });
         }
-        if (position?.isAutoAddMargin !== false) {
+        if (certifiedPosition?.isAutoAddMargin !== false) {
           return send(res, 409, {
             ok:false,
-            code:position?.isAutoAddMargin===true
+            code:certifiedPosition?.isAutoAddMargin===true
               ?'EXECUTION_ACK_AUTO_ADD_MARGIN_ENABLED'
               :'EXECUTION_ACK_AUTO_ADD_MARGIN_UNKNOWN'
           });
@@ -4707,6 +4719,8 @@ export default async function handler(req, res) {
           maxLossTriggerPrice:triggerPrice,
           configuredMaxLossUsd:configuredMaxLoss,
           impliedLossUsd,
+          marginType:String(certifiedPosition.marginType||'').toUpperCase(),
+          isAutoAddMargin:false,
           reconciliationObservedAt:Number(readiness.report?.observedAt || 0),
         })]);
         await redis(['LTRIM', KEY_AUDIT, '0', '199']);
