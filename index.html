@@ -263,7 +263,7 @@ const MASTER_AUTO_HIGHWATER_KEY='zenith_master_auto_protection_highwater_v1';
 let masterAutoProtection={pending:new Set(),highWater:new Map(),lastError:'',lastActionAt:0};
 function scheduleLiveRender(){if(uiRenderPending)return;uiRenderPending=true;requestAnimationFrame(()=>{uiRenderPending=false;renderKpis();renderPositions();renderTable();if(selectedSymbol){const m=n(lastPrices.get(selectedSymbol));if($('selectedPriceLabel'))$('selectedPriceLabel').textContent=`Prix : ${m?price(m):'—'}`}})}
 function setStatus(msg,err=false){$('status').textContent=msg;$('status').classList.toggle('err',!!err)}
-function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`$${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'$'+av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'COMPTE BINANCE INACCESSIBLE':'COMPTE BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'prix publics Binance disponibles · compte Futures privé inaccessible':'portefeuille Futures Binance · connexion serveur requise'}renderRealPositions();renderRealEntryOrders()}
+function renderBinanceAccount(){const b=$('accountBadge'),w=$('kWallet'),sub=$('kWalletSub');if(!b||!w||!sub)return;if(binanceAccount.connected){b.textContent='BINANCE LECTURE OK';b.classList.add('on');const wb=n(binanceAccount.walletBalance,NaN),av=n(binanceAccount.availableBalance,NaN);w.textContent=Number.isFinite(wb)?`${wb.toFixed(2)}`:'—';sub.textContent=`disponible ${Number.isFinite(av)?'
 async function loadControllerRealCommandModule(){
   if(controllerRealCommandModule)return controllerRealCommandModule;
   controllerRealCommandModule=await import('/lib/controller-real-command.mjs');
@@ -2304,6 +2304,17 @@ function controllerRealPositionBySymbol(symbol){
   const rows=Array.isArray(binanceAccount.positions)?binanceAccount.positions:[];
   return rows.find(p=>String(p?.symbol||'').toUpperCase()===wanted&&Math.abs(n(p?.positionAmt??p?.quantity,0))>0)||null;
 }
+function realPositionPnlAtPrice(position,mark){
+  const amount=n(position?.positionAmt??position?.quantity,NaN),entry=n(position?.entryPrice,NaN),px=n(mark,NaN);
+  if(!Number.isFinite(amount)||amount===0||!(entry>0)||!(px>0))return NaN;
+  return (amount>0?1:-1)*(px-entry)*Math.abs(amount);
+}
+function realPositionPriceForPnl(position,pnl){
+  const amount=n(position?.positionAmt??position?.quantity,NaN),entry=n(position?.entryPrice,NaN),wanted=n(pnl,NaN);
+  if(!Number.isFinite(amount)||amount===0||!(entry>0)||!Number.isFinite(wanted))return 0;
+  const px=entry+wanted/((amount>0?1:-1)*Math.abs(amount));
+  return px>0?px:0;
+}
 function anyActivePositionBySymbol(symbol){return openBySymbol(symbol)||controllerRealPositionBySymbol(symbol)||null}
 function masterRealPositionBySymbol(symbol){
   if(controllerIdentity.role!=='master')return null;
@@ -2386,11 +2397,11 @@ function setTokenFieldsEnabled(){
 }
 function updateTokenPreview(){
   if(!selectedSymbol)return;
-  const t=tokenSettings[selectedSymbol]||{},active=openBySymbol(selectedSymbol),margin=Math.max(1,n(t.margin,settings.margin)),lev=clamp(n(t.leverage,settings.leverage),1,10),base=active?{margin:n(active.notional)/Math.max(1,n(active.leverage)),leverage:n(active.leverage),binanceEffectiveNotional:n(active.notional)}:{margin,leverage:lev},buy=$('tExactBuy').checked?parsePrice($('tExactBuyPrice').value):0,sale=$('tExactSale').checked?parsePrice($('tExactSalePrice').value):0,targetEl=$('tTarget');
+  const t=tokenSettings[selectedSymbol]||{},localActive=openBySymbol(selectedSymbol),realActive=controllerRealPositionBySymbol(selectedSymbol),active=localActive||realActive,margin=Math.max(1,n(t.margin,settings.margin)),lev=clamp(n(t.leverage,settings.leverage),1,10),base=localActive?{margin:n(localActive.notional)/Math.max(1,n(localActive.leverage)),leverage:n(localActive.leverage),binanceEffectiveNotional:n(localActive.notional)}:{margin,leverage:lev},buy=$('tExactBuy').checked?parsePrice($('tExactBuyPrice').value):0,sale=$('tExactSale').checked?parsePrice($('tExactSalePrice').value):0,targetEl=$('tTarget');
   if(targetEl.dataset.exactAuto!=='1')targetEl.dataset.manualTarget=targetEl.value||settings.targetProfit;
-  const manual=n(targetEl.dataset.manualTarget,settings.targetProfit),entry=active?n(active.entryPrice):buy,both=entry>0&&sale>0,profit=both?exactProfitFor(entry,sale,base):null;
+  const manual=n(targetEl.dataset.manualTarget,settings.targetProfit),entry=active?n(active.entryPrice):buy,both=entry>0&&sale>0,profit=both?(realActive?realPositionPnlAtPrice(realActive,sale):exactProfitFor(entry,sale,base)):null;
   if(!active&&both&&profit!=null){targetEl.value=profit.toFixed(2);targetEl.dataset.exactAuto='1'}else if(!active){if(targetEl.dataset.exactAuto==='1')targetEl.value=manual;targetEl.dataset.exactAuto='0'}else{targetEl.dataset.exactAuto='0'}
-  const target=active?manual:(both&&profit!=null?profit:n(targetEl.value,settings.targetProfit)),goal=sale||(entry?priceForPnl(entry,notional(base),target):0);$('tTargetPreview').value=goal?price(goal):'—';$('tExactProfit').textContent=profit==null?'Bénéfice prévu : —':`Bénéfice prévu : ${money(profit)} · calculé avec ${active?'le prix d’achat réel':'les deux prix déterminés'}`;setTokenFieldsEnabled()
+  const target=active?manual:(both&&profit!=null?profit:n(targetEl.value,settings.targetProfit)),goal=sale||(realActive?realPositionPriceForPnl(realActive,target):(entry?priceForPnl(entry,notional(base),target):0));$('tTargetPreview').value=goal?price(goal):'—';$('tExactProfit').textContent=profit==null?'Bénéfice prévu : —':`Bénéfice prévu : ${money(profit)} · calculé avec ${active?'le prix d’achat réel':'les deux prix déterminés'}`;setTokenFieldsEnabled()
 }
 function protectionDraft(){const els=[...($('protectionEditor')?.querySelectorAll('.protectionItem')||[])];return els.map((_,i)=>{const d=defaultProtection(i);return{enabled:$(`tProtect${i+1}`)?.checked!==false,arm:Math.max(0,n($(`tProtect${i+1}Arm`)?.value,d.arm)),floor:Math.max(0,n($(`tProtect${i+1}Floor`)?.value,d.floor))}})}
 function protectionValidationError(stages){
@@ -2410,8 +2421,2279 @@ function protectionsForTarget(stages,target,minCount=0){const count=Math.max(pro
 function reachedProtectionCount(stages,maxProfit){let count=0;for(let i=0;i<(Array.isArray(stages)?stages.length:0);i++){const st=stages[i];if(st?.enabled&&n(maxProfit)>=n(st.arm,Infinity))count=i+1}return count}
 function renderProtectionEditor(stages,target=3000,minCount=0){const arr=protectionsForTarget(stages,target,minCount),head=`<div class="protectionHead"><span class="armHead">ATTEINT</span><span class="floorHead">PROTÉGÉ</span></div>`,item=(st,i)=>`<div class="protectionItem" title="Protection ${i+1} : +${st.arm} → +${st.floor}"><input id="tProtect${i+1}" type="checkbox" ${st.enabled?'checked':''} aria-label="Activer protection ${i+1}"><span class="protectionNum">${i+1}</span><input id="tProtect${i+1}Arm" type="number" min="0" step="0.1" inputmode="decimal" value="${st.arm}" aria-label="Gain atteint protection ${i+1}"><span class="protectionArrow">→</span><input id="tProtect${i+1}Floor" type="number" min="0" step="0.1" inputmode="decimal" value="${st.floor}" aria-label="Gain protégé protection ${i+1}"></div>`;const mid=Math.ceil(arr.length/2);$('protectionEditor').innerHTML=`<div class="protectionGrid"><div class="protectionColumn">${head}${arr.slice(0,mid).map((st,j)=>item(st,j)).join('')}</div><div class="protectionColumn">${head}${arr.slice(mid).map((st,j)=>item(st,mid+j)).join('')}</div></div>`;const hint=$('protectionHint');if(hint){const last=arr.length?arr[arr.length-1]:null;hint.textContent=arr.length?`${arr.length} protections affichées pour un objectif de +${money(n(target)).replace('$','').trim()} $ : +105→+100 jusqu’à +${last.arm}→+${last.floor}. Décimales acceptées avec un point (ex. 7.8). En réel, PROTÉGÉ est un seuil de déclenchement, pas un P&L garanti. Si l’objectif augmente, Zenith ajoute automatiquement les protections utiles par tranche de 100 $.`:`Aucune protection par tranche de 100 $ n’est possible sous cet objectif.`}}
 function applyProtectionVisibility(){const cb=$('showProtectionsToggle'),details=$('protectionDetails');if(!cb||!details)return;cb.checked=settings.showProtections!==false;details.hidden=!cb.checked}
-function syncProtectionsToTarget(target){if(!selectedSymbol)return;const active=openBySymbol(selectedSymbol);if(validated[selectedSymbol]&&!active)return;const current=protectionDraft(),saved=active?.protectionStages||tokenSettings[selectedSymbol]?.protectionStages||settings.protectionStages,merged=current.length?current:saved,minCount=active?reachedProtectionCount(merged,active.maxProfit):0;renderProtectionEditor(merged,target,minCount);setTokenFieldsEnabled()}
-function fillToken(){const s=selectedSymbol,has=!!s;$('tokenNoSelection').hidden=has;$('tokenSettingsWrap').hidden=!has;applyProtectionVisibility();$('settingsSymbol').textContent=s||'—';$('selectedSymbolLabel').textContent=s||'—';$('selectedPriceLabel').textContent=`Prix : ${s?price(lastPrices.get(s)):'—'}`;renderSelectedCurrentPrice();if(!has){fillFutures();return}const active=openBySymbol(s),t=tokenSettings[s]||{},c={...settings,...t},manual=active?n(active.baseTargetProfit,n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit))):n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit));$('tTarget').value=manual;$('tTarget').dataset.manualTarget=manual;$('tTarget').dataset.exactAuto='0';const shownProtections=active?.protectionStages||t.protectionStages||settings.protectionStages;renderProtectionEditor(shownProtections,manual,active?reachedProtectionCount(shownProtections,active.maxProfit):0);$('tMaxLoss').value=n(active?.maxLoss,n(t.maxLoss,settings.maxLoss));$('tExactBuy').checked=!!t.exactBuyEnabled;$('tExactBuyPrice').value=n(t.exactBuyPrice)||'';$('tExactSale').checked=!!t.exactSaleEnabled;$('tExactSalePrice').value=n(t.exactSalePrice)||'';$('devalidateBtn').disabled=!validated[s];$('tokenCloseNowBtn').disabled=!openBySymbol(s);$('instantBuyBtn').disabled=!!openBySymbol(s)||openPositions.length>=settings.maxActive;fillFutures();updateTokenPreview()}
+function syncProtectionsToTarget(target){if(!selectedSymbol)return;const localActive=openBySymbol(selectedSymbol),realActive=controllerRealPositionBySymbol(selectedSymbol),active=localActive||realActive;if(validated[selectedSymbol]&&!active)return;const current=protectionDraft(),saved=localActive?.protectionStages||tokenSettings[selectedSymbol]?.protectionStages||settings.protectionStages,merged=current.length?current:saved,minCount=localActive?reachedProtectionCount(merged,localActive.maxProfit):0;renderProtectionEditor(merged,target,minCount);setTokenFieldsEnabled()}
+function fillToken(){const s=selectedSymbol,has=!!s;$('tokenNoSelection').hidden=has;$('tokenSettingsWrap').hidden=!has;applyProtectionVisibility();$('settingsSymbol').textContent=s||'—';$('selectedSymbolLabel').textContent=s||'—';$('selectedPriceLabel').textContent=`Prix : ${s?price(lastPrices.get(s)):'—'}`;renderSelectedCurrentPrice();if(!has){fillFutures();return}const localActive=openBySymbol(s),realActive=controllerRealPositionBySymbol(s),t=tokenSettings[s]||{},c={...settings,...t},manual=localActive?n(localActive.baseTargetProfit,n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit))):n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit));$('tTarget').value=manual;$('tTarget').dataset.manualTarget=manual;$('tTarget').dataset.exactAuto='0';const shownProtections=localActive?.protectionStages||t.protectionStages||settings.protectionStages;renderProtectionEditor(shownProtections,manual,localActive?reachedProtectionCount(shownProtections,localActive.maxProfit):0);$('tMaxLoss').value=n(localActive?.maxLoss,n(t.maxLoss,settings.maxLoss));$('tExactBuy').checked=!!t.exactBuyEnabled;$('tExactBuyPrice').value=n(t.exactBuyPrice)||'';$('tExactSale').checked=!!t.exactSaleEnabled;$('tExactSalePrice').value=n(t.exactSalePrice)||'';$('devalidateBtn').disabled=!validated[s];$('tokenCloseNowBtn').disabled=!localActive;$('instantBuyBtn').disabled=!!(localActive||realActive)||openPositions.length>=settings.maxActive;fillFutures();updateTokenPreview()}
+async function saveFutures(){const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);if(anyActivePositionBySymbol(s))return setStatus(`${s} est actif : marge et levier sont verrouillés. Seuls l’objectif de gain, le prix déterminé de VENTE et les protections peuvent être modifiés.`,true);if(validated[s])return setStatus(`${s} est surveillé : annule d’abord l’achat surveillé avant de modifier ses paramètres.`,true);const old=tokenSettings[s]||{},margin=Math.max(1,n($('fMargin').value,settings.margin)),leverage=Math.round(n($('fLev').value,settings.leverage));if(!(margin>=1&&margin<=1000))return setStatus('La marge doit être comprise entre 1 $ et 1 000 $.',true);if(leverage<1||leverage>10)return setStatus('Le levier doit être compris entre x1 et x10.',true);try{await ensureExchange();if(!(n(lastPrices.get(s))>0))await currentMarketPrice(s)}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}const d=futuresDraft(s,margin,leverage,'LIMIT');if(!d.ok)return setStatus(`${s} : réglage refusé par les limites Binance — ${d.error}.`,true);const buy=tokenExactBuy(s),sale=tokenExactSale(s),buyErr=buy>0?validateLimitPrice(s,buy,'Prix d’achat'):'';if(buyErr)return setStatus(`${s} : ${buyErr}.`,true);const saleErr=sale>0?validateLimitPrice(s,sale,'Prix de vente'):'';if(saleErr)return setStatus(`${s} : ${saleErr}.`,true);tokenSettings[s]={...old,enabled:true,margin,leverage,marginType:'ISOLATED',binanceQty:d.qty,binanceEffectiveNotional:d.effectiveNotional};const active=openBySymbol(s);if(active){active.margin=margin;active.leverage=leverage;active.marginType='ISOLATED';active.notional=d.effectiveNotional||margin*leverage;active.binanceQty=d.qty;active.stopExitPrice=priceForPnl(active.entryPrice,active.notional,-active.maxLoss);if(active.manualSaleTarget&&n(active.targetPrice)>active.entryPrice)active.targetProfit=exactProfitFor(active.entryPrice,active.targetPrice,{margin:active.notional/leverage,leverage});else active.targetPrice=priceForPnl(active.entryPrice,active.notional,active.targetProfit)}save();renderAll();setStatus(`${s} : Futures enregistré — ISOLÉE $${margin.toFixed(2)}, x${leverage}, quantité Binance ${d.qty}, notionnel effectif ≈ $${d.effectiveNotional.toFixed(2)}.`)}
+function readBotSettings(){return{maxActive:clamp(Math.round(n($('bMaxActive').value,settings.maxActive||3)),1,3),theme:$('bTheme').value==='light'?'light':'dark',sound:$('bSound').checked,vibrate:$('bVibrate').checked}}
+function applyBotSettings(message='Réglages BOT enregistrés.'){const next=readBotSettings(),themeChanged=next.theme!==settings.theme,soundEnabled=next.sound&&!settings.sound;settings={...settings,...next};save();if(themeChanged)applyTheme();if(soundEnabled)ensureAudio();renderKpis();fillBot();if(selectedSymbol)fillToken();setStatus(message)}
+function saveBot(){const wantsVibrate=$('bVibrate').checked;applyBotSettings('Réglages BOT enregistrés.');if(wantsVibrate&&!('vibrate' in navigator))setStatus('Réglages BOT enregistrés. La vibration est activée dans Zenith, mais ce navigateur ne prend pas en charge la vibration.',true)}
+async function saveSelectedAsDefaults(){
+  const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton avant de définir les défauts.',true);
+  if(openPositions.length||n(binanceAccount.realPositions)>0||Object.keys(validated).length){
+    return setStatus('Défauts globaux verrouillés : une position ou un achat surveillé est en cours.',true);
+  }
+  const margin=Math.max(1,n($('fMargin').value,settings.margin)),leverage=Math.round(n($('fLev').value,settings.leverage));
+  const target=Math.max(0,n($('tTarget').dataset.manualTarget,n($('tTarget').value,settings.targetProfit)));
+  const maxLoss=n($('tMaxLoss').value,settings.maxLoss),protections=protectionDraft(),protectionError=protectionValidationError(protections);
+  if(!(margin>=1&&margin<=1000))return setStatus('Marge par défaut invalide : entre 1 $ et 1 000 $.',true);
+  if(leverage<1||leverage>10)return setStatus('Levier par défaut invalide : entre x1 et x10.',true);
+  if(!(target>0))return setStatus('Objectif de gain par défaut invalide : entre un montant supérieur à 0 $.',true);
+  if(!(maxLoss>=2&&maxLoss<=400))return setStatus('Perte maximale par défaut invalide : entre 2 $ et 400 $.',true);
+  if(maxLoss>margin)return setStatus('Perte maximale par défaut invalide : elle ne peut pas dépasser la marge par défaut.',true);
+  if(protectionError)return setStatus(protectionError,true);
+  try{await ensureExchange();if(!(n(lastPrices.get(s))>0))await currentMarketPrice(s)}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}
+  const d=futuresDraft(s,margin,leverage,'LIMIT');if(!d.ok)return setStatus(`${s} : défauts refusés par les limites Binance — ${d.error}.`,true);
+  settings={...settings,margin,leverage,marginType:'ISOLATED',targetProfit:target,maxLoss,protectionStages:clone(protections)};
+  save();fillBot();if(selectedSymbol)fillToken();setStatus(`Défauts globaux enregistrés depuis ${s} : marge ${margin.toFixed(2)}, x${leverage}, objectif +${target.toFixed(2)}, MAX -${maxLoss.toFixed(2)}.`);
+}
+async function saveToken(){
+  const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);
+  const active=openBySymbol(s),watched=!!validated[s]&&!active;
+  if(watched)return setStatus(`${s} est surveillé : utilise « Annuler l’achat surveillé » avant de modifier ses paramètres.`,true);
+  try{await ensureExchange()}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}
+  const old=tokenSettings[s]||{},protections=protectionDraft(),protectionError=protectionValidationError(protections);
+  const requestedMaxLoss=n($('tMaxLoss').value,settings.maxLoss);
+  if(!(requestedMaxLoss>=2&&requestedMaxLoss<=400)){
+    return setStatus('Perte maximale invalide : Zenith réel impose un minimum de 2 $ et un plafond de 400 $.',true);
+  }
+  if(protectionError)return setStatus(protectionError,true);
+  if(active){
+    const saleEnabled=$('tExactSale').checked,salePrice=Math.max(0,parsePrice($('tExactSalePrice').value)),manualTarget=Math.max(0,n($('tTarget').dataset.manualTarget,n($('tTarget').value,n(active.baseTargetProfit,settings.targetProfit))));
+    if(!(manualTarget>0))return setStatus('Objectif de gain invalide : entre un montant supérieur à 0 $.',true);
+    if(saleEnabled&&!(salePrice>0))return setStatus('Entre un prix de vente déterminé supérieur à 0.',true);
+    const saleRuleErr=saleEnabled?validateLimitPrice(s,salePrice,'Prix de vente'):'';if(saleRuleErr)return setStatus(`${s} : ${saleRuleErr}.`,true);
+    tokenSettings[s]={...old,targetProfit:manualTarget,manualTargetProfit:manualTarget,protectionStages:protections,exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings',marginType:'ISOLATED'};
+    active.baseTargetProfit=manualTarget;
+    active.protectionStages=normalizeProtections(protections,null);
+    let floor=0;for(const st of active.protectionStages)if(st.enabled&&n(active.maxProfit)>=st.arm)floor=Math.max(floor,st.floor);active.protectionFloorActive=floor;
+    const exact=saleEnabled&&salePrice>active.entryPrice?salePrice:0;
+    active.manualSaleTarget=!!exact;active.targetProfit=exact?exactProfitFor(active.entryPrice,exact,{margin:active.margin,leverage:active.leverage,binanceEffectiveNotional:active.notional}):active.baseTargetProfit;active.targetPrice=exact||priceForPnl(active.entryPrice,active.notional,active.targetProfit);
+    save();renderAll();const mark=n(lastPrices.get(s),active.entryPrice);tickPosition(active,mark);if(openBySymbol(s))setStatus(`${s} actif : objectif de gain, prix déterminé de VENTE et protections enregistrés. Achat, marge, levier et perte MAX restent verrouillés.`);return;
+  }
+  const buyEnabled=$('tExactBuy').checked,buyPrice=Math.max(0,parsePrice($('tExactBuyPrice').value)),saleEnabled=$('tExactSale').checked,salePrice=Math.max(0,parsePrice($('tExactSalePrice').value)),manual=Math.max(0,n($('tTarget').dataset.manualTarget,settings.targetProfit)),shown=Math.max(0,n($('tTarget').value,manual));
+  if(buyEnabled&&!(buyPrice>0))return setStatus('Entre un prix d’achat déterminé supérieur à 0.',true);if(saleEnabled&&!(salePrice>0))return setStatus('Entre un prix de vente déterminé supérieur à 0.',true);
+  const market=n(lastPrices.get(s));if(buyEnabled&&market>0&&buyPrice>=market)return setStatus(`Le BUY Limit ${price(buyPrice)} doit être sous le prix actuel ${price(market)}. Pour acheter maintenant, utilise « Achat immédiat ».`,true);if(buyEnabled&&market>0&&(buyPrice>market*100||buyPrice<market/100))return setStatus(`Prix d’achat incohérent avec Binance (${price(market)}). Vérifie la décimale.`,true);
+  const buyRuleErr=buyEnabled?validateLimitPrice(s,buyPrice,'Prix d’achat'):'';if(buyRuleErr)return setStatus(`${s} : ${buyRuleErr}.`,true);const saleRuleErr=saleEnabled?validateLimitPrice(s,salePrice,'Prix de vente'):'';if(saleRuleErr)return setStatus(`${s} : ${saleRuleErr}.`,true);
+  tokenSettings[s]={...old,enabled:true,targetProfit:shown,manualTargetProfit:manual,protectionStages:protections,maxLoss:requestedMaxLoss,exactBuyEnabled:buyEnabled,exactBuyPrice:buyPrice,exactBuySource:'settings',exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings',marginType:'ISOLATED'};
+  if(buyEnabled){manualTokens[s]={symbol:s,last:market,addedAt:n(manualTokens[s]?.addedAt,Date.now())};validated[s]={buy:buyPrice,validatedAt:Date.now(),armedAbove:market>buyPrice,lastSeen:market||null};delete revalidateBlock[s];delete missedSignals[s]}else{delete validated[s];delete revalidateBlock[s];delete missedSignals[s];delete manualTokens[s]}
+  save();syncRealtime();renderAll();setStatus(buyEnabled?`${s} validé : ajouté à la liste et surveillé pour achat à ${price(buyPrice)}.`:`${s} enregistré sans surveillance : il n’est pas ajouté à la liste.`)
+}
+function devalidateSelected(){const s=selectedSymbol;if(!s)return;delete validated[s];delete missedSignals[s];delete revalidateBlock[s];delete manualTokens[s];save();syncRealtime();renderAll();setStatus(`${s} : surveillance annulée, retiré de la liste.`)}
+function tokenDefaults(){if(!selectedSymbol)return;if(anyActivePositionBySymbol(selectedSymbol))return setStatus(`${selectedSymbol} est actif : réinitialisation interdite. Seuls l’objectif de gain, le prix déterminé de VENTE et les protections peuvent être modifiés.`,true);if(validated[selectedSymbol])return setStatus(`${selectedSymbol} est surveillé : annule d’abord l’achat surveillé.`,true);delete tokenSettings[selectedSymbol];delete validated[selectedSymbol];delete revalidateBlock[selectedSymbol];delete missedSignals[selectedSymbol];delete manualTokens[selectedSymbol];save();syncRealtime();renderAll();setStatus(`${selectedSymbol} revenu aux réglages par défaut.`)}
+function positionCfg(s){const c=cfg(s);return{margin:n(c.margin),leverage:n(c.leverage),marginType:'ISOLATED',notional:notional(c),binanceQty:n(c.binanceQty),binanceEffectiveNotional:n(c.binanceEffectiveNotional),targetProfit:n(c.targetProfit),maxLoss:n(c.maxLoss),protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit)))}}
+function createPosition(s,entry,source){if(!localSimulationEntryAllowed()){setStatus('Entrée simulée bloquée : le trading réel est armé. Zenith ne créera jamais une position locale fictive à la place d’un ordre Binance réel.',true);return null}if(!masterLocalEntryAllowed()){setStatus('Nouvelle entrée bloquée : '+masterEntryBlockMessage()+'. Les positions déjà ouvertes restent protégées.',true);return null}if(openBySymbol(s)||openPositions.length>=settings.maxActive)return null;const c=positionCfg(s),kind=source==='ACHAT IMMÉDIAT'?'MARKET':'LIMIT',bd=futuresDraft(s,c.margin,c.leverage,kind,entry);if(!bd.ok){setStatus(`${s} : activation bloquée par les limites Binance — ${bd.error}.`,true);return null}c.binanceQty=bd.qty;c.notional=bd.effectiveNotional||c.notional;const exact=tokenExactSale(s)>entry?tokenExactSale(s):0,targetPrice=exact||priceForPnl(entry,c.notional,c.targetProfit),targetProfit=exact?exactProfitFor(entry,exact,{margin:c.notional/c.leverage,leverage:c.leverage}):c.targetProfit,baseTargetProfit=Math.max(1,n(tokenSettings[s]?.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),p={symbol:s,entryPrice:n(entry),openedAt:Date.now(),source,margin:c.margin,leverage:c.leverage,marginType:'ISOLATED',notional:c.notional,binanceQty:c.binanceQty,targetProfit,baseTargetProfit,targetPrice,manualSaleTarget:!!exact,maxLoss:c.maxLoss,maxProfit:0,protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit))),protectionFloorActive:0,stopExitPrice:priceForPnl(entry,c.notional,-c.maxLoss)};openPositions.push(p);history.push({symbol:s,entryPrice:p.entryPrice,exitPrice:null,pnl:null,reason:'ACHAT',openedAt:p.openedAt,closedAt:null,status:'OPEN'});delete validated[s];delete revalidateBlock[s];delete missedSignals[s];save();syncRealtime();renderAll();tradeAlert('buy');return p}
+function closePosition(s,exit,reason){const i=openPositions.findIndex(p=>p.symbol===s);if(i<0)return false;const p=openPositions[i],ep=n(exit,lastPrices.get(s)||p.entryPrice),pl=pnlAt(p,ep);openPositions.splice(i,1);const closedAt=Date.now(),hi=history.findIndex(h=>h.symbol===s&&h.status==='OPEN'&&n(h.openedAt)===n(p.openedAt));if(hi>=0)history[hi]={...history[hi],entryPrice:p.entryPrice,exitPrice:ep,pnl:pl,reason,closedAt,status:'CLOSED'};else history.push({symbol:s,entryPrice:p.entryPrice,exitPrice:ep,pnl:pl,reason,openedAt:p.openedAt,closedAt,status:'CLOSED'});delete validated[s];delete revalidateBlock[s];delete missedSignals[s];delete manualTokens[s];save();processWaitingSignals();syncRealtime();renderAll();tradeAlert('sell');setStatus(`${s} fermé ${money(pl)} — ${reason}. Le jeton a été retiré de la liste.`);return true}
+async function currentMarketPrice(s){try{const d=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(s)}`),p=n(d.price);if(p)lastPrices.set(s,p);return p}catch(_){return 0}}
+async function instantBuySelected(){const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);if(anyActivePositionBySymbol(s))return setStatus(`${s} a déjà une position active.`,true);if(openPositions.length>=settings.maxActive)return setStatus(`Impossible : ${settings.maxActive} positions sont déjà actives.`,true);const mark=await currentMarketPrice(s);if(!(mark>0))return setStatus(`Prix Binance indisponible pour ${s}. Achat non lancé.`,true);const p=createPosition(s,mark,'ACHAT IMMÉDIAT');if(p)setStatus(`${s} acheté immédiatement à ${price(mark)}.`)}
+async function manualClose(s){const p=openBySymbol(s);if(!p)return;const mark=await currentMarketPrice(s);if(!(mark>0))return setStatus(`${s} : prix Binance actuel indisponible. Vente simulée non exécutée plutôt que d’utiliser un prix ancien.`,true);closePosition(s,mark,'VENTE MANUELLE')}
+function tickPosition(p,mark){const pl=pnlAt(p,mark),eps=1e-7;p.maxProfit=Math.max(n(p.maxProfit),pl);p.protectionStages=normalizeProtections(p.protectionStages,n(p.baseTargetProfit,n(p.targetProfit,settings.targetProfit)));let floor=n(p.protectionFloorActive);for(const st of p.protectionStages){if(st.enabled&&p.maxProfit>=st.arm-eps)floor=Math.max(floor,st.floor)}if(floor!==n(p.protectionFloorActive)){p.protectionFloorActive=floor;p.protectionArmedAt=Date.now();save()}if(p.manualSaleTarget){if(mark>=p.targetPrice)return closePosition(p.symbol,p.targetPrice,'VENTE DÉTERMINÉE')}else if(pl>=p.targetProfit-eps)return closePosition(p.symbol,p.targetPrice,'OBJECTIF');if(n(p.protectionFloorActive)>0&&pl<=n(p.protectionFloorActive)+eps)return closePosition(p.symbol,priceForPnl(p.entryPrice,p.notional,n(p.protectionFloorActive)),'PROTECTION +'+n(p.protectionFloorActive).toFixed(0));if(pl<=-(p.maxLoss-1))return closePosition(p.symbol,priceForPnl(p.entryPrice,p.notional,-p.maxLoss),'STOP')}
+function expireWaitingSignals(){let changed=false;const now=Date.now();for(const [s,m] of Object.entries(missedSignals)){if(m?.state==='waiting'&&now>=n(m.expiresAt)){m.state='expired';delete validated[s];changed=true}}if(changed){save();syncRealtime()}}
+function startWaitingSignal(s){const v=validated[s];if(!v||missedSignals[s]?.state)return;missedSignals[s]={state:'waiting',startedAt:Date.now(),expiresAt:Date.now()+50000,buy:n(v.buy)};save();renderAll();setStatus(`${s} : prix d’achat touché mais limite de positions atteinte. Délai d’activation : 50 secondes.`,true);setTimeout(()=>{const m=missedSignals[s];if(m?.state==='waiting'&&Date.now()>=n(m.expiresAt)){m.state='expired';delete validated[s];save();syncRealtime();renderAll();setStatus(`${s} : OBJECTIF DÉPASSÉ !! Jeton gelé.`,true)}},50100)}
+function processWaitingSignals(){expireWaitingSignals();for(const [s,m] of Object.entries(missedSignals)){if(m?.state!=='waiting'||openPositions.length>=settings.maxActive)continue;const mark=n(lastPrices.get(s)),buy=n(m.buy);if(mark>0&&buy>0&&mark<=buy){delete missedSignals[s];const p=createPosition(s,mark,'BUY RETARD ≤50s');if(p)setStatus(`${s} activé avec retard dans la limite des 50 secondes.`)}}}
+function tickValidated(s,mark){if(openBySymbol(s)||revalidateBlock[s])return;const v=validated[s],buy=n(v?.buy);if(!(buy>0)||!(mark>0))return;const wait=missedSignals[s];if(wait?.state==='expired')return;if(wait?.state==='waiting'){if(Date.now()>=n(wait.expiresAt)){wait.state='expired';delete validated[s];save();syncRealtime();renderAll();return setStatus(`${s} : OBJECTIF DÉPASSÉ !! Jeton gelé.`,true)}if(openPositions.length<settings.maxActive&&mark<=buy){delete missedSignals[s];return createPosition(s,mark,'BUY RETARD ≤50s')}return}if(buy>mark*100||buy<mark/100){delete validated[s];revalidateBlock[s]=Date.now();save();syncRealtime();renderAll();return setStatus(`${s} : BUY incohérent avec Binance. Achat bloqué, vérifie la décimale.`,true)}if(v.armedAbove!==true){if(mark>buy){v.armedAbove=true;v.lastSeen=mark;save()}else{v.lastSeen=mark}return}const prev=n(v.lastSeen,mark);v.lastSeen=mark;if(prev>buy&&mark<=buy){if(openPositions.length>=settings.maxActive)return startWaitingSignal(s);createPosition(s,buy,'BUY DÉTERMINÉ')}}
+function scheduleCursorSave(){if(cursorSaveTimer)return;cursorSaveTimer=setTimeout(()=>{cursorSaveTimer=null;save()},1500)}
+function trackingStartTime(s){
+  const p=openBySymbol(s),v=validated[s],real=masterRealPositionBySymbol(s);
+  return Math.max(0,n(
+    lastAggTimes.get(s),
+    n(p?.lastAggTime,n(v?.lastAggTime,n(p?.openedAt,n(v?.validatedAt,n(real?.updateTime,Date.now()-2000)))))
+  ));
+}
+function rememberAggCursor(s,id,t){if(Number.isFinite(+id))lastAggIds.set(s,+id);if(Number.isFinite(+t)){lastAggTimes.set(s,+t);const p=openBySymbol(s),v=validated[s];if(p){p.lastAggId=+id;p.lastAggTime=+t}else if(v){v.lastAggId=+id;v.lastAggTime=+t}scheduleCursorSave()}}
+function onMark(s,mark){
+  if(!s||!mark)return;
+  lastPrices.set(s,mark);
+  if(String(s).toUpperCase()===String(selectedSymbol||'').toUpperCase())renderSelectedCurrentPrice();
+  const p=openBySymbol(s),real=masterRealPositionBySymbol(s);
+  if(p)tickPosition(p,mark);
+  if(real)scheduleMasterAutoProtection(s,mark);
+  if(!p&&!real)tickValidated(s,mark);
+  scheduleLiveRender();
+}
+function processAggTrade(s,q){if(!q)return;const id=n(q.a,-1),t=n(q.T,n(q.E,Date.now())),prevId=lastAggIds.get(s);if(Number.isFinite(prevId)&&id>=0&&id<=prevId)return;onMark(s,n(q.p));rememberAggCursor(s,id,t)}
+async function recoverMissedAggTrades(s){if(!trackedSymbols().has(s)||recoveringSymbols.has(s))return;recoveringSymbols.add(s);pendingAggTrades.set(s,[]);try{let start=Math.max(Date.now()-48*3600*1000,trackingStartTime(s)-250),fromId=null,pages=0;while(trackedSymbols().has(s)&&pages<25){const path=fromId==null?`/fapi/v1/aggTrades?symbol=${encodeURIComponent(s)}&startTime=${Math.floor(start)}&limit=1000`:`/fapi/v1/aggTrades?symbol=${encodeURIComponent(s)}&fromId=${fromId}&limit=1000`;const rows=await jf(path);if(!Array.isArray(rows)||!rows.length)break;for(const q of rows){if(!trackedSymbols().has(s))break;processAggTrade(s,q)}pages++;if(rows.length<1000)break;fromId=n(rows[rows.length-1]?.a,-1)+1;if(!(fromId>0))break;await new Promise(r=>setTimeout(r,40))}if(pages>=25)setStatus(`${s} : coupure de flux très longue, récupération partielle des transactions.`,true)}catch(_){/* REST de récupération indisponible : le secours ticker reste actif */}finally{const queued=pendingAggTrades.get(s)||[];recoveringSymbols.delete(s);pendingAggTrades.delete(s);queued.sort((a,b)=>n(a.a)-n(b.a)||n(a.T)-n(b.T));for(const q of queued)if(trackedSymbols().has(s))processAggTrade(s,q)}}
+function recoverAllTracked(){for(const s of trackedSymbols())recoverMissedAggTrades(s)}
+function wsStreamName(s){return s.toLowerCase()+'@aggTrade'}
+function sendWsControl(method,params){if(!ws||ws.readyState!==WebSocket.OPEN||!params.length)return false;try{ws.send(JSON.stringify({method,params,id:wsRequestId++}));return true}catch(_){return false}}
+function reconcileRealtimeSubscriptions(){if(!ws||ws.readyState!==WebSocket.OPEN)return;const desired=new Set([...trackedSymbols()].map(wsStreamName)),add=[...desired].filter(x=>!wsSubscribed.has(x)),remove=[...wsSubscribed].filter(x=>!desired.has(x));if(add.length&&sendWsControl('SUBSCRIBE',add))add.forEach(x=>wsSubscribed.add(x));if(remove.length&&sendWsControl('UNSUBSCRIBE',remove))remove.forEach(x=>wsSubscribed.delete(x))}
+function connectRealtime(){if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;try{ws=new WebSocket('wss://fstream.binance.com/market/ws');ws.onopen=()=>{wsLive=true;wsSubscribed.clear();if(wsReconnectTimer){clearTimeout(wsReconnectTimer);wsReconnectTimer=null}reconcileRealtimeSubscriptions();recoverAllTracked();renderKpis()};ws.onmessage=e=>{try{const q=JSON.parse(e.data);if(q&&q.e==='aggTrade'&&trackedSymbols().has(q.s)){if(recoveringSymbols.has(q.s)){const a=pendingAggTrades.get(q.s)||[];a.push(q);pendingAggTrades.set(q.s,a)}else processAggTrade(q.s,q)}}catch(_){}};ws.onerror=()=>{wsLive=false;renderKpis()};ws.onclose=()=>{wsLive=false;ws=null;wsSubscribed.clear();renderKpis();binancePulse();if(trackedSymbols().size&&navigator.onLine!==false){if(wsReconnectTimer)clearTimeout(wsReconnectTimer);wsReconnectTimer=setTimeout(()=>{wsReconnectTimer=null;connectRealtime()},250)}}}catch(_){wsLive=false;ws=null;renderKpis()}}
+function syncRealtime(){const tracked=trackedSymbols();if(tracked.size){connectRealtime();reconcileRealtimeSubscriptions();if(wsLive)recoverAllTracked();if(!fallbackTimer){fallbackTimer=setInterval(binancePulse,4000);binancePulse()}}else{reconcileRealtimeSubscriptions();if(fallbackTimer){clearInterval(fallbackTimer);fallbackTimer=null}}renderKpis()}
+async function binancePulse(){const tracked=trackedSymbols();if(!tracked.size)return;if(wsLive&&ws&&ws.readyState===WebSocket.OPEN)return;try{const all=await jf('/fapi/v1/ticker/price');for(const q of all)if(tracked.has(q.symbol))onMark(q.symbol,n(q.price))}catch(_){}}
+function renderAll(){renderTable();renderKpis();renderPositions();renderHistory();fillGeneral();fillToken();applyMasterReadOnlyPolicy()}
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));document.querySelectorAll('.pane').forEach(x=>x.classList.remove('on'));b.classList.add('on');$(b.dataset.pane).classList.add('on');$('settingsSymbol').classList.toggle('invisible',b.dataset.pane==='botPane');if(b.dataset.pane==='botPane')fillBot();if(b.dataset.pane==='futuresPane')fillFutures()});
+$('manualTokenAddBtn').onclick=addManualToken;$('manualTokenInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addManualToken()}});$('selectedCard').onclick=()=>selectedSymbol&&openTokenSettings(selectedSymbol,true);$('saveTokenBtn').onclick=saveToken;$('saveFuturesBtn').onclick=saveFutures;$('saveBotDefaultsBtn').onclick=saveSelectedAsDefaults;$('saveBotBtn').onclick=saveBot;$('instantBuyBtn').onclick=instantBuySelected;$('devalidateBtn').onclick=devalidateSelected;$('tokenDefaultsBtn').onclick=tokenDefaults;$('tokenCloseNowBtn').onclick=()=>{if(selectedSymbol&&confirm(`AVERTISSEMENT — Confirmer la vente immédiate de ${selectedSymbol} ?\n\nCette action fermera la position au prix disponible.`))manualClose(selectedSymbol)};
+// Les réglages BOT restent en brouillon tant que « Enregistrer BOT » n’est pas validé.
+// Aucun changement de Position max / Jour-Nuit / Son / Vibration n’est appliqué automatiquement.
+['fMargin','fLev'].forEach(id=>$(id).addEventListener('input',()=>{if(!selectedSymbol)return;const m=Math.max(1,n($('fMargin').value,settings.margin)),l=clamp(n($('fLev').value,settings.leverage),1,10),d=futuresDraft(selectedSymbol,m,l,'LIMIT');$('fSummary').textContent=`Marge : ISOLÉE · Notionnel demandé : $${(m*l).toFixed(2)}${d.qty>0?` · effectif ≈ $${d.effectiveNotional.toFixed(2)}`:''}`;$('fLimits').textContent=limitsText(selectedSymbol,m,l);updateTokenPreview()}));['tExactBuyPrice','tExactSalePrice'].forEach(id=>$(id).addEventListener('input',updateTokenPreview));$('tTarget').addEventListener('input',()=>{if($('tTarget').dataset.exactAuto!=='1'){$('tTarget').dataset.manualTarget=$('tTarget').value;syncProtectionsToTarget(Math.max(0,n($('tTarget').value,settings.targetProfit)))}updateTokenPreview()});['tExactBuy','tExactSale'].forEach(id=>$(id).addEventListener('change',updateTokenPreview));
+$('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();save()});
+$('adminCodeCancel').onclick=()=>closeAdminCodeModal(null);$('adminCodeConfirm').onclick=submitAdminCodeModal;$('adminCodeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submitAdminCodeModal()}else if(e.key==='Escape'){e.preventDefault();closeAdminCodeModal(null)}});$('adminCodeModal').addEventListener('pointerdown',e=>{if(e.target===e.currentTarget)closeAdminCodeModal(null)});
+$('masterAuthorizeBtn').onclick=controllerAuthorizeMaster;$('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('masterRevokeBtn').onclick=controllerRevokeMaster;$('panicClearBtn').onclick=controllerClearPanic;
+$('resetClosedBtn').onclick=()=>{if(!confirm('Effacer les gains, pertes et trades fermés ?'))return;history=[];save();renderAll()};$('resetSimBtn').onclick=()=>{if(!confirm('Réinitialiser les positions simulées et les achats surveillés ?'))return;openPositions=[];validated={};revalidateBlock={};missedSignals={};manualTokens={};save();syncRealtime();renderAll();setStatus('Simulation réinitialisée.')};
+document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio();if(controllerIdentity.role==='master')syncMasterWakeLock(true)},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){syncMasterWakeLock(true);masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}else if(Object.values(missedSignals).some(x=>x?.state==='waiting'))renderTable()},1000);
+load();applyTheme();renderAll();ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startControllerIdentityCheck();
+</script>
+</body>
+</html>
++av.toFixed(2):'—'} · positions réelles ${n(binanceAccount.realPositions)} · ordres ouverts ${n(binanceAccount.openOrders)}`}else{b.textContent=binanceAccount.configured?'COMPTE BINANCE INACCESSIBLE':'COMPTE BINANCE NON CONFIGURÉ';b.classList.remove('on');w.textContent='—';sub.textContent=binanceAccount.configured?'prix publics Binance disponibles · compte Futures privé inaccessible':'portefeuille Futures Binance · connexion serveur requise'}renderRealPositions();renderRealEntryOrders();if(selectedSymbol)setTokenFieldsEnabled()}
+async function loadControllerRealCommandModule(){
+  if(controllerRealCommandModule)return controllerRealCommandModule;
+  controllerRealCommandModule=await import('/lib/controller-real-command.mjs');
+  return controllerRealCommandModule;
+}
+async function loadControllerRealProtectionModule(){
+  if(controllerRealProtectionModule)return controllerRealProtectionModule;
+  controllerRealProtectionModule=await import('/lib/real-protection-levels.mjs');
+  return controllerRealProtectionModule;
+}
+async function realAutomaticProtectionLevels(position){
+  await ensureExchange();
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const rules=symbolRules(symbol);
+  const priceFilter=rules?.filters?.PRICE_FILTER;
+  if(!priceFilter)throw new Error('PRICE_FILTER_REQUIRED');
+  const c=cfg(symbol);
+  const mod=await loadControllerRealProtectionModule();
+  return mod.buildRealProtectionLevels({
+    position,
+    targetProfitUsd:n(c.targetProfit,settings.targetProfit),
+    maxLossUsd:n(c.maxLoss,settings.maxLoss),
+    priceFilter,
+  });
+}
+async function queueRealPositionClose(position){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('Fermeture réelle refusée : iPhone contrôleur non vérifié.',true);
+  let command,key;
+  try{
+    const mod=await loadControllerRealCommandModule();
+    command=mod.buildControllerRealCloseCommand(position);
+    key=mod.realPositionKey(position);
+  }catch(e){return setStatus('Fermeture réelle refusée : '+String(e?.message||'position invalide')+'.',true)}
+  if(realClosePending.has(key))return;
+  const symbol=String(position?.symbol||'');
+  if(!confirm(`ARGENT RÉEL — Confirmer la fermeture de ${symbol} ?\n\nZenith enverra une sortie LIMIT IOC reduce-only au plus près du marché. La position restera affichée jusqu’à confirmation Binance.`))return;
+  realClosePending.add(key);renderRealPositions();
+  try{
+    const r=await fetch('/api/zenith-sync?action=command',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify(command)
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.reason||q?.error||('HTTP '+r.status));
+    setStatus(`${symbol} : fermeture réelle mise en file MASTER. Zenith attend la confirmation Binance avant de considérer la position fermée.`);
+    setTimeout(()=>refreshBinanceAccount(),1000);
+  }catch(e){
+    realClosePending.delete(key);
+    renderRealPositions();
+    setStatus(`${symbol} : ordre réel NON envoyé — ${String(e?.message||'erreur')}.`,true);
+  }
+}
+async function queueRealEntryCancel(order){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('Annulation réelle refusée : iPhone contrôleur non vérifié.',true);
+  let command,key;
+  try{
+    const mod=await loadControllerRealCommandModule();
+    command=mod.buildControllerCancelEntryCommand(order);
+    key=mod.realEntryOrderKey(order);
+  }catch(e){return setStatus('Annulation réelle refusée : '+String(e?.message||'ordre invalide')+'.',true)}
+  if(realCancelPending.has(key))return;
+  const symbol=String(order?.symbol||''),cid=String(order?.clientOrderId||'');
+  if(!confirm(`ARGENT RÉEL — Annuler l’ordre d’entrée ${symbol} ?\n\nOrdre Binance : ${cid}\nAucune position existante ne sera fermée par cette action.`))return;
+  realCancelPending.add(key);renderRealEntryOrders();
+  try{
+    const r=await fetch('/api/zenith-sync?action=command',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify(command)
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.reason||q?.error||('HTTP '+r.status));
+    setStatus(`${symbol} : annulation de l’entrée réelle mise en file MASTER. Zenith attend la confirmation Binance.`);
+    setTimeout(()=>refreshBinanceAccount(),1000);
+  }catch(e){
+    realCancelPending.delete(key);renderRealEntryOrders();
+    setStatus(`${symbol} : annulation réelle NON envoyée — ${String(e?.message||'erreur')}.`,true);
+  }
+}
+function zenithManagedRealId(value){
+  const id=String(value||'');
+  return /^zth-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
+}
+function realNumberMatches(a,b){
+  const aa=n(a,NaN),bb=n(b,NaN);
+  return Number.isFinite(aa)&&Number.isFinite(bb)&&Math.abs(aa-bb)<=Math.max(1e-9,Math.abs(bb)*1e-10);
+}
+function realProtectionInventory(position){
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const amount=n(position?.positionAmt,0);
+  const direction=amount>=0?'LONG':'SHORT';
+  const side=direction==='LONG'?'SELL':'BUY';
+  const qty=Math.abs(amount),entry=n(position?.entryPrice,0);
+  const standard=Array.isArray(binanceAccount.standardOrders)?binanceAccount.standardOrders:[];
+  const algo=Array.isArray(binanceAccount.algoOrders)?binanceAccount.algoOrders:[];
+  const sameStandardPurpose=o=>
+    String(o?.symbol||'').toUpperCase()===symbol&&
+    String(o?.side||'').toUpperCase()===side&&
+    String(o?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
+    String(o?.type||'').toUpperCase()==='LIMIT'&&
+    o?.reduceOnly===true;
+  const sameAlgoPurpose=(o,type,flag)=>
+    String(o?.symbol||'').toUpperCase()===symbol&&
+    String(o?.side||'').toUpperCase()===side&&
+    String(o?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
+    String(o?.type||'').toUpperCase()===type&&
+    flag(o);
+  const exitCandidates=standard.filter(sameStandardPurpose);
+  const progressiveCandidates=algo.filter(o=>sameAlgoPurpose(o,'STOP',x=>x?.reduceOnly===true));
+  const maxLossCandidates=algo.filter(o=>sameAlgoPurpose(o,'STOP_MARKET',x=>x?.closePosition===true));
+  const exits=exitCandidates.filter(o=>{
+    const px=n(o?.price,0),remaining=Math.max(0,n(o?.origQty,0)-n(o?.executedQty,0));
+    const profitSide=direction==='LONG'?px>entry:px<entry;
+    return entry>0&&qty>0&&String(o?.timeInForce||'').toUpperCase()==='GTC'&&
+      realNumberMatches(remaining,qty)&&px>0&&profitSide;
+  });
+  const progressive=progressiveCandidates.filter(o=>{
+    const trigger=n(o?.triggerPrice??o?.stopPrice,0),px=n(o?.price,0),oq=n(o?.origQty,0);
+    const protectedSide=direction==='LONG'?trigger>=entry:trigger<=entry;
+    return entry>0&&qty>0&&String(o?.timeInForce||'').toUpperCase()==='GTC'&&
+      realNumberMatches(oq,qty)&&trigger>0&&px>0&&realNumberMatches(px,trigger)&&
+      protectedSide&&(!o?.priceMatch||String(o.priceMatch).toUpperCase()==='NONE');
+  });
+  const maxLoss=maxLossCandidates.filter(o=>{
+    const trigger=n(o?.triggerPrice??o?.stopPrice,0);
+    const lossSide=direction==='LONG'?trigger<entry:trigger>entry;
+    return entry>0&&trigger>0&&lossSide&&o?.reduceOnly!==true;
+  });
+  const managed=(candidates,valid,idField)=>
+    candidates.length===1&&valid.length===1&&
+    zenithManagedRealId(valid[0]?.[idField])?valid[0]:null;
+  const conflict=(candidates,valid,idField)=>
+    candidates.length>1||
+    (candidates.length===1&&(valid.length!==1||!zenithManagedRealId(valid[0]?.[idField])));
+  return {
+    exits,progressive,maxLoss,
+    managedExit:managed(exitCandidates,exits,'clientOrderId'),
+    managedProgressive:managed(progressiveCandidates,progressive,'clientAlgoId'),
+    managedMaxLoss:managed(maxLossCandidates,maxLoss,'clientAlgoId'),
+    exitConflict:conflict(exitCandidates,exits,'clientOrderId'),
+    progressiveConflict:conflict(progressiveCandidates,progressive,'clientAlgoId'),
+    maxLossConflict:conflict(maxLossCandidates,maxLoss,'clientAlgoId'),
+  };
+}
+function realUpdatePendingKey(position,kind){
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const amount=n(position?.positionAmt,0);
+  return `${symbol}:${amount>=0?'LONG':'SHORT'}:${String(kind||'').toUpperCase()}`;
+}
+function reconcileRealProtectiveUpdatePending(){
+  if(!(realProtectiveUpdatePending instanceof Map)||!realProtectiveUpdatePending.size)return;
+  const positions=Array.isArray(binanceAccount.positions)?binanceAccount.positions:[];
+  for(const [key,pending] of [...realProtectiveUpdatePending.entries()]){
+    const position=positions.find(p=>String(p?.symbol||'').toUpperCase()===String(pending?.symbol||'').toUpperCase());
+    if(!position){realProtectiveUpdatePending.delete(key);continue}
+    const inv=realProtectionInventory(position),wanted=n(pending?.price,NaN);
+    let current=NaN;
+    if(pending?.kind==='EXIT')current=n(inv.managedExit?.price,NaN);
+    else if(pending?.kind==='PROGRESSIVE')current=n(inv.managedProgressive?.triggerPrice,NaN);
+    else if(pending?.kind==='MAX_LOSS')current=n(inv.managedMaxLoss?.triggerPrice,NaN);
+    if(Number.isFinite(wanted)&&realNumberMatches(current,wanted)){
+      realProtectiveUpdatePending.delete(key);
+    }else if(Date.now()-n(pending?.at,Date.now())>120000){
+      realProtectiveUpdatePending.delete(key);
+    }
+  }
+}
+async function queueRealProtectiveUpdate(position,kind,options={}){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
+    setStatus('Modification réelle refusée : iPhone contrôleur non vérifié.',true);return false;
+  }
+  const inv=realProtectionInventory(position);
+  const normalizedKind=String(kind||'').toUpperCase();
+  if(normalizedKind==='EXIT'&&inv.exitConflict){
+    setStatus(`${position.symbol} : objectif réel non modifié — ordre concurrent non identifié avec certitude.`,true);return false;
+  }
+  if(normalizedKind==='PROGRESSIVE'&&inv.progressiveConflict){
+    setStatus(`${position.symbol} : protection gain non modifiée — protection concurrente non identifiée avec certitude.`,true);return false;
+  }
+  if(normalizedKind==='MAX_LOSS'&&inv.maxLossConflict){
+    setStatus(`${position.symbol} : perte max non modifiée — plusieurs protections ou protection externe détectée.`,true);return false;
+  }
+  if((normalizedKind==='EXIT'||normalizedKind==='PROGRESSIVE')&&
+     (!inv.managedMaxLoss||inv.maxLossConflict)){
+    setStatus(`${position.symbol} : modification refusée — aucune protection MAX-LOSS Zenith unique et confirmée.`,true);return false;
+  }
+
+  let current=normalizedKind==='EXIT'
+    ?n(inv.managedExit?.price,0)
+    :normalizedKind==='PROGRESSIVE'
+      ?n(inv.managedProgressive?.triggerPrice,0)
+      :n(inv.managedMaxLoss?.triggerPrice,0);
+  let autoNote='';
+  if(options?.auto===true){
+    if(!['EXIT','MAX_LOSS'].includes(normalizedKind)){
+      setStatus(`${position.symbol} : calcul automatique indisponible pour cette protection.`,true);return false;
+    }
+    try{
+      const levels=await realAutomaticProtectionLevels(position);
+      current=normalizedKind==='EXIT'?n(levels.targetPrice):n(levels.maxLossTriggerPrice);
+      autoNote=normalizedKind==='EXIT'
+        ?`\nCalcul Zenith : objectif +${n(levels.targetProfitUsd).toFixed(2)} → ${price(current)}`
+        :`\nCalcul Zenith : perte max -${n(levels.maxLossUsd).toFixed(2)} → ${price(current)}`;
+    }catch(e){
+      setStatus(`${position.symbol} : calcul automatique refusé — ${String(e?.message||'calcul impossible')}.`,true);return false;
+    }
+  }
+  const label=normalizedKind==='EXIT'?'objectif de sortie'
+    :normalizedKind==='PROGRESSIVE'?'seuil de protection gain':'seuil de perte maximale';
+  let wanted=parsePrice(options?.wantedPrice,0);
+  if(!(wanted>0)){
+    const raw=prompt(`ARGENT RÉEL — ${position.symbol}\nNouveau ${label} (prix Binance) :${autoNote}`,current>0?String(current):'');
+    if(raw===null)return false;
+    wanted=parsePrice(raw,0);
+  }
+  if(!(wanted>0)){setStatus(`${position.symbol} : prix réel invalide.`,true);return false}
+
+  let command,key;
+  try{
+    const mod=await loadControllerRealCommandModule();
+    if(normalizedKind==='EXIT'){
+      command=mod.buildControllerUpdateExitCommand(position,wanted,inv.managedExit?.clientOrderId||'');
+    }else{
+      const previous=normalizedKind==='PROGRESSIVE'
+        ?inv.managedProgressive?.clientAlgoId||''
+        :inv.managedMaxLoss?.clientAlgoId||'';
+      command=mod.buildControllerUpdateProtectionCommand(position,wanted,normalizedKind,previous);
+    }
+    key=realUpdatePendingKey(position,normalizedKind);
+  }catch(e){
+    setStatus(`${position.symbol} : modification réelle refusée — ${String(e?.message||'paramètres invalides')}.`,true);return false;
+  }
+  if(realProtectiveUpdatePending.has(key)){setStatus(`${position.symbol} : une modification réelle ${label} est déjà en attente de confirmation Binance.`,true);return false}
+
+  const warning=normalizedKind==='EXIT'
+    ?'Zenith remplacera uniquement un objectif Zenith identifié. La protection MAX-LOSS restera obligatoire.'
+    :normalizedKind==='PROGRESSIVE'
+      ?'Zenith remplacera la protection gain en conservant la protection MAX-LOSS de secours.'
+      :'Zenith confirmera la nouvelle protection MAX-LOSS avant de retirer l’ancienne.';
+  const grossNote=(options?.auto===true||options?.fromSettings===true)?'\nCalcul brut sur variation de prix, hors frais/funding/slippage.':'';
+  if(!confirm(`ARGENT RÉEL — Confirmer ${position.symbol} ?\n\n${label} : ${price(wanted)}\n${warning}${grossNote}`))return false;
+
+  realProtectiveUpdatePending.set(key,{symbol:String(position.symbol||''),kind:normalizedKind,price:wanted,at:Date.now()});
+  renderRealPositions();
+  try{
+    const r=await fetch('/api/zenith-sync?action=command',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify(command)
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.reason||q?.error||('HTTP '+r.status));
+    setStatus(`${position.symbol} : ${label} réel mis en file MASTER. Zenith attend les confirmations Binance avant ACK.`);
+    setTimeout(()=>refreshBinanceAccount(),1000);
+    return true;
+  }catch(e){
+    realProtectiveUpdatePending.delete(key);
+    renderRealPositions();
+    setStatus(`${position.symbol} : modification réelle NON envoyée — ${String(e?.message||'erreur')}.`,true);
+    return false;
+  }
+}
+function renderRealEntryOrders(){
+  const wrap=$('realEntryOrdersWrap');if(!wrap)return;
+  if(!binanceAccount.connected){wrap.innerHTML='<div class="hint">Lecture Binance indisponible.</div>';return}
+  const all=Array.isArray(binanceAccount.standardOrders)?binanceAccount.standardOrders:[];
+  const rows=all.filter(o=>o?.reduceOnly!==true&&String(o?.positionSide||'BOTH').toUpperCase()==='BOTH');
+  if(!rows.length){wrap.innerHTML='<div class="hint">Aucun ordre d’entrée standard réel en attente.</div>';return}
+  const controller=controllerIdentity.paired&&controllerIdentity.role==='controller';
+  wrap.innerHTML=rows.map((o,i)=>{
+    const key=controllerRealCommandModule?controllerRealCommandModule.realEntryOrderKey(o):'';
+    const pending=key&&realCancelPending.has(key);
+    return `<div class="posCard"><div class="posTop"><span class="posSym">ENTRÉE RÉELLE · ${escapeHtml(o.symbol)}</span><span class="hint">${escapeHtml(o.side)} · ${escapeHtml(o.type)}</span></div><div class="posGrid"><span>Prix</span><b>${price(o.price)}</b><span>Quantité</span><b>${escapeHtml(String(o.origQty||'—'))}</b><span>Exécuté</span><b>${escapeHtml(String(o.executedQty||'0'))}</b><span>Statut</span><b>${escapeHtml(String(o.status||'—'))}</b></div><button class="btn danger closeNowMini" data-real-cancel="${i}" ${controller&&!pending?'':'disabled'}>${pending?'ANNULATION EN ATTENTE':'ANNULER ENTRÉE RÉELLE'}</button></div>`;
+  }).join('');
+  wrap.querySelectorAll('[data-real-cancel]').forEach(b=>b.onclick=e=>{e.stopPropagation();const o=rows[Number(b.dataset.realCancel)];if(o)queueRealEntryCancel(o)});
+}
+function renderRealPositions(){
+  const wrap=$('realPositionsWrap'),note=$('realPositionsNote');
+  if(!wrap||!note)return;
+  if(!binanceAccount.connected){
+    note.textContent='lecture indisponible';
+    wrap.innerHTML='<div class="hint">Compte Binance réel inaccessible. Aucune action réelle disponible.</div>';
+    return;
+  }
+  const rows=Array.isArray(binanceAccount.positions)?binanceAccount.positions:[];
+  note.textContent=`${rows.length} position(s) · lecture Binance`;
+  if(!rows.length){
+    wrap.innerHTML='<div class="hint">Aucune position réelle ouverte sur Binance.</div>';
+    return;
+  }
+  const controller=controllerIdentity.paired&&controllerIdentity.role==='controller';
+  wrap.innerHTML=rows.map((p,i)=>{
+    const amt=n(p.positionAmt,0),qty=Math.abs(amt),dir=amt>=0?'LONG':'SHORT';
+    const pnl=n(p.unrealizedProfit,0),side=String(p.positionSide||'BOTH').toUpperCase();
+    const key=controllerRealCommandModule?controllerRealCommandModule.realPositionKey(p):'';
+    const closePending=key&&realClosePending.has(key);
+    const inv=realProtectionInventory(p);
+    const emergencyReady=Boolean(inv.managedMaxLoss)&&inv.maxLossConflict!==true;
+    const exitPending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'EXIT'));
+    const progressivePending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'PROGRESSIVE'));
+    const maxLossPending=realProtectiveUpdatePending.has(realUpdatePendingKey(p,'MAX_LOSS'));
+    const baseAllowed=controller&&side==='BOTH'&&qty>0&&!closePending;
+    const closeAllowed=baseAllowed;
+    const exitAllowed=baseAllowed&&emergencyReady&&!inv.exitConflict&&!exitPending;
+    const progressiveAllowed=baseAllowed&&emergencyReady&&!inv.progressiveConflict&&!progressivePending;
+    const maxLossAllowed=baseAllowed&&!inv.maxLossConflict&&!maxLossPending;
+
+    const targetText=inv.exitConflict?'CONFLIT / EXTERNE'
+      :inv.managedExit?price(inv.managedExit.price):'AUCUN';
+    const progressiveText=inv.progressiveConflict?'CONFLIT / EXTERNE'
+      :inv.managedProgressive?price(inv.managedProgressive.triggerPrice):'AUCUNE';
+    const maxLossSingle=inv.maxLoss.length===1?inv.maxLoss[0]:null;
+    const maxLossText=inv.maxLossConflict?'CONFLIT / EXTERNE'
+      :maxLossSingle
+        ?price(maxLossSingle.triggerPrice)+(zenithManagedRealId(maxLossSingle.clientAlgoId)?'':' · EXTERNE')
+        :'ABSENTE';
+
+    return `<div class="posCard">
+      <div class="posTop">
+        <span class="posSym">RÉEL · ${escapeHtml(p.symbol)} · ${dir}</span>
+        <span class="posLive">
+          <span class="maxLossState ${emergencyReady?'ok':'bad'}">${emergencyReady?'🟢 MAX-LOSS : ACTIVE':inv.maxLossConflict?'🔴 MAX-LOSS : À VÉRIFIER':'🔴 MAX-LOSS ABSENTE — RÉPARATION EN COURS'}</span>
+          <span class="posPnl ${pnl>=0?'pos':'neg'}">${money(pnl)}</span>
+        </span>
+      </div>
+      <div class="posGrid">
+        <span>Entrée</span><b>${price(p.entryPrice)}</b>
+        <span>Mark</span><b>${price(p.markPrice)}</b>
+        <span>Quantité</span><b>${escapeHtml(String(qty))}</b>
+        <span>Levier</span><b>x${escapeHtml(String(p.leverage||'—'))}</b>
+        <span>Objectif réel</span><b>${escapeHtml(targetText)}</b>
+        <span>Protection gain</span><b>${escapeHtml(progressiveText)}</b>
+        <span>Perte MAX</span><b>${escapeHtml(maxLossText)}</b>
+        <span>Liquidation</span><b>${price(p.liquidationPrice)}</b>
+      </div>
+      <div class="realExitActions">
+        <button class="btn" data-real-exit="${i}" ${exitAllowed?'':'disabled'}>
+          ${exitPending?'OBJECTIF EN ATTENTE':inv.exitConflict?'OBJECTIF BLOQUÉ':'MODIFIER OBJECTIF'}
+        </button>
+        <button class="btn" data-real-auto-exit="${i}" ${exitAllowed?'':'disabled'}>OBJECTIF AUTO</button>
+        <button class="btn" data-real-progressive="${i}" ${progressiveAllowed?'':'disabled'}>
+          ${progressivePending?'PROTECTION EN ATTENTE':inv.progressiveConflict?'PROTECTION BLOQUÉE':'PROTECTION GAIN'}
+        </button>
+        <button class="btn danger" data-real-maxloss="${i}" ${maxLossAllowed?'':'disabled'}>
+          ${maxLossPending?'PERTE MAX EN ATTENTE':inv.maxLossConflict?'PERTE MAX BLOQUÉE':'RÉGLER PERTE MAX'}
+        </button>
+        <button class="btn danger" data-real-auto-maxloss="${i}" ${maxLossAllowed?'':'disabled'}>PERTE MAX AUTO</button>
+        <button class="btn danger" data-real-close="${i}" ${closeAllowed?'':'disabled'}>
+          ${closePending?'FERMETURE EN ATTENTE':side!=='BOTH'?'HEDGE NON PRIS EN CHARGE':'FERMER RÉEL · LIMIT IOC'}
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+
+  wrap.querySelectorAll('[data-real-exit]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realExit)];if(p)queueRealProtectiveUpdate(p,'EXIT');
+  });
+  wrap.querySelectorAll('[data-real-auto-exit]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realAutoExit)];if(p)queueRealProtectiveUpdate(p,'EXIT',{auto:true});
+  });
+  wrap.querySelectorAll('[data-real-progressive]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realProgressive)];if(p)queueRealProtectiveUpdate(p,'PROGRESSIVE');
+  });
+  wrap.querySelectorAll('[data-real-maxloss]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realMaxloss)];if(p)queueRealProtectiveUpdate(p,'MAX_LOSS');
+  });
+  wrap.querySelectorAll('[data-real-auto-maxloss]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realAutoMaxloss)];if(p)queueRealProtectiveUpdate(p,'MAX_LOSS',{auto:true});
+  });
+  wrap.querySelectorAll('[data-real-close]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const p=rows[Number(b.dataset.realClose)];if(p)queueRealPositionClose(p);
+  });
+}
+function applyMasterReadOnlyPolicy(){
+  const readOnly=controllerIdentity.paired&&controllerIdentity.role==='master';
+  document.documentElement.classList.toggle('master-readonly',readOnly);
+  if(!readOnly)return;
+  document.querySelectorAll('input,select,textarea,button').forEach(el=>{
+    el.disabled=true;
+    el.setAttribute('aria-disabled','true');
+  });
+}
+function masterWakeLockWanted(){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='master'))return false;
+  if(document.visibilityState!=='visible')return false;
+  const mode=String(masterRuntimeState.mode||'PAUSED').toUpperCase();
+  return mode==='RUNNING'||mode==='PAUSE_PENDING';
+}
+function renderMasterWakeLock(){
+  const badge=$('masterWakeBadge');if(!badge)return;
+  const isMaster=controllerIdentity.paired&&controllerIdentity.role==='master';
+  badge.hidden=!isMaster;
+  if(!isMaster)return;
+  if(!('wakeLock' in navigator)){
+    badge.textContent='ÉCRAN MASTER · VEILLE NON BLOQUÉE';
+    badge.classList.remove('on');
+    return;
+  }
+  if(masterWakeLock.sentinel&&masterWakeLock.sentinel.released!==true){
+    badge.textContent='ÉCRAN MASTER · ÉVEILLÉ';
+    badge.classList.add('on');
+    return;
+  }
+  const mode=String(masterRuntimeState.mode||'PAUSED').toUpperCase();
+  if(mode==='PAUSED'){
+    badge.textContent='ÉCRAN MASTER · PAUSE';
+    badge.classList.remove('on');
+  }else{
+    badge.textContent=masterWakeLock.error?'ÉCRAN MASTER · VEILLE NON BLOQUÉE':'ÉCRAN MASTER · ACTIVATION';
+    badge.classList.remove('on');
+  }
+}
+async function releaseMasterWakeLock(){
+  const sentinel=masterWakeLock.sentinel;
+  masterWakeLock.sentinel=null;
+  if(sentinel&&sentinel.released!==true){
+    try{await sentinel.release()}catch(_){}
+  }
+  renderMasterWakeLock();
+}
+async function syncMasterWakeLock(force=false){
+  if(!masterWakeLockWanted()){
+    if(masterWakeLock.sentinel)await releaseMasterWakeLock();
+    else renderMasterWakeLock();
+    return false;
+  }
+  if(!('wakeLock' in navigator)){
+    masterWakeLock.error='WAKE_LOCK_UNSUPPORTED';
+    renderMasterWakeLock();
+    return false;
+  }
+  if(masterWakeLock.sentinel&&masterWakeLock.sentinel.released!==true){
+    masterWakeLock.error='';
+    renderMasterWakeLock();
+    return true;
+  }
+  if(masterWakeLock.requesting)return false;
+  const now=Date.now();
+  if(!force&&now-masterWakeLock.lastAttemptAt<15000){
+    renderMasterWakeLock();
+    return false;
+  }
+  masterWakeLock.requesting=true;
+  masterWakeLock.lastAttemptAt=now;
+  try{
+    const sentinel=await navigator.wakeLock.request('screen');
+    masterWakeLock.sentinel=sentinel;
+    masterWakeLock.error='';
+    sentinel.addEventListener('release',()=>{
+      if(masterWakeLock.sentinel===sentinel)masterWakeLock.sentinel=null;
+      masterWakeLock.error=masterWakeLockWanted()?'WAKE_LOCK_RELEASED':'';
+      renderMasterWakeLock();
+    },{once:true});
+    renderMasterWakeLock();
+    return true;
+  }catch(e){
+    masterWakeLock.sentinel=null;
+    masterWakeLock.error=String(e?.name||e?.message||'WAKE_LOCK_FAILED');
+    renderMasterWakeLock();
+    return false;
+  }finally{
+    masterWakeLock.requesting=false;
+  }
+}
+function renderControllerIdentity(){
+  const b=$('controllerBadge');
+  if(!b)return;
+  if(controllerIdentity.paired&&controllerIdentity.role==='controller'){
+    if(controllerSyncState.conflict){
+      b.textContent='CONTRÔLEUR CONFLIT SYNC';
+      b.classList.remove('on');
+    }else{
+      b.textContent='IPHONE CONTRÔLEUR OK';
+      b.classList.add('on');
+    }
+  }else if(controllerIdentity.paired&&controllerIdentity.role==='master'){
+    if(masterRuntimeState.synchronized&&masterRuntimeState.heartbeatFresh&&!masterRuntimeState.error){
+      b.textContent='IPAD MASTER LECTURE SEULE · R'+String(masterRuntimeState.appliedRevision||0)+(masterRuntimeState.userStreamReady?' · BINANCE WS':' · WS EN SÉCURITÉ');
+      b.classList.toggle('on',masterRuntimeState.userStreamReady===true);
+    }else{
+      b.textContent='IPAD MASTER EN SÉCURITÉ';
+      b.classList.remove('on');
+    }
+  }else{
+    b.textContent=controllerIdentity.error?'APPAREIL HORS LIGNE':'APPAREIL NON JUMELÉ';
+    b.classList.remove('on');
+  }
+  renderMasterWakeLock();
+  applyMasterReadOnlyPolicy();
+}
+function renderMasterControls(){
+  const badge=$('masterModeBadge'),authorizeBtn=$('masterAuthorizeBtn'),pauseBtn=$('masterPauseBtn'),cancelBtn=$('masterCancelPauseBtn'),resumeBtn=$('masterResumeBtn'),panicBtn=$('panicStopBtn'),revokeBtn=$('masterRevokeBtn'),panicClearBtn=$('panicClearBtn');
+  if(!badge||!authorizeBtn||!pauseBtn||!cancelBtn||!resumeBtn||!panicBtn||!revokeBtn||!panicClearBtn)return;
+  const visible=controllerIdentity.paired&&controllerIdentity.role==='controller';
+  badge.hidden=!visible;authorizeBtn.hidden=!visible||masterControlState.masterRegistered!==true||masterControlState.masterLeaseActive===true;pauseBtn.hidden=!visible;resumeBtn.hidden=!visible;panicBtn.hidden=!visible;revokeBtn.hidden=!visible;
+  if(!visible){cancelBtn.hidden=true;panicClearBtn.hidden=true;return}
+  const mode=String(masterControlState.mode||'');
+  cancelBtn.hidden=mode!=='PAUSE_PENDING';
+  const rev='R'+String(masterControlState.masterAppliedRevision||0)+'/'+String(masterControlState.controllerRevision||0);
+  if(masterControlState.error){
+    badge.textContent='MASTER NON VÉRIFIÉ';
+    badge.classList.remove('on');
+  }else if(masterControlState.masterSyncFailClosed){
+    badge.textContent='MASTER DÉSYNCHRONISÉ · '+rev;
+    badge.classList.remove('on');
+  }else if(mode==='RUNNING'){
+    badge.textContent='MASTER EN MARCHE · '+rev;
+    badge.classList.add('on');
+  }else if(mode==='PAUSE_PENDING'){
+    badge.textContent='PAUSE EN ATTENTE · '+rev;
+    badge.classList.remove('on');
+  }else{
+    badge.textContent='MASTER EN PAUSE · '+rev;
+    badge.classList.remove('on');
+  }
+  authorizeBtn.disabled=masterControlState.error||masterControlState.masterRegistered!==true||masterControlState.masterLeaseActive===true;
+  pauseBtn.disabled=mode==='PAUSED'||mode==='PAUSE_PENDING';
+  resumeBtn.disabled=mode==='RUNNING'||mode==='PAUSE_PENDING'||masterControlState.masterLeaseActive!==true||masterControlState.masterSyncFailClosed||!masterControlState.masterHeartbeatFresh;
+  cancelBtn.disabled=mode!=='PAUSE_PENDING'||masterControlState.masterLeaseActive!==true;
+  panicBtn.disabled=masterControlState.emergencyStopActive===true;
+  panicBtn.textContent=masterControlState.emergencyStopActive===true?'PANIC STOP ACTIF':'PANIC STOP';
+  panicClearBtn.hidden=!(masterControlState.emergencyStopActive===true&&masterControlState.realTradingEnabled===true);
+  panicClearBtn.disabled=panicClearBtn.hidden||mode!=='PAUSED'||masterControlState.masterLeaseActive!==true||masterControlState.masterSyncFailClosed||!masterControlState.masterHeartbeatFresh;
+}
+async function refreshMasterControls(){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
+    masterControlState={mode:'',masterRegistered:false,masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,realExecutionArmed:false,error:''};
+    renderMasterControls();
+    return false;
+  }
+  try{
+    const r=await fetch('/api/zenith-sync?action=safety',{
+      cache:'no-store',
+      headers:{Accept:'application/json'}
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    masterControlState={
+      mode:String(q.masterMode||'PAUSED'),
+      masterRegistered:q.masterRegistered===true,
+      masterLeaseActive:q.masterLeaseActive===true,
+      controllerRevision:Math.max(0,n(q.controllerRevision,0)),
+      masterAppliedRevision:Math.max(0,n(q.masterAppliedRevision,0)),
+      masterSyncFailClosed:q.masterSyncFailClosed!==false,
+      masterHeartbeatFresh:q.masterHeartbeatFresh===true,
+      emergencyStopActive:q.emergencyStopActive!==false,
+      realTradingEnabled:q.realTradingEnabled===true,
+      realExecutionArmed:q.realExecutionArmed===true,
+      error:''
+    };
+    renderMasterControls();
+    return true;
+  }catch(e){
+    masterControlState={...masterControlState,error:e?.message||'Connexion impossible'};
+    renderMasterControls();
+    return false;
+  }
+}
+let adminCodeRequestResolver=null;
+function closeAdminCodeModal(value){
+  const modal=$('adminCodeModal'),input=$('adminCodeInput');
+  if(input)input.value='';
+  if(modal)modal.hidden=true;
+  const resolve=adminCodeRequestResolver;
+  adminCodeRequestResolver=null;
+  if(resolve)resolve(value);
+}
+function requestAdminCode(message){
+  if(adminCodeRequestResolver)return Promise.resolve(null);
+  const modal=$('adminCodeModal'),input=$('adminCodeInput'),msg=$('adminCodeMessage');
+  if(!modal||!input||!msg)return Promise.resolve(null);
+  msg.textContent=String(message||'Code ADMIN MASTER requis.');
+  input.value='';
+  modal.hidden=false;
+  return new Promise(resolve=>{
+    adminCodeRequestResolver=resolve;
+    requestAnimationFrame(()=>input.focus());
+  });
+}
+function submitAdminCodeModal(){
+  const input=$('adminCodeInput');
+  if(!input)return closeAdminCodeModal(null);
+  const value=String(input.value||'');
+  if(!value){input.focus();return}
+  closeAdminCodeModal(value);
+}
+async function controllerAuthorizeMaster(){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
+  if(masterControlState.masterRegistered!==true)return setStatus('Aucun MASTER enregistré à autoriser.',true);
+  if(masterControlState.masterLeaseActive===true)return setStatus('MASTER déjà actif.');
+  const adminCode=await requestAdminCode('Code ADMIN MASTER pour autoriser le serveur 24/7 :');
+  if(adminCode===null)return;
+  const btn=$('masterAuthorizeBtn');if(btn)btn.disabled=true;
+  try{
+    const r=await fetch('/api/zenith-sync?action=master-authorize',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify({adminCode})
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    setStatus('Serveur 24/7 autorisé temporairement pendant '+String(q.expiresInSeconds||120)+' secondes. Le moteur Render peut prendre son lease.');
+    await refreshMasterControls();
+  }catch(e){
+    setStatus('Autorisation MASTER refusée : '+String(e?.message||'erreur')+'.',true);
+    await refreshMasterControls();
+  }finally{if(btn)btn.disabled=false}
+}
+async function controllerPanicStop(){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
+  const panicBtn=$('panicStopBtn');if(panicBtn)panicBtn.disabled=true;
+  try{
+    const r=await fetch('/api/zenith-sync?action=emergency-stop',{
+      method:'POST',cache:'no-store',
+      headers:{Accept:'application/json'}
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    setStatus('PANIC STOP activé : nouvelles entrées bloquées immédiatement ; sorties/protections conservées.');
+    await refreshMasterControls();
+  }catch(e){
+    setStatus('PANIC STOP non confirmé : '+String(e?.message||'erreur')+'.',true);
+    await refreshMasterControls();
+  }
+}
+async function controllerClearPanic(){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
+  const adminCode=await requestAdminCode('Code ADMIN MASTER pour réarmer la sécurité réelle :');
+  if(adminCode===null)return;
+  try{
+    const r=await fetch('/api/zenith-sync?action=emergency-stop-clear',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify({adminCode})
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    setStatus('Sécurité réelle réarmée après contrôles. Le MASTER reste en pause jusqu’à reprise explicite.');
+    await refreshMasterControls();
+  }catch(e){
+    setStatus('Réarmement refusé : '+String(e?.message||'erreur')+'.',true);
+    await refreshMasterControls();
+  }
+}
+async function controllerRevokeMaster(){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
+  if(!confirm('Révoquer le MASTER ? Cette action active PANIC, désarme le trading réel et invalide l’iPad MASTER. Si une position ou un ordre est encore actif, Zenith refusera la révocation jusqu’au drainage sécurisé.'))return;
+  const adminCode=await requestAdminCode('Code ADMIN MASTER pour révoquer le MASTER :');
+  if(adminCode===null)return;
+  const revokeBtn=$('masterRevokeBtn');if(revokeBtn)revokeBtn.disabled=true;
+  try{
+    const r=await fetch('/api/zenith-sync?action=master-revoke',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify({adminCode})
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true){
+      const blockers=Array.isArray(q?.blockers)&&q.blockers.length?' · '+q.blockers.join(', '):'';
+      if(q?.code==='MASTER_REVOKE_DRAIN_REQUIRED'){
+        throw new Error('PANIC actif ; révocation en attente du drainage sécurisé'+blockers);
+      }
+      throw new Error((q?.code||q?.error||('HTTP '+r.status))+blockers);
+    }
+    setStatus(q?.alreadyRevoked?'MASTER déjà révoqué.':'MASTER révoqué : ancien iPad invalidé, trading réel désarmé et PANIC maintenu.');
+    await refreshMasterControls();
+  }catch(e){
+    setStatus('Révocation MASTER non terminée : '+String(e?.message||'erreur')+'.',true);
+    await refreshMasterControls();
+  }finally{if(revokeBtn)revokeBtn.disabled=false}
+}
+async function controllerMasterAction(action){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
+  const label=action==='master-pause'
+    ?'mettre le MASTER en pause'
+    :action==='master-pause-cancel'
+      ?'annuler la pause en attente'
+      :'reprendre le MASTER';
+  const adminCode=await requestAdminCode('Code ADMIN MASTER pour '+label+' :');
+  if(adminCode===null)return;
+  const pauseBtn=$('masterPauseBtn'),cancelBtn=$('masterCancelPauseBtn'),resumeBtn=$('masterResumeBtn');
+  if(pauseBtn)pauseBtn.disabled=true;if(cancelBtn)cancelBtn.disabled=true;if(resumeBtn)resumeBtn.disabled=true;
+  try{
+    const r=await fetch('/api/zenith-sync?action='+action,{
+      method:'POST',
+      cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify({adminCode})
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true){
+      const blockers=Array.isArray(q?.blockers)&&q.blockers.length?' · '+q.blockers.join(', '):'';
+      throw new Error((q?.code||q?.error||('HTTP '+r.status))+blockers);
+    }
+    if(q.masterMode==='PAUSE_PENDING'){
+      setStatus('Pause programmée : aucune nouvelle position ne sera ouverte. Le MASTER passera en pause après la fermeture de la dernière position.');
+    }else if(action==='master-pause-cancel'){
+      setStatus('Pause en attente annulée. MASTER maintenu en marche.');
+    }else{
+      setStatus(q.masterMode==='PAUSED'?'MASTER mis en pause.':'MASTER repris après contrôles de sécurité.');
+    }
+    await refreshMasterControls();
+  }catch(e){
+    setStatus('Action MASTER refusée : '+String(e?.message||'erreur')+'.',true);
+    await refreshMasterControls();
+  }
+}
+async function refreshControllerIdentity(){
+  const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
+  try{
+    const r=await fetch('/api/zenith-sync?action=whoami',{
+      cache:'no-store',
+      headers:{Accept:'application/json',Authorization:'Bearer '+token}
+    });
+    let q={};try{q=await r.json()}catch(_){q={}}
+    const role=String(q?.device?.role||'');
+    if(!r.ok||q?.ok!==true||!['controller','master'].includes(role)){
+      controllerIdentity={paired:false,role,lastOk:0,error:q?.code||q?.error||('HTTP '+r.status)};
+      releaseMasterWakeLock();
+      renderControllerIdentity();
+      return false;
+    }
+    localStorage.removeItem(ZENITH_DEVICE_TOKEN_KEY);
+    localStorage.setItem(ZENITH_DEVICE_ROLE_KEY,role);
+    controllerIdentity={paired:true,role,lastOk:Date.now(),error:''};
+    renderControllerIdentity();
+    renderMasterControls();
+    if(role==='controller'){
+      scheduleControllerCloudStateSync();
+      refreshMasterControls();
+    }else{
+      startMasterRuntimeLoop();
+    }
+    return true;
+  }catch(e){
+    controllerIdentity={...controllerIdentity,paired:false,error:e?.message||'Connexion impossible'};
+    releaseMasterWakeLock();
+    renderControllerIdentity();
+    return false;
+  }
+}
+
+function realExecutionActiveForLocalSimulation(){
+  if(controllerIdentity.role==='master')return masterRuntimeState.realExecutionArmed===true;
+  if(controllerIdentity.role==='controller')return masterControlState.realExecutionArmed===true;
+  return false;
+}
+function localSimulationEntryAllowed(){
+  return !realExecutionActiveForLocalSimulation();
+}
+function masterLocalEntryAllowed(){
+  if(controllerIdentity.role!=='master')return true;
+  return masterRuntimeState.mode==='RUNNING'&&masterRuntimeState.synchronized===true&&masterRuntimeState.heartbeatFresh===true&&!masterRuntimeState.error;
+}
+function masterEntryBlockMessage(){
+  if(controllerIdentity.role!=='master')return '';
+  if(masterRuntimeState.mode==='PAUSED')return 'MASTER en pause';
+  if(masterRuntimeState.mode==='PAUSE_PENDING')return 'pause MASTER en attente';
+  if(!masterRuntimeState.heartbeatFresh)return 'heartbeat MASTER absent';
+  if(!masterRuntimeState.synchronized)return 'MASTER désynchronisé';
+  return masterRuntimeState.error||'MASTER non prêt';
+}
+async function masterRuntimeApi(action,method='GET',body){
+  const r=await fetch('/api/zenith-sync?action='+action,{
+    method,cache:'no-store',
+    headers:{Accept:'application/json',...(body?{'Content-Type':'application/json'}:{})},
+    ...(body?{body:JSON.stringify(body)}:{})
+  });
+  const q=await r.json().catch(()=>({}));
+  return {r,q};
+}
+async function loadMasterUserStreamModules(){
+  if(masterUserStream.modules)return masterUserStream.modules;
+  const [stateModule,inventoryModule,seedModule,dispatchModule,closeModule,autoProtectionModule,protectionLevelsModule]=await Promise.all([
+    import('/lib/user-stream-state.mjs'),
+    import('/lib/master-runtime-inventory.mjs'),
+    import('/lib/user-stream-seed.mjs'),
+    import('/lib/master-command-dispatch.mjs'),
+    import('/lib/protective-close-state.mjs'),
+    import('/lib/master-auto-protection.mjs'),
+    import('/lib/real-protection-levels.mjs')
+  ]);
+  masterUserStream.modules={
+    stateModule,inventoryModule,seedModule,dispatchModule,closeModule,
+    autoProtectionModule,protectionLevelsModule
+  };
+  if(!masterUserStream.state)masterUserStream.state=stateModule.createUserStreamState();
+  return masterUserStream.modules;
+}
+function masterStreamProjection(){
+  if(masterUserStream.modules&&masterUserStream.state){
+    return masterUserStream.modules.inventoryModule.runtimeInventoryFromUserStream(masterUserStream.state,'SIMULATION');
+  }
+  return {
+    binancePositions:[],binanceOrders:[],activePositions:0,openOrderCount:0,
+    userStream:{connected:false,ready:false,failClosed:true,needsReconciliation:true,failReasons:['STREAM_NOT_READY'],connectionId:''}
+  };
+}
+function masterRuntimeSnapshot(){
+  const stream=masterStreamProjection();
+  const executionMode=masterRuntimeState.realExecutionArmed===true?'REAL':'SIMULATION';
+  const simulationPositions=executionMode==='REAL'?[]:clone(openPositions);
+  const activePositions=executionMode==='REAL'
+    ?n(stream.activePositions)
+    :Math.max(openPositions.length,n(stream.activePositions));
+  return {
+    executionMode,
+    mode:executionMode,
+    openPositions:simulationPositions,
+    activePositions,
+    openOrders:[],
+    openOrderCount:n(stream.openOrderCount),
+    binancePositions:Array.isArray(stream.binancePositions)?stream.binancePositions:[],
+    binanceOrders:Array.isArray(stream.binanceOrders)?stream.binanceOrders:[],
+    userStream:stream.userStream
+  };
+}
+async function postMasterRuntimeState(){
+  const {r,q}=await masterRuntimeApi('state','POST',{
+    controllerRevision:masterRuntimeState.controllerRevision,
+    appliedRevision:masterRuntimeState.appliedRevision,
+    data:masterRuntimeSnapshot()
+  });
+  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  return true;
+}
+async function masterUserStreamApi(action,method='GET'){
+  const r=await fetch('/api/binance-user-stream-session?action='+action,{
+    method,cache:'no-store',
+    headers:{Accept:'application/json'}
+  });
+  const q=await r.json().catch(()=>({}));
+  return {r,q};
+}
+async function masterRuntimeSeedApi(){
+  const r=await fetch('/api/binance-runtime-snapshot',{
+    cache:'no-store',
+    headers:{Accept:'application/json'}
+  });
+  const q=await r.json().catch(()=>({}));
+  return {r,q};
+}
+function clearMasterStreamTimers(){
+  for(const key of ['keepaliveTimer','restartTimer','reconcileDebounceTimer','reconcileInterval']){
+    if(masterUserStream[key]){
+      clearTimeout(masterUserStream[key]);
+      clearInterval(masterUserStream[key]);
+      masterUserStream[key]=null;
+    }
+  }
+}
+function scheduleMasterStreamReconnect(delay=1500){
+  if(controllerIdentity.role!=='master'||!masterRuntimeState.leaseActive||document.hidden)return;
+  if(masterUserStream.reconnectTimer)clearTimeout(masterUserStream.reconnectTimer);
+  masterUserStream.reconnectTimer=setTimeout(()=>{
+    masterUserStream.reconnectTimer=null;
+    ensureMasterUserStream();
+  },Math.max(500,delay));
+}
+async function publishMasterStreamState(){
+  masterRuntimeState.userStreamReady=masterStreamProjection().userStream?.ready===true;
+  if(masterRuntimeState.userStreamReady)pruneMasterAutoProtectionHighWater();
+  renderControllerIdentity();
+  if(controllerIdentity.role==='master')syncRealtime();
+  if(controllerIdentity.role==='master'&&masterRuntimeState.leaseActive){
+    try{await postMasterRuntimeState()}catch(_){}
+  }
+}
+async function invalidateMasterStream(reason='RECONCILIATION_REQUIRED'){
+  try{
+    const {stateModule}=await loadMasterUserStreamModules();
+    masterUserStream.state=stateModule.markUserStreamNeedsReconciliation(masterUserStream.state,reason);
+  }catch(_){}
+  masterRuntimeState.userStreamReady=false;
+  await publishMasterStreamState();
+}
+async function reconcileMasterUserStream(secondPass=false){
+  if(masterUserStream.reconcileBusy||controllerIdentity.role!=='master'||!masterRuntimeState.leaseActive)return false;
+  const ws=masterUserStream.ws;
+  if(!ws||ws.readyState!==WebSocket.OPEN)return false;
+  masterUserStream.reconcileBusy=true;
+  try{
+    const r=await fetch('/api/binance-reconcile',{method:'POST',cache:'no-store',headers:{Accept:'application/json'}});
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true||!q?.report){
+      const reason=String(q?.code||q?.error||('HTTP '+r.status));
+      await invalidateMasterStream('BINANCE_RECONCILIATION_'+reason);
+      masterUserStream.lastError=reason;
+      return false;
+    }
+    const {stateModule,dispatchModule}=await loadMasterUserStreamModules();
+    const orphanCleanupTargets=dispatchModule.orphanZenithCleanupOrders(q.report);
+    if(orphanCleanupTargets.length){
+      if(secondPass){
+        const reason='ORPHAN_CLEANUP_RECONCILIATION_FAILED';
+        await invalidateMasterStream(reason);
+        masterUserStream.lastError=reason;
+        return false;
+      }
+      for(const target of orphanCleanupTargets){
+        const body={
+          type:'EXEC_CLEAN_ORPHAN_PROTECTION',phase:'CANCEL_ORPHAN',
+          symbol:target.symbol,orderClass:target.orderClass,
+          ...(target.orderClass==='ALGO'
+            ?{clientAlgoId:target.clientAlgoId}
+            :{clientOrderId:target.clientOrderId})
+        };
+        const cleaned=await callMasterProtectiveUpdateExecute(body);
+        if(!cleaned.r.ok||cleaned.q?.ok!==true){
+          const reason='ORPHAN_CLEANUP_'+String(cleaned.q?.code||cleaned.q?.error||('HTTP_'+cleaned.r.status));
+          await invalidateMasterStream(reason);
+          masterUserStream.lastError=reason;
+          return false;
+        }
+        const clientId=target.orderClass==='ALGO'?target.clientAlgoId:target.clientOrderId;
+        const order=await waitForStreamOrder({
+          kind:target.orderClass==='ALGO'?'ALGO':'STANDARD',
+          clientId,terminal:true
+        },3000);
+        const status=String(order?.status||'').toUpperCase();
+        const safe=target.orderClass==='ALGO'
+          ?['CANCELED','EXPIRED','REJECTED'].includes(status)
+          :['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status);
+        if(!safe){
+          const reason='ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED';
+          await invalidateMasterStream(reason);
+          masterUserStream.lastError=reason;
+          return false;
+        }
+      }
+      await publishMasterStreamState();
+      masterUserStream.reconcileBusy=false;
+      return reconcileMasterUserStream(true);
+    }
+
+    const repairTarget=dispatchModule.protectionOnlyMismatchTarget(q.report);
+    const reconciliationAcceptable=q.report.failClosed===false||Boolean(repairTarget);
+    if(!reconciliationAcceptable){
+      const reason=String(q?.report?.reasons?.[0]||'BINANCE_RECONCILIATION_MISMATCH');
+      await invalidateMasterStream('BINANCE_RECONCILIATION_'+reason);
+      masterUserStream.lastError=reason;
+      return false;
+    }
+    if(masterUserStream.state?.needsReconciliation===true){
+      masterUserStream.state=stateModule.markUserStreamReconciled(masterUserStream.state,{
+        observedAt:Number(q.report.observedAt||Date.now()),
+        runtimeHash:String(q.report.runtimeDataHash||q.report.runtimeHash||'')
+      });
+      masterUserStream.lastError=repairTarget?'PROTECTION_REPAIR_REQUIRED':'';
+      await publishMasterStreamState();
+      if(!secondPass){
+        masterUserStream.reconcileBusy=false;
+        return reconcileMasterUserStream(true);
+      }
+    }
+    masterRuntimeState.userStreamReady=stateModule.userStreamReady(masterUserStream.state);
+    renderControllerIdentity();
+    return masterRuntimeState.userStreamReady;
+  }catch(e){
+    masterUserStream.lastError=String(e?.message||'BINANCE_RECONCILIATION_FAILED');
+    await invalidateMasterStream(masterUserStream.lastError);
+    return false;
+  }finally{
+    masterUserStream.reconcileBusy=false;
+  }
+}
+async function awaitMasterReconciliation(timeoutMs=5000){
+  const deadline=Date.now()+Math.max(500,n(timeoutMs,5000));
+  while(masterUserStream.reconcileBusy&&Date.now()<deadline){
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  if(masterUserStream.reconcileBusy){
+    masterUserStream.lastError='RECONCILIATION_BUSY_TIMEOUT';
+    return false;
+  }
+  return reconcileMasterUserStream();
+}
+function scheduleMasterStreamReconcile(delay=250){
+  if(masterUserStream.reconcileDebounceTimer)clearTimeout(masterUserStream.reconcileDebounceTimer);
+  masterUserStream.reconcileDebounceTimer=setTimeout(()=>{
+    masterUserStream.reconcileDebounceTimer=null;
+    reconcileMasterUserStream();
+  },Math.max(50,delay));
+}
+async function closeMasterUserStream(reason='STREAM_DISCONNECTED',reconnect=true){
+  const ws=masterUserStream.ws;
+  masterUserStream.ws=null;
+  masterUserStream.seeding=false;
+  masterUserStream.bufferedEvents=[];
+  clearMasterStreamTimers();
+  try{
+    const {stateModule}=await loadMasterUserStreamModules();
+    masterUserStream.state=stateModule.markUserStreamDisconnected(masterUserStream.state,{at:Date.now(),reason});
+  }catch(_){}
+  masterRuntimeState.userStreamReady=false;
+  await publishMasterStreamState();
+  if(ws&&ws.readyState<2){try{ws.close(1000,'zenith-reconnect')}catch(_){}}
+  if(reconnect)scheduleMasterStreamReconnect();
+}
+async function processMasterStreamPayload(payload,stateModule){
+  const result=stateModule.applyUserDataEvent(masterUserStream.state,payload);
+  masterUserStream.state=result.state;
+  if(result.reason==='LISTEN_KEY_EXPIRED'||result.reason==='STREAM_EVENT_OUT_OF_ORDER'||
+     result.reason==='ORDER_EVENT_IDENTITY_INVALID'||result.reason==='ALGO_EVENT_IDENTITY_INVALID'){
+    throw new Error(result.reason);
+  }
+  if(result.applied===true&&['ORDER','ACCOUNT','ALGO'].includes(String(result.kind||''))){
+    await invalidateMasterStream('STREAM_INVENTORY_CHANGED');
+    scheduleMasterStreamReconcile(200);
+  }
+  return result;
+}
+async function seedMasterUserStream(connectionId,connectedAt){
+  const {r,q}=await masterRuntimeSeedApi();
+  if(!r.ok||q?.ok!==true||!q?.snapshot)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  const {stateModule,seedModule}=await loadMasterUserStreamModules();
+  const snapshot=q.snapshot;
+  masterUserStream.state=seedModule.seedUserStreamStateFromRuntimeSnapshot(snapshot,{connectionId,connectedAt});
+  const cutoff=n(snapshot.serverTime,0);
+  const buffered=masterUserStream.bufferedEvents.splice(0).sort((a,b)=>n(a?.E,n(a?.T,0))-n(b?.E,n(b?.T,0)));
+  for(const payload of buffered){
+    const eventTime=n(payload?.E,n(payload?.T,0));
+    if(cutoff>0&&eventTime>0&&eventTime<cutoff)continue;
+    await processMasterStreamPayload(payload,stateModule);
+  }
+  masterUserStream.seeding=false;
+  await publishMasterStreamState();
+}
+async function masterStreamKeepalive(){
+  if(controllerIdentity.role!=='master'||!masterRuntimeState.leaseActive)return;
+  try{
+    const {r,q}=await masterUserStreamApi('keepalive','POST');
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    if(q.listenKeyChanged===true){
+      await closeMasterUserStream('LISTEN_KEY_ROTATED',true);
+    }
+  }catch(e){
+    masterUserStream.lastError=String(e?.message||'USER_STREAM_KEEPALIVE_FAILED');
+    await closeMasterUserStream(masterUserStream.lastError,true);
+  }
+}
+async function ensureMasterUserStream(){
+  if(controllerIdentity.role!=='master'||!masterRuntimeState.leaseActive||document.hidden)return false;
+  if(masterUserStream.starting)return false;
+  if(masterUserStream.ws&&(masterUserStream.ws.readyState===WebSocket.OPEN||masterUserStream.ws.readyState===WebSocket.CONNECTING))return true;
+  masterUserStream.starting=true;
+  try{
+    const {stateModule}=await loadMasterUserStreamModules();
+    const {r,q}=await masterUserStreamApi('start','POST');
+    if(!r.ok||q?.ok!==true||!q?.listenKey)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    const listenKey=String(q.listenKey);
+    const generation=++masterUserStream.connectionSeq;
+    const socket=new WebSocket('wss://fstream.binance.com/private/ws?listenKey='+encodeURIComponent(listenKey)+'&events=ORDER_TRADE_UPDATE/ACCOUNT_UPDATE/ALGO_UPDATE/listenKeyExpired');
+    masterUserStream.ws=socket;
+    socket.onopen=async()=>{
+      if(masterUserStream.ws!==socket||generation!==masterUserStream.connectionSeq)return;
+      const connectedAt=Date.now(),connectionId='master-ws-'+generation;
+      masterUserStream.state=stateModule.markUserStreamConnected(masterUserStream.state,{connectionId,at:connectedAt});
+      masterUserStream.seeding=true;
+      masterUserStream.bufferedEvents=[];
+      masterUserStream.lastError='';
+      clearMasterStreamTimers();
+      masterUserStream.keepaliveTimer=setInterval(masterStreamKeepalive,45*60*1000);
+      masterUserStream.restartTimer=setTimeout(()=>closeMasterUserStream('SCHEDULED_23H_RECONNECT',true),23*60*60*1000);
+      masterUserStream.reconcileInterval=setInterval(()=>reconcileMasterUserStream(),15000);
+      await publishMasterStreamState();
+      try{
+        await seedMasterUserStream(connectionId,connectedAt);
+        scheduleMasterStreamReconcile(100);
+      }catch(e){
+        masterUserStream.seeding=false;
+        masterUserStream.lastError=String(e?.message||'RUNTIME_SEED_FAILED');
+        await closeMasterUserStream(masterUserStream.lastError,true);
+      }
+    };
+    socket.onmessage=async event=>{
+      if(masterUserStream.ws!==socket||generation!==masterUserStream.connectionSeq)return;
+      let payload=null;
+      try{payload=JSON.parse(event.data)}catch(_){
+        await invalidateMasterStream('STREAM_EVENT_INVALID_JSON');
+        return;
+      }
+      if(masterUserStream.seeding){
+        if(masterUserStream.bufferedEvents.length>=1000){
+          masterUserStream.lastError='STREAM_SEED_BUFFER_OVERFLOW';
+          await closeMasterUserStream(masterUserStream.lastError,true);
+          return;
+        }
+        masterUserStream.bufferedEvents.push(payload);
+        return;
+      }
+      try{
+        await processMasterStreamPayload(payload,stateModule);
+      }catch(e){
+        const reason=String(e?.message||'STREAM_EVENT_INVALID');
+        await publishMasterStreamState();
+        await closeMasterUserStream(reason,true);
+      }
+    };
+    socket.onerror=()=>{masterUserStream.lastError='STREAM_SOCKET_ERROR'};
+    socket.onclose=async()=>{
+      if(masterUserStream.ws!==socket)return;
+      masterUserStream.ws=null;
+      await closeMasterUserStream(masterUserStream.lastError||'STREAM_DISCONNECTED',true);
+    };
+    return true;
+  }catch(e){
+    masterUserStream.lastError=String(e?.message||'USER_STREAM_START_FAILED');
+    await invalidateMasterStream(masterUserStream.lastError);
+    scheduleMasterStreamReconnect(3000);
+    return false;
+  }finally{
+    masterUserStream.starting=false;
+  }
+}
+async function masterCommandDisposition(action,raw,extra={}){
+  return masterRuntimeApi(action,'POST',{raw,...extra});
+}
+async function requeueMasterCommand(raw,reason,delayMs=1500){
+  const {r,q}=await masterCommandDisposition('command-requeue',raw,{
+    deferMs:Math.max(250,Math.min(30000,n(delayMs,1500))),
+    deferReason:String(reason||'MASTER_EXECUTION_RETRY').slice(0,120)
+  });
+  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  return q;
+}
+async function failMasterCommand(raw,reason){
+  const clean=String(reason||'EXECUTION_FAILED').toUpperCase().replace(/[^A-Z0-9_:-]+/g,'_').slice(0,96)||'EXECUTION_FAILED';
+  const {r,q}=await masterCommandDisposition('command-fail',raw,{reason:clean});
+  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  return q;
+}
+async function ackMasterCommand(raw,executionProof){
+  const {r,q}=await masterCommandDisposition('command-ack',raw,{executionProof});
+  if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+  return q;
+}
+async function callMasterProtectiveExecute(body){
+  const r=await fetch('/api/binance-protective-execute',{
+    method:'POST',cache:'no-store',
+    headers:{'Content-Type':'application/json',Accept:'application/json'},
+    body:JSON.stringify(body)
+  });
+  const q=await r.json().catch(()=>({}));
+  return {r,q};
+}
+async function callMasterProtectiveUpdateExecute(body){
+  const r=await fetch('/api/binance-protective-update-execute',{
+    method:'POST',cache:'no-store',
+    headers:{'Content-Type':'application/json',Accept:'application/json'},
+    body:JSON.stringify(body)
+  });
+  const q=await r.json().catch(()=>({}));
+  return {r,q};
+}
+function streamStandardOrderByClientId(clientOrderId){
+  const wanted=String(clientOrderId||'');
+  return Object.values(masterUserStream.state?.standardOrders||{}).find(o=>String(o?.clientOrderId||'')===wanted)||null;
+}
+function streamAlgoOrderByClientId(clientAlgoId){
+  const wanted=String(clientAlgoId||'');
+  return Object.values(masterUserStream.state?.algoOrders||{}).find(o=>String(o?.clientAlgoId||'')===wanted)||null;
+}
+function terminalStandardStatus(status){
+  return ['FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(String(status||'').toUpperCase());
+}
+function terminalAlgoStatus(status){
+  return ['CANCELED','TRIGGERED','FINISHED','REJECTED','EXPIRED'].includes(String(status||'').toUpperCase());
+}
+async function waitForStreamOrder({kind,clientId,terminal=false},timeoutMs=3000){
+  const deadline=Date.now()+Math.max(300,n(timeoutMs,3000));
+  let order=null;
+  while(Date.now()<deadline){
+    order=kind==='ALGO'?streamAlgoOrderByClientId(clientId):streamStandardOrderByClientId(clientId);
+    if(order){
+      const isTerminal=kind==='ALGO'?terminalAlgoStatus(order.status):terminalStandardStatus(order.status);
+      if((terminal&&isTerminal)||(!terminal&&!isTerminal))return order;
+    }
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  return order;
+}
+async function safeAckAfterReconcile(raw,executionProof,failureReason='EXECUTION_ACK_FAILED'){
+  try{
+    const reconciled=await awaitMasterReconciliation();
+    if(reconciled!==true||masterRuntimeState.userStreamReady!==true)throw new Error('RECONCILIATION_NOT_READY');
+    await ackMasterCommand(raw,executionProof);
+    return true;
+  }catch(e){
+    const reason=failureReason+'_'+String(e?.message||'RECONCILE');
+    await failMasterCommand(raw,reason);
+    masterExecution.lastError=reason;
+    return false;
+  }
+}
+async function handleMasterMutationFailure(raw,r,q,prefix){
+  const reason=String(q?.code||q?.reason||q?.error||('HTTP_'+r.status));
+  const ambiguous=q?.ambiguous===true||q?.result?.ambiguous===true;
+  if(ambiguous||q?.writeAttempted===true){
+    await failMasterCommand(raw,prefix+'_AMBIGUOUS_'+reason);
+    masterExecution.lastError=prefix+'_AMBIGUOUS_'+reason;
+    return false;
+  }
+  if(['EXECUTION_NOT_READY','EXECUTION_NOT_ARMED','BINANCE_WRITE_LOCKED'].includes(reason)){
+    await requeueMasterCommand(raw,prefix+'_'+reason,1500);
+    return false;
+  }
+  await failMasterCommand(raw,prefix+'_'+reason);
+  masterExecution.lastError=prefix+'_'+reason;
+  return false;
+}
+async function runMasterCancelEntry(command,raw,dispatch){
+  const {r,q}=await callMasterProtectiveExecute(dispatch.body);
+  if(!r.ok||q?.ok!==true)return handleMasterMutationFailure(raw,r,q,'CANCEL_ENTRY');
+  const status=String(q?.result?.order?.status||'').toUpperCase();
+  if(status==='FILLED'||q?.result?.disposition==='ALREADY_FILLED'){
+    await failMasterCommand(raw,'ENTRY_ALREADY_FILLED');
+    scheduleMasterStreamReconcile(100);
+    return false;
+  }
+  const clientOrderId=String(dispatch.body?.clientOrderId||'');
+  const terminal=terminalStandardStatus(status)
+    ?q.result.order
+    :await waitForStreamOrder({kind:'STANDARD',clientId:clientOrderId,terminal:true},3000);
+  const terminalStatus=String(terminal?.status||status||'').toUpperCase();
+  if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus)){
+    await failMasterCommand(raw,'ENTRY_CANCEL_NOT_CONFIRMED');
+    masterExecution.lastError='ENTRY_CANCEL_NOT_CONFIRMED';
+    return false;
+  }
+  return safeAckAfterReconcile(raw,{terminalStatus},'EXEC_CANCEL_ACK_RETRY');
+}
+async function runMasterProtectiveUpdate(command,raw,dispatch){
+  const body={...dispatch.body};
+  const type=String(dispatch.type||'').toUpperCase();
+  const progressive=type==='EXEC_UPDATE_PROTECTION'&&String(body.protectionKind||'').toUpperCase()==='PROGRESSIVE';
+  const maxLoss=type==='EXEC_UPDATE_PROTECTION'&&String(body.protectionKind||'').toUpperCase()==='MAX_LOSS';
+  const previousId=type==='EXEC_UPDATE_EXIT'
+    ?String(body.previousClientOrderId||'')
+    :String(body.previousClientAlgoId||'');
+
+  async function cancelOld(newClientAlgoId=''){
+    if(!previousId)return true;
+    const {r,q}=await callMasterProtectiveUpdateExecute({
+      ...body,phase:'CANCEL_OLD',newClientAlgoId
+    });
+    if(!r.ok||q?.ok!==true)return handleMasterMutationFailure(raw,r,q,'PROTECTIVE_CANCEL_OLD');
+    const kind=type==='EXEC_UPDATE_EXIT'?'STANDARD':'ALGO';
+    const order=await waitForStreamOrder({kind,clientId:previousId,terminal:true},3000);
+    const status=String(order?.status||q?.result?.order?.status||q?.result?.algoOrder?.algoStatus||'').toUpperCase();
+    const safeTerminal=kind==='STANDARD'
+      ?['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status)
+      :['CANCELED','EXPIRED','REJECTED'].includes(status);
+    if(!safeTerminal){
+      await failMasterCommand(raw,'PREVIOUS_PROTECTIVE_ORDER_CANCEL_NOT_CONFIRMED');
+      masterExecution.lastError='PREVIOUS_PROTECTIVE_ORDER_CANCEL_NOT_CONFIRMED';
+      return false;
+    }
+    const reconciled=await awaitMasterReconciliation();
+    if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
+      await failMasterCommand(raw,'POST_CANCEL_RECONCILIATION_FAILED');
+      return false;
+    }
+    return true;
+  }
+
+  async function placeNew({deferReconcile=false}={}){
+    const {r,q}=await callMasterProtectiveUpdateExecute({...body,phase:'PLACE_NEW'});
+    if(!r.ok||q?.ok!==true){
+      await handleMasterMutationFailure(raw,r,q,'PROTECTIVE_PLACE_NEW');
+      return '';
+    }
+    const clientId=String(q?.plan?.params?.newClientOrderId||q?.plan?.params?.clientAlgoId||'');
+    if(!clientId){
+      await failMasterCommand(raw,'PROTECTIVE_NEW_CLIENT_ID_MISSING');
+      return '';
+    }
+    const kind=type==='EXEC_UPDATE_EXIT'?'STANDARD':'ALGO';
+    const order=await waitForStreamOrder({kind,clientId,terminal:false},3500);
+    if(!order){
+      await failMasterCommand(raw,'PROTECTIVE_NEW_ORDER_NOT_STREAM_CONFIRMED');
+      masterExecution.lastError='PROTECTIVE_NEW_ORDER_NOT_STREAM_CONFIRMED';
+      return '';
+    }
+    await publishMasterStreamState();
+    if(deferReconcile){
+      // MAX-LOSS replacement temporarily has two valid close-all stops.
+      // Publish the stream-confirmed new stop so CANCEL_OLD can prove it exists,
+      // then perform full reconciliation only after the previous stop is gone.
+      return clientId;
+    }
+    const reconciled=await awaitMasterReconciliation();
+    if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
+      await failMasterCommand(raw,'POST_PLACE_RECONCILIATION_FAILED');
+      return '';
+    }
+    return clientId;
+  }
+
+  let newClientId='';
+  if(maxLoss||progressive){
+    newClientId=await placeNew({deferReconcile:maxLoss});
+    if(!newClientId)return false;
+    if(!(await cancelOld(newClientId)))return false;
+  }else{
+    if(!(await cancelOld()))return false;
+    newClientId=await placeNew();
+    if(!newClientId)return false;
+  }
+
+  const ok=await safeAckAfterReconcile(raw,{newClientId},'EXEC_PROTECTIVE_UPDATE_ACK_RETRY');
+  if(!ok)return false;
+  return true;
+}
+async function waitForFullCloseState({symbol,direction,beforeQuantity,clientOrderId},timeoutMs=2500){
+  const {closeModule}=await loadMasterUserStreamModules();
+  const deadline=Date.now()+Math.max(250,n(timeoutMs,2500));
+  let result=closeModule.evaluateFullProtectiveClose({
+    state:masterUserStream.state,symbol,direction,beforeQuantity,clientOrderId
+  });
+  while(Date.now()<deadline){
+    result=closeModule.evaluateFullProtectiveClose({
+      state:masterUserStream.state,symbol,direction,beforeQuantity,clientOrderId
+    });
+    if(result.streamReady&&(result.confirmed||result.terminalSeen))return result;
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  try{await awaitMasterReconciliation()}catch(_){}
+  return closeModule.evaluateFullProtectiveClose({
+    state:masterUserStream.state,symbol,direction,beforeQuantity,clientOrderId
+  });
+}
+async function safeAckFullClose(raw,beforeQuantity,clientOrderId='',alreadySatisfied=false){
+  try{
+    const reconciled=await awaitMasterReconciliation();
+    if(reconciled!==true||masterRuntimeState.userStreamReady!==true){
+      throw new Error('RECONCILIATION_NOT_READY');
+    }
+    await ackMasterCommand(raw,{beforeQuantity,clientOrderId,alreadySatisfied});
+    return true;
+  }catch(e){
+    await requeueMasterCommand(raw,'EXEC_CLOSE_ACK_RETRY_'+String(e?.message||'RECONCILE'),1500);
+    return false;
+  }
+}
+async function runMasterFullClose(command,raw){
+  const {closeModule}=await loadMasterUserStreamModules();
+  const payload=command?.payload||{};
+  const symbol=String(payload.symbol||'').toUpperCase();
+  const direction=String(payload.direction||'').toUpperCase();
+  let currentQuantity=closeModule.streamPositionQuantity(masterUserStream.state,symbol,direction);
+
+  if(!(currentQuantity>0)){
+    try{await awaitMasterReconciliation()}catch(_){}
+    currentQuantity=closeModule.streamPositionQuantity(masterUserStream.state,symbol,direction);
+    if(currentQuantity<=1e-12&&masterRuntimeState.userStreamReady===true){
+      return safeAckFullClose(raw,Math.max(n(payload.quantity),1e-12),'',true);
+    }
+    await requeueMasterCommand(raw,'LIVE_POSITION_NOT_READY',1500);
+    return false;
+  }
+
+  const initialQuantity=currentQuantity;
+  const policies=String(payload.exitMode||'PROTECTIVE_IOC').toUpperCase()==='MARKET_LAST_RESORT'
+    ? [closeModule.PROTECTIVE_CLOSE_ATTEMPTS[3]]
+    : closeModule.PROTECTIVE_CLOSE_ATTEMPTS;
+
+  let lastClientOrderId='';
+  for(const policy of policies){
+    currentQuantity=closeModule.streamPositionQuantity(masterUserStream.state,symbol,direction);
+    if(currentQuantity<=1e-12){
+      return safeAckFullClose(raw,initialQuantity,lastClientOrderId,lastClientOrderId==='');
+    }
+
+    const {r,q}=await callMasterProtectiveExecute({
+      type:'EXEC_CLOSE_POSITION',
+      commandId:String(command.id||''),
+      symbol,
+      direction,
+      quantity:currentQuantity,
+      closeAll:true,
+      exitMode:policy.exitMode,
+      attempt:policy.attempt,
+      priceMatch:policy.priceMatch
+    });
+
+    if(!r.ok||q?.ok!==true){
+      const reason=String(q?.code||q?.reason||q?.error||('HTTP_'+r.status));
+      const wrote=q?.writeAttempted===true;
+      const ambiguous=q?.ambiguous===true||q?.result?.ambiguous===true;
+      if(wrote||ambiguous){
+        await failMasterCommand(raw,'AMBIGUOUS_'+reason);
+        masterExecution.lastError='AMBIGUOUS_'+reason;
+        return false;
+      }
+      if(['EXECUTION_NOT_READY','EXECUTION_NOT_ARMED','POSITION_NOT_FOUND','CLOSE_QUANTITY_EXCEEDS_POSITION','FULL_CLOSE_QUANTITY_REQUIRED'].includes(reason)){
+        try{await awaitMasterReconciliation()}catch(_){}
+        await requeueMasterCommand(raw,'PROTECTIVE_EXEC_'+reason,1500);
+        return false;
+      }
+      await failMasterCommand(raw,'PROTECTIVE_EXEC_'+reason);
+      masterExecution.lastError=reason;
+      return false;
+    }
+
+    lastClientOrderId=String(q?.plan?.params?.newClientOrderId||'');
+    if(!lastClientOrderId){
+      await failMasterCommand(raw,'PROTECTIVE_CLIENT_ORDER_ID_MISSING');
+      return false;
+    }
+
+    const outcome=await waitForFullCloseState({
+      symbol,direction,beforeQuantity:currentQuantity,clientOrderId:lastClientOrderId
+    },policy.exitMode==='MARKET_LAST_RESORT'?4000:2500);
+
+    if(outcome.confirmed&&outcome.streamReady){
+      return safeAckFullClose(raw,initialQuantity,lastClientOrderId,false);
+    }
+    if(policy.exitMode==='MARKET_LAST_RESORT'){
+      await failMasterCommand(raw,'MARKET_CLOSE_NOT_CONFIRMED');
+      masterExecution.lastError='MARKET_CLOSE_NOT_CONFIRMED';
+      return false;
+    }
+    if(!outcome.safeToRetry){
+      const reason=outcome.inconsistentFilled
+        ?'FILLED_POSITION_MISMATCH'
+        :outcome.terminalSeen
+          ?'PROTECTIVE_RETRY_NOT_SAFE'
+          :'PROTECTIVE_ORDER_UNCONFIRMED';
+      await failMasterCommand(raw,reason);
+      masterExecution.lastError=reason;
+      return false;
+    }
+  }
+  await failMasterCommand(raw,'PROTECTIVE_CLOSE_ATTEMPTS_EXHAUSTED');
+  return false;
+}
+async function masterExecutionCycle(){
+  if(masterExecution.busy||controllerIdentity.role!=='master')return false;
+  const {dispatchModule}=await loadMasterUserStreamModules();
+  if(!dispatchModule.masterExecutionEligible({
+    role:controllerIdentity.role,
+    hidden:document.hidden,
+    leaseActive:masterRuntimeState.leaseActive,
+    realExecutionArmed:masterRuntimeState.realExecutionArmed,
+    userStreamReady:masterRuntimeState.userStreamReady,
+    mode:masterRuntimeState.mode
+  }))return false;
+
+  masterExecution.busy=true;
+  let raw='';
+  try{
+    const next=await masterRuntimeApi('command-next','POST',{});
+    if(next.r.status===423)return false;
+    if(!next.r.ok||next.q?.ok!==true)throw new Error(next.q?.code||next.q?.error||('HTTP '+next.r.status));
+    if(!next.q.command||!next.q.raw)return false;
+
+    const command=next.q.command;
+    raw=String(next.q.raw);
+    masterExecution.lastCommandId=String(command.id||'');
+
+    let dispatch;
+    try{dispatch=dispatchModule.buildMasterCommandDispatch(command)}
+    catch(e){
+      await failMasterCommand(raw,'MASTER_DISPATCH_INVALID_'+String(e?.message||'COMMAND'));
+      return false;
+    }
+    if(dispatch.supported!==true){
+      await failMasterCommand(raw,dispatch.reason||'MASTER_COMMAND_NOT_IMPLEMENTED');
+      return false;
+    }
+
+    let ok=false;
+    if(dispatch.type==='EXEC_CLOSE_POSITION'){
+      ok=await runMasterFullClose(command,raw);
+    }else if(dispatch.type==='EXEC_CANCEL_ENTRY'){
+      ok=await runMasterCancelEntry(command,raw,dispatch);
+    }else if(dispatch.type==='EXEC_UPDATE_EXIT'||dispatch.type==='EXEC_UPDATE_PROTECTION'){
+      ok=await runMasterProtectiveUpdate(command,raw,dispatch);
+    }else{
+      await failMasterCommand(raw,'MASTER_COMMAND_NOT_IMPLEMENTED');
+      return false;
+    }
+    if(ok){
+      masterExecution.lastError='';
+      scheduleMasterStreamReconcile(100);
+    }
+    return ok;
+  }catch(e){
+    const reason=String(e?.message||'MASTER_EXECUTION_ERROR');
+    masterExecution.lastError=reason;
+    if(raw){
+      try{await requeueMasterCommand(raw,'MASTER_WORKER_RECOVERY_'+reason,1500)}catch(_){}
+    }
+    return false;
+  }finally{
+    masterExecution.busy=false;
+  }
+}
+function startMasterExecutionLoop(){
+  if(controllerIdentity.role!=='master')return;
+  masterExecutionCycle();
+  if(!masterExecution.timer)masterExecution.timer=setInterval(masterExecutionCycle,750);
+}
+function loadMasterAutoProtectionHighWater(){
+  if(controllerIdentity.role!=='master')return;
+  try{
+    const raw=JSON.parse(localStorage.getItem(MASTER_AUTO_HIGHWATER_KEY)||'{}');
+    masterAutoProtection.highWater=new Map(
+      Object.entries(raw||{}).filter(([,v])=>Number.isFinite(Number(v)))
+        .map(([k,v])=>[k,Number(v)])
+    );
+  }catch(_){
+    masterAutoProtection.highWater=new Map();
+  }
+}
+function saveMasterAutoProtectionHighWater(){
+  if(controllerIdentity.role!=='master')return;
+  try{
+    const obj={};
+    for(const [k,v] of masterAutoProtection.highWater.entries()){
+      if(Number.isFinite(Number(v)))obj[k]=Number(v);
+    }
+    localStorage.setItem(MASTER_AUTO_HIGHWATER_KEY,JSON.stringify(obj));
+  }catch(_){}
+}
+function masterAutoPositionKey(position){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const direction=amount>=0?'LONG':'SHORT';
+  const qty=Math.abs(amount);
+  const entry=n(position?.entryPrice,0);
+  const lifecycle=Math.max(0,Math.floor(n(
+    position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,0
+  )));
+  return `${symbol}:${direction}:${qty}:${entry}:${lifecycle}`;
+}
+function pruneMasterAutoProtectionHighWater(){
+  if(controllerIdentity.role!=='master')return;
+  const projection=masterStreamProjection();
+  if(projection.userStream?.ready!==true)return;
+  const active=new Set(
+    (projection.binancePositions||[])
+      .filter(p=>Math.abs(n(p?.positionAmt??p?.quantity,0))>0)
+      .map(masterAutoPositionKey)
+  );
+  let changed=false;
+  for(const key of [...masterAutoProtection.highWater.keys()]){
+    if(!active.has(key)){
+      masterAutoProtection.highWater.delete(key);
+      changed=true;
+    }
+  }
+  if(changed)saveMasterAutoProtectionHighWater();
+}
+function observedRealLinearPnl(position,mark){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const qty=Math.abs(amount),entry=n(position?.entryPrice,0),px=n(mark,0);
+  if(!(qty>0)||!(entry>0)||!(px>0))return NaN;
+  return (amount>=0?1:-1)*(px-entry)*qty;
+}
+function updateMasterAutoHighWater(position,mark){
+  const observed=observedRealLinearPnl(position,mark);
+  if(!Number.isFinite(observed))return NaN;
+  const key=masterAutoPositionKey(position);
+  const previous=n(masterAutoProtection.highWater.get(key),NaN);
+  const next=Number.isFinite(previous)?Math.max(previous,observed):observed;
+  if(!Number.isFinite(previous)||next>previous+1e-8){
+    masterAutoProtection.highWater.set(key,next);
+    saveMasterAutoProtectionHighWater();
+  }
+  return next;
+}
+function masterHasSingleMaxLoss(position,orders,hardMaxLossUsd=400){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const direction=amount>=0?'LONG':'SHORT';
+  const quantity=Math.abs(amount);
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const side=direction==='LONG'?'SELL':'BUY';
+  const entry=n(position?.entryPrice,0);
+  const cap=n(hardMaxLossUsd,0);
+  if(!(quantity>0)||!(entry>0)||!(cap>0))return false;
+  const rows=(Array.isArray(orders)?orders:[]).filter(o=>{
+    if(String(o?.orderClass||'').toUpperCase()!=='ALGO')return false;
+    if(String(o?.symbol||'').toUpperCase()!==symbol)return false;
+    if(String(o?.side||'').toUpperCase()!==side)return false;
+    if(String(o?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
+    if(String(o?.type||'').toUpperCase()!=='STOP_MARKET')return false;
+    if(!(o?.closePosition===true||o?.closePosition==='true'))return false;
+    if(!zenithManagedRealId(o?.clientAlgoId))return false;
+    const trigger=n(o?.triggerPrice??o?.stopPrice,0);
+    if(!(trigger>0))return false;
+    const lossSide=direction==='LONG'?trigger<entry:trigger>entry;
+    if(!lossSide)return false;
+    const impliedLossUsd=direction==='LONG'
+      ?(entry-trigger)*quantity
+      :(trigger-entry)*quantity;
+    return impliedLossUsd<=cap+1e-8;
+  });
+  return rows.length===1;
+}
+async function executeMasterAutoProgressive(plan){
+  const live=plan.live,level=plan.level;
+  const body={
+    type:'EXEC_UPDATE_PROTECTION',
+    commandId:`auto-protect-${live.symbol}-${live.direction}-${Math.round(plan.stage.armProfitUsd*10)}-${Math.round(plan.stage.protectedProfitUsd*10)}-${live.lifecycleAt||live.updateTime||0}`,
+    symbol:live.symbol,
+    direction:live.direction,
+    quantity:live.quantity,
+    triggerPrice:level.triggerPrice,
+    limitPrice:level.limitPrice,
+    protectionKind:'PROGRESSIVE',
+    ...(plan.previousClientAlgoId?{previousClientAlgoId:plan.previousClientAlgoId}:{})
+  };
+
+  const placed=await callMasterProtectiveUpdateExecute({...body,phase:'PLACE_NEW'});
+  if(!placed.r.ok||placed.q?.ok!==true){
+    masterAutoProtection.lastError='AUTO_PLACE_'+String(placed.q?.code||placed.q?.reason||placed.q?.error||('HTTP_'+placed.r.status));
+    return false;
+  }
+  const clientId=String(placed.q?.plan?.params?.clientAlgoId||'');
+  if(!clientId){
+    masterAutoProtection.lastError='AUTO_NEW_PROTECTION_ID_MISSING';
+    return false;
+  }
+  const order=await waitForStreamOrder({kind:'ALGO',clientId,terminal:false},3500);
+  if(!order){
+    masterAutoProtection.lastError='AUTO_NEW_PROTECTION_NOT_STREAM_CONFIRMED';
+    return false;
+  }
+  if(String(order?.type||'').toUpperCase()!=='STOP'||
+     String(order?.timeInForce||'').toUpperCase()!=='GTC'||
+     !(order?.reduceOnly===true||order?.reduceOnly==='true')||
+     !realNumberMatches(order?.triggerPrice,level.triggerPrice)||
+     !realNumberMatches(order?.price,level.limitPrice)||
+     (order?.priceMatch&&String(order.priceMatch).toUpperCase()!=='NONE')){
+    masterAutoProtection.lastError='AUTO_NEW_PROTECTION_IDENTITY_MISMATCH';
+    return false;
+  }
+  await publishMasterStreamState();
+  if(await awaitMasterReconciliation()!==true){
+    masterAutoProtection.lastError='AUTO_POST_PLACE_RECONCILIATION_FAILED';
+    return false;
+  }
+
+  if(plan.previousClientAlgoId){
+    const canceled=await callMasterProtectiveUpdateExecute({
+      ...body,phase:'CANCEL_OLD',newClientAlgoId:clientId
+    });
+    if(!canceled.r.ok||canceled.q?.ok!==true){
+      masterAutoProtection.lastError='AUTO_CANCEL_'+String(canceled.q?.code||canceled.q?.reason||canceled.q?.error||('HTTP_'+canceled.r.status));
+      return false;
+    }
+    const terminal=await waitForStreamOrder({
+      kind:'ALGO',clientId:plan.previousClientAlgoId,terminal:true
+    },3000);
+    const terminalStatus=String(terminal?.status||canceled.q?.result?.algoOrder?.algoStatus||'').toUpperCase();
+    if(!['CANCELED','EXPIRED','REJECTED'].includes(terminalStatus)){
+      masterAutoProtection.lastError='AUTO_OLD_PROTECTION_CANCEL_NOT_CONFIRMED';
+      return false;
+    }
+    if(await awaitMasterReconciliation()!==true){
+      masterAutoProtection.lastError='AUTO_POST_CANCEL_RECONCILIATION_FAILED';
+      return false;
+    }
+  }
+
+  masterAutoProtection.lastError='';
+  masterAutoProtection.lastActionAt=Date.now();
+  return true;
+}
+async function runMasterAutoProtection(symbol,mark){
+  if(controllerIdentity.role!=='master'||document.hidden)return false;
+  if(!masterRuntimeState.synchronized||!masterRuntimeState.heartbeatFresh)return false;
+  const {dispatchModule,autoProtectionModule}=await loadMasterUserStreamModules();
+  if(!dispatchModule.masterExecutionEligible({
+    role:controllerIdentity.role,
+    hidden:document.hidden,
+    leaseActive:masterRuntimeState.leaseActive,
+    realExecutionArmed:masterRuntimeState.realExecutionArmed,
+    userStreamReady:masterRuntimeState.userStreamReady,
+    mode:masterRuntimeState.mode
+  }))return false;
+
+  const position=masterRealPositionBySymbol(symbol);
+  if(!position)return false;
+  const tokenCfg=tokenSettings[String(symbol||'').toUpperCase()];
+  if(!tokenCfg||!Array.isArray(tokenCfg.protectionStages))return false;
+
+  await ensureExchange();
+  const rules=symbolRules(String(symbol||'').toUpperCase());
+  const priceFilter=rules?.filters?.PRICE_FILTER;
+  if(!priceFilter)return false;
+
+  const projection=masterStreamProjection();
+  const orders=Array.isArray(projection.binanceOrders)?projection.binanceOrders:[];
+  if(!masterHasSingleMaxLoss(position,orders)){
+    masterAutoProtection.lastError='AUTO_MAX_LOSS_NOT_UNIQUE';
+    return false;
+  }
+
+  const highWater=updateMasterAutoHighWater(position,mark);
+  const cfgNow=cfg(String(symbol||'').toUpperCase());
+  const stages=normalizeProtections(
+    tokenCfg.protectionStages,
+    n(tokenCfg.manualTargetProfit,n(tokenCfg.targetProfit,n(cfgNow.targetProfit,settings.targetProfit)))
+  );
+  const plan=autoProtectionModule.evaluateMasterAutoProgressiveProtection({
+    position,
+    markPrice:mark,
+    protectionStages:stages,
+    currentOrders:orders,
+    priceFilter,
+    previousHighWaterProfitUsd:highWater
+  });
+  if(plan.action==='BLOCK'){
+    masterAutoProtection.lastError=String(plan.reason||'AUTO_PROTECTION_BLOCKED');
+    return false;
+  }
+  if(plan.action!=='REPLACE')return false;
+  return executeMasterAutoProgressive(plan);
+}
+function scheduleMasterAutoProtection(symbol,mark){
+  if(controllerIdentity.role!=='master')return;
+  const position=masterRealPositionBySymbol(symbol);
+  if(!position)return;
+  updateMasterAutoHighWater(position,mark);
+  const key=masterAutoPositionKey(position);
+  if(masterAutoProtection.pending.has(key))return;
+  masterAutoProtection.pending.add(key);
+  Promise.resolve().then(()=>runMasterAutoProtection(symbol,mark)).catch(e=>{
+    masterAutoProtection.lastError=String(e?.message||'AUTO_PROTECTION_ERROR');
+  }).finally(()=>{
+    masterAutoProtection.pending.delete(key);
+    const latest=n(lastPrices.get(String(symbol||'').toUpperCase()),0);
+    if(latest>0&&latest!==n(mark,0))setTimeout(()=>scheduleMasterAutoProtection(symbol,latest),0);
+  });
+}
+async function applyMasterControllerState(state){
+  if(!state||!state.data||typeof state.data!=='object')throw new Error('CONTROLLER_STATE_INVALID');
+  const revision=Math.max(0,n(state.revision,0)),stateHash=String(state.stateHash||'');
+  if(!Number.isInteger(revision)||revision<=0||!stateHash)throw new Error('CONTROLLER_STATE_INVALID');
+  const computed=await sha256Hex(stableStringify(state.data));
+  if(computed!==stateHash)throw new Error('CONTROLLER_STATE_HASH_MISMATCH');
+
+  let current={};
+  try{current=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}')||{}}catch(_){current={}}
+  const data=state.data;
+  localStorage.setItem(STORAGE_KEY,JSON.stringify({
+    ...current,
+    settings:data.settings&&typeof data.settings==='object'?data.settings:{},
+    tokenSettings:data.tokenSettings&&typeof data.tokenSettings==='object'?data.tokenSettings:{},
+    manualTokens:data.manualTokens&&typeof data.manualTokens==='object'?data.manualTokens:{},
+    validated:data.validated&&typeof data.validated==='object'?data.validated:{}
+  }));
+  localStorage.setItem(ZENITH_MASTER_APPLIED_REV_KEY,String(revision));
+  load();applyTheme();renderAll();syncRealtime();
+  const appliedHash=await sha256Hex(stableStringify(controllerCloudStatePayload()));
+  if(appliedHash!==stateHash)throw new Error('MASTER_APPLIED_CONFIG_HASH_MISMATCH');
+  return {revision,stateHash};
+}
+async function masterRuntimeCycle(){
+  if(masterRuntimeBusy||controllerIdentity.role!=='master'||document.hidden)return false;
+  masterRuntimeBusy=true;
+  try{
+    const hb=await masterRuntimeApi('master-heartbeat','POST',{});
+    if(!hb.r.ok||hb.q?.ok!==true){
+      masterRuntimeState={...masterRuntimeState,leaseActive:false,heartbeatFresh:false,synchronized:false,userStreamReady:false,error:String(hb.q?.code||hb.q?.error||('HTTP '+hb.r.status))};
+      renderControllerIdentity();
+      releaseMasterWakeLock();
+      if(masterUserStream.ws)closeMasterUserStream('MASTER_LEASE_LOST',false);
+      return false;
+    }
+    masterRuntimeState.mode=String(hb.q.masterMode||'PAUSED');
+    masterRuntimeState.leaseActive=true;
+    syncMasterWakeLock();
+    masterRuntimeState.heartbeatFresh=true;
+    masterRuntimeState.realExecutionArmed=hb.q.realExecutionArmed===true;
+    masterRuntimeState.error='';
+
+    await loadMasterUserStreamModules();
+    await postMasterRuntimeState();
+    ensureMasterUserStream();
+
+    const st=await masterRuntimeApi('master-config-status');
+    if(!st.r.ok||st.q?.ok!==true)throw new Error(st.q?.code||st.q?.error||('HTTP '+st.r.status));
+    masterRuntimeState.controllerRevision=Math.max(0,n(st.q.controllerRevision,0));
+    masterRuntimeState.appliedRevision=Math.max(0,n(st.q.appliedRevision,0));
+    const controllerState=st.q.controllerState||null;
+    const controllerStateHash=String(st.q.controllerStateHash||controllerState?.stateHash||'');
+    let localConfigMatches=false;
+    if(controllerState?.data&&controllerStateHash){
+      const localHash=await sha256Hex(stableStringify(controllerCloudStatePayload()));
+      localConfigMatches=localHash===controllerStateHash;
+    }
+    masterRuntimeState.synchronized=st.q.synchronized===true&&localConfigMatches;
+
+    if(st.q.synchronized===true&&!localConfigMatches){
+      const activity=st.q.activity||{};
+      if(n(activity.activePositions)>0||n(activity.openOrders)>0){
+        masterRuntimeState.error='MASTER_LOCAL_CONFIG_DRIFT_ACTIVE';
+        renderControllerIdentity();
+        return false;
+      }
+      if(!controllerState)throw new Error('MASTER_LOCAL_CONFIG_DRIFT');
+      const applied=await applyMasterControllerState(controllerState);
+      const ack=await masterRuntimeApi('master-config-ack','POST',applied);
+      if(!ack.r.ok||ack.q?.ok!==true)throw new Error(ack.q?.code||ack.q?.error||('HTTP '+ack.r.status));
+      masterRuntimeState.appliedRevision=applied.revision;
+      masterRuntimeState.controllerRevision=applied.revision;
+      masterRuntimeState.synchronized=true;
+      masterRuntimeState.error='';
+      await postMasterRuntimeState();
+    }else if(st.q.applyAllowed===true&&controllerState){
+      const applied=await applyMasterControllerState(controllerState);
+      const ack=await masterRuntimeApi('master-config-ack','POST',applied);
+      if(!ack.r.ok||ack.q?.ok!==true)throw new Error(ack.q?.code||ack.q?.error||('HTTP '+ack.r.status));
+      masterRuntimeState.appliedRevision=applied.revision;
+      masterRuntimeState.controllerRevision=applied.revision;
+      masterRuntimeState.synchronized=true;
+      masterRuntimeState.error='';
+      await postMasterRuntimeState();
+    }else if(st.q.synchronized!==true){
+      masterRuntimeState.error=String(st.q.reason||'MASTER_CONFIG_OUT_OF_SYNC');
+    }
+
+    renderControllerIdentity();
+    return masterRuntimeState.synchronized;
+  }catch(e){
+    masterRuntimeState={...masterRuntimeState,heartbeatFresh:false,synchronized:false,error:String(e?.message||'MASTER_RUNTIME_ERROR')};
+    renderControllerIdentity();
+    return false;
+  }finally{
+    masterRuntimeBusy=false;
+  }
+}
+function startMasterRuntimeLoop(){
+  if(controllerIdentity.role!=='master')return;
+  syncMasterWakeLock(true);
+  loadMasterAutoProtectionHighWater();
+  loadMasterUserStreamModules().then(()=>publishMasterStreamState()).catch(()=>{});
+  masterRuntimeCycle();
+  startMasterExecutionLoop();
+  if(!masterRuntimeTimer)masterRuntimeTimer=setInterval(masterRuntimeCycle,8000);
+}
+
+function controllerCloudStatePayload(){
+  return {
+    settings:clone(settings),
+    tokenSettings:clone(normalizeRecordBlock(tokenSettings)),
+    manualTokens:clone(normalizeRecordBlock(manualTokens)),
+    validated:clone(normalizeRecordBlock(validated))
+  };
+}
+async function syncControllerCloudStateNow(){
+  if(!controllerIdentity.paired||controllerIdentity.role!=='controller')return false;
+  const payload=controllerCloudStatePayload();
+
+  try{
+    const currentResponse=await fetch('/api/zenith-sync?action=controller-state',{
+      cache:'no-store',
+      headers:{Accept:'application/json'}
+    });
+    const current=await currentResponse.json().catch(()=>({}));
+    if(!currentResponse.ok||current?.ok!==true){
+      controllerSyncState={...controllerSyncState,error:current?.code||current?.error||('HTTP '+currentResponse.status)};
+      renderControllerIdentity();
+      return false;
+    }
+
+    const remoteState=current?.state||null;
+    const remoteRevision=Math.max(0,n(remoteState?.revision,0));
+    const remoteStateHash=remoteState?await sha256Hex(stableStringify(remoteState?.data||{})):'';
+    if(remoteState&&String(remoteState?.stateHash||'')!==remoteStateHash){
+      const repair=await fetch('/api/zenith-sync?action=controller-state',{
+        method:'POST',
+        cache:'no-store',
+        headers:{
+          'Content-Type':'application/json',
+          Accept:'application/json',
+        },
+        body:JSON.stringify({expectedRevision:remoteRevision,data:payload})
+      });
+      const repaired=await repair.json().catch(()=>({}));
+      if(repair.status===409&&repaired?.code==='REVISION_CONFLICT'){
+        controllerSyncState={conflict:true,lastOk:0,error:'REVISION_CONFLICT'};
+        renderControllerIdentity();
+        return false;
+      }
+      if(!repair.ok||repaired?.ok!==true||!repaired?.state){
+        controllerSyncState={...controllerSyncState,error:repaired?.code||repaired?.error||('HTTP '+repair.status)};
+        renderControllerIdentity();
+        return false;
+      }
+      localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(Math.max(0,n(repaired.state.revision,remoteRevision))));
+      controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
+      renderControllerIdentity();
+      return true;
+    }
+
+    const localRevisionRaw=localStorage.getItem(ZENITH_CONTROLLER_REV_KEY);
+    let localRevision=localRevisionRaw===null?null:Math.max(0,n(localRevisionRaw,0));
+
+    if(localRevision===null){
+      if(remoteState){
+        const localJson=stableStringify(payload);
+        const remoteJson=stableStringify(remoteState?.data||{});
+        if(localJson!==remoteJson){
+          controllerSyncState={conflict:true,lastOk:0,error:'REVISION_BOOTSTRAP_CONFLICT'};
+          renderControllerIdentity();
+          return false;
+        }
+        localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(remoteRevision));
+        controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
+        renderControllerIdentity();
+        return true;
+      }
+      localRevision=0;
+    }
+
+    if(remoteRevision!==localRevision){
+      controllerSyncState={conflict:true,lastOk:0,error:'REVISION_CONFLICT'};
+      renderControllerIdentity();
+      return false;
+    }
+
+    const payloadHash=await sha256Hex(stableStringify(payload));
+    if(remoteState&&stableStringify(remoteState?.data||{})===stableStringify(payload)&&String(remoteState?.stateHash||'')===payloadHash){
+      controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
+      renderControllerIdentity();
+      return true;
+    }
+
+    const r=await fetch('/api/zenith-sync?action=controller-state',{
+      method:'POST',
+      cache:'no-store',
+      headers:{
+        'Content-Type':'application/json',
+        Accept:'application/json',
+        
+      },
+      body:JSON.stringify({expectedRevision:localRevision,data:payload})
+    });
+    const q=await r.json().catch(()=>({}));
+
+    if(r.status===409&&q?.code==='REVISION_CONFLICT'){
+      controllerSyncState={conflict:true,lastOk:0,error:'REVISION_CONFLICT'};
+      renderControllerIdentity();
+      return false;
+    }
+
+    if(!r.ok||q?.ok!==true||!q?.state){
+      controllerSyncState={...controllerSyncState,error:q?.code||q?.error||('HTTP '+r.status)};
+      renderControllerIdentity();
+      return false;
+    }
+
+    localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(Math.max(0,n(q.state.revision,localRevision))));
+    controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
+    renderControllerIdentity();
+    return true;
+  }catch(e){
+    controllerSyncState={...controllerSyncState,error:e?.message||'Connexion impossible'};
+    renderControllerIdentity();
+    return false;
+  }
+}
+function scheduleControllerCloudStateSync(){
+  if(controllerStateSyncTimer)clearTimeout(controllerStateSyncTimer);
+  controllerStateSyncTimer=setTimeout(()=>{
+    controllerStateSyncTimer=null;
+    syncControllerCloudStateNow();
+  },600);
+}
+function startControllerIdentityCheck(){
+  if(controllerIdentityTimer)clearInterval(controllerIdentityTimer);
+  refreshControllerIdentity();
+  controllerIdentityTimer=setInterval(refreshControllerIdentity,300000);
+}
+async function refreshBinanceAccount(){
+  try{
+    const r=await fetch('/api/binance-read',{
+      cache:'no-store',
+      headers:{Accept:'application/json'}
+    });
+    let q={};try{q=await r.json()}catch(_){q={}}
+    if(!r.ok||q?.ok!==true){
+      binanceAccount={
+        ...binanceAccount,connected:false,configured:q?.code!=='MISSING_ENV',
+        positions:[],standardOrders:[],algoOrders:[],realPositions:0,
+        error:q?.error||`HTTP ${r.status}`
+      };
+      reconcileRealProtectiveUpdatePending();
+      renderBinanceAccount();
+      return false;
+    }
+    const usdt=q?.usdt||{};
+    const positions=Array.isArray(q.positions)?q.positions:[];
+    const standardOrders=Array.isArray(q.standardOrderDetails)?q.standardOrderDetails:[];
+    const algoOrders=Array.isArray(q.algoOrderDetails)?q.algoOrderDetails:[];
+    binanceAccount={
+      connected:true,configured:true,
+      walletBalance:n(usdt.balance,n(usdt.walletBalance,NaN)),
+      availableBalance:n(usdt.availableBalance,NaN),
+      positions:clone(positions),
+      standardOrders:clone(standardOrders),
+      algoOrders:clone(algoOrders),
+      realPositions:positions.length,
+      openOrders:n(q.openOrders),
+      latencyMs:n(q.latencyMs),
+      lastOk:Date.now(),
+      error:''
+    };
+    reconcileRealProtectiveUpdatePending();
+    renderBinanceAccount();
+    return true;
+  }catch(e){
+    binanceAccount={
+      ...binanceAccount,connected:false,positions:[],standardOrders:[],algoOrders:[],
+      realPositions:0,error:e?.message||'Connexion impossible'
+    };
+    reconcileRealProtectiveUpdatePending();
+    renderBinanceAccount();
+    return false;
+  }
+}
+function startBinanceAccountReadOnly(){if(binanceAccountTimer)clearInterval(binanceAccountTimer);refreshBinanceAccount();binanceAccountTimer=setInterval(refreshBinanceAccount,15000)}
+function notional(c){return n(c.binanceEffectiveNotional)>0?n(c.binanceEffectiveNotional):n(c.margin,100)*n(c.leverage,10)}
+function normalizeProtections(stages,target=3000){const src=Array.isArray(stages)?stages:[],count=Math.max(protectionCountForTarget(target),src.length&&target==null?src.length:0);return Array.from({length:count},(_,i)=>{const d=defaultProtection(i),x=src[i]||d;return{enabled:x.enabled!==false,arm:Math.max(0,n(x.arm,d.arm)),floor:Math.max(0,n(x.floor,d.floor))}})}
+function cfg(symbol){const t=tokenSettings[symbol]||{},base={...settings,...t};base.marginType='ISOLATED';base.protectionStages=normalizeProtections(t.protectionStages||settings.protectionStages,n(t.manualTargetProfit,n(t.targetProfit,settings.targetProfit)));if(t.exactBuyEnabled&&n(t.exactBuyPrice)>0&&t.exactSaleEnabled&&n(t.exactSalePrice)>0)base.targetProfit=((n(t.exactSalePrice)-n(t.exactBuyPrice))/n(t.exactBuyPrice))*notional(base);return base}
+function exactProfitFor(buy,sale,c){buy=n(buy);sale=n(sale);return buy>0&&sale>0?((sale-buy)/buy)*notional(c):null}
+function tokenExactBuy(symbol){const t=tokenSettings[symbol]||{};return t.exactBuyEnabled&&n(t.exactBuyPrice)>0?n(t.exactBuyPrice):0}
+function tokenExactSale(symbol){const t=tokenSettings[symbol]||{};return t.exactSaleEnabled&&n(t.exactSalePrice)>0?n(t.exactSalePrice):0}
+function openBySymbol(symbol){return openPositions.find(p=>p.symbol===symbol)||null}
+function controllerRealPositionBySymbol(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  const rows=Array.isArray(binanceAccount.positions)?binanceAccount.positions:[];
+  return rows.find(p=>String(p?.symbol||'').toUpperCase()===wanted&&Math.abs(n(p?.positionAmt??p?.quantity,0))>0)||null;
+}
+function realPositionPnlAtPrice(position,mark){
+  const amount=n(position?.positionAmt??position?.quantity,NaN),entry=n(position?.entryPrice,NaN),px=n(mark,NaN);
+  if(!Number.isFinite(amount)||amount===0||!(entry>0)||!(px>0))return NaN;
+  return (amount>0?1:-1)*(px-entry)*Math.abs(amount);
+}
+function realPositionPriceForPnl(position,pnl){
+  const amount=n(position?.positionAmt??position?.quantity,NaN),entry=n(position?.entryPrice,NaN),wanted=n(pnl,NaN);
+  if(!Number.isFinite(amount)||amount===0||!(entry>0)||!Number.isFinite(wanted))return 0;
+  const px=entry+wanted/((amount>0?1:-1)*Math.abs(amount));
+  return px>0?px:0;
+}
+function anyActivePositionBySymbol(symbol){return openBySymbol(symbol)||controllerRealPositionBySymbol(symbol)||null}
+function masterRealPositionBySymbol(symbol){
+  if(controllerIdentity.role!=='master')return null;
+  const wanted=String(symbol||'').toUpperCase();
+  const rows=masterStreamProjection().binancePositions||[];
+  return rows.find(p=>String(p?.symbol||'').toUpperCase()===wanted&&Math.abs(n(p?.positionAmt??p?.quantity,0))>0)||null;
+}
+function trackedSymbols(){
+  const out=new Set([...Object.keys(validated),...openPositions.map(p=>p.symbol)]);
+  if(selectedSymbol)out.add(String(selectedSymbol).toUpperCase());
+  if(controllerIdentity.role==='master'){
+    for(const p of masterStreamProjection().binancePositions||[]){
+      const symbol=String(p?.symbol||'').toUpperCase();
+      if(symbol&&Math.abs(n(p?.positionAmt??p?.quantity,0))>0)out.add(symbol);
+    }
+  }
+  return out;
+}
+function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify({settings,tokenSettings,manualTokens,validated,revalidateBlock,missedSignals,openPositions,history,dismissed,selectedSymbol}));scheduleControllerCloudStateSync()}
+function load(){try{const x=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');if(!x)return;settings={...clone(DEFAULTS),...x.settings};if(n(x.settings?.margin)===100)settings.margin=1000;if(n(x.settings?.targetProfit)===40)settings.targetProfit=3000;if(n(x.settings?.maxLoss)===40)settings.maxLoss=400;settings.maxLoss=Math.min(400,Math.max(2,n(settings.maxLoss,400)));settings.marginType='ISOLATED';settings.protectionStages=normalizeProtections(settings.protectionStages,settings.targetProfit);tokenSettings=normalizeRecordBlock(x.tokenSettings);for(const t of Object.values(tokenSettings)){if(n(t?.targetProfit)===40&&n(t?.manualTargetProfit,40)===40){t.targetProfit=3000;t.manualTargetProfit=3000}if(n(t?.maxLoss)===40)t.maxLoss=400;t.maxLoss=Math.min(400,Math.max(2,n(t?.maxLoss,settings.maxLoss)));if(Array.isArray(t?.protectionStages)&&t.protectionStages.length===9)t.protectionStages=normalizeProtections(t.protectionStages,n(t.manualTargetProfit,n(t.targetProfit,settings.targetProfit)))};manualTokens=normalizeRecordBlock(x.manualTokens);validated=normalizeRecordBlock(x.validated);revalidateBlock=normalizeRecordBlock(x.revalidateBlock);missedSignals=normalizeRecordBlock(x.missedSignals);openPositions=x.openPositions||[];history=x.history||[];dismissed=x.dismissed||{};selectedSymbol=x.selectedSymbol||'';for(const [s,r] of Object.entries(manualTokens))if(n(r?.last)>0)lastPrices.set(s,n(r.last));for(const p of openPositions){if(!(n(p.openedAt)>0))p.openedAt=n(p.startedAt,n(p.createdAt,Date.now()));if(!(n(p.baseTargetProfit)>0))p.baseTargetProfit=Math.max(1,n(tokenSettings[p.symbol]?.manualTargetProfit,n(tokenSettings[p.symbol]?.targetProfit,settings.targetProfit)));if(n(p.entryPrice)>0)lastPrices.set(p.symbol,n(p.entryPrice));if(Number.isFinite(+p.lastAggId))lastAggIds.set(p.symbol,+p.lastAggId);if(Number.isFinite(+p.lastAggTime))lastAggTimes.set(p.symbol,+p.lastAggTime);p.marginType='ISOLATED';p.protectionStages=normalizeProtections(p.protectionStages,n(p.baseTargetProfit,n(p.targetProfit,settings.targetProfit)));p.protectionFloorActive=0;for(const st of p.protectionStages)if(st.enabled&&n(p.maxProfit)>=st.arm)p.protectionFloorActive=Math.max(n(p.protectionFloorActive),st.floor);if(!history.some(h=>h.symbol===p.symbol&&(h.status==='OPEN'||h.closedAt==null)&&n(h.openedAt)===n(p.openedAt)))history.push({symbol:p.symbol,entryPrice:p.entryPrice,exitPrice:null,pnl:null,reason:'ACHAT',openedAt:p.openedAt,closedAt:null,status:'OPEN'})}for(const [s,v] of Object.entries(validated)){if(Number.isFinite(+v?.lastAggId))lastAggIds.set(s,+v.lastAggId);if(Number.isFinite(+v?.lastAggTime))lastAggTimes.set(s,+v.lastAggTime)}expireWaitingSignals()}catch(_){}}
+async function jf(path){const r=await fetch(API+path,{cache:'no-store'});if(!r.ok)throw new Error(`Binance ${r.status}`);return r.json()}
+async function ensureExchange(force=false){if(exchangeMap.size&&!force)return;const info=await jf('/fapi/v1/exchangeInfo');exchangeMap.clear();for(const s of info.symbols||[]){if(!['PERPETUAL','TRADIFI_PERPETUAL'].includes(s.contractType)||s.quoteAsset!=='USDT'||s.status!=='TRADING')continue;const fm={};for(const f of s.filters||[])if(f?.filterType)fm[f.filterType]=f;exchangeMap.set(s.symbol,{contractType:s.contractType,onboardDate:n(s.onboardDate),underlyingType:s.underlyingType||'',underlyingSubType:s.underlyingSubType||[],pricePrecision:n(s.pricePrecision),quantityPrecision:n(s.quantityPrecision),filters:fm})}}
+function ruleNum(o,...keys){for(const k of keys){const v=n(o?.[k],NaN);if(Number.isFinite(v))return v}return 0}
+function stepDecimals(step){const x=String(step||'');if(!x.includes('.'))return 0;return Math.min(12,x.split('.')[1].replace(/0+$/,'').length)}
+function floorStep(v,step){v=n(v);step=n(step);if(!(step>0))return v;const q=Math.floor((v+step*1e-10)/step)*step;return Number(q.toFixed(stepDecimals(step)))}
+function alignedStep(v,min,step){v=n(v);min=n(min);step=n(step);if(!(step>0))return true;const z=(v-min)/step;return Math.abs(z-Math.round(z))<1e-7}
+function symbolRules(s){return exchangeMap.get(s)||null}
+function futuresDraft(s,margin,leverage,kind='LIMIT',refOverride=0){const r=symbolRules(s),ref=n(refOverride,n(tokenExactBuy(s),n(lastPrices.get(s)))),requestedNotional=n(margin)*n(leverage);if(!r||!(ref>0))return{ok:false,error:`Limites/prix Binance indisponibles pour ${s}.`};const lot=r.filters?.[kind==='MARKET'?'MARKET_LOT_SIZE':'LOT_SIZE']||r.filters?.LOT_SIZE||{},minQty=ruleNum(lot,'minQty'),maxQty=ruleNum(lot,'maxQty'),step=ruleNum(lot,'stepSize'),rawQty=requestedNotional/ref,qty=floorStep(rawQty,step),effectiveNotional=qty*ref,minNotional=ruleNum(r.filters?.MIN_NOTIONAL,'notional','minNotional'),notionalRule=r.filters?.NOTIONAL||{},notMin=ruleNum(notionalRule,'minNotional'),notMax=ruleNum(notionalRule,'maxNotional'),errors=[];if(!(qty>0))errors.push('quantité calculée nulle');if(minQty>0&&qty<minQty)errors.push(`quantité minimale ${minQty}`);if(maxQty>0&&qty>maxQty)errors.push(`quantité maximale ${maxQty}`);const minN=Math.max(minNotional,notMin);if(minN>0&&effectiveNotional+1e-9<minN)errors.push(`notionnel minimum $${minN}`);if(notMax>0&&effectiveNotional-1e-9>notMax)errors.push(`notionnel maximum $${notMax}`);return{ok:!errors.length,error:errors.join(' · '),rules:r,ref,requestedNotional,qty,effectiveNotional,minQty,maxQty,step,minNotional:minN,maxNotional:notMax}}
+function validateLimitPrice(s,pv,label){const r=symbolRules(s),f=r?.filters?.PRICE_FILTER;if(!f||!(pv>0))return'';const min=ruleNum(f,'minPrice'),max=ruleNum(f,'maxPrice'),tick=ruleNum(f,'tickSize');if(min>0&&pv<min)return`${label} inférieur au minimum Binance ${price(min)}`;if(max>0&&pv>max)return`${label} supérieur au maximum Binance ${price(max)}`;if(tick>0&&!alignedStep(pv,min,tick))return`${label} non conforme au pas Binance ${price(tick)}`;return''}
+function limitsText(s,margin,leverage){const d=futuresDraft(s,margin,leverage,'LIMIT'),r=symbolRules(s);if(!r)return'Limites Binance : non chargées';const lot=r.filters?.LOT_SIZE||{},pf=r.filters?.PRICE_FILTER||{},parts=[];const step=ruleNum(lot,'stepSize'),minQ=ruleNum(lot,'minQty'),maxQ=ruleNum(lot,'maxQty'),tick=ruleNum(pf,'tickSize');if(step>0)parts.push(`pas quantité ${step}`);if(minQ>0)parts.push(`min ${minQ}`);if(maxQ>0)parts.push(`max ${maxQ}`);if(tick>0)parts.push(`tick ${tick}`);if(d.minNotional>0)parts.push(`notionnel min $${d.minNotional}`);if(d.maxNotional>0)parts.push(`notionnel max $${d.maxNotional}`);if(d.qty>0)parts.push(`quantité calculée ${d.qty}`);parts.push('levier compte : contrôlé à la connexion Binance');return`Limites Binance : ${parts.join(' · ')}`}
+function showTokenPane(){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.pane==='tokenPane'));document.querySelectorAll('.pane').forEach(x=>x.classList.toggle('on',x.id==='tokenPane'));$('settingsSymbol').classList.remove('invisible')}
+function openTokenSettings(symbol,scroll=true){if(!symbol)return;selectedSymbol=String(symbol).toUpperCase();save();showTokenPane();renderAll();syncRealtime();if(scroll){requestAnimationFrame(()=>{const el=$('tokenSettingsBlock');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest',inline:'end'})})}}
+async function addManualToken(){let symbol=($('manualTokenInput').value||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');if(!symbol)return setStatus('Entre le nom du jeton.',true);if(!symbol.endsWith('USDT'))symbol+='USDT';try{$('manualTokenAddBtn').disabled=true;let last=0,directFound=false;try{const t=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(symbol)}`);last=n(t?.price);directFound=last>0}catch(_){}if(!directFound){await ensureExchange(true);if(!exchangeMap.has(symbol))return setStatus(`${symbol} est introuvable sur Binance Futures USDⓈ-M.`,true);try{const t=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(symbol)}`);last=n(t?.price)}catch(_){}}if(!(last>0))return setStatus(`${symbol} existe peut-être sur Binance mais son prix Futures est indisponible actuellement.`,true);await ensureExchange();if(!exchangeMap.has(symbol))return setStatus(`${symbol} n’est pas actuellement négociable en Futures perpétuel USDT sur Binance.`,true);lastPrices.set(symbol,last);delete dismissed[symbol];$('manualTokenInput').value='';openTokenSettings(symbol,true);setStatus(`${symbol} trouvé sur Binance Futures USDⓈ-M. Réglages ouverts — il n’entrera dans la liste qu’après validation de la surveillance.`)}catch(e){setStatus(`Ajout impossible : ${e.message}`,true)}finally{$('manualTokenAddBtn').disabled=false}}
+function rowStatus(s){const m=missedSignals[s];if(m?.state==='expired')return 'OBJECTIF DÉPASSÉ !!';if(m?.state==='waiting')return `ATTENTE PLACE (${Math.max(0,Math.ceil((n(m.expiresAt)-Date.now())/1000))}s)`;if(openBySymbol(s))return 'ACTIF';if(validated[s]&&!revalidateBlock[s])return 'SURVEILLÉ';if(revalidateBlock[s])return 'À REVALIDER';return 'NON SURVEILLÉ'}
+function tableRows(){const by=new Map();for(const [s,r] of Object.entries(manualTokens))by.set(s,{symbol:s,last:n(lastPrices.get(s),r?.last),manual:true});for(const s of Object.keys(validated))if(!by.has(s))by.set(s,{symbol:s,last:n(lastPrices.get(s))});for(const s of Object.keys(missedSignals))if(!by.has(s))by.set(s,{symbol:s,last:n(lastPrices.get(s))});for(const p of openPositions)if(!by.has(p.symbol))by.set(p.symbol,{symbol:p.symbol,last:n(lastPrices.get(p.symbol),p.entryPrice)});const rows=[...by.values()];const rank=s=>openBySymbol(s)?0:validated[s]?1:missedSignals[s]?2:3;rows.sort((a,b)=>rank(a.symbol)-rank(b.symbol)||n(manualTokens[a.symbol]?.addedAt)-n(manualTokens[b.symbol]?.addedAt)||a.symbol.localeCompare(b.symbol));return rows}
+function distanceBuy(s,last){const b=tokenExactBuy(s);return b>0&&last>0?((n(last)-b)/n(last))*100:null}
+function effectiveSalePrice(s){const p=openBySymbol(s);if(p&&n(p.targetPrice)>0)return n(p.targetPrice);const exact=tokenExactSale(s);if(exact>0)return exact;const buy=n(validated[s]?.buy,tokenExactBuy(s));if(!(buy>0))return 0;const c=cfg(s);return priceForPnl(buy,notional(c),n(c.targetProfit,settings.targetProfit))}
+function dismissSymbol(s){if(openBySymbol(s))return setStatus(`${s} est ACTIF.`,true);if(validated[s])return setStatus(`${s} est surveillé : annule d'abord son achat surveillé.`,true);dismissed[s]=Date.now();delete manualTokens[s];if(selectedSymbol===s)selectedSymbol=tableRows().find(r=>r.symbol!==s)?.symbol||'';save();renderAll();setStatus(`${s} supprimé de la liste.`)}
+function renderTable(){expireWaitingSignals();const rows=tableRows(),body=$('selectionBody');$('selectionCount').textContent=`${rows.length} jeton(s)`;body.innerHTML=rows.map((r,i)=>{const s=r.symbol,last=n(lastPrices.get(s),r.last),buy=n(validated[s]?.buy,tokenExactBuy(s)),sale=effectiveSalePrice(s),d=distanceBuy(s,last),st=rowStatus(s),missed=missedSignals[s]?.state==='expired',waiting=missedSignals[s]?.state==='waiting',rc=openBySymbol(s)?'activeRow':validated[s]?'validRow':'',cls=s===selectedSymbol?'sel ':'';return `<tr class="${cls}${rc}" data-symbol="${escapeHtml(s)}"><td>${i+1}</td><td><b>${escapeHtml(s)}</b></td><td>${price(last)}</td><td>${price(buy)}</td><td>${price(sale)}</td><td>${d==null?'—':d.toFixed(2)+'%'}</td><td class="${missed?'missedStatus':waiting?'waitingStatus':''}">${escapeHtml(st)}</td><td><button class="trashMini" data-trash="${escapeHtml(s)}" ${openBySymbol(s)||validated[s]?'disabled':''}>🗑</button></td></tr>`}).join('');body.querySelectorAll('tr[data-symbol]').forEach(tr=>tr.onclick=e=>{if(e.target.closest('[data-trash]'))return;openTokenSettings(tr.dataset.symbol,true)});body.querySelectorAll('[data-trash]').forEach(b=>b.onclick=e=>{e.stopPropagation();dismissSymbol(b.dataset.trash)})}
+function totals(){let gain=0,loss=0;for(const h of history){if(h.status==='OPEN'||h.closedAt==null)continue;const pl=n(h.pnl);if(pl>=0)gain+=pl;else loss+=Math.abs(pl)}return{gain,loss}}
+function renderKpis(){const t=totals(),watch=Object.keys(validated).filter(s=>!openBySymbol(s)&&!revalidateBlock[s]).length;$('kWatch').textContent=watch;$('kActive').textContent=`${openPositions.length}/${settings.maxActive}`;$('kGain').textContent=`+$${t.gain.toFixed(2)}`;$('kLoss').textContent=`-$${t.loss.toFixed(2)}`;$('liveBadge').textContent=`LIVE ${wsLive?1:0}`;$('liveBadge').classList.toggle('on',wsLive);$('activeLimitNote').textContent=`max ${settings.maxActive}`;renderBinanceAccount()}
+function pnlAt(p,mark){return ((n(mark)-n(p.entryPrice))/n(p.entryPrice))*n(p.notional)}
+function priceForPnl(entry,notionalValue,pnl){return n(entry)*(1+n(pnl)/n(notionalValue))}
+function durationHMS(openedAt,closedAt=Date.now()){const secs=Math.max(0,Math.floor((n(closedAt,Date.now())-n(openedAt,Date.now()))/1000)),h=Math.floor(secs/3600),m=Math.floor((secs%3600)/60),s=secs%60;return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
+function elapsedHMS(openedAt){return durationHMS(openedAt,Date.now())}
+function renderPositions(){const wrap=$('activeWrap');wrap.innerHTML=openPositions.length?openPositions.map(p=>{const mark=n(lastPrices.get(p.symbol),p.entryPrice),pl=pnlAt(p,mark);return `<div class="posCard"><div class="posTop"><span class="posSym">${escapeHtml(p.symbol)}</span><span class="posLive"><span class="posElapsed">${elapsedHMS(p.openedAt)}</span><button class="posRefresh" data-refresh="${escapeHtml(p.symbol)}">↻</button><span class="posPnl ${pl>=0?'pos':'neg'}">${money(pl)}</span></span></div><div class="posGrid"><span>Achat</span><b>${price(p.entryPrice)}</b><span>Actuel</span><b>${price(mark)}</b><span>Objectif</span><b>${price(p.targetPrice)}</b><span>Protection</span><b>${n(p.protectionFloorActive)>0?'ON '+money(p.protectionFloorActive):'EN ATTENTE'}</b></div><button class="btn danger closeNowMini" data-close="${escapeHtml(p.symbol)}">VENDRE MAINTENANT</button></div>`}).join(''):'<div class="hint">Aucune position active.</div>';wrap.querySelectorAll('[data-refresh]').forEach(b=>b.onclick=e=>{e.stopPropagation();location.reload()});wrap.querySelectorAll('[data-close]').forEach(b=>b.onclick=e=>{e.stopPropagation();const sym=b.dataset.close;if(confirm(`AVERTISSEMENT — Confirmer la vente immédiate de ${sym} ?\n\nCette action fermera la position au prix disponible.`))manualClose(sym)});wrap.querySelectorAll('.posCard').forEach(card=>card.onclick=e=>{if(e.target.closest('button'))return;const sym=card.querySelector('.posSym')?.textContent?.trim();if(sym)openTokenSettings(sym,true)})}
+function renderHistory(){const t=totals();$('historyTotals').textContent=`+$${t.gain.toFixed(2)} / -$${t.loss.toFixed(2)}`;$('historyBody').innerHTML=history.length?history.slice().reverse().slice(0,80).map(h=>{const active=h.status==='OPEN'||h.closedAt==null,pl=active?'—':money(h.pnl),when=h.openedAt||h.closedAt,chrono=durationHMS(h.openedAt,active?Date.now():h.closedAt);return `<tr><td>${fmtDate(when)}</td><td><b>${escapeHtml(h.symbol)}</b></td><td>${price(h.entryPrice)}</td><td>${active?'—':price(h.exitPrice)}</td><td>${chrono}</td><td class="historyPnl ${active?'active':n(h.pnl)>=0?'pos':'neg'}">${pl}</td><td>${active?'ACHAT':'VENTE — '+escapeHtml(h.reason)}</td></tr>`}).join(''):'<tr><td colspan="7" class="hint">Aucun achat enregistré.</td></tr>'}
+function applyTheme(){const theme=settings.theme==='light'?'light':'dark';document.documentElement.dataset.theme=theme;const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute('content',theme==='light'?'#eef3f8':'#07111d')}
+let audioCtx=null;
+function ensureAudio(){if(!settings.sound)return null;try{if(!audioCtx)audioCtx=new (window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==='suspended')audioCtx.resume();return audioCtx}catch(_){return null}}
+function tradeAlert(kind){if(settings.sound){try{const ctx=ensureAudio();if(ctx){const o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=kind==='buy'?740:520;g.gain.setValueAtTime(.0001,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.07,ctx.currentTime+.01);g.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+.16);o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+.17)}}catch(_){}}if(settings.vibrate&&navigator.vibrate){try{navigator.vibrate(kind==='buy'?[80]:[80,50,80])}catch(_){}}}
+function fillGeneral(){fillFutures();fillBot()}
+function fillFutures(){const s=selectedSymbol,has=!!s;$('futuresNoSelection').hidden=has;$('futuresSettingsWrap').hidden=!has;$('futuresSymbol').textContent=s||'—';if(!has)return;const t=tokenSettings[s]||{},margin=Math.max(1,n(t.margin,settings.margin)),lev=clamp(n(t.leverage,settings.leverage),1,10);$('fMargin').value=margin;$('fLev').value=lev;const d=futuresDraft(s,margin,lev,'LIMIT');$('fSummary').textContent=`Marge : ISOLÉE · Notionnel demandé : $${(margin*lev).toFixed(2)}${d.qty>0?` · effectif ≈ $${d.effectiveNotional.toFixed(2)}`:''}`;$('fLimits').textContent=limitsText(s,margin,lev)}
+function fillBot(){$('bMaxActive').value=settings.maxActive;$('bTheme').value=settings.theme==='light'?'light':'dark';$('bSound').checked=settings.sound!==false;$('bVibrate').checked=settings.vibrate!==false;const summary=$('defaultRiskSummary');if(summary)summary.textContent=`Défauts risque : marge ISOLÉE ${n(settings.margin).toFixed(2)} · x${Math.round(n(settings.leverage))} · objectif +${n(settings.targetProfit).toFixed(2)} · MAX -${n(settings.maxLoss).toFixed(2)} · ${Array.isArray(settings.protectionStages)?settings.protectionStages.length:0} protections`;const btn=$('saveBotDefaultsBtn');if(btn)btn.disabled=!selectedSymbol}
+function setTokenFieldsEnabled(){
+  if(!selectedSymbol)return;
+  const localActive=openBySymbol(selectedSymbol),realActive=controllerRealPositionBySymbol(selectedSymbol),active=!!(localActive||realActive),watched=!!validated[selectedSymbol]&&!active,lock=$('tokenLockHint');
+  const protectionEls=$('protectionEditor')?.querySelectorAll('input')||[];
+  if(watched){
+    ['tExactBuy','tExactBuyPrice','tExactSale','tExactSalePrice','tTarget','tMaxLoss'].forEach(id=>$(id).disabled=true);
+    protectionEls.forEach(el=>el.disabled=true);
+    $('saveTokenBtn').disabled=true;$('instantBuyBtn').disabled=true;$('tokenDefaultsBtn').disabled=true;
+    $('fMargin').disabled=true;$('fLev').disabled=true;$('saveFuturesBtn').disabled=true;
+    lock.hidden=false;lock.textContent='Achat surveillé : paramètres verrouillés. Utilise « Annuler l’achat surveillé » avant toute modification.';
+    return;
+  }
+  if(active){
+    ['tExactBuy','tExactBuyPrice','tMaxLoss'].forEach(id=>$(id).disabled=true);
+    ['tExactSale','tExactSalePrice','tTarget'].forEach(id=>$(id).disabled=false);
+    protectionEls.forEach(el=>el.disabled=false);
+    $('saveTokenBtn').disabled=false;$('instantBuyBtn').disabled=true;$('tokenDefaultsBtn').disabled=true;$('devalidateBtn').disabled=true;
+    $('fMargin').disabled=true;$('fLev').disabled=true;$('saveFuturesBtn').disabled=true;
+    lock.hidden=false;lock.textContent=realActive?'Position réelle ACTIVE : objectif de gain, prix déterminé de VENTE et protections modifiables. Achat, marge, levier et perte MAX restent verrouillés.':'Position active : objectif de gain, prix déterminé de VENTE et protections modifiables. Achat, marge, levier et perte MAX restent verrouillés.';
+    return;
+  }
+  ['tExactBuy','tExactBuyPrice','tExactSale','tExactSalePrice','tMaxLoss'].forEach(id=>$(id).disabled=false);
+  $('tTarget').disabled=$('tTarget').dataset.exactAuto==='1';protectionEls.forEach(el=>el.disabled=false);
+  $('saveTokenBtn').disabled=false;$('tokenDefaultsBtn').disabled=false;$('fMargin').disabled=false;$('fLev').disabled=false;$('saveFuturesBtn').disabled=false;
+  lock.hidden=true;lock.textContent='';
+}
+function updateTokenPreview(){
+  if(!selectedSymbol)return;
+  const t=tokenSettings[selectedSymbol]||{},localActive=openBySymbol(selectedSymbol),realActive=controllerRealPositionBySymbol(selectedSymbol),active=localActive||realActive,margin=Math.max(1,n(t.margin,settings.margin)),lev=clamp(n(t.leverage,settings.leverage),1,10),base=localActive?{margin:n(localActive.notional)/Math.max(1,n(localActive.leverage)),leverage:n(localActive.leverage),binanceEffectiveNotional:n(localActive.notional)}:{margin,leverage:lev},buy=$('tExactBuy').checked?parsePrice($('tExactBuyPrice').value):0,sale=$('tExactSale').checked?parsePrice($('tExactSalePrice').value):0,targetEl=$('tTarget');
+  if(targetEl.dataset.exactAuto!=='1')targetEl.dataset.manualTarget=targetEl.value||settings.targetProfit;
+  const manual=n(targetEl.dataset.manualTarget,settings.targetProfit),entry=active?n(active.entryPrice):buy,both=entry>0&&sale>0,profit=both?(realActive?realPositionPnlAtPrice(realActive,sale):exactProfitFor(entry,sale,base)):null;
+  if(!active&&both&&profit!=null){targetEl.value=profit.toFixed(2);targetEl.dataset.exactAuto='1'}else if(!active){if(targetEl.dataset.exactAuto==='1')targetEl.value=manual;targetEl.dataset.exactAuto='0'}else{targetEl.dataset.exactAuto='0'}
+  const target=active?manual:(both&&profit!=null?profit:n(targetEl.value,settings.targetProfit)),goal=sale||(realActive?realPositionPriceForPnl(realActive,target):(entry?priceForPnl(entry,notional(base),target):0));$('tTargetPreview').value=goal?price(goal):'—';$('tExactProfit').textContent=profit==null?'Bénéfice prévu : —':`Bénéfice prévu : ${money(profit)} · calculé avec ${active?'le prix d’achat réel':'les deux prix déterminés'}`;setTokenFieldsEnabled()
+}
+function protectionDraft(){const els=[...($('protectionEditor')?.querySelectorAll('.protectionItem')||[])];return els.map((_,i)=>{const d=defaultProtection(i);return{enabled:$(`tProtect${i+1}`)?.checked!==false,arm:Math.max(0,n($(`tProtect${i+1}Arm`)?.value,d.arm)),floor:Math.max(0,n($(`tProtect${i+1}Floor`)?.value,d.floor))}})}
+function protectionValidationError(stages){
+  let previousArm=-Infinity,previousFloor=-Infinity;
+  for(let i=0;i<(Array.isArray(stages)?stages.length:0);i++){
+    const st=stages[i];if(!st?.enabled)continue;
+    const arm=n(st.arm,NaN),floor=n(st.floor,NaN);
+    if(!Number.isFinite(arm)||!Number.isFinite(floor)||arm<0||floor<0)return `Protection ${i+1} : montant invalide.`;
+    if(!(floor<arm))return `Protection ${i+1} : le gain protégé doit être inférieur au gain atteint.`;
+    if(arm<=previousArm)return `Protection ${i+1} : le niveau ATTEINT doit être supérieur au niveau activé précédent.`;
+    if(floor<previousFloor)return `Protection ${i+1} : le niveau PROTÉGÉ ne peut pas redescendre sous la protection précédente.`;
+    previousArm=arm;previousFloor=floor;
+  }
+  return '';
+}
+function protectionsForTarget(stages,target,minCount=0){const count=Math.max(protectionCountForTarget(target),Math.max(0,Math.floor(n(minCount,0)))),src=Array.isArray(stages)?stages:[];return Array.from({length:count},(_,i)=>{const d=defaultProtection(i),x=src[i]||d;return{enabled:x.enabled!==false,arm:Math.max(0,n(x.arm,d.arm)),floor:Math.max(0,n(x.floor,d.floor))}})}
+function reachedProtectionCount(stages,maxProfit){let count=0;for(let i=0;i<(Array.isArray(stages)?stages.length:0);i++){const st=stages[i];if(st?.enabled&&n(maxProfit)>=n(st.arm,Infinity))count=i+1}return count}
+function renderProtectionEditor(stages,target=3000,minCount=0){const arr=protectionsForTarget(stages,target,minCount),head=`<div class="protectionHead"><span class="armHead">ATTEINT</span><span class="floorHead">PROTÉGÉ</span></div>`,item=(st,i)=>`<div class="protectionItem" title="Protection ${i+1} : +${st.arm} → +${st.floor}"><input id="tProtect${i+1}" type="checkbox" ${st.enabled?'checked':''} aria-label="Activer protection ${i+1}"><span class="protectionNum">${i+1}</span><input id="tProtect${i+1}Arm" type="number" min="0" step="0.1" inputmode="decimal" value="${st.arm}" aria-label="Gain atteint protection ${i+1}"><span class="protectionArrow">→</span><input id="tProtect${i+1}Floor" type="number" min="0" step="0.1" inputmode="decimal" value="${st.floor}" aria-label="Gain protégé protection ${i+1}"></div>`;const mid=Math.ceil(arr.length/2);$('protectionEditor').innerHTML=`<div class="protectionGrid"><div class="protectionColumn">${head}${arr.slice(0,mid).map((st,j)=>item(st,j)).join('')}</div><div class="protectionColumn">${head}${arr.slice(mid).map((st,j)=>item(st,mid+j)).join('')}</div></div>`;const hint=$('protectionHint');if(hint){const last=arr.length?arr[arr.length-1]:null;hint.textContent=arr.length?`${arr.length} protections affichées pour un objectif de +${money(n(target)).replace('$','').trim()} $ : +105→+100 jusqu’à +${last.arm}→+${last.floor}. Décimales acceptées avec un point (ex. 7.8). En réel, PROTÉGÉ est un seuil de déclenchement, pas un P&L garanti. Si l’objectif augmente, Zenith ajoute automatiquement les protections utiles par tranche de 100 $.`:`Aucune protection par tranche de 100 $ n’est possible sous cet objectif.`}}
+function applyProtectionVisibility(){const cb=$('showProtectionsToggle'),details=$('protectionDetails');if(!cb||!details)return;cb.checked=settings.showProtections!==false;details.hidden=!cb.checked}
+function syncProtectionsToTarget(target){if(!selectedSymbol)return;const localActive=openBySymbol(selectedSymbol),realActive=controllerRealPositionBySymbol(selectedSymbol),active=localActive||realActive;if(validated[selectedSymbol]&&!active)return;const current=protectionDraft(),saved=localActive?.protectionStages||tokenSettings[selectedSymbol]?.protectionStages||settings.protectionStages,merged=current.length?current:saved,minCount=localActive?reachedProtectionCount(merged,localActive.maxProfit):0;renderProtectionEditor(merged,target,minCount);setTokenFieldsEnabled()}
+function fillToken(){const s=selectedSymbol,has=!!s;$('tokenNoSelection').hidden=has;$('tokenSettingsWrap').hidden=!has;applyProtectionVisibility();$('settingsSymbol').textContent=s||'—';$('selectedSymbolLabel').textContent=s||'—';$('selectedPriceLabel').textContent=`Prix : ${s?price(lastPrices.get(s)):'—'}`;renderSelectedCurrentPrice();if(!has){fillFutures();return}const localActive=openBySymbol(s),realActive=controllerRealPositionBySymbol(s),t=tokenSettings[s]||{},c={...settings,...t},manual=localActive?n(localActive.baseTargetProfit,n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit))):n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit));$('tTarget').value=manual;$('tTarget').dataset.manualTarget=manual;$('tTarget').dataset.exactAuto='0';const shownProtections=localActive?.protectionStages||t.protectionStages||settings.protectionStages;renderProtectionEditor(shownProtections,manual,localActive?reachedProtectionCount(shownProtections,localActive.maxProfit):0);$('tMaxLoss').value=n(localActive?.maxLoss,n(t.maxLoss,settings.maxLoss));$('tExactBuy').checked=!!t.exactBuyEnabled;$('tExactBuyPrice').value=n(t.exactBuyPrice)||'';$('tExactSale').checked=!!t.exactSaleEnabled;$('tExactSalePrice').value=n(t.exactSalePrice)||'';$('devalidateBtn').disabled=!validated[s];$('tokenCloseNowBtn').disabled=!localActive;$('instantBuyBtn').disabled=!!(localActive||realActive)||openPositions.length>=settings.maxActive;fillFutures();updateTokenPreview()}
 async function saveFutures(){const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);if(anyActivePositionBySymbol(s))return setStatus(`${s} est actif : marge et levier sont verrouillés. Seuls l’objectif de gain, le prix déterminé de VENTE et les protections peuvent être modifiés.`,true);if(validated[s])return setStatus(`${s} est surveillé : annule d’abord l’achat surveillé avant de modifier ses paramètres.`,true);const old=tokenSettings[s]||{},margin=Math.max(1,n($('fMargin').value,settings.margin)),leverage=Math.round(n($('fLev').value,settings.leverage));if(!(margin>=1&&margin<=1000))return setStatus('La marge doit être comprise entre 1 $ et 1 000 $.',true);if(leverage<1||leverage>10)return setStatus('Le levier doit être compris entre x1 et x10.',true);try{await ensureExchange();if(!(n(lastPrices.get(s))>0))await currentMarketPrice(s)}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}const d=futuresDraft(s,margin,leverage,'LIMIT');if(!d.ok)return setStatus(`${s} : réglage refusé par les limites Binance — ${d.error}.`,true);const buy=tokenExactBuy(s),sale=tokenExactSale(s),buyErr=buy>0?validateLimitPrice(s,buy,'Prix d’achat'):'';if(buyErr)return setStatus(`${s} : ${buyErr}.`,true);const saleErr=sale>0?validateLimitPrice(s,sale,'Prix de vente'):'';if(saleErr)return setStatus(`${s} : ${saleErr}.`,true);tokenSettings[s]={...old,enabled:true,margin,leverage,marginType:'ISOLATED',binanceQty:d.qty,binanceEffectiveNotional:d.effectiveNotional};const active=openBySymbol(s);if(active){active.margin=margin;active.leverage=leverage;active.marginType='ISOLATED';active.notional=d.effectiveNotional||margin*leverage;active.binanceQty=d.qty;active.stopExitPrice=priceForPnl(active.entryPrice,active.notional,-active.maxLoss);if(active.manualSaleTarget&&n(active.targetPrice)>active.entryPrice)active.targetProfit=exactProfitFor(active.entryPrice,active.targetPrice,{margin:active.notional/leverage,leverage});else active.targetPrice=priceForPnl(active.entryPrice,active.notional,active.targetProfit)}save();renderAll();setStatus(`${s} : Futures enregistré — ISOLÉE $${margin.toFixed(2)}, x${leverage}, quantité Binance ${d.qty}, notionnel effectif ≈ $${d.effectiveNotional.toFixed(2)}.`)}
 function readBotSettings(){return{maxActive:clamp(Math.round(n($('bMaxActive').value,settings.maxActive||3)),1,3),theme:$('bTheme').value==='light'?'light':'dark',sound:$('bSound').checked,vibrate:$('bVibrate').checked}}
 function applyBotSettings(message='Réglages BOT enregistrés.'){const next=readBotSettings(),themeChanged=next.theme!==settings.theme,soundEnabled=next.sound&&!settings.sound;settings={...settings,...next};save();if(themeChanged)applyTheme();if(soundEnabled)ensureAudio();renderKpis();fillBot();if(selectedSymbol)fillToken();setStatus(message)}
