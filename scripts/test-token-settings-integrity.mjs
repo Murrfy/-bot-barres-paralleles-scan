@@ -58,12 +58,13 @@ test('client controls do not advertise values above server real-risk caps',()=>{
   assert.doesNotMatch(html,/settings\.maxActive\|\|3\)\),1,20/);
 });
 
-test('watched tokens freeze settings while active positions keep only safe controls editable',()=>{
+test('watched tokens freeze settings while active real positions expose only safe controls',()=>{
   const locks=block('function setTokenFieldsEnabled()','function updateTokenPreview()');
   assert.match(locks,/Achat surveillé : paramètres verrouillés/);
   assert.match(locks,/\['tExactBuy','tExactBuyPrice','tExactSale','tExactSalePrice','tTarget','tMaxLoss'\]/);
-  assert.match(locks,/Position active : objectif de gain, prix déterminé de VENTE et protections modifiables/);
-  assert.match(locks,/\['tExactBuy','tExactBuyPrice','tMaxLoss'\]/);
+  assert.match(locks,/\['tExactBuy','tExactBuyPrice'\]/);
+  assert.match(locks,/\$\('tMaxLoss'\)\.disabled=!realActive\|\|maxLossPending/);
+  assert.match(locks,/protections et perte MAX modifiables/);
   assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]/);
   assert.match(locks,/\$\('fMargin'\)\.disabled=true;\$\('fLev'\)\.disabled=true/);
 });
@@ -114,7 +115,8 @@ test('live Binance positions lock unsafe token controls on the iPhone',()=>{
   assert.match(helpers,/anyActivePositionBySymbol\(symbol\)/);
   const locks=block('function setTokenFieldsEnabled()','function updateTokenPreview()');
   assert.match(locks,/realActive=controllerRealPositionBySymbol\(selectedSymbol\)/);
-  assert.match(locks,/\['tExactBuy','tExactBuyPrice','tMaxLoss'\]/);
+  assert.match(locks,/\['tExactBuy','tExactBuyPrice'\]/);
+  assert.match(locks,/\$\('tMaxLoss'\)\.disabled=!realActive\|\|maxLossPending/);
   assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]/);
   assert.match(locks,/Position réelle ACTIVE/);
   const futures=block('async function saveFutures()','function readBotSettings()');
@@ -138,18 +140,19 @@ test('live Binance target preview uses actual entry quantity and direction',()=>
   assert.match(preview,/realPositionPriceForPnl\(realActive,target\)/);
 });
 
-test('live Binance target edits synchronize central state before protected exit replacement',()=>{
+test('live Binance target and max-loss edits use protected confirmed replacements',()=>{
   const realSave=block('async function saveRealActiveTokenSettings','async function saveToken()');
   assert.match(realSave,/!inv\.managedMaxLoss\|\|inv\.maxLossConflict/);
   assert.match(realSave,/inv\.progressiveConflict/);
-  assert.match(realSave,/buildRealProtectionLevels\(\{position,targetProfitUsd:manualTarget,maxLossUsd:currentMaxLoss,priceFilter\}\)/);
-  assert.match(realSave,/tokenSettings\[s\]=\{\.\.\.old,targetProfit:manualTarget,manualTargetProfit:manualTarget,protectionStages:nextProtections/);
-  assert.match(realSave,/const centralOk=await syncControllerCloudStateNow\(\)/);
+  assert.match(realSave,/requestedMaxLoss=n\(\$\('tMaxLoss'\)\.value,currentMaxLoss\)/);
+  assert.match(realSave,/requestedMaxLoss>configuredMargin/);
+  assert.match(realSave,/buildRealProtectionLevels\([\s\S]*maxLossUsd:requestedMaxLoss/);
+  assert.match(realSave,/const maxLossChanged=Math\.abs\(currentMaxLoss-requestedMaxLoss\)>1e-8/);
   assert.match(realSave,/queueRealProtectiveUpdate\(position,'EXIT',\{wantedPrice:wantedExit,fromSettings:true\}\)/);
-  assert.match(realSave,/if\(!queued\)[\s\S]*previousOwn[\s\S]*syncControllerCloudStateNow/);
+  assert.match(realSave,/queueRealProtectiveUpdate\(position,'MAX_LOSS',[\s\S]*maxLossUsd:requestedMaxLoss/);
   const queue=block('async function queueRealProtectiveUpdate(position,kind,options={})','function renderRealEntryOrders()');
   assert.match(queue,/wanted=parsePrice\(options\?\.wantedPrice,0\)/);
-  assert.match(queue,/realProtectiveUpdatePending\.set/);
+  assert.match(queue,/maxLossUsd:n\(options\.maxLossUsd\)/);
   assert.match(queue,/setTimeout\(\(\)=>refreshBinanceAccount\(\),1000\);[\s\S]*return true/);
 });
 
