@@ -96,7 +96,9 @@ test('global risk defaults can be updated without overwriting per-token override
   assert.doesNotMatch(saveDefaults,/tokenSettings\s*=/);
   assert.match(saveDefaults,/maxLoss>margin/);
   const cloud=block('function controllerCloudStatePayload()','async function syncControllerCloudStateNow()');
-  assert.match(cloud,/settings:clone\(settings\)/);
+  assert.match(cloud,/const controlSettings=clone\(settings\)/);
+  assert.match(cloud,/settings:controlSettings/);
+  assert.match(cloud,/for\(const key of \['theme','sound','vibrate','showProtections'\]\)delete controlSettings\[key\]/);
   assert.match(cloud,/tokenSettings:clone\(normalizeRecordBlock\(tokenSettings\)\)/);
 });
 
