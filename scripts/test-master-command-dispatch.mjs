@@ -84,10 +84,10 @@ test('entry cancellation maps to protective endpoint without position-close fiel
   assert.equal('quantity' in d.body,false);
 });
 
-test('cancel entry requires Binance client order id',()=>{
+test('cancel entry requires an exact Zenith entry client order id',()=>{
   assert.throws(()=>buildMasterCommandDispatch({
     id:'command-cancel-1234',type:'EXEC_CANCEL_ENTRY',payload:{symbol:'BTCUSDT'}
-  }),/CLIENT_ORDER_ID_INVALID/);
+  }),/CANCEL_TARGET_NOT_ZENITH_ENTRY/);
 });
 
 
