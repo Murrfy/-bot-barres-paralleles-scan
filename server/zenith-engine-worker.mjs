@@ -771,8 +771,10 @@ async function callEntryExecute(body){
   return binanceApi('/api/binance-entry-execute',{method:'POST',body});
 }
 
-async function executeWatchedEntry(config){
+async function executeWatchedEntry(config,{limitPrice=config.buy,delayedCurrentPrice=false}={}){
   const symbol=config.symbol;
+  const effectiveLimitPrice=n(limitPrice,0);
+  if(!(effectiveLimitPrice>0))return {ok:false,reason:'ENTRY_LIMIT_PRICE_INVALID'};
   if(entryWatch.busySymbols.has(symbol))return {ok:false,reason:'ENTRY_ALREADY_BUSY'};
   if(!entryWatchMayDispatch(symbol))return {ok:false,reason:'ENTRY_SLOT_OR_RUNTIME_NOT_READY',slotBlocked:true};
 
@@ -787,7 +789,7 @@ async function executeWatchedEntry(config){
     margin:config.margin,
     leverage:config.leverage,
     maxLoss:config.maxLoss,
-    limitPrice:config.buy,
+    limitPrice:effectiveLimitPrice,
   };
   let preparedCommitted=false;
   try{
@@ -836,7 +838,8 @@ async function executeWatchedEntry(config){
     entryWatch.lastActionAt=Date.now();
     entryWatch.lastError='';
     log('AUTO_ENTRY_SUBMITTED',{
-      symbol,commandId,limitPrice:config.buy,
+      symbol,commandId,limitPrice:effectiveLimitPrice,
+      requestedBuyPrice:config.buy,delayedCurrentPrice:delayedCurrentPrice===true,
       margin:config.margin,leverage:config.leverage,maxLoss:config.maxLoss,
       entryClientOrderId:entryId,protectionClientAlgoId:protectionId,
     });
@@ -898,7 +901,10 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
     entryWatch.lastError='ENTRY_CONFIG_INVALID';
     return false;
   }
-  const executed=await executeWatchedEntry(config);
+  const executed=await executeWatchedEntry(config,{
+    limitPrice:n(result.signal?.limitPrice,config.buy),
+    delayedCurrentPrice:result.signal?.delayedCurrentPrice===true,
+  });
   if(executed.ok){
     scheduleEntryWatchSave(250);
     return true;
