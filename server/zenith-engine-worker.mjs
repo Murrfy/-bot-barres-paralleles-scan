@@ -387,6 +387,42 @@ async function applyControllerState(controllerState){
   return {revision,stateHash};
 }
 
+function activeMaxLossOnlyConfigRefreshAllowed(currentConfig,nextConfig){
+  if(!currentConfig||typeof currentConfig!=='object'||!nextConfig||typeof nextConfig!=='object')return false;
+  for(const key of ['settings','manualTokens','validated']){
+    if(stableStringify(currentConfig[key]||{})!==stableStringify(nextConfig[key]||{}))return false;
+  }
+
+  const currentTokens=currentConfig.tokenSettings&&typeof currentConfig.tokenSettings==='object'
+    ?currentConfig.tokenSettings:{};
+  const nextTokens=nextConfig.tokenSettings&&typeof nextConfig.tokenSettings==='object'
+    ?nextConfig.tokenSettings:{};
+  const symbols=[...new Set([...Object.keys(currentTokens),...Object.keys(nextTokens)])].sort();
+  let changed=0;
+
+  for(const symbol of symbols){
+    const before=currentTokens[symbol]&&typeof currentTokens[symbol]==='object'?currentTokens[symbol]:null;
+    const after=nextTokens[symbol]&&typeof nextTokens[symbol]==='object'?nextTokens[symbol]:null;
+    if(!before||!after)return false;
+    if(stableStringify(before)===stableStringify(after))continue;
+
+    const beforeRest={...before};
+    const afterRest={...after};
+    delete beforeRest.maxLoss;delete afterRest.maxLoss;
+    delete beforeRest.marginType;delete afterRest.marginType;
+    if(stableStringify(beforeRest)!==stableStringify(afterRest))return false;
+
+    const maxLoss=n(after.maxLoss,NaN);
+    const margin=n(after.margin,n(nextConfig?.settings?.margin,NaN));
+    if(!(maxLoss>=2&&maxLoss<=REAL_RISK_LIMITS.maxLossUsd))return false;
+    if(!(margin>0)||maxLoss>margin+1e-8)return false;
+    if(String(after.marginType||'ISOLATED').toUpperCase()!=='ISOLATED')return false;
+    changed+=1;
+  }
+
+  return changed>0;
+}
+
 async function syncControllerConfig(){
   if(!runtime.leaseActive)return false;
   const {response,data}=await syncApi('master-config-status');
@@ -417,9 +453,17 @@ async function syncControllerConfig(){
   if(data.synchronized===true&&!localMatches){
     const activity=data.activity||{};
     if(n(activity.activePositions)>0||n(activity.openOrders)>0){
-      runtime.synchronized=false;
-      runtime.error='ENGINE_LOCAL_CONFIG_DRIFT_ACTIVE';
-      return false;
+      if(!activeMaxLossOnlyConfigRefreshAllowed(runtime.config,controllerState.data)){
+        runtime.synchronized=false;
+        runtime.error='ENGINE_LOCAL_CONFIG_DRIFT_ACTIVE';
+        return false;
+      }
+      const applied=await applyControllerState(controllerState);
+      runtime.appliedRevision=applied.revision;
+      runtime.controllerRevision=applied.revision;
+      runtime.synchronized=true;
+      runtime.error='';
+      return true;
     }
   }
 
