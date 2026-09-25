@@ -8,7 +8,6 @@ test('24/7 engine repairs one exact missing MAX-LOSS before accepting reconcilia
   assert.match(worker,/buildMaxLossRepairPlan/);
   assert.match(worker,/repairMissingMaxLoss\(data\.report\)/);
   assert.match(worker,/AUTO_MAX_LOSS_REPAIR_/);
-  assert.match(worker,/syncApi\('emergency-stop'/);
   assert.match(worker,/protectionKind:'MAX_LOSS'/);
   assert.match(worker,/phase:'PLACE_NEW'/);
   assert.match(worker,/STOP_MARKET/);
@@ -16,8 +15,9 @@ test('24/7 engine repairs one exact missing MAX-LOSS before accepting reconcilia
   assert.match(worker,/return reconcile\(true\)/);
 });
 
-test('ambiguous or failed repair remains fail-closed',()=>{
+test('ambiguous or failed repair remains fail-closed without manual PANIC or auto-close',()=>{
   assert.match(worker,/if\(plan\.action!=='REPAIR'\)/);
   assert.match(worker,/await invalidateStream\(reason\)/);
   assert.match(worker,/AUTO_MAX_LOSS_REPAIR_RECONCILIATION_FAILED/);
+  assert.equal(worker.includes("syncApi('emergency-stop'"),false);
 });
