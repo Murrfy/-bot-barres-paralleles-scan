@@ -1839,7 +1839,103 @@ async function removeProcessingAtomic(raw, device) {
   ]));
 }
 
-async function completeProcessingCommandAtomic(raw, command, device) {
+async function prepareActiveMaxLossControllerCommit(command, payloadStatus, device) {
+  if (String(command?.type || '').toUpperCase() !== 'EXEC_UPDATE_PROTECTION' ||
+      String(payloadStatus?.protectionKind || '').toUpperCase() !== 'MAX_LOSS' ||
+      !Number.isFinite(Number(payloadStatus?.maxLossUsd))) return null;
+
+  const requestedMaxLossUsd = Number(payloadStatus.maxLossUsd);
+  if (!(requestedMaxLossUsd >= 2 && requestedMaxLossUsd <= REAL_RISK_LIMITS.maxLossUsd)) {
+    const e = new Error('MAX_LOSS_USD_INVALID'); e.code = 'MAX_LOSS_USD_INVALID'; throw e;
+  }
+
+  const controllerRaw = await redis(['GET', KEY_CONTROLLER_STATE]);
+  const controllerState = parseStoredJson(controllerRaw);
+  const expectedControllerDeviceId = String(command?.deviceId || '');
+  if (!controllerState || String(controllerState.controllerDeviceId || '') !== expectedControllerDeviceId) {
+    const e = new Error('CONTROLLER_STATE_OWNER_CHANGED'); e.code = 'CONTROLLER_STATE_OWNER_CHANGED'; throw e;
+  }
+  const revision = Number(controllerState.revision || 0);
+  const currentStateHash = String(controllerState.stateHash || '');
+  const data = controllerState.data && typeof controllerState.data === 'object' ? controllerState.data : null;
+  if (!Number.isInteger(revision) || revision <= 0 || !currentStateHash || !data ||
+      sha256(stableStringify(data)) !== currentStateHash) {
+    const e = new Error('CONTROLLER_STATE_INVALID'); e.code = 'CONTROLLER_STATE_INVALID'; throw e;
+  }
+
+  const symbol = String(payloadStatus.symbol || '').toUpperCase();
+  const tokenSettings = data.tokenSettings && typeof data.tokenSettings === 'object' ? data.tokenSettings : {};
+  const settings = data.settings && typeof data.settings === 'object' ? data.settings : {};
+  const currentToken = tokenSettings[symbol] && typeof tokenSettings[symbol] === 'object' ? tokenSettings[symbol] : {};
+  const margin = Number(currentToken.margin ?? settings.margin);
+  if (!(margin > 0)) {
+    const e = new Error('CONFIGURED_MARGIN_UNAVAILABLE'); e.code = 'CONFIGURED_MARGIN_UNAVAILABLE'; throw e;
+  }
+  if (requestedMaxLossUsd > margin + 1e-8) {
+    const e = new Error('MAX_LOSS_EXCEEDS_CONFIGURED_MARGIN');
+    e.code = 'MAX_LOSS_EXCEEDS_CONFIGURED_MARGIN';
+    e.requestedMaxLossUsd = requestedMaxLossUsd;
+    e.configuredMarginUsd = margin;
+    throw e;
+  }
+
+  const nextData = {
+    ...data,
+    tokenSettings: {
+      ...tokenSettings,
+      [symbol]: {
+        ...currentToken,
+        maxLoss: requestedMaxLossUsd,
+        marginType: 'ISOLATED',
+      },
+    },
+  };
+  const nextRevision = revision + 1;
+  const updatedAt = Date.now();
+  const nextStateHash = sha256(stableStringify(nextData));
+  const nextControllerState = {
+    ...controllerState,
+    version: 1,
+    revision: nextRevision,
+    updatedAt,
+    controllerDeviceId: expectedControllerDeviceId,
+    stateHash: nextStateHash,
+    data: nextData,
+  };
+  const appliedState = {
+    version: 1,
+    revision: nextRevision,
+    stateHash: nextStateHash,
+    appliedAt: updatedAt,
+    masterDeviceId: String(device?.deviceId || ''),
+  };
+  const audit = {
+    at: updatedAt,
+    kind: 'ACTIVE_MAX_LOSS_CONFIG_COMMITTED',
+    commandId: String(command?.id || ''),
+    controllerDeviceId: expectedControllerDeviceId,
+    masterDeviceId: String(device?.deviceId || ''),
+    symbol,
+    previousRevision: revision,
+    revision: nextRevision,
+    maxLossUsd: requestedMaxLossUsd,
+    stateHash: nextStateHash,
+  };
+  return {
+    expectedControllerDeviceId,
+    expectedRevision: revision,
+    expectedStateHash: currentStateHash,
+    nextRevision,
+    nextStateHash,
+    nextControllerRaw: JSON.stringify(nextControllerState),
+    appliedRaw: JSON.stringify(appliedState),
+    auditRaw: JSON.stringify(audit),
+    symbol,
+    maxLossUsd: requestedMaxLossUsd,
+  };
+}
+
+async function completeProcessingCommandAtomic(raw, command, device, controllerCommit = null) {
   const commandId = String(command?.id || '');
   const doneKey = commandTerminalResultKey(commandId);
   const doneValue = JSON.stringify({
@@ -1850,6 +1946,13 @@ async function completeProcessingCommandAtomic(raw, command, device) {
     status: 'ACK',
     reason: '',
     at: Date.now(),
+    ...(controllerCommit ? {
+      activeMaxLossCommitted:true,
+      controllerRevision:controllerCommit.nextRevision,
+      controllerStateHash:controllerCommit.nextStateHash,
+      symbol:controllerCommit.symbol,
+      maxLossUsd:controllerCommit.maxLossUsd,
+    } : {}),
   });
   const script = [
     "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
@@ -1859,24 +1962,54 @@ async function completeProcessingCommandAtomic(raw, command, device) {
     "local roleIssuedAt = tonumber(redis.call('GET', KEYS[4]) or '0') or 0",
     "local sessionCreatedAt = tonumber(ARGV[3]) or 0",
     "if roleIssuedAt > 0 and sessionCreatedAt < roleIssuedAt then return -3 end",
+    "if ARGV[7] == '1' then",
+    "  local currentController = tostring(redis.call('GET', KEYS[6]) or '')",
+    "  if currentController ~= ARGV[8] then return -4 end",
+    "  local currentRaw = redis.call('GET', KEYS[7])",
+    "  if not currentRaw then return -5 end",
+    "  local ok, current = pcall(cjson.decode, currentRaw)",
+    "  if not ok then return -5 end",
+    "  if tonumber(current['revision'] or 0) ~= tonumber(ARGV[9]) then return -6 end",
+    "  if tostring(current['stateHash'] or '') ~= ARGV[10] then return -6 end",
+    "end",
     "local removed = redis.call('LREM', KEYS[1], 1, ARGV[1])",
     "if removed <= 0 then return 0 end",
+    "if ARGV[7] == '1' then",
+    "  redis.call('SET', KEYS[7], ARGV[11])",
+    "  redis.call('SET', KEYS[8], ARGV[12])",
+    "  redis.call('SET', KEYS[9], ARGV[13])",
+    "  redis.call('LPUSH', KEYS[10], ARGV[14])",
+    "  redis.call('LTRIM', KEYS[10], 0, 199)",
+    "end",
     "if ARGV[4] == '1' then redis.call('SET', KEYS[5], ARGV[5], 'EX', ARGV[6]) end",
     "return 1"
   ].join('\n');
   return Number(await redis([
-    'EVAL', script, '5',
+    'EVAL', script, '10',
     KEY_PROCESSING,
     KEY_MASTER_DEVICE,
     KEY_MASTER,
     roleAssignmentKey(PREFIX, 'master'),
     doneKey,
+    KEY_CONTROLLER_DEVICE,
+    KEY_CONTROLLER_STATE,
+    KEY_CONTROLLER_REV,
+    KEY_MASTER_CONFIG_ACK,
+    KEY_AUDIT,
     raw,
     String(device?.deviceId || ''),
     String(Number(device?.createdAt || 0)),
     commandId ? '1' : '0',
     doneValue,
     String(COMMAND_DEDUPE_TTL_SECONDS),
+    controllerCommit ? '1' : '0',
+    String(controllerCommit?.expectedControllerDeviceId || ''),
+    String(controllerCommit?.expectedRevision || 0),
+    String(controllerCommit?.expectedStateHash || ''),
+    String(controllerCommit?.nextControllerRaw || ''),
+    String(controllerCommit?.nextRevision || 0),
+    String(controllerCommit?.appliedRaw || ''),
+    String(controllerCommit?.auditRaw || ''),
   ]));
 }
 
@@ -4336,6 +4469,11 @@ export default async function handler(req, res) {
         type:String(result.type || ''),
         clientCommandId:String(result.clientCommandId || ''),
         at:Number(result.at || 0),
+        activeMaxLossCommitted:result.activeMaxLossCommitted===true,
+        controllerRevision:Math.max(0,Number(result.controllerRevision || 0)),
+        controllerStateHash:String(result.controllerStateHash || ''),
+        symbol:String(result.symbol || ''),
+        maxLossUsd:Number.isFinite(Number(result.maxLossUsd))?Number(result.maxLossUsd):null,
       });
     }
 
@@ -4695,6 +4833,7 @@ export default async function handler(req, res) {
       try { command = JSON.parse(raw); } catch {}
       const commandId = String(command?.id || '');
       const commandType = String(command?.type || '').toUpperCase();
+      let controllerCompletion = null;
 
       if (commandType === 'EXEC_OPEN_MARKET_POSITION') {
         const payload = command?.payload || {};
@@ -4919,6 +5058,19 @@ export default async function handler(req, res) {
         }
         if (!confirmedOrder) return send(res, 409, { ok:false, code:'EXECUTION_ACK_NEW_ORDER_NOT_CONFIRMED' });
 
+        if (payloadStatus.protectionKind === 'MAX_LOSS' && Number.isFinite(Number(payloadStatus.maxLossUsd))) {
+          try {
+            controllerCompletion = await prepareActiveMaxLossControllerCommit(command, payloadStatus, device);
+          } catch (e) {
+            return send(res, 409, {
+              ok:false,
+              code:e?.code || 'ACTIVE_MAX_LOSS_CONFIG_COMMIT_PREPARE_FAILED',
+              requestedMaxLossUsd:Number.isFinite(Number(e?.requestedMaxLossUsd))?Number(e.requestedMaxLossUsd):null,
+              configuredMarginUsd:Number.isFinite(Number(e?.configuredMarginUsd))?Number(e.configuredMarginUsd):null,
+            });
+          }
+        }
+
         await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
           at:Date.now(),kind:'EXEC_PROTECTIVE_UPDATE_CONFIRMED',commandId,commandType,
           deviceId:device.deviceId,symbol:payloadStatus.symbol,newClientId,previousId,
@@ -4974,8 +5126,18 @@ export default async function handler(req, res) {
         await redis(['LTRIM', KEY_AUDIT, '0', '199']);
       }
 
-      const completed = await completeProcessingCommandAtomic(raw, command, device);
+      const completed = await completeProcessingCommandAtomic(raw, command, device, controllerCompletion);
       if (completed < 0) {
+        if (completed === -4 || completed === -5 || completed === -6) {
+          if (completed === -4) clearDeviceSessionCookie(res);
+          return send(res, 409, {
+            ok:false,
+            code:completed === -4 ? 'CONTROLLER_ROLE_CHANGED_DURING_ACK'
+              : completed === -5 ? 'CONTROLLER_STATE_UNAVAILABLE_DURING_ACK'
+              : 'CONTROLLER_STATE_REVISION_CHANGED_DURING_ACK',
+            commandId,
+          });
+        }
         clearDeviceSessionCookie(res);
         return send(res, 409, {
           ok:false,
@@ -4986,7 +5148,17 @@ export default async function handler(req, res) {
       if (completed !== 1) {
         return send(res, 409, { ok:false, code:'COMMAND_ACK_NOT_PROCESSING', commandId });
       }
-      return send(res, 200, { ok:true, commandId });
+      return send(res, 200, {
+        ok:true,
+        commandId,
+        ...(controllerCompletion ? {
+          activeMaxLossCommitted:true,
+          controllerRevision:controllerCompletion.nextRevision,
+          controllerStateHash:controllerCompletion.nextStateHash,
+          symbol:controllerCompletion.symbol,
+          maxLossUsd:controllerCompletion.maxLossUsd,
+        } : {}),
+      });
     }
 
     if (action === 'command-fail' && req.method === 'POST') {
