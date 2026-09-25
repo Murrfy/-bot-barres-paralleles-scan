@@ -75,19 +75,19 @@ test('entry cancellation maps to protective endpoint without position-close fiel
   const d=buildMasterCommandDispatch({
     id:'command-cancel-1234',
     type:'EXEC_CANCEL_ENTRY',
-    payload:{symbol:'BTCUSDT',clientOrderId:'zenith-entry-123'}
+    payload:{symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567'}
   });
   assert.equal(d.supported,true);
   assert.equal(d.endpoint,'/api/binance-protective-execute');
   assert.equal(d.body.type,'EXEC_CANCEL_ENTRY');
-  assert.equal(d.body.clientOrderId,'zenith-entry-123');
+  assert.equal(d.body.clientOrderId,'zth-ENT-0123456789abcdef01234567');
   assert.equal('quantity' in d.body,false);
 });
 
-test('cancel entry requires Binance client order id',()=>{
+test('cancel entry requires an exact Zenith entry client order id',()=>{
   assert.throws(()=>buildMasterCommandDispatch({
     id:'command-cancel-1234',type:'EXEC_CANCEL_ENTRY',payload:{symbol:'BTCUSDT'}
-  }),/CLIENT_ORDER_ID_INVALID/);
+  }),/CANCEL_TARGET_NOT_ZENITH_ENTRY/);
 });
 
 
@@ -106,4 +106,9 @@ test('active protection-table config command is server-only and carries no Binan
   assert.equal(d.endpoint,'');
   assert.equal(d.body.type,'EXEC_UPDATE_ACTIVE_CONFIG');
   assert.deepEqual(d.body.activeConfig,activeConfig);
+});
+
+
+test('cancel dispatch rejects non-Zenith entry ids',()=>{
+  assert.throws(()=>buildMasterCommandDispatch({id:'command-cancel-1234',type:'EXEC_CANCEL_ENTRY',payload:{symbol:'BTCUSDT',clientOrderId:'external-order-123'}}),/CANCEL_TARGET_NOT_ZENITH_ENTRY/);
 });

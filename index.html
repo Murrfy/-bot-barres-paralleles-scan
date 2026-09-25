@@ -797,9 +797,17 @@ function renderRealEntryOrders(){
   if(!rows.length){wrap.innerHTML='<div class="hint">Aucun ordre d’entrée standard réel en attente.</div>';return}
   const controller=controllerIdentity.paired&&controllerIdentity.role==='controller';
   wrap.innerHTML=rows.map((o,i)=>{
-    const key=controllerRealCommandModule?controllerRealCommandModule.realEntryOrderKey(o):'';
+    const cid=String(o?.clientOrderId||'');
+    const managed=/^zth-ENT-[a-f0-9]{24}$/i.test(cid)&&
+      String(o?.side||'').toUpperCase()==='BUY'&&
+      String(o?.type||'').toUpperCase()==='LIMIT'&&
+      String(o?.timeInForce||'').toUpperCase()==='GTC'&&
+      o?.reduceOnly!==true&&String(o?.positionSide||'BOTH').toUpperCase()==='BOTH';
+    let key='';
+    if(managed&&controllerRealCommandModule){try{key=controllerRealCommandModule.realEntryOrderKey(o)}catch(_){key=''}}
     const pending=key&&realCancelPending.has(key);
-    return `<div class="posCard"><div class="posTop"><span class="posSym">ENTRÉE RÉELLE · ${escapeHtml(o.symbol)}</span><span class="hint">${escapeHtml(o.side)} · ${escapeHtml(o.type)}</span></div><div class="posGrid"><span>Prix</span><b>${price(o.price)}</b><span>Quantité</span><b>${escapeHtml(String(o.origQty||'—'))}</b><span>Exécuté</span><b>${escapeHtml(String(o.executedQty||'0'))}</b><span>Statut</span><b>${escapeHtml(String(o.status||'—'))}</b></div><button class="btn danger closeNowMini" data-real-cancel="${i}" ${controller&&!pending?'':'disabled'}>${pending?'ANNULATION EN ATTENTE':'ANNULER ENTRÉE RÉELLE'}</button></div>`;
+    const actionText=managed?(pending?'ANNULATION EN ATTENTE':'ANNULER ENTRÉE RÉELLE'):'EXTERNE · LECTURE SEULE';
+    return `<div class="posCard"><div class="posTop"><span class="posSym">ENTRÉE RÉELLE · ${escapeHtml(o.symbol)}</span><span class="hint">${managed?'ZENITH':'EXTERNE'} · ${escapeHtml(o.side)} · ${escapeHtml(o.type)}</span></div><div class="posGrid"><span>Prix</span><b>${price(o.price)}</b><span>Quantité</span><b>${escapeHtml(String(o.origQty||'—'))}</b><span>Exécuté</span><b>${escapeHtml(String(o.executedQty||'0'))}</b><span>Statut</span><b>${escapeHtml(String(o.status||'—'))}</b></div><button class="btn danger closeNowMini" data-real-cancel="${i}" ${controller&&managed&&!pending?'':'disabled'}>${actionText}</button></div>`;
   }).join('');
   wrap.querySelectorAll('[data-real-cancel]').forEach(b=>b.onclick=e=>{e.stopPropagation();const o=rows[Number(b.dataset.realCancel)];if(o)queueRealEntryCancel(o)});
 }

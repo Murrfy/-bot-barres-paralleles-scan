@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cancelEntryOrderIdempotent, BinanceRequestError } from '../lib/binance-order-writer.mjs';
 
-const openOrder={symbol:'BTCUSDT',clientOrderId:'entry-123',orderId:1,status:'NEW',reduceOnly:false,positionSide:'BOTH'};
+const openOrder={symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',orderId:1,status:'NEW',side:'BUY',type:'LIMIT',timeInForce:'GTC',reduceOnly:false,positionSide:'BOTH'};
 function json(body,status=200){return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}})}
 
 test('write lock never DELETEs',async()=>{
   const methods=[];
   const fetchImpl=async(url,init={})=>{methods.push(init.method);return json(openOrder)};
-  const r=await cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'entry-123',writesEnabled:false,timestamp:1});
+  const r=await cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',writesEnabled:false,timestamp:1});
   assert.equal(r.disposition,'WRITE_LOCKED');
   assert.deepEqual(methods,['GET']);
 });
@@ -20,7 +20,7 @@ test('cancel entry queries first then performs one DELETE',async()=>{
     if(init.method==='GET')return json(openOrder);
     return json({...openOrder,status:'CANCELED'});
   };
-  const r=await cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'entry-123',writesEnabled:true,timestamp:1});
+  const r=await cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',writesEnabled:true,timestamp:1});
   assert.equal(r.disposition,'CANCELED');
   assert.equal(r.writeAttempted,true);
   assert.deepEqual(methods,['GET','DELETE']);
@@ -29,7 +29,7 @@ test('cancel entry queries first then performs one DELETE',async()=>{
 test('filled order is never canceled and requests reconciliation',async()=>{
   const methods=[];
   const fetchImpl=async(url,init={})=>{methods.push(init.method);return json({...openOrder,status:'FILLED'})};
-  const r=await cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'entry-123',writesEnabled:true,timestamp:1});
+  const r=await cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',writesEnabled:true,timestamp:1});
   assert.equal(r.disposition,'ALREADY_FILLED');
   assert.equal(r.writeAttempted,false);
   assert.equal(r.reconciliationRequired,true);
@@ -39,7 +39,7 @@ test('filled order is never canceled and requests reconciliation',async()=>{
 test('reduce-only order is never canceled by entry-cancel path',async()=>{
   const fetchImpl=async()=>json({...openOrder,reduceOnly:true});
   await assert.rejects(
-    cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'entry-123',writesEnabled:true,timestamp:1}),
+    cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',writesEnabled:true,timestamp:1}),
     e=>e instanceof BinanceRequestError&&e.message==='CANCEL_TARGET_IS_REDUCE_ONLY'
   );
 });
@@ -54,7 +54,7 @@ test('ambiguous DELETE is resolved only by query, never blind DELETE retry',asyn
     }
     throw new TypeError('network reset');
   };
-  const r=await cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'entry-123',writesEnabled:true,timestamp:1});
+  const r=await cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',writesEnabled:true,timestamp:1});
   assert.equal(r.disposition,'RECOVERED_CANCELED');
   assert.deepEqual(methods,['GET','DELETE','GET']);
 });
@@ -62,7 +62,23 @@ test('ambiguous DELETE is resolved only by query, never blind DELETE retry',asyn
 test('unknown cancel target fails closed',async()=>{
   const fetchImpl=async()=>json({code:-2013,msg:'Order does not exist.'},400);
   await assert.rejects(
-    cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'entry-123',writesEnabled:true,timestamp:1}),
+    cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',writesEnabled:true,timestamp:1}),
     e=>e instanceof BinanceRequestError&&e.message==='CANCEL_TARGET_UNKNOWN'&&e.ambiguous===true
   );
+});
+
+
+test('external client id is rejected before Binance lookup',async()=>{
+  let called=false;
+  const fetchImpl=async()=>{called=true;return json(openOrder)};
+  await assert.rejects(cancelEntryOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'external-order-123',writesEnabled:true,timestamp:1}),/CANCEL_TARGET_NOT_ZENITH_ENTRY/);
+  assert.equal(called,false);
+});
+
+
+test('entry cancellation refuses wrong side, type, or time in force after lookup',async()=>{
+  const args={apiKey:'k',secret:'s',symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',writesEnabled:true,timestamp:1};
+  await assert.rejects(cancelEntryOrderIdempotent({...args,fetchImpl:async()=>json({...openOrder,side:'SELL'})}),e=>e instanceof BinanceRequestError&&e.message==='CANCEL_TARGET_NOT_BUY');
+  await assert.rejects(cancelEntryOrderIdempotent({...args,fetchImpl:async()=>json({...openOrder,type:'MARKET'})}),e=>e instanceof BinanceRequestError&&e.message==='CANCEL_TARGET_NOT_LIMIT');
+  await assert.rejects(cancelEntryOrderIdempotent({...args,fetchImpl:async()=>json({...openOrder,timeInForce:'IOC'})}),e=>e instanceof BinanceRequestError&&e.message==='CANCEL_TARGET_NOT_GTC');
 });

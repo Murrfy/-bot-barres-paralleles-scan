@@ -292,6 +292,8 @@ jobs:
         run: node --test scripts/test-master-worker-routing.mjs
       - name: Test idempotent real entry cancellation
         run: node --test scripts/test-binance-order-cancel.mjs
+      - name: Test Zenith-only entry cancellation ownership
+        run: node --test scripts/test-entry-cancel-ownership.mjs
       - name: Test protective execution arm gate
         run: node --test scripts/test-protective-arm-gate.mjs
       - name: Test final MASTER gate before protective Binance writes

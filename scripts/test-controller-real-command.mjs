@@ -54,17 +54,25 @@ test('controller command builder cannot create an entry',()=>{
 
 
 test('controller can construct only a stable cancel command for a visible non-reduce-only entry',()=>{
-  const order={symbol:'BTCUSDT',clientOrderId:'entry-abc-123',positionSide:'BOTH',reduceOnly:false,updateTime:1790161000000};
+  const order={symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',side:'BUY',type:'LIMIT',timeInForce:'GTC',positionSide:'BOTH',reduceOnly:false,updateTime:1790161000000};
   const a=buildControllerCancelEntryCommand(order);
   const b=buildControllerCancelEntryCommand({...order});
   assert.equal(a.type,'EXEC_CANCEL_ENTRY');
-  assert.equal(a.payload.clientOrderId,'entry-abc-123');
+  assert.equal(a.payload.clientOrderId,'zth-ENT-0123456789abcdef01234567');
   assert.equal(a.clientCommandId,b.clientCommandId);
   assert.equal(realEntryOrderKey(order),realEntryOrderKey({...order}));
 });
 
 test('controller refuses canceling reduce-only or hedge orders',()=>{
-  const base={symbol:'BTCUSDT',clientOrderId:'entry-abc-123',positionSide:'BOTH',reduceOnly:false};
+  const base={symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',side:'BUY',type:'LIMIT',timeInForce:'GTC',positionSide:'BOTH',reduceOnly:false};
   assert.throws(()=>buildControllerCancelEntryCommand({...base,reduceOnly:true}),/CANCEL_TARGET_IS_REDUCE_ONLY/);
   assert.throws(()=>buildControllerCancelEntryCommand({...base,positionSide:'LONG'}),/HEDGE_MODE_UNSUPPORTED/);
+});
+
+test('controller refuses external or non-entry order cancellation',()=>{
+  const base={symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',side:'BUY',type:'LIMIT',timeInForce:'GTC',positionSide:'BOTH',reduceOnly:false};
+  assert.throws(()=>buildControllerCancelEntryCommand({...base,clientOrderId:'external-order-123'}),/CANCEL_TARGET_NOT_ZENITH_ENTRY/);
+  assert.throws(()=>buildControllerCancelEntryCommand({...base,side:'SELL'}),/CANCEL_TARGET_NOT_BUY/);
+  assert.throws(()=>buildControllerCancelEntryCommand({...base,type:'MARKET'}),/CANCEL_TARGET_NOT_LIMIT/);
+  assert.throws(()=>buildControllerCancelEntryCommand({...base,timeInForce:'IOC'}),/CANCEL_TARGET_NOT_GTC/);
 });
