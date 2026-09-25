@@ -2395,52 +2395,50 @@ function effectiveSalePrice(s){const p=openBySymbol(s);if(p&&n(p.targetPrice)>0)
 function dismissSymbol(s){if(openBySymbol(s))return setStatus(`${s} est ACTIF.`,true);if(validated[s])return setStatus(`${s} est surveillé : annule d'abord son achat surveillé.`,true);dismissed[s]=Date.now();delete manualTokens[s];if(selectedSymbol===s)selectedSymbol=tableRows().find(r=>r.symbol!==s)?.symbol||'';save();renderAll();setStatus(`${s} supprimé de la liste.`)}
 function renderTable(){expireWaitingSignals();const rows=tableRows(),body=$('selectionBody');$('selectionCount').textContent=`${rows.length} jeton(s)`;body.innerHTML=rows.map((r,i)=>{const s=r.symbol,last=n(lastPrices.get(s),r.last),buy=n(validated[s]?.buy,tokenExactBuy(s)),sale=effectiveSalePrice(s),d=distanceBuy(s,last),st=rowStatus(s),missed=missedSignals[s]?.state==='expired',waiting=missedSignals[s]?.state==='waiting',rc=openBySymbol(s)?'activeRow':validated[s]?'validRow':'',cls=s===selectedSymbol?'sel ':'';return `<tr class="${cls}${rc}" data-symbol="${escapeHtml(s)}"><td>${i+1}</td><td><b>${escapeHtml(s)}</b></td><td>${price(last)}</td><td>${price(buy)}</td><td>${price(sale)}</td><td>${d==null?'—':d.toFixed(2)+'%'}</td><td class="${missed?'missedStatus':waiting?'waitingStatus':''}">${escapeHtml(st)}</td><td><button class="trashMini" data-trash="${escapeHtml(s)}" ${openBySymbol(s)||validated[s]?'disabled':''}>🗑</button></td></tr>`}).join('');body.querySelectorAll('tr[data-symbol]').forEach(tr=>tr.onclick=e=>{if(e.target.closest('[data-trash]'))return;openTokenSettings(tr.dataset.symbol,true)});body.querySelectorAll('[data-trash]').forEach(b=>b.onclick=e=>{e.stopPropagation();dismissSymbol(b.dataset.trash)})}
 function totals(){const t=binanceHistory?.totals||{};return{gain:Math.max(0,n(t.gain,0)),loss:Math.max(0,n(t.loss,0)),net:n(t.net,0)}}
-function renderKpis(){const t=totals(),watch=Object.keys(validated).filter(s=>!openBySymbol(s)&&!revalidateBlock[s]).length;$('kWatch').textContent=watch;$('kActive').textContent=`${n(binanceAccount.realPositions,0)}/${settings.maxActive}`;$('kGain').textContent=`+${t.gain.toFixed(2)}`;$('kLoss').textContent=`-${t.loss.toFixed(2)}`;$('liveBadge').textContent=`LIVE ${wsLive?1:0}`;$('liveBadge').classList.toggle('on',wsLive);renderBinanceAccount()}
+function renderKpis(){const t=totals(),watch=Object.keys(validated).filter(s=>!openBySymbol(s)&&!revalidateBlock[s]).length;$('kWatch').textContent=watch;$('kActive').textContent=String(n(binanceAccount.realPositions,0))+'/'+String(settings.maxActive);$('kGain').textContent=money(t.gain);$('kLoss').textContent=money(-t.loss);$('liveBadge').textContent='LIVE '+String(wsLive?1:0);$('liveBadge').classList.toggle('on',wsLive);renderBinanceAccount()}
 function pnlAt(p,mark){return ((n(mark)-n(p.entryPrice))/n(p.entryPrice))*n(p.notional)}
 function priceForPnl(entry,notionalValue,pnl){return n(entry)*(1+n(pnl)/n(notionalValue))}
-function durationHMS(openedAt,closedAt=Date.now()){const secs=Math.max(0,Math.floor((n(closedAt,Date.now())-n(openedAt,Date.now()))/1000)),h=Math.floor(secs/3600),m=Math.floor((secs%3600)/60),s=secs%60;return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
+function durationHMS(openedAt,closedAt=Date.now()){const secs=Math.max(0,Math.floor((n(closedAt,Date.now())-n(openedAt,Date.now()))/1000)),h=Math.floor(secs/3600),m=Math.floor((secs%3600)/60),sec=secs%60;return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0')}
 function elapsedHMS(openedAt){return durationHMS(openedAt,Date.now())}
 function renderPositions(){return false}
 function historyFeeText(row){
   const parts=[];
-  if(n(row?.commissionUsdt,0)>0)parts.push('-'+n(row.commissionUsdt).toFixed(2));
+  if(n(row?.commissionUsdt,0)>0)parts.push(money(-n(row.commissionUsdt)));
   for(const [asset,amount] of Object.entries(row?.feesByAsset||{})){
     if(asset==='USDT'||!(n(amount)>0))continue;
     parts.push('-'+n(amount).toFixed(8).replace(/0+$/,'').replace(/\.$/,'')+' '+escapeHtml(asset));
   }
-  return parts.length?parts.join(' · '):'$0.00';
+  return parts.length?parts.join(' · '):money(0);
 }
 function historyFundingText(row){
   const parts=[];
   if(Math.abs(n(row?.fundingUsdt,0))>1e-12)parts.push(money(n(row.fundingUsdt)));
   for(const [asset,amount] of Object.entries(row?.fundingByAsset||{})){
     if(asset==='USDT'||Math.abs(n(amount))<=1e-12)continue;
-    const value=n(amount);
-    parts.push((value>=0?'+':'')+value.toFixed(8).replace(/0+$/,'').replace(/\.$/,'')+' '+escapeHtml(asset));
+    const value=n(amount);parts.push((value>=0?'+':'')+value.toFixed(8).replace(/0+$/,'').replace(/\.$/,'')+' '+escapeHtml(asset));
   }
-  return parts.length?parts.join(' · '):'$0.00';
+  return parts.length?parts.join(' · '):money(0);
 }
 function renderHistory(){
-  const t=totals();
-  const totalEl=$('historyTotals'),body=$('historyBody');
+  const t=totals(),totalEl=$('historyTotals'),body=$('historyBody');
   if(!totalEl||!body)return;
   totalEl.textContent=binanceHistory.connected
-    ?'+'+t.gain.toFixed(2)+' / -'+t.loss.toFixed(2)+' · net '+money(t.net)
+    ?money(t.gain)+' / '+money(-t.loss)+' · net '+money(t.net)
     :(binanceHistory.error?'Binance indisponible':'chargement Binance…');
   const rows=Array.isArray(binanceHistory.history)?binanceHistory.history:[];
   body.innerHTML=rows.length?rows.slice(0,80).map(row=>{
     const netExact=row?.exactNetUsdt===true&&Number.isFinite(Number(row?.netUsdt));
     const net=netExact?n(row.netUsdt):NaN;
-    return '<tr>'+
-      '<td>'+fmtDate(row.closedAt||row.openedAt)+'</td>'+
+    const gross=n(row.grossRealizedPnl);
+    const netClass=netExact?(net>=0?'pos':'neg'):'active';
+    return '<tr><td>'+fmtDate(row.closedAt||row.openedAt)+'</td>'+
       '<td><b>'+escapeHtml(row.symbol)+'</b></td>'+
       '<td>'+price(row.entryPrice)+'</td>'+
       '<td>'+price(row.exitPrice)+'</td>'+
-      '<td class="historyPnl '+(n(row.grossRealizedPnl)>=0?'pos':'neg')+'">'+money(n(row.grossRealizedPnl))+'</td>'+
+      '<td class="historyPnl '+(gross>=0?'pos':'neg')+'">'+money(gross)+'</td>'+
       '<td>'+historyFeeText(row)+'</td>'+
       '<td>'+historyFundingText(row)+'</td>'+
-      '<td class="historyPnl '+(netExact?(net>=0?'pos':'neg'):'active')+'">'+(netExact?money(net):'NET À VÉRIFIER')+'</td>'+
-    '</tr>';
+      '<td class="historyPnl '+netClass+'">'+(netExact?money(net):'NET À VÉRIFIER')+'</td></tr>';
   }).join(''):'<tr><td colspan="8" class="hint">'+(binanceHistory.error?'Historique Binance indisponible.':'Aucun trade Zenith réel fermé.')+'</td></tr>';
 }
 function applyTheme(){const theme=settings.theme==='light'?'light':'dark';document.documentElement.dataset.theme=theme;const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute('content',theme==='light'?'#eef3f8':'#07111d')}
