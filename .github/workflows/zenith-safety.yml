@@ -214,6 +214,8 @@ jobs:
         run: node --test scripts/test-maxloss-status-ui.mjs
       - name: Test per-token settings integrity
         run: node --test scripts/test-token-settings-integrity.mjs
+      - name: Test per-token defaults through Binance
+        run: node --test scripts/test-per-token-defaults-binance.mjs
       - name: Test protection table visibility toggle
         run: node --test scripts/test-protection-visibility-toggle.mjs
       - name: Test active real MAX-LOSS edit confirmation
