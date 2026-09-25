@@ -2046,6 +2046,97 @@ async function prepareActiveMaxLossControllerCommit(command, payloadStatus, devi
   };
 }
 
+async function prepareActiveConfigControllerCommit(command, payloadStatus, device, commitKind = 'ACTIVE_CONFIG') {
+  const activeConfig = payloadStatus?.activeConfig;
+  if (!activeConfig) return null;
+  const validated = activeConfigStatus(activeConfig);
+  if (!validated.ok) {
+    const e = new Error(validated.reason); e.code = validated.reason; throw e;
+  }
+
+  const commandType = String(command?.type || '').toUpperCase();
+  if (!['EXEC_UPDATE_EXIT','EXEC_UPDATE_ACTIVE_CONFIG'].includes(commandType)) {
+    const e = new Error('ACTIVE_CONFIG_COMMAND_TYPE_INVALID'); e.code = 'ACTIVE_CONFIG_COMMAND_TYPE_INVALID'; throw e;
+  }
+  if (commandType === 'EXEC_UPDATE_EXIT' && validated.activeConfig.exactSaleEnabled &&
+      !numberMatches(validated.activeConfig.exactSalePrice, payloadStatus?.targetPrice)) {
+    const e = new Error('ACTIVE_EXACT_SALE_PRICE_MISMATCH'); e.code = 'ACTIVE_EXACT_SALE_PRICE_MISMATCH'; throw e;
+  }
+
+  const controllerRaw = await redis(['GET', KEY_CONTROLLER_STATE]);
+  const controllerState = parseStoredJson(controllerRaw);
+  const expectedControllerDeviceId = String(command?.deviceId || '');
+  if (!controllerState || String(controllerState.controllerDeviceId || '') !== expectedControllerDeviceId) {
+    const e = new Error('CONTROLLER_STATE_OWNER_CHANGED'); e.code = 'CONTROLLER_STATE_OWNER_CHANGED'; throw e;
+  }
+  const revision = Number(controllerState.revision || 0);
+  const currentStateHash = String(controllerState.stateHash || '');
+  const data = controllerState.data && typeof controllerState.data === 'object' ? controllerState.data : null;
+  if (!Number.isInteger(revision) || revision <= 0 || !currentStateHash || !data ||
+      sha256(stableStringify(data)) !== currentStateHash) {
+    const e = new Error('CONTROLLER_STATE_INVALID'); e.code = 'CONTROLLER_STATE_INVALID'; throw e;
+  }
+
+  const symbol = String(payloadStatus.symbol || '').toUpperCase();
+  const tokenSettings = data.tokenSettings && typeof data.tokenSettings === 'object' ? data.tokenSettings : {};
+  const currentToken = tokenSettings[symbol] && typeof tokenSettings[symbol] === 'object' ? tokenSettings[symbol] : {};
+  const nextToken = {
+    ...currentToken,
+    ...validated.activeConfig,
+    marginType:'ISOLATED',
+  };
+  const nextData = {
+    ...data,
+    tokenSettings:{
+      ...tokenSettings,
+      [symbol]:nextToken,
+    },
+  };
+  const nextRevision = revision + 1;
+  const updatedAt = Date.now();
+  const nextStateHash = sha256(stableStringify(nextData));
+  const nextControllerState = {
+    ...controllerState,
+    version:1,
+    revision:nextRevision,
+    updatedAt,
+    controllerDeviceId:expectedControllerDeviceId,
+    stateHash:nextStateHash,
+    data:nextData,
+  };
+  const appliedState = {
+    version:1,
+    revision:nextRevision,
+    stateHash:nextStateHash,
+    appliedAt:updatedAt,
+    masterDeviceId:String(device?.deviceId || ''),
+  };
+  const audit = {
+    at:updatedAt,
+    kind:String(commitKind || 'ACTIVE_CONFIG') + '_COMMITTED',
+    commandId:String(command?.id || ''),
+    controllerDeviceId:expectedControllerDeviceId,
+    masterDeviceId:String(device?.deviceId || ''),
+    symbol,
+    previousRevision:revision,
+    revision:nextRevision,
+    stateHash:nextStateHash,
+  };
+  return {
+    expectedControllerDeviceId,
+    expectedRevision:revision,
+    expectedStateHash:currentStateHash,
+    nextRevision,
+    nextStateHash,
+    nextControllerRaw:JSON.stringify(nextControllerState),
+    appliedRaw:JSON.stringify(appliedState),
+    auditRaw:JSON.stringify(audit),
+    symbol,
+    activeConfig:validated.activeConfig,
+    activeConfigKind:String(commitKind || 'ACTIVE_CONFIG'),
+  };
+}
+
 async function completeProcessingCommandAtomic(raw, commandId, device, controllerCommit = null) {
   let command = null;
   try { command = JSON.parse(String(raw || '')); } catch {}
@@ -2060,11 +2151,17 @@ async function completeProcessingCommandAtomic(raw, commandId, device, controlle
     reason: '',
     at: Date.now(),
     ...(controllerCommit ? {
-      activeMaxLossCommitted:true,
+      ...(controllerCommit.activeConfig ? {
+        activeConfigCommitted:true,
+        activeConfigKind:String(controllerCommit.activeConfigKind || 'ACTIVE_CONFIG'),
+        activeConfig:controllerCommit.activeConfig,
+      } : {
+        activeMaxLossCommitted:true,
+        maxLossUsd:controllerCommit.maxLossUsd,
+      }),
       controllerRevision:controllerCommit.nextRevision,
       controllerStateHash:controllerCommit.nextStateHash,
       symbol:controllerCommit.symbol,
-      maxLossUsd:controllerCommit.maxLossUsd,
     } : {}),
   });
   const script = [
