@@ -198,6 +198,8 @@ jobs:
         run: node --test scripts/test-vercel-control-mutation-gate.mjs
       - name: Test deterministic order planning
         run: node --test scripts/test-order-intent.mjs
+      - name: Test protected real MARKET instant buy
+        run: node --test scripts/test-real-market-entry.mjs
       - name: Test fail-closed entry protection gate
         run: node --test scripts/test-entry-protection-gate.mjs
       - name: Test central managed emergency hard-cap ACK
