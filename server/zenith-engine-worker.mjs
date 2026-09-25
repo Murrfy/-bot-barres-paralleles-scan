@@ -1052,16 +1052,72 @@ async function ensureAutomaticTargetForPosition(position){
     autoTarget.lastError='';
     return {ok:true,changed:false,reason:plan.reason};
   }
-  if(plan.action!=='PLACE')return failClosedAutoTarget(plan.reason||'PLAN_BLOCKED');
+  if(!['PLACE','REPLACE'].includes(plan.action))return failClosedAutoTarget(plan.reason||'PLAN_BLOCKED');
 
   autoTarget.busySymbols.add(symbol);
   try{
-    const live=plan.live;
+    let activePlan=plan;
+
+    if(activePlan.action==='REPLACE'){
+      const live=activePlan.live;
+      const previousClientOrderId=String(activePlan.previousClientOrderId||'');
+      if(!/^zth-EXI-[A-Za-z0-9._:-]+$/.test(previousClientOrderId)){
+        return failClosedAutoTarget('PREVIOUS_CLIENT_ORDER_ID_INVALID');
+      }
+      const commandId=`auto-target-refresh-${live.symbol}-${live.direction}-${live.lifecycleAt||0}`;
+      const canceled=await callProtectiveUpdateExecute({
+        type:'EXEC_UPDATE_EXIT',phase:'CANCEL_OLD',commandId,
+        symbol:live.symbol,direction:live.direction,quantity:live.quantity,
+        targetPrice:activePlan.targetPrice,previousClientOrderId,
+      });
+      if(!canceled.response.ok||canceled.data?.ok!==true){
+        const reason='CANCEL_'+String(canceled.data?.code||canceled.data?.reason||('HTTP_'+canceled.response.status));
+        if(canceled.data?.writeAttempted===true||canceled.data?.ambiguous===true||canceled.data?.result?.ambiguous===true){
+          return failClosedAutoTarget(reason+'_AMBIGUOUS');
+        }
+        return failClosedAutoTarget(reason);
+      }
+      const terminal=await waitForStreamOrder({kind:'STANDARD',clientId:previousClientOrderId,terminal:true},3000);
+      const terminalStatus=String(
+        terminal?.status||
+        canceled.data?.result?.order?.status||
+        ''
+      ).toUpperCase();
+      if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus)){
+        return failClosedAutoTarget('PREVIOUS_TARGET_CANCEL_NOT_CONFIRMED');
+      }
+
+      // Re-read the Binance position after the old target is gone. Another slice of the
+      // pending BUY LIMIT may have filled while cancellation was in flight.
+      await publishRuntime();
+      const latestProjection=streamProjection();
+      const latestOrders=Array.isArray(latestProjection.binanceOrders)?latestProjection.binanceOrders:[];
+      const latestPosition=(latestProjection.binancePositions||[]).find(row=>{
+        if(String(row?.symbol||'').toUpperCase()!==live.symbol)return false;
+        const amount=n(row?.positionAmt??row?.quantity,0);
+        return (amount>0?'LONG':'SHORT')===live.direction&&Math.abs(amount)>0;
+      });
+      if(!latestPosition)return {ok:true,changed:true,reason:'POSITION_CLOSED_DURING_TARGET_REFRESH'};
+      const refreshedMaxLoss=uniqueManagedMaxLoss(latestPosition,latestOrders,configuredMaxLoss);
+      activePlan=planAutomaticTargetExit({
+        position:latestPosition,currentOrders:latestOrders,tokenSettings,settings:globalSettings,
+        priceFilter,maxLossConfirmed:refreshedMaxLoss,
+      });
+      if(activePlan.action==='NONE'){
+        autoTarget.lastError='';
+        return {ok:true,changed:true,reason:'TARGET_REFRESH_ALREADY_SATISFIED'};
+      }
+      if(activePlan.action!=='PLACE'){
+        return failClosedAutoTarget(activePlan.reason||'TARGET_REFRESH_REPLAN_BLOCKED');
+      }
+    }
+
+    const live=activePlan.live;
     const commandId=`auto-target-${live.symbol}-${live.direction}-${live.lifecycleAt||0}`;
     const body={
       type:'EXEC_UPDATE_EXIT',phase:'PLACE_NEW',commandId,
       symbol:live.symbol,direction:live.direction,quantity:live.quantity,
-      targetPrice:plan.targetPrice,
+      targetPrice:activePlan.targetPrice,
     };
     const placed=await callProtectiveUpdateExecute(body);
     if(!placed.response.ok||placed.data?.ok!==true){
@@ -1087,7 +1143,7 @@ async function ensureAutomaticTargetForPosition(position){
       String(order?.type||'').toUpperCase()==='LIMIT'&&
       String(order?.timeInForce||'').toUpperCase()==='GTC'&&
       (order?.reduceOnly===true||order?.reduceOnly==='true')&&
-      realNumberMatches(order?.price,plan.targetPrice)&&
+      realNumberMatches(order?.price,activePlan.targetPrice)&&
       realNumberMatches(remaining,live.quantity)
     );
     if(!valid)return failClosedAutoTarget('ORDER_NOT_STREAM_CONFIRMED');
@@ -1097,7 +1153,7 @@ async function ensureAutomaticTargetForPosition(position){
     autoTarget.lastActionAt=Date.now();
     log('AUTO_TARGET_LIMIT_PLACED',{
       symbol:live.symbol,direction:live.direction,quantity:live.quantity,
-      targetPrice:plan.targetPrice,targetSource:plan.targetSource,clientOrderId:clientId,
+      targetPrice:activePlan.targetPrice,targetSource:activePlan.targetSource,clientOrderId:clientId,
     });
     return {ok:true,changed:true,reason:'AUTO_TARGET_LIMIT_PLACED'};
   }finally{
