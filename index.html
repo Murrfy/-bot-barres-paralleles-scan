@@ -2833,27 +2833,40 @@ async function saveRealActiveTokenSettings(s,position,old,protections){
     return;
   }
 
-  const hadOwn=Object.prototype.hasOwnProperty.call(tokenSettings,s),previousOwn=hadOwn?clone(tokenSettings[s]):null;
-  tokenSettings[s]={...old,targetProfit:manualTarget,manualTargetProfit:manualTarget,protectionStages:nextProtections,exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings',maxLoss:currentMaxLoss,marginType:'ISOLATED'};
-  save();
-  const centralOk=await syncControllerCloudStateNow();
-  if(!centralOk){
-    if(hadOwn)tokenSettings[s]=previousOwn;else delete tokenSettings[s];
-    save();renderAll();
-    return setStatus(s+' : modification annulée — état central Upstash non confirmé.',true);
+  const activeConfig={
+    targetProfit:manualTarget,
+    manualTargetProfit:manualTarget,
+    protectionStages:nextProtections,
+    exactSaleEnabled:saleEnabled,
+    exactSalePrice:saleEnabled?salePrice:0,
+    exactSaleSource:'settings'
+  };
+  const pendingKinds=['EXIT','ACTIVE_CONFIG','MAX_LOSS'];
+  if(pendingKinds.some(kind=>realProtectiveUpdatePending.has(realUpdatePendingKey(position,kind)))){
+    return setStatus(s+' : une modification active est déjà en attente de confirmation.',true);
   }
+
   if(targetChanged){
-    const queued=await queueRealProtectiveUpdate(position,'EXIT',{wantedPrice:wantedExit,fromSettings:true});
-    if(!queued){
-      if(hadOwn)tokenSettings[s]=previousOwn;else delete tokenSettings[s];
-      save();await syncControllerCloudStateNow().catch(()=>false);renderAll();
-      return;
-    }
+    const queued=await queueRealProtectiveUpdate(position,'EXIT',{
+      wantedPrice:wantedExit,
+      fromSettings:true,
+      activeConfig
+    });
+    if(!queued){fillToken();return}
+    renderAll();
+    return setStatus(
+      protectionsChanged
+        ?s+' réel : objectif LIMIT + protections envoyés. Ancien réglage conservé jusqu’à ACK Binance/serveur.'
+        :s+' réel : objectif LIMIT envoyé. Ancien réglage conservé jusqu’à ACK Binance/serveur.'
+    );
   }
-  renderAll();
-  if(targetChanged&&protectionsChanged)setStatus(s+' réel : objectif en attente de confirmation Binance ; protections synchronisées, high-water conservé.');
-  else if(targetChanged)setStatus(s+' réel : objectif en attente de confirmation Binance.');
-  else setStatus(s+' réel : protections synchronisées ; le moteur conserve le high-water et confirme la nouvelle protection Binance avant de retirer l’ancienne.');
+
+  if(protectionsChanged){
+    const queued=await queueRealActiveConfigUpdate(position,activeConfig);
+    if(!queued){fillToken();return}
+    renderAll();
+    return setStatus(s+' réel : protections envoyées. High-water conservé ; ancien réglage conservé jusqu’à ACK serveur.');
+  }
 }
 async function saveToken(){
   const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);
