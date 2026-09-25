@@ -163,6 +163,15 @@ function configuredMaxLossUsd(controllerState,symbol){
   const value=n(token?.maxLoss,n(global?.maxLoss,NaN));
   return value>0?value:NaN;
 }
+function configuredMarginUsd(controllerState,symbol){
+  const data=controllerState?.data&&typeof controllerState.data==='object'?controllerState.data:null;
+  if(!data)return NaN;
+  const sym=String(symbol||'').toUpperCase();
+  const token=data.tokenSettings&&typeof data.tokenSettings==='object'?data.tokenSettings[sym]:null;
+  const global=data.settings&&typeof data.settings==='object'?data.settings:null;
+  const value=n(token?.margin,n(global?.margin,NaN));
+  return value>0?value:NaN;
+}
 function runtimePosition(runtimeState,symbol,direction){
   const list=Array.isArray(runtimeState?.data?.binancePositions)?runtimeState.data.binancePositions:[];
   const sym=String(symbol||'').toUpperCase(),dir=String(direction||'').toUpperCase();
@@ -440,19 +449,37 @@ export default async function handler(req,res){
     const live=validateUpdateAgainstLivePosition(update,position);
     if(type==='EXEC_UPDATE_PROTECTION'&&update.protectionKind==='MAX_LOSS'){
       const configuredMaxLoss=configuredMaxLossUsd(state.controllerState,update.symbol);
-      if(!(configuredMaxLoss>0)){
+      const requestedMaxLoss=n(update.maxLossUsd,NaN);
+      const activeEdit=Number.isFinite(requestedMaxLoss);
+      const allowedMaxLoss=activeEdit?requestedMaxLoss:configuredMaxLoss;
+      if(!(allowedMaxLoss>0)){
         return send(res,423,{ok:false,code:'CONFIGURED_MAX_LOSS_UNAVAILABLE',writeAttempted:false});
+      }
+      if(activeEdit){
+        const configuredMargin=configuredMarginUsd(state.controllerState,update.symbol);
+        if(!(configuredMargin>0)){
+          return send(res,423,{ok:false,code:'CONFIGURED_MARGIN_UNAVAILABLE',writeAttempted:false});
+        }
+        if(requestedMaxLoss>configuredMargin+1e-8){
+          return send(res,409,{
+            ok:false,code:'MAX_LOSS_EXCEEDS_CONFIGURED_MARGIN',
+            requestedMaxLossUsd:requestedMaxLoss,configuredMarginUsd:configuredMargin,writeAttempted:false
+          });
+        }
       }
       try{
         const checked=validateMaxLossTrigger({
           position,
           triggerPrice:update.triggerPrice,
-          hardMaxLossUsd:Math.min(configuredMaxLoss,REAL_RISK_LIMITS.maxLossUsd),
+          hardMaxLossUsd:Math.min(allowedMaxLoss,REAL_RISK_LIMITS.maxLossUsd),
         });
-        if(checked.impliedLossUsd>configuredMaxLoss+1e-8){
+        if(checked.impliedLossUsd>allowedMaxLoss+1e-8){
           return send(res,409,{
             ok:false,code:'MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT',
-            impliedLossUsd:checked.impliedLossUsd,configuredMaxLossUsd:configuredMaxLoss,writeAttempted:false
+            impliedLossUsd:checked.impliedLossUsd,
+            configuredMaxLossUsd:configuredMaxLoss,
+            requestedMaxLossUsd:activeEdit?requestedMaxLoss:null,
+            writeAttempted:false
           });
         }
       }catch(e){
@@ -461,6 +488,7 @@ export default async function handler(req,res){
           code:e?.message==='MAX_LOSS_EXCEEDS_SERVER_LIMIT'?'MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT':(e?.message||'MAX_LOSS_TRIGGER_INVALID'),
           impliedLossUsd:Number.isFinite(Number(e?.impliedLossUsd))?Number(e.impliedLossUsd):null,
           configuredMaxLossUsd:configuredMaxLoss,
+          requestedMaxLossUsd:activeEdit?requestedMaxLoss:null,
           hardMaxLossUsd:REAL_RISK_LIMITS.maxLossUsd,
           writeAttempted:false,
         });
