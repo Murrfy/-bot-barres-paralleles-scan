@@ -904,7 +904,7 @@ async function executeWatchedEntry(config){
   }
 }
 
-async function runWatchedEntry(symbol,mark){
+async function runWatchedEntry(symbol,mark,observedAt=Date.now()){
   const config=watchedEntryConfig(symbol);
   if(!config||!(mark>0))return false;
   const state=entryWatchState(config,mark);
@@ -918,6 +918,7 @@ async function runWatchedEntry(symbol,mark){
   }
 
   const now=Date.now();
+  const eventAt=Math.max(0,n(observedAt,now));
   if(state.pending){
     if(now>=state.expiresAt){
       state.pending=false;
@@ -948,7 +949,14 @@ async function runWatchedEntry(symbol,mark){
   state.lastSeen=mark;
   if(previous>config.buy&&mark<=config.buy){
     state.pending=true;
-    state.expiresAt=now+50000;
+    state.expiresAt=eventAt+50000;
+    if(now>=state.expiresAt){
+      state.pending=false;
+      state.blocked=true;
+      state.lastError='ENTRY_TRIGGER_EXPIRED';
+      entryWatch.lastError=state.lastError;
+      return false;
+    }
     if(occupiedRealEntrySlots().size>=config.maxActive)return false;
     const ok=await executeWatchedEntry(config);
     if(ok){
@@ -1002,7 +1010,7 @@ async function processAggTradeRow(symbol,row){
   if(!(price>0))return false;
   markStream.lastEventAt=Date.now();
   if(activeProtectionSymbols().has(wanted))await runAutoProtection(wanted,price);
-  if(watchedEntrySymbols().has(wanted))await runWatchedEntry(wanted,price);
+  if(watchedEntrySymbols().has(wanted))await runWatchedEntry(wanted,price,eventTime);
   rememberAggCursor(wanted,id,eventTime);
   return true;
 }
@@ -1121,23 +1129,37 @@ async function processMarkPayload(payload){
 async function fallbackMarkPrices(){
   if(stopping||!runtime.leaseActive)return false;
   if(markStream.ws&&markStream.ws.readyState===WebSocket.OPEN)return false;
-  if(!activeProtectionSymbols().size)return false;
+  const activeSymbols=activeProtectionSymbols();
+  const watchedSymbols=watchedEntrySymbols();
+  if(!activeSymbols.size&&!watchedSymbols.size)return false;
   try{
-    const result=await binanceApi('/api/binance-read');
-    if(result.response.status===429)return false;
-    if(!result.response.ok||result.data?.ok!==true){
-      const code=String(result.data?.code||('HTTP_'+result.response.status));
-      if(fatalAuthorityCode(code)){
-        const error=new Error(code);error.code=code;throw error;
-      }
-      markStream.lastError='MARK_FALLBACK_'+code;
-      return false;
-    }
     const tasks=[];
-    for(const position of Array.isArray(result.data?.positions)?result.data.positions:[]){
-      const symbol=String(position?.symbol||'').toUpperCase();
-      const mark=n(position?.markPrice,0);
-      if(activeProtectionSymbols().has(symbol)&&mark>0)tasks.push(runAutoProtection(symbol,mark));
+    if(activeSymbols.size){
+      const result=await binanceApi('/api/binance-read');
+      if(result.response.status===429)return false;
+      if(!result.response.ok||result.data?.ok!==true){
+        const code=String(result.data?.code||('HTTP_'+result.response.status));
+        if(fatalAuthorityCode(code)){
+          const error=new Error(code);error.code=code;throw error;
+        }
+        markStream.lastError='MARK_FALLBACK_'+code;
+        return false;
+      }
+      for(const position of Array.isArray(result.data?.positions)?result.data.positions:[]){
+        const symbol=String(position?.symbol||'').toUpperCase();
+        const mark=n(position?.markPrice,0);
+        if(activeSymbols.has(symbol)&&mark>0)tasks.push(runAutoProtection(symbol,mark));
+      }
+    }
+    if(watchedSymbols.size){
+      const prices=await publicBinanceJson('/fapi/v1/ticker/price');
+      const rows=Array.isArray(prices)?prices:[prices];
+      const now=Date.now();
+      for(const row of rows){
+        const symbol=String(row?.symbol||'').toUpperCase();
+        const mark=n(row?.price,0);
+        if(watchedSymbols.has(symbol)&&mark>0)tasks.push(runWatchedEntry(symbol,mark,now));
+      }
     }
     if(tasks.length)await Promise.allSettled(tasks);
     return true;
