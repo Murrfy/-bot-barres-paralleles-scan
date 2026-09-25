@@ -24,6 +24,7 @@ import {
 } from '../lib/protective-close-state.mjs';
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
+import { pendingEntryProtectionLossTargets } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import {
   entryWatchDefinition,
@@ -105,8 +106,10 @@ const entryWatch={
   loadPromise:null,
   saveTimer:null,
   saveBusy:false,
+  busySymbols:new Set(),
   lastError:'',
   lastCrossingAt:0,
+  lastActionAt:0,
 };
 
 const markStream={
@@ -621,9 +624,155 @@ function trackedMarkSymbols(){
   return new Set([...activeProtectionSymbols(),...watchedEntrySymbols()]);
 }
 
-function entryWatchMayDispatch(){
-  // Detection-only safety phase: no entry order is dispatched from this branch.
-  return false;
+function watchedEntryConfig(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  const definition=entryWatchDefinitionMap().get(wanted);
+  if(!definition)return null;
+  const tokenSettings=runtime.config?.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const globalSettings=runtime.config?.settings&&typeof runtime.config.settings==='object'
+    ?runtime.config.settings:{};
+  const token=tokenSettings[wanted]&&typeof tokenSettings[wanted]==='object'?tokenSettings[wanted]:{};
+  const margin=n(token.margin,n(globalSettings.margin,0));
+  const leverage=n(token.leverage,n(globalSettings.leverage,0));
+  const maxLoss=n(token.maxLoss,n(globalSettings.maxLoss,0));
+  const maxActive=Math.max(
+    1,
+    Math.min(
+      REAL_RISK_LIMITS.maxActivePositions,
+      Math.floor(n(globalSettings.maxActive,REAL_RISK_LIMITS.maxActivePositions))
+    )
+  );
+  if(!(margin>0)||!(leverage>0)||!(maxLoss>0))return null;
+  return {
+    ...definition,
+    margin,leverage,maxLoss,maxActive,
+  };
+}
+
+function occupiedRealEntrySlots(){
+  const projection=streamProjection();
+  const occupied=new Set();
+  for(const position of projection.binancePositions||[]){
+    if(Math.abs(n(position?.positionAmt??position?.quantity,0))>0){
+      const symbol=String(position?.symbol||'').toUpperCase();
+      if(symbol)occupied.add(symbol);
+    }
+  }
+  for(const order of projection.binanceOrders||[]){
+    const symbol=String(order?.symbol||'').toUpperCase();
+    if(!symbol)continue;
+    const reduceOnly=order?.reduceOnly===true||order?.reduceOnly==='true';
+    const closePosition=order?.closePosition===true||order?.closePosition==='true';
+    if(!reduceOnly&&!closePosition)occupied.add(symbol);
+  }
+  return occupied;
+}
+
+function entryWatchMayDispatch(symbol){
+  const config=watchedEntryConfig(symbol);
+  if(!config||!entryWatch.loaded)return false;
+  if(!runtime.synchronized||!runtime.heartbeatFresh||runtime.mode!=='RUNNING')return false;
+  if(!masterExecutionEligible({
+    role:'master',
+    hidden:false,
+    leaseActive:runtime.leaseActive,
+    realExecutionArmed:runtime.realExecutionArmed,
+    userStreamReady:userStreamReady(stream.state),
+    mode:runtime.mode,
+  }))return false;
+  const occupied=occupiedRealEntrySlots();
+  return !occupied.has(config.symbol)&&occupied.size<config.maxActive;
+}
+
+function autoEntryCommandId(config){
+  const digest=sha256Hex(`${config.symbol}|${config.validatedAt}|${config.buy}`).slice(0,20);
+  return `auto-entry-${config.symbol}-${digest}`;
+}
+
+async function callEntryExecute(body){
+  return binanceApi('/api/binance-entry-execute',{method:'POST',body});
+}
+
+async function executeWatchedEntry(config){
+  const symbol=config.symbol;
+  if(entryWatch.busySymbols.has(symbol))return {ok:false,reason:'ENTRY_ALREADY_BUSY'};
+  if(!entryWatchMayDispatch(symbol))return {ok:false,reason:'ENTRY_SLOT_OR_RUNTIME_NOT_READY',slotBlocked:true};
+
+  entryWatch.busySymbols.add(symbol);
+  const commandId=autoEntryCommandId(config);
+  const common={
+    type:'EXEC_OPEN_POSITION',
+    commandId,
+    symbol,
+    side:'BUY',
+    orderType:'LIMIT',
+    margin:config.margin,
+    leverage:config.leverage,
+    maxLoss:config.maxLoss,
+    limitPrice:config.buy,
+  };
+  let preparedCommitted=false;
+  try{
+    const prepared=await callEntryExecute({...common,phase:'PREPARE_PROTECTION'});
+    if(!prepared.response.ok||prepared.data?.ok!==true){
+      const reasons=Array.isArray(prepared.data?.reasons)?prepared.data.reasons:[];
+      const reason='ENTRY_PREPARE_'+String(prepared.data?.code||prepared.data?.reason||('HTTP_'+prepared.response.status));
+      entryWatch.lastError=reason;
+      return {
+        ok:false,reason,
+        slotBlocked:reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'),
+        prepared:false,
+      };
+    }
+    preparedCommitted=true;
+    const protectionId=String(prepared.data?.protectionPlan?.algoPlan?.params?.clientAlgoId||'');
+    if(!/^zth-MAX-[A-Za-z0-9._:-]+$/.test(protectionId)){
+      entryWatch.lastError='ENTRY_PREPARE_PROTECTION_ID_MISSING';
+      return {ok:false,reason:entryWatch.lastError,prepared:true};
+    }
+
+    const protection=await waitForStreamOrder({kind:'ALGO',clientId:protectionId,terminal:false},3500);
+    if(!protection){
+      entryWatch.lastError='ENTRY_PREPARE_NOT_STREAM_CONFIRMED';
+      scheduleReconcile(250);
+      return {ok:false,reason:entryWatch.lastError,prepared:true};
+    }
+
+    await publishRuntime();
+    const submitted=await callEntryExecute({...common,phase:'SUBMIT_ENTRY'});
+    if(!submitted.response.ok||submitted.data?.ok!==true){
+      entryWatch.lastError='ENTRY_SUBMIT_'+String(
+        submitted.data?.code||submitted.data?.reason||('HTTP_'+submitted.response.status)
+      );
+      scheduleReconcile(250);
+      return {ok:false,reason:entryWatch.lastError,prepared:true};
+    }
+
+    const entryId=String(submitted.data?.plan?.params?.newClientOrderId||'');
+    if(!entryId){
+      entryWatch.lastError='ENTRY_ORDER_ID_MISSING';
+      scheduleReconcile(250);
+      return {ok:false,reason:entryWatch.lastError,prepared:true};
+    }
+
+    entryWatch.lastActionAt=Date.now();
+    entryWatch.lastError='';
+    log('AUTO_ENTRY_SUBMITTED',{
+      symbol,commandId,limitPrice:config.buy,
+      margin:config.margin,leverage:config.leverage,maxLoss:config.maxLoss,
+      entryClientOrderId:entryId,protectionClientAlgoId:protectionId,
+    });
+    scheduleReconcile(150);
+    return {ok:true,commandId,entryClientOrderId:entryId,protectionClientAlgoId:protectionId};
+  }catch(error){
+    const reason='AUTO_ENTRY_'+cleanReason(error?.message||'FAILED','FAILED');
+    entryWatch.lastError=reason;
+    scheduleReconcile(500);
+    return {ok:false,reason,prepared:preparedCommitted};
+  }finally{
+    entryWatch.busySymbols.delete(symbol);
+  }
 }
 
 async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.now()}={}){
@@ -637,22 +786,61 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
     price,
     eventId,
     eventTime,
-    allowTrigger:entryWatchMayDispatch(),
+    allowTrigger:entryWatchMayDispatch(wanted),
     seedArmed:!previous&&entryWatchSeedArmed(definition),
   });
   if(result.action==='DUPLICATE')return false;
+
   entryWatch.states.set(wanted,result.state);
-  scheduleEntryWatchSave();
-  if(result.action==='SUPPRESSED'){
+  if(result.action==='PENDING'){
     entryWatch.lastCrossingAt=n(result.state.suppressedCrossingAt,Date.now());
-    log('ENTRY_WATCH_CROSSING_SUPPRESSED',{
-      symbol:wanted,
-      buy:definition.buy,
-      observedPrice:n(price),
-      reason:'REAL_ENTRY_DISPATCH_NOT_INSTALLED',
-    });
+    entryWatch.lastError='ENTRY_WAITING_FOR_POSITION_SLOT';
+    scheduleEntryWatchSave(250);
+    return true;
   }
-  return true;
+  if(result.action==='EXPIRED'){
+    entryWatch.lastError='ENTRY_TRIGGER_EXPIRED';
+    scheduleEntryWatchSave(250);
+    log('ENTRY_WATCH_EXPIRED',{symbol:wanted,buy:definition.buy});
+    return true;
+  }
+  if(result.action!=='TRIGGER'){
+    scheduleEntryWatchSave();
+    return true;
+  }
+
+  // Persist the one-shot trigger before any Binance write. If persistence is unavailable,
+  // fail closed and do not place a real order.
+  if(!(await persistEntryWatchStateNow())){
+    entryWatch.lastError='ENTRY_TRIGGER_NOT_PERSISTED';
+    return false;
+  }
+
+  const config=watchedEntryConfig(wanted);
+  if(!config){
+    entryWatch.lastError='ENTRY_CONFIG_INVALID';
+    return false;
+  }
+  const executed=await executeWatchedEntry(config);
+  if(executed.ok){
+    scheduleEntryWatchSave(250);
+    return true;
+  }
+
+  // A slot can disappear between the crossing decision and Binance preflight. Preserve the
+  // historical 50-second waiting rule only if no protection/order was committed yet.
+  if(executed.slotBlocked===true&&executed.prepared!==true){
+    const state=entryWatch.states.get(wanted);
+    if(state){
+      state.triggeredAt=0;
+      state.pendingUntil=Math.max(Date.now()+1,n(eventTime,Date.now())+50000);
+      state.blockedAt=0;
+      entryWatch.states.set(wanted,state);
+      await persistEntryWatchStateNow().catch(()=>false);
+    }
+  }
+  log('AUTO_ENTRY_FAILED',{symbol:wanted,reason:executed.reason||'UNKNOWN'});
+  return false;
 }
 
 async function pruneAutoHighWater(){
