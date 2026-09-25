@@ -771,6 +771,17 @@ async function callEntryExecute(body){
   return binanceApi('/api/binance-entry-execute',{method:'POST',body});
 }
 
+async function currentBestAsk(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  if(!/^[A-Z0-9]{3,30}$/.test(wanted))throw new Error('ENTRY_BEST_ASK_SYMBOL_INVALID');
+  const quote=await publicBinanceJson('/fapi/v1/ticker/bookTicker?symbol='+encodeURIComponent(wanted));
+  if(String(quote?.symbol||'').toUpperCase()!==wanted)throw new Error('ENTRY_BEST_ASK_SYMBOL_MISMATCH');
+  const askPrice=n(quote?.askPrice,0);
+  const askQty=n(quote?.askQty,0);
+  if(!(askPrice>0)||!(askQty>0))throw new Error('ENTRY_BEST_ASK_UNAVAILABLE');
+  return {askPrice,askQty};
+}
+
 async function executeWatchedEntry(config,{limitPrice=config.buy,delayedCurrentPrice=false}={}){
   const symbol=config.symbol;
   const effectiveLimitPrice=n(limitPrice,0);
@@ -840,6 +851,7 @@ async function executeWatchedEntry(config,{limitPrice=config.buy,delayedCurrentP
     log('AUTO_ENTRY_SUBMITTED',{
       symbol,commandId,limitPrice:effectiveLimitPrice,
       requestedBuyPrice:config.buy,delayedCurrentPrice:delayedCurrentPrice===true,
+      delayedPriceSource:delayedCurrentPrice===true?'BEST_ASK':'CONFIGURED_LIMIT',
       margin:config.margin,leverage:config.leverage,maxLoss:config.maxLoss,
       entryClientOrderId:entryId,protectionClientAlgoId:protectionId,
     });
@@ -870,6 +882,26 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
     seedArmed:!previous&&entryWatchSeedArmed(definition),
   });
   if(result.action==='DUPLICATE')return false;
+
+  if(result.action==='TRIGGER'&&result.signal?.delayedCurrentPrice===true){
+    try{
+      const quote=await currentBestAsk(wanted);
+      result.signal.limitPrice=quote.askPrice;
+      result.signal.observedBestAsk=quote.askPrice;
+      result.signal.observedBestAskQty=quote.askQty;
+    }catch(error){
+      const retryState={
+        ...result.state,
+        triggeredAt:0,
+        pendingUntil:Math.max(n(previous?.pendingUntil,0),n(eventTime,Date.now())+1),
+        blockedAt:0,
+      };
+      entryWatch.states.set(wanted,retryState);
+      entryWatch.lastError='ENTRY_BEST_ASK_'+cleanReason(error?.message||'UNAVAILABLE','UNAVAILABLE');
+      scheduleEntryWatchSave(250);
+      return true;
+    }
+  }
 
   entryWatch.states.set(wanted,result.state);
   if(result.action==='PENDING'){
