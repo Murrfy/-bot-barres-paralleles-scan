@@ -733,6 +733,234 @@ function activeProtectionSymbols(){
   );
 }
 
+function watchedEntryConfig(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  const validated=runtime.config?.validated&&typeof runtime.config.validated==='object'
+    ?runtime.config.validated:{};
+  const row=validated[wanted]&&typeof validated[wanted]==='object'?validated[wanted]:null;
+  const buy=n(row?.buy,0);
+  if(!row||!(buy>0))return null;
+  const tokenSettings=runtime.config?.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const globalSettings=runtime.config?.settings&&typeof runtime.config.settings==='object'
+    ?runtime.config.settings:{};
+  const token=tokenSettings[wanted]&&typeof tokenSettings[wanted]==='object'?tokenSettings[wanted]:{};
+  return {
+    symbol:wanted,
+    buy,
+    validatedAt:Math.max(1,Math.floor(n(row.validatedAt,0))),
+    armedAbove:row.armedAbove===true,
+    lastSeen:n(row.lastSeen,0),
+    margin:n(token.margin,n(globalSettings.margin,0)),
+    leverage:n(token.leverage,n(globalSettings.leverage,0)),
+    maxLoss:n(token.maxLoss,n(globalSettings.maxLoss,0)),
+    maxActive:Math.max(1,Math.min(REAL_RISK_LIMITS.maxActivePositions,Math.floor(n(globalSettings.maxActive,REAL_RISK_LIMITS.maxActivePositions)))),
+  };
+}
+
+function watchedEntrySymbols(){
+  const validated=runtime.config?.validated&&typeof runtime.config.validated==='object'
+    ?runtime.config.validated:{};
+  return new Set(
+    Object.keys(validated)
+      .map(symbol=>String(symbol||'').toUpperCase())
+      .filter(symbol=>Boolean(watchedEntryConfig(symbol)))
+  );
+}
+
+function markTrackedSymbols(){
+  return new Set([...activeProtectionSymbols(),...watchedEntrySymbols()]);
+}
+
+function occupiedRealEntrySlots(){
+  const projection=streamProjection();
+  const occupied=new Set();
+  for(const position of projection.binancePositions||[]){
+    if(Math.abs(n(position?.positionAmt??position?.quantity,0))>0){
+      const symbol=String(position?.symbol||'').toUpperCase();
+      if(symbol)occupied.add(symbol);
+    }
+  }
+  for(const order of projection.binanceOrders||[]){
+    const symbol=String(order?.symbol||'').toUpperCase();
+    if(!symbol)continue;
+    const reduceOnly=order?.reduceOnly===true||order?.reduceOnly==='true';
+    const closePosition=order?.closePosition===true||order?.closePosition==='true';
+    if(!reduceOnly&&!closePosition)occupied.add(symbol);
+  }
+  return occupied;
+}
+
+function entryWatchState(config,mark){
+  const key=config.symbol;
+  const previous=entryWatch.states.get(key);
+  if(!previous||previous.validatedAt!==config.validatedAt||!realNumberMatches(previous.buy,config.buy)){
+    const state={
+      validatedAt:config.validatedAt,
+      buy:config.buy,
+      armedAbove:config.armedAbove===true,
+      lastSeen:config.lastSeen>0?config.lastSeen:n(mark,0),
+      pending:false,
+      expiresAt:0,
+      submitted:false,
+      blocked:false,
+      lastError:'',
+    };
+    entryWatch.states.set(key,state);
+    return state;
+  }
+  return previous;
+}
+
+function autoEntryCommandId(config){
+  const digest=sha256Hex(`${config.symbol}|${config.validatedAt}|${config.buy}`).slice(0,20);
+  return `auto-entry-${config.symbol}-${digest}`;
+}
+
+async function callEntryExecute(body){
+  return binanceApi('/api/binance-entry-execute',{method:'POST',body});
+}
+
+async function executeWatchedEntry(config){
+  const symbol=config.symbol;
+  if(entryWatch.busySymbols.has(symbol))return false;
+  if(!runtime.synchronized||!runtime.heartbeatFresh||runtime.mode!=='RUNNING')return false;
+  if(!masterExecutionEligible({
+    role:'master',
+    hidden:false,
+    leaseActive:runtime.leaseActive,
+    realExecutionArmed:runtime.realExecutionArmed,
+    userStreamReady:userStreamReady(stream.state),
+    mode:runtime.mode,
+  }))return false;
+
+  const occupied=occupiedRealEntrySlots();
+  if(occupied.has(symbol)||occupied.size>=config.maxActive)return false;
+
+  entryWatch.busySymbols.add(symbol);
+  const commandId=autoEntryCommandId(config);
+  const common={
+    type:'EXEC_OPEN_POSITION',
+    commandId,
+    symbol,
+    side:'BUY',
+    orderType:'LIMIT',
+    margin:config.margin,
+    leverage:config.leverage,
+    maxLoss:config.maxLoss,
+    limitPrice:config.buy,
+  };
+  try{
+    const prepared=await callEntryExecute({...common,phase:'PREPARE_PROTECTION'});
+    if(!prepared.response.ok||prepared.data?.ok!==true){
+      entryWatch.lastError='ENTRY_PREPARE_'+String(prepared.data?.code||prepared.data?.reason||('HTTP_'+prepared.response.status));
+      return false;
+    }
+    const protectionId=String(prepared.data?.protectionPlan?.algoPlan?.params?.clientAlgoId||'');
+    if(!/^zth-MAX-[A-Za-z0-9._:-]+$/.test(protectionId)){
+      entryWatch.lastError='ENTRY_PREPARE_PROTECTION_ID_MISSING';
+      return false;
+    }
+
+    const protection=await waitForStreamOrder({kind:'ALGO',clientId:protectionId,terminal:false},3500);
+    if(!protection){
+      entryWatch.lastError='ENTRY_PREPARE_NOT_STREAM_CONFIRMED';
+      scheduleReconcile(250);
+      return false;
+    }
+
+    await publishRuntime();
+    const submitted=await callEntryExecute({...common,phase:'SUBMIT_ENTRY'});
+    if(!submitted.response.ok||submitted.data?.ok!==true){
+      entryWatch.lastError='ENTRY_SUBMIT_'+String(submitted.data?.code||submitted.data?.reason||('HTTP_'+submitted.response.status));
+      scheduleReconcile(250);
+      return false;
+    }
+
+    const entryId=String(submitted.data?.plan?.params?.newClientOrderId||'');
+    if(!entryId){
+      entryWatch.lastError='ENTRY_ORDER_ID_MISSING';
+      return false;
+    }
+
+    entryWatch.lastActionAt=Date.now();
+    entryWatch.lastError='';
+    log('AUTO_ENTRY_SUBMITTED',{
+      symbol,
+      commandId,
+      limitPrice:config.buy,
+      margin:config.margin,
+      leverage:config.leverage,
+      maxLoss:config.maxLoss,
+    });
+    scheduleReconcile(150);
+    return true;
+  }catch(error){
+    entryWatch.lastError='AUTO_ENTRY_'+cleanReason(error?.message||'FAILED','FAILED');
+    scheduleReconcile(500);
+    return false;
+  }finally{
+    entryWatch.busySymbols.delete(symbol);
+  }
+}
+
+async function runWatchedEntry(symbol,mark){
+  const config=watchedEntryConfig(symbol);
+  if(!config||!(mark>0))return false;
+  const state=entryWatchState(config,mark);
+  if(state.submitted||state.blocked)return false;
+
+  if(config.buy>mark*100||config.buy<mark/100){
+    state.blocked=true;
+    state.lastError='ENTRY_BUY_PRICE_INCOHERENT';
+    entryWatch.lastError=state.lastError;
+    return false;
+  }
+
+  const now=Date.now();
+  if(state.pending){
+    if(now>=state.expiresAt){
+      state.pending=false;
+      state.blocked=true;
+      state.lastError='ENTRY_TRIGGER_EXPIRED';
+      return false;
+    }
+    if(mark<=config.buy&&occupiedRealEntrySlots().size<config.maxActive){
+      const ok=await executeWatchedEntry(config);
+      if(ok){
+        state.pending=false;
+        state.submitted=true;
+        state.lastError='';
+      }
+      return ok;
+    }
+    state.lastSeen=mark;
+    return false;
+  }
+
+  if(state.armedAbove!==true){
+    if(mark>config.buy)state.armedAbove=true;
+    state.lastSeen=mark;
+    return false;
+  }
+
+  const previous=n(state.lastSeen,mark);
+  state.lastSeen=mark;
+  if(previous>config.buy&&mark<=config.buy){
+    state.pending=true;
+    state.expiresAt=now+50000;
+    if(occupiedRealEntrySlots().size>=config.maxActive)return false;
+    const ok=await executeWatchedEntry(config);
+    if(ok){
+      state.pending=false;
+      state.submitted=true;
+      state.lastError='';
+    }
+    return ok;
+  }
+  return false;
+}
+
 function markStreamName(symbol){
   return String(symbol||'').toLowerCase()+'@aggTrade';
 }
