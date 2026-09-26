@@ -1619,9 +1619,6 @@ function commandMayOperateQuarantinedSymbol(type, payload = {}) {
   const commandType = String(type || '').toUpperCase();
   if (commandType === 'EXEC_CLOSE_POSITION') return payload?.closeAll === true;
   if (commandType === 'EXEC_CANCEL_ENTRY') return true;
-  if (commandType === 'EXEC_UPDATE_PROTECTION') {
-    return String(payload?.protectionKind || '').toUpperCase() === 'MAX_LOSS';
-  }
   return false;
 }
 
