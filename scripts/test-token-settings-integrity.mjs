@@ -25,6 +25,41 @@ test('each token can override Futures margin and leverage independently',()=>{
   assert.match(cfg,/base=\{\.\.\.settings,\.\.\.t\}/);
 });
 
+
+test('locked operational defaults are +40 target, -40 MAX-LOSS and protection 1 at +30 to +20',()=>{
+  assert.match(html,/const DEFAULT_PROTECTIONS=\[\{enabled:true,arm:30,floor:20\}\]/);
+  assert.match(html,/const DEFAULTS=\{[^\n]*targetProfit:40,maxLoss:40,protectionStages:DEFAULT_PROTECTIONS/);
+  assert.match(html,/function normalizeProtections\(stages,target=40\)/);
+  assert.match(html,/function renderProtectionEditor\(stages,target=40,minCount=0\)/);
+});
+
+test('load never upgrades the locked +40/-40 defaults back to legacy +3000/-400',()=>{
+  const load=block('function load()','async function jf(path)');
+  assert.doesNotMatch(load,/targetProfit\)===40\)settings\.targetProfit=3000/);
+  assert.doesNotMatch(load,/maxLoss\)===40\)settings\.maxLoss=400/);
+  assert.doesNotMatch(load,/t\?\.targetProfit\)===40[\s\S]*t\.targetProfit=3000/);
+  assert.doesNotMatch(load,/t\?\.maxLoss\)===40\)t\.maxLoss=400/);
+});
+
+test('legacy +3000/-400 migration is restricted to the exact old default protection profile',()=>{
+  const defaults=block('const DEFAULT_PROTECTIONS=','const DEFAULTS=');
+  assert.match(defaults,/function legacyDefaultProtectionProfile\(stages\)/);
+  assert.match(defaults,/rows\.length===29/);
+  assert.match(defaults,/105\+i\*100/);
+  assert.match(defaults,/100\+i\*100/);
+  const load=block('function load()','async function jf(path)');
+  assert.match(load,/legacyGlobalDefaults=n\(x\.settings\?\.targetProfit\)===3000&&n\(x\.settings\?\.maxLoss\)===400&&legacyDefaultProtectionProfile\(x\.settings\?\.protectionStages\)/);
+  assert.match(load,/if\(legacyGlobalDefaults\)\{settings\.targetProfit=40;settings\.maxLoss=40;settings\.protectionStages=clone\(DEFAULT_PROTECTIONS\)\}/);
+  assert.match(load,/legacyTokenDefaults=n\(t\?\.targetProfit\)===3000&&n\(t\?\.manualTargetProfit,3000\)===3000&&n\(t\?\.maxLoss\)===400&&legacyDefaultProtectionProfile\(t\?\.protectionStages\)/);
+});
+
+test('configured protection arrays remain untruncated after the default reset',()=>{
+  const normalize=block('function normalizeProtections(stages,target=40)','function cfg(symbol)');
+  assert.match(normalize,/Math\.max\(protectionCountForTarget\(target\),src\.length\)/);
+  const editor=block('function protectionsForTarget(stages,target,minCount=0)','function applyProtectionVisibility()');
+  assert.match(editor,/Math\.max\(protectionCountForTarget\(target\),Math\.max\(0,Math\.floor\(n\(minCount,0\)\)\)\)/);
+});
+
 test('token gain, max-loss and progressive protections persist as token overrides',()=>{
   const save=block('async function saveToken()','function devalidateSelected()');
   assert.match(save,/targetProfit:shown/);
@@ -202,7 +237,7 @@ test('real-only UI exposes no simulation controls or local fake position path',(
 
 
 test('configured protection lists are never truncated by a lower calculated target count',()=>{
-  const normalize=block('function normalizeProtections(stages,target=3000)','function cfg(symbol)');
+  const normalize=block('function normalizeProtections(stages,target=40)','function cfg(symbol)');
   assert.match(normalize,/Math\.max\(protectionCountForTarget\(target\),src\.length\)/);
   assert.doesNotMatch(normalize,/target==null/);
 });
