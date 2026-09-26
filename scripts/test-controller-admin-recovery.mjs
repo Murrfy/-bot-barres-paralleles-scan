@@ -5,6 +5,7 @@ import test from 'node:test';
 const sync=fs.readFileSync('api/zenith-sync.js','utf8');
 const page=fs.readFileSync('replace-controller.html','utf8');
 const index=fs.readFileSync('index.html','utf8');
+const admin=fs.readFileSync('master-admin.html','utf8');
 
 function between(startMarker,endMarker){
   const start=sync.indexOf(startMarker);
@@ -16,7 +17,7 @@ function between(startMarker,endMarker){
 const verifier=between('async function verifyControllerRecoveryAdminCode','function normalizeReplacementCode');
 const endpoint=between("if (action === 'controller-recovery-admin'","if (action === 'whoami'");
 
-test('lost-iPhone recovery uses the server-side ADMIN secret without requiring a MASTER device',()=>{
+test('lost-device recovery uses the server-side ADMIN secret without requiring a MASTER device',()=>{
   assert.ok(endpoint.includes('verifyControllerRecoveryAdminCode(req, res)'));
   assert.equal(endpoint.includes('requireDevice(req, res'),false);
   assert.equal(endpoint.includes('MASTER_LEASE_REQUIRED'),false);
@@ -68,6 +69,21 @@ test('successful recovery rotates ownership, creates a fresh HttpOnly session an
   const auditBlock=endpoint.slice(auditStart,scriptStart);
   assert.equal(auditBlock.includes('adminCode'),false);
   assert.equal(endpoint.includes('MASTER_ADMIN_CODE'),false);
+});
+
+
+test('Administration exposes the generic ADMIN recovery path without the legacy MASTER authorization flow',()=>{
+  assert.ok(admin.includes('Reprendre le contrôle sur cet appareil'));
+  assert.ok(admin.includes('action="/replace-controller.html"'));
+  assert.equal(admin.includes('Autoriser le remplacement de l’iPhone'),false);
+  assert.equal(admin.includes('controller-replacement-authorize'),false);
+});
+
+test('recovery page remains device-neutral',()=>{
+  assert.ok(page.includes("deviceName:'Appareil contrôleur Zenith'"));
+  assert.ok(page.includes("localStorage.setItem(DEVICE_NAME_KEY,'Appareil contrôleur Zenith')"));
+  assert.ok(page.includes("id='device-'"));
+  assert.equal(page.includes("id='phone-'"),false);
 });
 
 test('new-device page asks only for ADMIN recovery and stores no ADMIN secret',()=>{
