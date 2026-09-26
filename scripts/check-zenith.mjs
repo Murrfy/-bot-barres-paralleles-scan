@@ -431,10 +431,15 @@ if (!orderIntent.includes("ENTRY_PREFLIGHT_MAX_AGE_MS = 5000") ||
 
 const riskPolicy = fs.readFileSync('lib/risk-policy.mjs', 'utf8');
 const entryProtectionGate = fs.readFileSync('lib/entry-protection-gate.mjs','utf8');
-if (!entryProtectionGate.includes("import { REAL_RISK_LIMITS } from './risk-policy.mjs'") ||
-    !entryProtectionGate.includes("/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId || ''))") ||
-    !entryProtectionGate.includes('impliedLossUsd > REAL_RISK_LIMITS.maxLossUsd + 1e-8')) {
-  fail('future real-entry protection gate must require a Zenith-managed emergency stop within the shared $400 cap');
+const maxLossOrderShape = fs.readFileSync('lib/maxloss-order-shape.mjs','utf8');
+if (!entryProtectionGate.includes("import { isLimitIocMaxLossOrder } from './maxloss-order-shape.mjs'") ||
+    !entryProtectionGate.includes('isLimitIocMaxLossOrder(order,{') ||
+    !entryProtectionGate.includes('impliedLossUsd > REAL_RISK_LIMITS.maxLossUsd + 1e-8') ||
+    !maxLossOrderShape.includes("type:'STOP'") ||
+    !maxLossOrderShape.includes("timeInForce:'IOC'") ||
+    !maxLossOrderShape.includes("priceMatch:'OPPONENT'") ||
+    !maxLossOrderShape.includes('if(!bool(order.reduceOnly)||bool(order.closePosition))return false;')) {
+  fail('future real-entry protection gate must require the canonical Zenith LIMIT IOC MAX-LOSS within the shared $400 cap');
 }
 if (!riskPolicy.includes('maxActivePositions: 3') ||
     !riskPolicy.includes('maxLeverage: 10') ||
@@ -680,21 +685,23 @@ if (!index.includes("String(o?.timeInForce||'').toUpperCase()==='GTC'") ||
   fail('iPhone protection inventory must classify exit/progressive/MAX-LOSS orders with strict identity and price-side rules');
 }
 
-if (!protectiveUpdateExecute.includes("/^zth-[A-Za-z0-9._:-]+$/.test(clientAlgoId)") ||
-    !binanceReconcile.includes('if (!zenithManagedOrderId(order)) continue;') ||
-    !index.includes('if(!zenithManagedRealId(o?.clientAlgoId))return false;') ||
+if (!protectiveUpdateExecute.includes("import { isLimitIocMaxLossOrder, maxLossAlgoExpected } from '../lib/maxloss-order-shape.mjs'") ||
+    !protectiveUpdateExecute.includes('isLimitIocMaxLossOrder(o,{') ||
+    !binanceReconcile.includes('isLimitIocMaxLossOrder(order,{') ||
+    !index.includes("String(o?.timeInForce||'').toUpperCase()==='IOC'") ||
+    !index.includes("String(o?.priceMatch||'').toUpperCase()==='OPPONENT'") ||
     !index.includes('const emergencyReady=Boolean(inv.managedMaxLoss)&&inv.maxLossConflict!==true') ||
     !index.includes('aucune protection MAX-LOSS Zenith unique et confirmée')) {
-  fail('protective execution, reconciliation, MASTER and controller must require a unique Zenith-managed MAX-LOSS');
+  fail('protective execution, reconciliation, MASTER and controller must require one canonical Zenith LIMIT IOC MAX-LOSS');
 }
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
 const deviceSessionSource = fs.readFileSync('lib/device-session.mjs', 'utf8');
-if (!sync.includes("import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs'") ||
+if (!sync.includes("import { isLimitIocMaxLossOrder } from '../lib/maxloss-order-shape.mjs'") ||
     !sync.includes('function runtimeEmergencyProtection(runtimeState, symbol, direction, entryPrice, quantity, excludeClientAlgoId') ||
-    !sync.includes("/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId || ''))") ||
+    !sync.includes('isLimitIocMaxLossOrder(order,{') ||
     !sync.includes('impliedLossUsd <= REAL_RISK_LIMITS.maxLossUsd + 1e-8')) {
-  fail('central execution ACK must independently require a Zenith-managed emergency stop within the shared $400 cap');
+  fail('central execution ACK must independently require a canonical Zenith LIMIT IOC MAX-LOSS within the shared $400 cap');
 }
 if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
     !sync.includes('setDeviceSessionCookie(res, token)') ||
