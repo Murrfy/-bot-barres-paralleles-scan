@@ -15,7 +15,8 @@ test('controller refuses to save MAX-LOSS outside the real safety range',()=>{
   assert.match(html,/maxLoss:requestedMaxLoss/);
 });
 
-test('legacy local settings are migrated down to the hard cap',()=>{
-  assert.match(html,/settings\.maxLoss=Math\.min\(400,Math\.max\(2,n\(settings\.maxLoss,400\)\)\)/);
+test('local settings use the locked $40 fallback while still clamping to the hard $400 cap',()=>{
+  assert.match(html,/settings\.maxLoss=Math\.min\(400,Math\.max\(2,n\(settings\.maxLoss,40\)\)\)/);
   assert.match(html,/t\.maxLoss=Math\.min\(400,Math\.max\(2,n\(t\?\.maxLoss,settings\.maxLoss\)\)\)/);
+  assert.match(html,/targetProfit:40,maxLoss:40/);
 });
