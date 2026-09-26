@@ -42,8 +42,9 @@ const validProgressive={
   clientAlgoId:'zth-PRO-valid'
 };
 const validMaxLoss={
-  symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',
-  reduceOnly:false,closePosition:true,triggerPrice:'90',clientAlgoId:'zth-MAX-valid'
+  symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP',timeInForce:'IOC',
+  reduceOnly:true,closePosition:false,origQty:'1',priceMatch:'OPPONENT',
+  triggerPrice:'90',clientAlgoId:'zth-MAX-valid'
 };
 
 test('LONG inventory recognizes only exact valid Zenith exit/progressive/max-loss orders',()=>{
