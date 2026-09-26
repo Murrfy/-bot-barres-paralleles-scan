@@ -8,7 +8,7 @@ const worker=fs.readFileSync('server/zenith-engine-worker.mjs','utf8');
 test('token settings reject an exact sale at or below the exact buy',()=>{
   assert.match(
     html,
-    /buyEnabled&&saleEnabled&&salePrice<=buyPrice[sS]{0,180}strictement supérieur au prix d’achat déterminé/
+    /buyEnabled&&saleEnabled&&salePrice<=buyPrice[\s\S]{0,180}strictement supérieur au prix d’achat déterminé/
   );
 });
 
