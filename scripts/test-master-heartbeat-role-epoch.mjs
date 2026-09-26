@@ -55,3 +55,29 @@ test('heartbeat handler no longer writes heartbeat with an unfenced SET',()=>{
   assert.ok(heartbeat.includes("'MASTER_ROLE_CHANGED'"));
   assert.ok(heartbeat.includes("'MASTER_SESSION_REVOKED'"));
 });
+
+
+test('authorized fenced engine may reacquire an expired MASTER lease without controller presence',()=>{
+  assert.ok(acquire.includes("if ARGV[4] == '1' then"));
+  assert.ok(acquire.includes("local currentInstance = tostring(redis.call('GET', KEYS[6]) or '')"));
+  assert.ok(acquire.includes("if currentInstance == '' or currentInstance ~= ARGV[5] then return -4 end"));
+  assert.ok(acquire.includes("local authorizationRaw = redis.call('GET', KEYS[5])"));
+  assert.ok(acquire.includes("tonumber(authorization['version'] or 0) ~= 1"));
+  assert.ok(acquire.includes("tostring(authorization['masterDeviceId'] or '') ~= ARGV[1]"));
+  assert.ok(acquire.includes("return 3"));
+  assert.ok(acquire.includes('KEY_ENGINE_AUTHORIZED'));
+  assert.ok(acquire.includes('KEY_ENGINE_INSTANCE'));
+  assert.ok(acquire.includes('reacquiredPersistent: result === 3'));
+  assert.ok(acquire.includes('authorized: result === 1 || result === 2 || result === 3'));
+  assert.ok(heartbeat.includes('lease.engineInstanceFenced'));
+  assert.ok(heartbeat.includes("'ENGINE_INSTANCE_FENCED'"));
+  assert.ok(heartbeat.includes('reacquiredPersistent: lease.reacquiredPersistent === true'));
+});
+
+test('non-engine MASTER still requires the short-lived controller activation after lease loss',()=>{
+  assert.ok(acquire.includes("if approved == '1' then"));
+  assert.ok(acquire.includes("redis.call('DEL', KEYS[2])"));
+  assert.ok(acquire.includes("if ARGV[4] == '1' then"));
+  assert.ok(acquire.includes("return 0"));
+  assert.ok(acquire.includes("isEngine ? '1' : '0'"));
+});

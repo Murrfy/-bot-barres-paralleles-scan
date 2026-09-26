@@ -954,6 +954,8 @@ function masterActivationKey(deviceId) {
 async function acquireOrRenewMaster(device) {
   const deviceId = String(device?.deviceId || '');
   const sessionCreatedAt = String(Number(device?.createdAt || 0));
+  const isEngine = String(device?.principal || '') === 'engine';
+  const engineInstanceId = String(device?.engineInstanceId || '');
   const script = [
     "local registered = tostring(redis.call('GET', KEYS[3]) or '')",
     "if registered ~= ARGV[1] then return -2 end",
@@ -967,30 +969,49 @@ async function acquireOrRenewMaster(device) {
     "end",
     "if current and current ~= ARGV[1] then return -1 end",
     "local approved = redis.call('GET', KEYS[2])",
-    "if approved ~= '1' then return 0 end",
-    "redis.call('DEL', KEYS[2])",
-    "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])",
-    "return 1"
+    "if approved == '1' then",
+    "  redis.call('DEL', KEYS[2])",
+    "  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])",
+    "  return 1",
+    "end",
+    "if ARGV[4] == '1' then",
+    "  local currentInstance = tostring(redis.call('GET', KEYS[6]) or '')",
+    "  if currentInstance == '' or currentInstance ~= ARGV[5] then return -4 end",
+    "  local authorizationRaw = redis.call('GET', KEYS[5])",
+    "  if not authorizationRaw then return -5 end",
+    "  local ok, authorization = pcall(cjson.decode, authorizationRaw)",
+    "  if not ok or tonumber(authorization['version'] or 0) ~= 1 or tostring(authorization['masterDeviceId'] or '') ~= ARGV[1] then return -5 end",
+    "  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])",
+    "  return 3",
+    "end",
+    "return 0"
   ].join('\n');
 
   const result = Number(await redis([
-    'EVAL', script, '4',
+    'EVAL', script, '6',
     KEY_MASTER,
     masterActivationKey(deviceId),
     KEY_MASTER_DEVICE,
     roleAssignmentKey(PREFIX, 'master'),
+    KEY_ENGINE_AUTHORIZED,
+    KEY_ENGINE_INSTANCE,
     deviceId,
     String(MASTER_TTL_SECONDS),
     sessionCreatedAt,
+    isEngine ? '1' : '0',
+    engineInstanceId,
   ]));
 
   return {
     acquired: result === 1,
     renewed: result === 2,
+    reacquiredPersistent: result === 3,
     conflict: result === -1,
     roleChanged: result === -2,
     sessionRevoked: result === -3,
-    authorized: result === 1 || result === 2,
+    engineInstanceFenced: result === -4,
+    restartAuthorizationMissing: result === -5,
+    authorized: result === 1 || result === 2 || result === 3,
   };
 }
 
@@ -3144,11 +3165,15 @@ export default async function handler(req, res) {
       if (!device) return;
 
       const lease = await acquireOrRenewMaster(device);
-      if (lease.roleChanged || lease.sessionRevoked) {
+      if (lease.roleChanged || lease.sessionRevoked || lease.engineInstanceFenced) {
         clearDeviceSessionCookie(res);
         return send(res, 409, {
           ok: false,
-          code: lease.sessionRevoked ? 'MASTER_SESSION_REVOKED' : 'MASTER_ROLE_CHANGED',
+          code: lease.engineInstanceFenced
+            ? 'ENGINE_INSTANCE_FENCED'
+            : lease.sessionRevoked
+              ? 'MASTER_SESSION_REVOKED'
+              : 'MASTER_ROLE_CHANGED',
         });
       }
       if (lease.conflict) {
@@ -3225,6 +3250,7 @@ export default async function handler(req, res) {
         realExecutionArmReason: armStatus.reason,
         acquired: lease.acquired,
         renewed: lease.renewed,
+        reacquiredPersistent: lease.reacquiredPersistent === true,
         currentMaster: await masterDeviceId(),
         masterMode: currentMode,
         pauseTransition,
