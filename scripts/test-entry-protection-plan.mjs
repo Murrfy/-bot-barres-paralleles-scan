@@ -4,7 +4,7 @@ import { buildEntryProtectionPlan } from '../lib/entry-protection-plan.mjs';
 
 const priceFilter={filterType:'PRICE_FILTER',tickSize:'0.1',minPrice:'0.1',maxPrice:'1000000'};
 
-test('LONG entry protection is a close-all STOP_MARKET below the LIMIT entry',()=>{
+test('LONG entry protection is a STOP LIMIT IOC below the LIMIT entry',()=>{
   const plan=buildEntryProtectionPlan({
     commandId:'entry-long-123456',symbol:'BTCUSDT',side:'BUY',
     quantity:0.2,limitPrice:50000,maxLoss:400,priceFilter,
@@ -13,12 +13,15 @@ test('LONG entry protection is a close-all STOP_MARKET below the LIMIT entry',()
   assert.equal(plan.triggerPrice,48000);
   assert.equal(plan.actualMaxLossUsd,400);
   assert.equal(plan.algoPlan.protectionKind,'MAX_LOSS');
-  assert.equal(plan.algoPlan.params.type,'STOP_MARKET');
+  assert.equal(plan.algoPlan.params.type,'STOP');
   assert.equal(plan.algoPlan.params.side,'SELL');
   assert.equal(plan.algoPlan.params.positionSide,'BOTH');
-  assert.equal(plan.algoPlan.params.closePosition,'true');
-  assert.equal(plan.algoPlan.params.quantity,undefined);
-  assert.equal(plan.algoPlan.params.reduceOnly,undefined);
+  assert.equal(plan.algoPlan.params.timeInForce,'IOC');
+  assert.equal(plan.algoPlan.params.quantity,'0.2');
+  assert.equal(plan.algoPlan.params.reduceOnly,'true');
+  assert.equal(plan.algoPlan.params.priceMatch,'OPPONENT');
+  assert.equal(plan.algoPlan.params.closePosition,undefined);
+  assert.equal(plan.algoPlan.params.price,undefined);
   assert.match(plan.algoPlan.params.clientAlgoId,/^zth-MAX-[a-f0-9]{24}$/);
 });
 
