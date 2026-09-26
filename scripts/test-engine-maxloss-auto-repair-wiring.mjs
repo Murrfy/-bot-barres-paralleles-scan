@@ -24,7 +24,7 @@ test('ambiguous or failed repair remains fail-closed without closing the positio
   assert.match(worker,/markMaxLossRepairFailure/);
   assert.match(worker,/AUTO_MAX_LOSS_REPAIR_RECONCILIATION_FAILED/);
   const start=worker.indexOf('async function repairMissingMaxLoss');
-  const end=worker.indexOf('async function reconcile',start);
+  const end=worker.indexOf('function authorizedMaxLossOverlapReport',start);
   const repairBlock=worker.slice(start,end);
   assert.doesNotMatch(repairBlock,/runFullClose|EXEC_CLOSE_POSITION|MARKET_LAST_RESORT|emergency-stop/);
 });
