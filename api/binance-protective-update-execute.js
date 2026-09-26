@@ -449,11 +449,9 @@ export default async function handler(req,res){
       (phase==='CANCEL_OLD'&&update.protectionKind==='MAX_LOSS'&&String(req.body?.newClientAlgoId||''))
     )?protectiveRepairTarget(type,update):'';
     const executionTarget=update.symbol+':'+update.direction;
-    const quarantineOperationAllowed=
-      type==='EXEC_UPDATE_PROTECTION'&&update.protectionKind==='MAX_LOSS';
     const readyReason=executionReadiness(
       state.runtimeState,state.report,master.deviceId,repairTarget,false,false,
-      executionTarget,quarantineOperationAllowed
+      executionTarget,false
     );
     if(readyReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readyReason,writeAttempted:false});
 
