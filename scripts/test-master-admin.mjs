@@ -43,7 +43,6 @@ for (const role of ['controller', 'master']) {
     const p = page(role);
     await p.run('verifyMaster()');
     assert.equal(p.elements.pauseBtn.disabled, false);
-    assert.equal(p.elements.replaceBtn.hidden, role !== 'master');
     await p.run("setMasterMode('master-pause')");
     assert.equal(p.posts.length, 0, 'code required');
     p.elements.adminCode.value = 'test-admin';
@@ -73,25 +72,20 @@ test('connection failure disables actions instead of showing a verified state', 
   await p.run('verifyMaster()');
   p.state.offline = true;
   await p.run('verifyMaster()');
-  for (const id of ['pauseBtn', 'cancelPauseBtn', 'resumeBtn', 'replaceBtn']) assert.equal(p.elements[id].disabled, true);
+  for (const id of ['pauseBtn', 'cancelPauseBtn', 'resumeBtn']) assert.equal(p.elements[id].disabled, true);
 });
-test('resume requires an active lease; controller has no recovery action', async () => {
+test('resume still requires an active MASTER lease', async () => {
   const p = page('controller', 'PAUSED'); p.state.lease = false;
   await p.run('verifyMaster()');
   assert.equal(p.elements.resumeBtn.disabled, true);
-  p.elements.adminCode.value = 'test-admin';
-  await p.run('authorizeReplacement()');
-  assert.equal(p.posts.length, 0);
 });
 
-test('MASTER without an active lease cannot authorize controller replacement', async () => {
-  const p = page('master', 'PAUSED'); p.state.lease = false;
-  await p.run('verifyMaster()');
-  assert.equal(p.elements.replaceBtn.hidden, false);
-  assert.equal(p.elements.replaceBtn.disabled, true);
-  p.elements.adminCode.value = 'test-admin';
-  await p.run('authorizeReplacement()');
-  assert.equal(p.posts.length, 0);
+test('controller recovery in Administration is a separate generic route', () => {
+  assert.match(html,/action="\/replace-controller\.html"/);
+  assert.match(html,/Reprendre le contrôle sur cet appareil/);
+  assert.doesNotMatch(html,/Autoriser le remplacement de l’iPhone/);
+  assert.doesNotMatch(script,/authorizeReplacement\(/);
+  assert.doesNotMatch(script,/controller-replacement-authorize/);
 });
 
 
