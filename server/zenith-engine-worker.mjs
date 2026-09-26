@@ -52,6 +52,7 @@ const KEEPALIVE_MS=45*60*1000;
 const STREAM_RESTART_MS=23*60*60*1000;
 const MARK_FALLBACK_MS=6000;
 const ENTRY_WATCH_RECOVERY_MS=48*60*60*1000;
+const HISTORY_ARCHIVE_MS=6*60*60*1000;
 const BOOTSTRAP_RETRY_MS=15000;
 
 const instanceId='engine-instance-'+crypto.randomUUID();
@@ -152,6 +153,7 @@ const markStream={
 
 let heartbeatTimer=null;
 let standbyTimer=null;
+let historyArchiveTimer=null;
 
 function required(name,value){
   if(!value)throw new Error(name+'_REQUIRED');
@@ -277,6 +279,29 @@ async function userStreamApi(action,method='GET'){
 }
 async function binanceApi(path,{method='GET',body}={}){
   return http(path,{method,body});
+}
+
+async function refreshRealHistoryArchive(){
+  if(stopping||!runtime.leaseActive||!sessionCookie)return false;
+  try{
+    const {response,data}=await binanceApi('/api/binance-history');
+    if(response.ok&&data?.ok===true){
+      log('REAL_HISTORY_ARCHIVE_REFRESHED',{
+        historyRows:Array.isArray(data.history)?data.history.length:0,
+        generatedAt:Number(data.generatedAt||0),
+        cached:data.cached===true,
+      });
+      return true;
+    }
+    log('REAL_HISTORY_ARCHIVE_REFRESH_FAILED',{
+      code:String(data?.code||('HTTP_'+response.status)),
+      status:Number(response.status)||0,
+    });
+    return false;
+  }catch(error){
+    logError('REAL_HISTORY_ARCHIVE_REFRESH_FAILED',error);
+    return false;
+  }
 }
 
 async function publicBinanceJson(path){
@@ -3311,6 +3336,7 @@ async function shutdown(code=0){
   stopping=true;
   if(heartbeatTimer)clearInterval(heartbeatTimer);
   if(standbyTimer)clearInterval(standbyTimer);
+  if(historyArchiveTimer)clearInterval(historyArchiveTimer);
   if(execution.timer)clearInterval(execution.timer);
   if(stream.reconnectTimer)clearTimeout(stream.reconnectTimer);
   if(markStream.reconnectTimer)clearTimeout(markStream.reconnectTimer);
@@ -3345,6 +3371,8 @@ async function main(){
   if(stopping)return;
 
   await runtimeCycle();
+  void refreshRealHistoryArchive();
+  historyArchiveTimer=setInterval(()=>{void refreshRealHistoryArchive()},HISTORY_ARCHIVE_MS);
   heartbeatTimer=setInterval(()=>runtimeCycle(),HEARTBEAT_MS);
   execution.timer=setInterval(()=>commandCycle(),COMMAND_POLL_MS);
   markStream.fallbackTimer=setInterval(
@@ -3356,6 +3384,7 @@ async function main(){
     baseOrigin:new URL(BASE_URL).origin,
     commandPollMs:COMMAND_POLL_MS,
     heartbeatMs:HEARTBEAT_MS,
+    historyArchiveMs:HISTORY_ARCHIVE_MS,
     autoProtectionMoved:true,
   });
 }

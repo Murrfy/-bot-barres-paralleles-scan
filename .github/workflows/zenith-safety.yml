@@ -234,6 +234,8 @@ jobs:
         run: node --test scripts/test-real-only-ui.mjs
       - name: Test real Binance net history
         run: node --test scripts/test-real-binance-history.mjs
+      - name: Test autonomous real-history archive
+        run: node --test scripts/test-engine-history-archive-wiring.mjs
       - name: Test proof-driven entry confirmation
         run: node --test scripts/test-entry-open-state.mjs
       - name: Test MASTER protective command dispatcher
