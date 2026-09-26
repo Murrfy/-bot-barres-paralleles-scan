@@ -57,7 +57,7 @@ test('configured protection arrays remain untruncated after the default reset',(
   const normalize=block('function normalizeProtections(stages,target=40)','function cfg(symbol)');
   assert.match(normalize,/Math\.max\(protectionCountForTarget\(target\),src\.length\)/);
   const editor=block('function protectionsForTarget(stages,target,minCount=0)','function applyProtectionVisibility()');
-  assert.match(editor,/Math\.max\(protectionCountForTarget\(target\),Math\.max\(0,Math\.floor\(n\(minCount,0\)\)\)\)/);
+  assert.match(editor,/Math\.max\(protectionCountForTarget\(target\),src\.length,Math\.max\(0,Math\.floor\(n\(minCount,0\)\)\)\)/);
 });
 
 test('token gain, max-loss and progressive protections persist as token overrides',()=>{
