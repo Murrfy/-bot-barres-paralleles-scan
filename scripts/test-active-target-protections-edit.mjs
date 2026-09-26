@@ -186,3 +186,35 @@ test('controller command identity includes active config digest and MASTER suppo
   assert.match(controller,/type:'EXEC_UPDATE_ACTIVE_CONFIG'/);
   assert.match(dispatch,/EXEC_UPDATE_ACTIVE_CONFIG/);
 });
+
+
+test('manual + protection stages are preserved beyond automatic target count and flow to Binance protection logic',()=>{
+  const editor=block(html,'function protectionsForTarget','function applyProtectionVisibility');
+  assert.match(editor,/src\.length/);
+  assert.match(editor,/function addManualProtectionStage/);
+  assert.match(editor,/current\.length>=200/);
+  assert.match(editor,/id="addProtectionStageBtn"/);
+  assert.match(editor,/add\.onclick=addManualProtectionStage/);
+  assert.match(editor,/Enregistrer le jeton/);
+
+  const serverStages=block(sync,'function activeProtectionStagesStatus','function activeConfigStatus');
+  assert.match(serverStages,/value\.length > 200/);
+  assert.match(serverStages,/rows\.push\(\{ enabled, arm, floor \}\)/);
+
+  const filter={filterType:'PRICE_FILTER',minPrice:'0.1',maxPrice:'1000000',tickSize:'0.1'};
+  const position={symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'1',entryPrice:'100',updateTime:1000};
+  const manual=[
+    {enabled:true,arm:30,floor:20},
+    {enabled:true,arm:105,floor:100},
+    {enabled:true,arm:205,floor:200},
+    {enabled:true,arm:230,floor:220},
+  ];
+  const result=evaluateMasterAutoProgressiveProtection({
+    position,markPrice:335,protectionStages:manual,currentOrders:[],priceFilter:filter,
+    previousHighWaterProfitUsd:235
+  });
+  assert.equal(result.action,'REPLACE');
+  assert.equal(result.stage.armProfitUsd,230);
+  assert.equal(result.stage.protectedProfitUsd,220);
+  assert.equal(result.level.triggerPrice,result.level.limitPrice);
+});
