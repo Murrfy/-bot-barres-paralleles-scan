@@ -55,7 +55,7 @@ const setStatus=(msg,type='')=>{
 function replacementDeviceId(){
   let id=localStorage.getItem(REPLACEMENT_DEVICE_ID_KEY);
   if(!id){
-    id='phone-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
+    id='device-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
     localStorage.setItem(REPLACEMENT_DEVICE_ID_KEY,id);
   }
   return id;
@@ -113,7 +113,7 @@ async function replaceController(){
     localStorage.setItem(DEVICE_ID_KEY,newDeviceId);
     localStorage.removeItem(DEVICE_TOKEN_KEY);
     localStorage.setItem(DEVICE_ROLE_KEY,'controller');
-    localStorage.setItem(DEVICE_NAME_KEY,'Téléphone contrôleur Zenith');
+    localStorage.setItem(DEVICE_NAME_KEY,'Appareil contrôleur Zenith');
     localStorage.removeItem(REPLACEMENT_DEVICE_ID_KEY);
 
     const restored=restoreCentralState(q.state);
