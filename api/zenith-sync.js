@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
+import { DEVICE_SESSION_MAX_AGE_SECONDS, deviceSessionRemainingSeconds, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
 import {
   normalizeProtectiveUpdatePayload,
   protectionOnlyMismatchTarget,
@@ -695,12 +695,6 @@ async function roleDeviceId(role) {
   return value ? String(value) : '';
 }
 
-function deviceSessionRemainingSeconds(device, now = Date.now()) {
-  const createdAt = Number(device?.createdAt || 0);
-  if (!Number.isFinite(createdAt) || createdAt <= 0) return 0;
-  const absoluteExpiresAt = createdAt + DEVICE_SESSION_MAX_AGE_SECONDS * 1000;
-  return Math.max(0, Math.ceil((absoluteExpiresAt - now) / 1000));
-}
 
 async function touchDevice(device) {
   if (!device?.tokenHash) return { expired:true, remainingSeconds:0 };
@@ -710,11 +704,13 @@ async function touchDevice(device) {
     await redis(['DEL', key]);
     return { expired:true, remainingSeconds:0 };
   }
+  const engine = String(device?.principal || '') === 'engine';
+  const renewedSeconds = engine ? DEVICE_SESSION_MAX_AGE_SECONDS : remainingSeconds;
   const updated = { ...device, lastSeenAt: Date.now() };
   delete updated.tokenHash;
   delete updated.sessionToken;
-  await redis(['SET', key, JSON.stringify(updated), 'EX', String(remainingSeconds)]);
-  return { expired:false, remainingSeconds };
+  await redis(['SET', key, JSON.stringify(updated), 'EX', String(renewedSeconds)]);
+  return { expired:false, remainingSeconds:renewedSeconds };
 }
 
 async function rotateLegacyBearerSession(device) {
