@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const sync=fs.readFileSync('api/zenith-sync.js','utf8');
 const page=fs.readFileSync('replace-controller.html','utf8');
+const index=fs.readFileSync('index.html','utf8');
 
 function between(startMarker,endMarker){
   const start=sync.indexOf(startMarker);
@@ -69,7 +70,7 @@ test('successful recovery rotates ownership, creates a fresh HttpOnly session an
   assert.equal(endpoint.includes('MASTER_ADMIN_CODE'),false);
 });
 
-test('new-iPhone page asks only for ADMIN recovery and stores no ADMIN secret',()=>{
+test('new-device page asks only for ADMIN recovery and stores no ADMIN secret',()=>{
   assert.ok(page.includes('Code administrateur Zenith'));
   assert.ok(page.includes("type=\"password\""));
   assert.ok(page.includes("action=controller-recovery-admin"));
@@ -78,4 +79,20 @@ test('new-iPhone page asks only for ADMIN recovery and stores no ADMIN secret',(
   assert.equal(page.includes('Code temporaire affiché sur l’iPad MASTER'),false);
   assert.equal(page.includes("localStorage.setItem('adminCode'"),false);
   assert.equal(page.includes('localStorage.setItem(ADMIN'),false);
+});
+
+
+test('main Zenith page exposes lost-device recovery only when this device is not recognized',()=>{
+  assert.ok(index.includes('id="replaceControllerBtn"'));
+  assert.ok(index.includes('href="/replace-controller.html"'));
+  assert.ok(index.includes('Reprendre le contrôle sur cet appareil'));
+  assert.ok(index.includes("replaceBtn.hidden=controllerIdentity.paired===true"));
+});
+
+test('lost-device recovery path does not invoke PANIC, pause, resume or MASTER replacement',()=>{
+  assert.equal(page.includes("action=emergency-stop"),false);
+  assert.equal(page.includes("action=master-pause"),false);
+  assert.equal(page.includes("action=master-resume"),false);
+  assert.equal(page.includes("action=master-revoke"),false);
+  assert.ok(page.includes("action=controller-recovery-admin"));
 });

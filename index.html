@@ -56,6 +56,7 @@
     <span id="masterModeBadge" class="live" hidden>MASTER —</span>
     <span id="masterWakeBadge" class="live" hidden>ÉCRAN MASTER —</span>
     <a class="btn" href="/master-admin.html">Administration MASTER</a>
+    <a id="replaceControllerBtn" class="btn" href="/replace-controller.html" hidden>Reprendre le contrôle sur cet appareil</a>
     <span id="masterInlineActions" hidden aria-hidden="true">
       <button id="masterAuthorizeBtn" class="btn good" hidden>Autoriser serveur 24/7</button>
       <button id="masterPauseBtn" class="btn danger" hidden>Pause MASTER</button>
@@ -996,7 +997,8 @@ async function syncMasterWakeLock(force=false){
   }
 }
 function renderControllerIdentity(){
-  const b=$('controllerBadge');
+  const b=$('controllerBadge'),replaceBtn=$('replaceControllerBtn');
+  if(replaceBtn)replaceBtn.hidden=controllerIdentity.paired===true;
   if(!b)return;
   if(controllerIdentity.paired&&controllerIdentity.role==='controller'){
     if(controllerSyncState.conflict){
