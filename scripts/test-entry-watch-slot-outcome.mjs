@@ -54,6 +54,18 @@ test('token list shows server-confirmed not-started state and keeps it out of wa
   assert.match(html,/setInterval\(refreshServerEntryWatch,3000\)/);
 });
 
+test('slot race never restarts the original 50-second waiting window',()=>{
+  const start=worker.indexOf('async function processEntryWatchPrice');
+  const end=worker.indexOf('async function pruneAutoHighWater',start);
+  assert.ok(start>=0&&end>start);
+  const block=worker.slice(start,end);
+  assert.match(block,/previousPendingUntil=Math\.max\(0,n\(previous\?\.pendingUntil,0\)\)/);
+  assert.match(block,/originalDeadline=previousPendingUntil>0\?previousPendingUntil:crossingAt\+50000/);
+  assert.match(block,/if\(Date\.now\(\)<originalDeadline\)[\s\S]*state\.pendingUntil=originalDeadline/);
+  assert.match(block,/else\{[\s\S]*state\.pendingUntil=0;[\s\S]*state\.blockedAt=Date\.now\(\)/);
+  assert.doesNotMatch(block,/state\.pendingUntil=Math\.max\(Date\.now\(\)\+1/);
+});
+
 test('expired slot window never sends an order and remains a terminal blocked watch state',()=>{
   assert.match(watch,/if\(at>=next\.pendingUntil\)[\s\S]*next\.blockedAt=at;[\s\S]*return \{action:'EXPIRED'/);
   assert.match(html,/N’A PAS DÉMARRÉ — aucune place libérée pendant les 50 secondes/);
