@@ -118,15 +118,12 @@ test('reconciliation can reconstruct a triggered MAX-LOSS remainder from Binance
           triggerTime:1700000000000,updateTime:1700000001000,
         }]));
       }
-      if(u.pathname==='/fapi/v1/order'&&u.searchParams.get('orderId')==='9001'){
-        return new Response(JSON.stringify({
+      if(u.pathname==='/fapi/v1/allOrders'){
+        return new Response(JSON.stringify([{
           symbol:'BTCUSDT',orderId:'9001',clientOrderId:'binance-triggered',
           side:'SELL',positionSide:'BOTH',type:'LIMIT',status:'EXPIRED',
           origQty:'1',executedQty:'0.4',reduceOnly:true,closePosition:false,timeInForce:'IOC'
-        }));
-      }
-      if(u.pathname==='/fapi/v1/order'&&u.searchParams.get('origClientOrderId')){
-        return new Response(JSON.stringify({code:-2013,msg:'Order does not exist.'}),{status:400});
+        }]));
       }
       throw new Error('unexpected '+u.pathname);
     };
