@@ -16,6 +16,7 @@ import {
   cancelAlgoOrderIdempotent,
 } from '../lib/binance-algo-writer.mjs';
 import { validateExecutionArmRecord, protectiveModeReason, executionReadiness } from './binance-protective-execute.js';
+import { isLimitIocMaxLossOrder, maxLossAlgoExpected } from '../lib/maxloss-order-shape.mjs';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
 
 const BASE='https://fapi.binance.com';
@@ -203,14 +204,10 @@ export function emergencyProtection(runtimeState,update,entryPrice,excludeClient
   const side=sideForDirection(update.direction);
   const quantity=n(update?.quantity,NaN);
   return runtimeOrders(runtimeState).find(o=>{
-    if(String(o?.orderClass||'').toUpperCase()!=='ALGO')return false;
-    if(String(o?.symbol||'').toUpperCase()!==update.symbol)return false;
-    if(String(o?.side||'').toUpperCase()!==side)return false;
-    if(String(o?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
-    if(String(o?.type||'').toUpperCase()!=='STOP_MARKET')return false;
-    if(!bool(o?.closePosition))return false;
+    if(!isLimitIocMaxLossOrder(o,{
+      symbol:update.symbol,side,positionSide:'BOTH',quantity,
+    }))return false;
     const clientAlgoId=String(o?.clientAlgoId||'');
-    if(!/^zth-[A-Za-z0-9._:-]+$/.test(clientAlgoId)||clientAlgoId.length>36)return false;
     if(clientAlgoId===String(excludeClientAlgoId||''))return false;
     const trigger=n(o?.triggerPrice??o?.stopPrice);
     if(!(trigger>0)||!(entryPrice>0)||!(quantity>0))return false;
@@ -265,8 +262,11 @@ export function conflictingProtectiveOrders(runtimeState, update, kind, allowedI
     } else if (wanted === 'MAX_LOSS') {
       samePurpose =
         orderClass === 'ALGO' &&
-        type === 'STOP_MARKET' &&
-        bool(order?.closePosition);
+        type === 'STOP' &&
+        String(order?.timeInForce || '').toUpperCase() === 'IOC' &&
+        bool(order?.reduceOnly) &&
+        !bool(order?.closePosition) &&
+        String(order?.priceMatch || '').toUpperCase() === 'OPPONENT';
       id = String(order?.clientAlgoId || '');
     }
 
@@ -392,6 +392,8 @@ export default async function handler(req,res){
           ...(target.reduceOnly?{reduceOnly:'true'}:{}),
           ...(target.triggerPrice?{triggerPrice:target.triggerPrice}:{}),
           ...(target.price?{price:target.price}:{}),
+          ...(target.timeInForce?{timeInForce:target.timeInForce}:{}),
+          ...(target.priceMatch?{priceMatch:target.priceMatch}:{}),
         };
         if(!(await requireFinalProtectiveMaster(res,master)))return;
         result=await cancelAlgoOrderIdempotent({
@@ -465,11 +467,13 @@ export default async function handler(req,res){
           ?(live.entryPrice-previousTrigger)*live.liveQuantity
           :(previousTrigger-live.entryPrice)*live.liveQuantity;
         if(!previousMaxLoss||
-           !/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(previousMaxLoss?.clientAlgoId||''))||
-           String(previousMaxLoss?.type||'').toUpperCase()!=='STOP_MARKET'||
-           !bool(previousMaxLoss?.closePosition)||
-           String(previousMaxLoss?.side||'').toUpperCase()!==sideForDirection(update.direction)||
-           String(previousMaxLoss?.positionSide||'BOTH').toUpperCase()!=='BOTH'||
+           !isLimitIocMaxLossOrder(previousMaxLoss,{
+             symbol:update.symbol,
+             side:sideForDirection(update.direction),
+             positionSide:'BOTH',
+             quantity:live.liveQuantity,
+             clientAlgoId:update.previousClientAlgoId,
+           })||
            !(previousTrigger>0)||
            !(previousImpliedLoss>=0)||
            previousImpliedLoss>configuredMaxLoss+1e-8){
@@ -623,11 +627,13 @@ export default async function handler(req,res){
         if(update.protectionKind==='MAX_LOSS'){
           const confirmedTrigger=n(confirmedNew?.triggerPrice??confirmedNew?.stopPrice,NaN);
           if(!newId||!confirmedNew||
-             !/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(confirmedNew?.clientAlgoId||''))||
-             String(confirmedNew.type||'').toUpperCase()!=='STOP_MARKET'||
-             !bool(confirmedNew.closePosition)||
-             String(confirmedNew.side||'').toUpperCase()!==sideForDirection(update.direction)||
-             String(confirmedNew.positionSide||'BOTH').toUpperCase()!=='BOTH'||
+             !isLimitIocMaxLossOrder(confirmedNew,{
+               symbol:update.symbol,
+               side:sideForDirection(update.direction),
+               positionSide:'BOTH',
+               quantity:update.quantity,
+               clientAlgoId:newId,
+             })||
              !Number.isFinite(confirmedTrigger)||
              Math.abs(confirmedTrigger-update.triggerPrice)>Math.max(1e-9,Math.abs(update.triggerPrice)*1e-10)){
             return send(res,423,{ok:false,code:'NEW_MAX_LOSS_PROTECTION_NOT_CONFIRMED',writeAttempted:false});
@@ -650,13 +656,20 @@ export default async function handler(req,res){
           }
         }
 
-        const expected={
+        let expected={
           symbol:update.symbol,side:sideForDirection(update.direction),positionSide:'BOTH',
           clientAlgoId:update.previousClientAlgoId,
-          type:update.protectionKind==='MAX_LOSS'?'STOP_MARKET':'STOP',
+          type:'STOP',
         };
         if(update.protectionKind==='MAX_LOSS'){
-          expected.closePosition='true';
+          const oldTrigger=n(old?.triggerPrice??old?.stopPrice);
+          expected=maxLossAlgoExpected({
+            symbol:update.symbol,
+            side:sideForDirection(update.direction),
+            quantity:update.quantity,
+            clientAlgoId:update.previousClientAlgoId,
+            triggerPrice:oldTrigger,
+          });
         }else{
           const oldPrice=n(old?.price);
           const oldTrigger=n(old?.triggerPrice??old?.stopPrice);
