@@ -24,6 +24,7 @@ const ENGINE_MASTER_DEVICE_ID = 'zenith-server-engine-v1';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
+const REAL_ENTRY_WRITE_ENABLED = process.env.ZENITH_REAL_ENTRY_WRITE_ENABLED === '1';
 // Final pre-unlock audit complete: every operational protective sell path is LIMIT-only.
 // This flag removes only the audit blocker; real trading still requires the independent env, production,
 // ADMIN arm, PAUSED/PANIC, reconciliation, stream, permission and MASTER authority gates below.
@@ -3616,6 +3617,7 @@ export default async function handler(req, res) {
       }
       if (!REAL_TRADING_ENABLED) return send(res, 423, { ok:false, code:'REAL_TRADING_DISABLED' });
       if (!BINANCE_WRITE_ENABLED) return send(res, 423, { ok:false, code:'BINANCE_WRITE_DISABLED' });
+      if (!REAL_ENTRY_WRITE_ENABLED) return send(res, 423, { ok:false, code:'REAL_ENTRY_WRITE_DISABLED' });
       if (!VERCEL_PRODUCTION_WRITE_ALLOWED) return send(res, 423, { ok:false, code:'NON_PRODUCTION_DEPLOYMENT' });
       if (!PAIRING_DISABLED) return send(res, 423, { ok:false, code:'PAIRING_MUST_BE_DISABLED' });
       if (!DEPLOYMENT_SHA) return send(res, 423, { ok:false, code:'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING' });
@@ -3907,6 +3909,7 @@ export default async function handler(req, res) {
         executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
         realTradingEnabled: REAL_TRADING_ENABLED,
         binanceWriteEnabled: BINANCE_WRITE_ENABLED,
+        realEntryWriteEnabled: REAL_ENTRY_WRITE_ENABLED,
         realExecutionArmed: armStatus.armed,
         realExecutionArmReason: armStatus.reason,
         realExecutionArmedAt: Number(armStatus.record?.armedAt || 0),
