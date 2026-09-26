@@ -44,11 +44,12 @@ test('high-water is scoped to persistent engine authorization',()=>{
   assert.ok(readBlock.includes('staleScope:Boolean(stored && !sameScope)'));
 });
 
-test('high-water write has bounded input and atomically rechecks authority plus authorizationAt',()=>{
+test('high-water write has no position-count cap and atomically rechecks authority plus authorizationAt',()=>{
+  assert.equal(writeBlock.includes('keys.length > 20'),false);
+  assert.equal(writeBlock.includes('ENGINE_HIGH_WATER_TOO_MANY_ENTRIES'),false);
   for(const required of [
-    'keys.length > 20','ENGINE_HIGH_WATER_TOO_MANY_ENTRIES',
     'A-Za-z0-9._:+-','Math.abs(value) > 1e9',
-    "Buffer.byteLength(entriesRaw, 'utf8') > 16 * 1024",
+    "Buffer.byteLength(entriesRaw, 'utf8') > ENGINE_HIGH_WATER_STATE_MAX_BYTES",
     'currentInstance ~= ARGV[1]','registered ~= ARGV[2]',
     'lease ~= ARGV[2]','epoch ~= ARGV[3]',
     "authorization['masterDeviceId']","authorization['authorizedAt']",
