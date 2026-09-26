@@ -280,6 +280,8 @@ jobs:
         run: node --test scripts/test-protective-repair-wiring.mjs
       - name: Test protective update conflict guards
         run: node --test scripts/test-protective-update-conflicts.mjs
+      - name: Test LIMIT-only protective sell invariants
+        run: node --test scripts/test-limit-only-protective-sells.mjs
       - name: Test MAX-LOSS safe overlap sequencing
         run: node --test scripts/test-maxloss-overlap-sequencing.mjs
       - name: Test MAX-LOSS hard-cap wiring
