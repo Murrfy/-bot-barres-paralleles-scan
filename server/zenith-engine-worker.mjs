@@ -2246,8 +2246,7 @@ async function reconcile(secondPass=false){
     const reportReasons=Array.isArray(data.report?.reasons)?data.report.reasons.map(x=>String(x||'')):[];
     if(reportReasons.includes('TRIGGERED_MAX_LOSS_RECOVERY_PENDING')){
       runtime.error='TRIGGERED_MAX_LOSS_RECOVERY_PENDING';
-      stream.lastError='TRIGGERED_MAX_LOSS_RECOVERY_PENDING';
-      await publishRuntime().catch(()=>{});
+      await invalidateStream('TRIGGERED_MAX_LOSS_RECOVERY_PENDING');
       stream.reconcileBusy=false;
       scheduleReconcile(250);
       return false;
@@ -2263,8 +2262,7 @@ async function reconcile(secondPass=false){
         'TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED',
       ].includes(value))||'MAX_LOSS_REMAINDER_FAIL_CLOSED';
       runtime.error=reason;
-      stream.lastError=reason;
-      await publishRuntime().catch(()=>{});
+      await invalidateStream(reason);
       return false;
     }
 
