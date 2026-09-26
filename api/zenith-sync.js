@@ -24,6 +24,9 @@ const ENGINE_MASTER_DEVICE_ID = 'zenith-server-engine-v1';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
+// Audit gate: keep real execution impossible until every protective sell path is LIMIT-only.
+// MAX-LOSS still uses a Binance STOP_MARKET conditional order on the current architecture.
+const LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE = false;
 const VERCEL_PRODUCTION_WRITE_ALLOWED = process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main';
 const ZENITH_CONTROL_MUTATION_ALLOWED = !process.env.VERCEL_ENV ||
   process.env.VERCEL_ENV === 'development' ||
@@ -3601,6 +3604,9 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res, ['controller', 'master']);
       if (!device) return;
       if (!(await verifyMasterAdminCode(req, res, device))) return;
+      if (!LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE) {
+        return send(res, 423, { ok:false, code:'LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_REQUIRED' });
+      }
       if (!REAL_TRADING_ENABLED) return send(res, 423, { ok:false, code:'REAL_TRADING_DISABLED' });
       if (!BINANCE_WRITE_ENABLED) return send(res, 423, { ok:false, code:'BINANCE_WRITE_DISABLED' });
       if (!VERCEL_PRODUCTION_WRITE_ALLOWED) return send(res, 423, { ok:false, code:'NON_PRODUCTION_DEPLOYMENT' });
