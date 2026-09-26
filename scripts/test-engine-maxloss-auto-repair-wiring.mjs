@@ -79,3 +79,15 @@ test('entry watch and automatic gain logic skip only a quarantined symbol',()=>{
   assert.match(worker,/if\(symbolMaxLossQuarantined\(symbol\)\)return \{ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'\}/);
   assert.match(worker,/if\(symbolMaxLossQuarantined\(wanted\)\)return false/);
 });
+
+
+test('MAX-LOSS recovery serializes only commands on the same symbol',()=>{
+  const start=worker.indexOf('async function commandCycle');
+  const end=worker.indexOf('function startCommandLoop',start);
+  const block=worker.slice(start,end);
+  assert.doesNotMatch(block,/if\(execution\.busy\|\|maxLossRemainderRecovery\.busy\|\|stopping\)/);
+  assert.match(block,/const dispatchSymbol=/);
+  assert.match(block,/maxLossRemainderRecovery\.busy&&maxLossRemainderRecovery\.symbol/);
+  assert.match(block,/dispatchSymbol===String\(maxLossRemainderRecovery\.symbol\)\.toUpperCase\(\)/);
+  assert.match(block,/requeueCommand\(raw,'SYMBOL_MAX_LOSS_RECOVERY_BUSY',500\)/);
+});
