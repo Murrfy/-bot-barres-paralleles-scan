@@ -149,3 +149,34 @@ test('normal Zenith exit LIMIT may coexist with automatic progressive protection
   assert.equal(r.action,'REPLACE');
   assert.equal(r.stage.armProfitUsd,40);
 });
+
+
+test('managed emergency MAX-LOSS does not block a due progressive gain protection',()=>{
+  const maxLoss=[{
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',timeInForce:'IOC',reduceOnly:true,closePosition:false,
+    triggerPrice:'60',priceMatch:'OPPONENT',origQty:'1',executedQty:'0',
+    clientAlgoId:'zth-MAX-0123456789abcdef'
+  }];
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:long,markPrice:145,protectionStages:stages,currentOrders:maxLoss,priceFilter:filter
+  });
+  assert.equal(r.action,'REPLACE');
+  assert.equal(r.reason,'FIRST_STAGE_REACHED');
+  assert.equal(r.stage.armProfitUsd,40);
+  assert.equal(r.stage.protectedProfitUsd,39.8);
+});
+
+test('unknown IOC STOP remains conservative and cannot masquerade as managed MAX-LOSS',()=>{
+  const unknown=[{
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',timeInForce:'IOC',reduceOnly:true,closePosition:false,
+    triggerPrice:'60',priceMatch:'OPPONENT',origQty:'1',executedQty:'0',
+    clientAlgoId:'manual-stop'
+  }];
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:long,markPrice:145,protectionStages:stages,currentOrders:unknown,priceFilter:filter
+  });
+  assert.equal(r.action,'BLOCK');
+  assert.equal(r.reason,'EXTERNAL_PROGRESSIVE_PROTECTION');
+});
