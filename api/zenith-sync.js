@@ -1664,7 +1664,7 @@ async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAge
   const target = String(executionTarget || '').toUpperCase();
   if (maxLossLocalQuarantineReport(report)) {
     if (!target) {
-      return { ok: true, report, runtimeState, runtimeReady, localQuarantines: true };
+      return { ok: false, reason: 'EXECUTION_TARGET_REQUIRED' };
     }
     const [symbol, direction = ''] = target.split(':');
     const quarantine = maxLossSymbolQuarantine(report, symbol, direction);
@@ -1700,7 +1700,6 @@ async function realExecutionReadiness(
   quarantineOperationAllowed = false, repairTarget = ''
 ) {
   if (!expectedMasterDeviceId) return { ok: false, reason: 'MASTER_LEASE_REQUIRED' };
-  if (!executionTarget) return { ok: false, reason: 'EXECUTION_TARGET_REQUIRED' };
   const arm = await realExecutionArmStatus(expectedMasterDeviceId);
   if (!arm.armed) return { ok: false, reason: arm.reason };
   const reconciliation = await freshConsistentReconciliation(
@@ -5275,7 +5274,9 @@ export default async function handler(req, res) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
         }
 
-        const readiness = await freshConsistentReconciliation(device.deviceId);
+        const readiness = await freshConsistentReconciliation(
+          device.deviceId,10000,symbol+':LONG',false
+        );
         if (!readiness.ok) {
           return send(res, 409, {
             ok:false,
@@ -5371,7 +5372,9 @@ export default async function handler(req, res) {
             !['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus)) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
         }
-        const readiness = await freshConsistentReconciliation(device.deviceId);
+        const readiness = await freshConsistentReconciliation(
+          device.deviceId,10000,symbol,true
+        );
         if (!readiness.ok) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_RECONCILIATION_REQUIRED', reason:readiness.reason });
         }
@@ -5405,7 +5408,9 @@ export default async function handler(req, res) {
             !newClientId.startsWith(expectedProofPrefix)) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
         }
-        const readiness = await freshConsistentReconciliation(device.deviceId);
+        const readiness = await freshConsistentReconciliation(
+          device.deviceId,10000,payloadStatus.symbol+':'+payloadStatus.direction,false
+        );
         if (!readiness.ok) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_RECONCILIATION_REQUIRED', reason:readiness.reason });
         }
@@ -5513,7 +5518,9 @@ export default async function handler(req, res) {
         if (!payloadStatus.ok) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PAYLOAD_INVALID', reason:payloadStatus.reason });
         }
-        const readiness = await freshConsistentReconciliation(device.deviceId);
+        const readiness = await freshConsistentReconciliation(
+          device.deviceId,10000,payloadStatus.symbol+':'+payloadStatus.direction,false
+        );
         if (!readiness.ok) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_RECONCILIATION_REQUIRED', reason:readiness.reason });
         }
@@ -5563,7 +5570,9 @@ export default async function handler(req, res) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
         }
 
-        const readiness = await freshConsistentReconciliation(device.deviceId);
+        const readiness = await freshConsistentReconciliation(
+          device.deviceId,10000,payloadStatus.symbol+':'+payloadStatus.direction,true
+        );
         if (!readiness.ok) {
           return send(res, 409, {
             ok:false,
