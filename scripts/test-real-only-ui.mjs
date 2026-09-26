@@ -42,11 +42,29 @@ test('legacy local position helpers fail closed',()=>{
   assert.match(html,/function openBySymbol\(\)\{return null\}/);
 });
 
-test('real sells have no MARKET fallback',()=>{
+test('full-position close escalation has no MARKET fallback',()=>{
   const orderIntent=fs.readFileSync('lib/order-intent.mjs','utf8');
   const closeState=fs.readFileSync('lib/protective-close-state.mjs','utf8');
   const protectiveApi=fs.readFileSync('api/binance-protective-execute.js','utf8');
   assert.doesNotMatch(orderIntent,/EXIT_MARKET|MARKET_LAST_RESORT/);
   assert.doesNotMatch(closeState,/MARKET_LAST_RESORT/);
   assert.match(protectiveApi,/EXIT_MODE_LIMIT_REQUIRED/);
+});
+
+
+test('real execution is hard-blocked while MAX-LOSS still contains STOP_MARKET',()=>{
+  const sync=fs.readFileSync('api/zenith-sync.js','utf8');
+  const protectiveIntent=fs.readFileSync('lib/protective-update-intent.mjs','utf8');
+  assert.match(protectiveIntent,/params\.type='STOP_MARKET'/);
+  assert.match(sync,/const LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE = false;/);
+  const start=sync.indexOf("if (action === 'real-execution-arm'");
+  const end=sync.indexOf("if (action === 'emergency-stop-clear'",start);
+  assert.ok(start>=0&&end>start,'real-execution-arm block missing');
+  const arm=sync.slice(start,end);
+  assert.match(arm,/LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_REQUIRED/);
+  assert.ok(
+    arm.indexOf('LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_REQUIRED') <
+    arm.indexOf("if (!REAL_TRADING_ENABLED)"),
+    'LIMIT-only audit gate must run before real-trading arm checks'
+  );
 });
