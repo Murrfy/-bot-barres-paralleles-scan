@@ -98,7 +98,7 @@ test('protective orders never consume a new position slot', () => {
   const r = evaluateEntryRisk(base({
     maxActivePositions:2,
     positions:[{symbol:'ETHUSDT',positionAmt:'1'}],
-    algoOrders:[{symbol:'ETHUSDT',side:'SELL',type:'STOP_MARKET',closePosition:true,reduceOnly:false}],
+    algoOrders:[{symbol:'ETHUSDT',side:'SELL',type:'STOP',timeInForce:'IOC',quantity:'1',priceMatch:'OPPONENT',closePosition:false,reduceOnly:true}],
   }));
   assert.equal(r.normalized.pendingEntrySlots,0);
   assert.equal(r.normalized.occupiedPositionSlots,1);
@@ -129,9 +129,12 @@ test('protective close-only orders do not masquerade as duplicate entry orders',
     algoOrders:[{
       symbol:'BTCUSDT',
       side:'SELL',
-      type:'STOP_MARKET',
-      closePosition:true,
-      reduceOnly:false,
+      type:'STOP',
+      timeInForce:'IOC',
+      quantity:'1',
+      priceMatch:'OPPONENT',
+      closePosition:false,
+      reduceOnly:true,
     }],
   }));
   assert.equal(r.ready, true);
