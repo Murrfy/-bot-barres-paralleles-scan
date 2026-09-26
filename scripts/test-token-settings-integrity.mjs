@@ -37,6 +37,13 @@ test('token gain, max-loss and progressive protections persist as token override
   assert.match(pos,/maxLoss:n\(c\.maxLoss\)/);
 });
 
+test('per-token MAX-LOSS cannot be saved above that token configured margin',()=>{
+  const save=block('async function saveToken()','function devalidateSelected()');
+  assert.match(save,/configuredMargin=Math\.max\(0,n\(old\.margin,settings\.margin\)\)/);
+  assert.match(save,/requestedMaxLoss>configuredMargin/);
+  assert.match(save,/elle ne peut pas dépasser la marge configurée du jeton/);
+});
+
 test('real progressive protection prefers per-token stages before defaults',()=>{
   assert.match(worker,/const tokenCfg=tokenSettings\[wanted\]/);
   assert.match(worker,/Array\.isArray\(tokenCfg\.protectionStages\)[\s\S]*tokenCfg\.protectionStages[\s\S]*globalSettings\.protectionStages/);
