@@ -129,7 +129,7 @@ test('active target changes resize protections without discarding already reache
   assert.match(sync,/minCount=localActive\?reachedProtectionCount\(merged,localActive\.maxProfit\):realActive\?\(Array\.isArray\(saved\)\?saved\.length:0\):0/);
   assert.match(sync,/renderProtectionEditor\(merged,target,minCount\)/);
   const protections=block('function protectionsForTarget(stages,target,minCount=0)','function applyProtectionVisibility()');
-  assert.match(protections,/Math\.max\(protectionCountForTarget\(target\),Math\.max\(0,Math\.floor\(n\(minCount,0\)\)\)\)/);
+  assert.match(protections,/Math\.max\(protectionCountForTarget\(target\),src\.length,Math\.max\(0,Math\.floor\(n\(minCount,0\)\)\)\)/);
   assert.match(protections,/reachedProtectionCount\(stages,maxProfit\)/);
 });
 
