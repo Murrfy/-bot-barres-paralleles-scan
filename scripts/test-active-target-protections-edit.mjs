@@ -150,7 +150,7 @@ test('an already stronger progressive protection is never downgraded by an edite
   const existing=[{
     orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
     type:'STOP',timeInForce:'GTC',reduceOnly:true,
-    triggerPrice:'150',price:'150',priceMatch:'NONE',clientAlgoId:'zth-PRO-existing'
+    triggerPrice:'150',price:'150',origQty:'1',executedQty:'0',priceMatch:'NONE',clientAlgoId:'zth-PRO-existing'
   }];
   const result=evaluateMasterAutoProgressiveProtection({
     position,markPrice:145,protectionStages:stages,currentOrders:existing,
