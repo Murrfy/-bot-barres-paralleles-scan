@@ -29,12 +29,12 @@ test('idempotent desired target is allowed but another target still blocks',()=>
 
 test('max-loss replacement allows exactly old and new Zenith protections',()=>{
   const orders=[
-    {orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',closePosition:true,clientAlgoId:'zth-MAX-old'},
-    {orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',closePosition:true,clientAlgoId:'zth-MAX-new'},
+    {orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP',timeInForce:'IOC',quantity:'1',reduceOnly:true,closePosition:false,priceMatch:'OPPONENT',clientAlgoId:'zth-MAX-old'},
+    {orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP',timeInForce:'IOC',quantity:'1',reduceOnly:true,closePosition:false,priceMatch:'OPPONENT',clientAlgoId:'zth-MAX-new'},
   ];
   assert.equal(conflictingProtectiveOrders(runtime(orders),update,'MAX_LOSS',['zth-MAX-old','zth-MAX-new']).length,0);
   assert.equal(conflictingProtectiveOrders(runtime([...orders,{
-    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',closePosition:true,clientAlgoId:'manual-stop'
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP',timeInForce:'IOC',quantity:'1',reduceOnly:true,closePosition:false,priceMatch:'OPPONENT',clientAlgoId:'manual-stop'
   }]),update,'MAX_LOSS',['zth-MAX-old','zth-MAX-new']).length,1);
 });
 
@@ -72,7 +72,7 @@ test('server refuses cancel-old progressive until the replacement STOP+LIMIT is 
 
 test('emergency protection validator accepts $400 but rejects anything above the hard cap',()=>{
   const base={orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
-    type:'STOP_MARKET',closePosition:true,clientAlgoId:'zth-MAX-cap'};
+    type:'STOP',timeInForce:'IOC',quantity:'1',reduceOnly:true,closePosition:false,priceMatch:'OPPONENT',clientAlgoId:'zth-MAX-cap'};
   const update={symbol:'BTCUSDT',direction:'LONG',quantity:1};
   assert.ok(emergencyProtection(runtime([{...base,triggerPrice:'49600'}]),update,50000));
   assert.equal(emergencyProtection(runtime([{...base,triggerPrice:'49599.99'}]),update,50000),null);
@@ -80,7 +80,7 @@ test('emergency protection validator accepts $400 but rejects anything above the
 
 test('SHORT emergency protection uses the same $400 hard cap',()=>{
   const base={orderClass:'ALGO',symbol:'BTCUSDT',side:'BUY',positionSide:'BOTH',
-    type:'STOP_MARKET',closePosition:true,clientAlgoId:'zth-MAX-short'};
+    type:'STOP',timeInForce:'IOC',quantity:'1',reduceOnly:true,closePosition:false,priceMatch:'OPPONENT',clientAlgoId:'zth-MAX-short'};
   const update={symbol:'BTCUSDT',direction:'SHORT',quantity:1};
   assert.ok(emergencyProtection(runtime([{...base,triggerPrice:'50400'}]),update,50000));
   assert.equal(emergencyProtection(runtime([{...base,triggerPrice:'50400.01'}]),update,50000),null);
