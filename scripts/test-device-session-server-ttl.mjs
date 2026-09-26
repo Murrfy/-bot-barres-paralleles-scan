@@ -4,7 +4,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync('api/zenith-sync.js', 'utf8');
 
-test('device sessions have an absolute 30-day lifetime instead of sliding forever', () => {
+test('phone sessions stay absolute while engine session slides only under authenticated heartbeat', () => {
   assert.match(
     source,
     /import \{[^\n]*DEVICE_SESSION_MAX_AGE_SECONDS[^\n]*bearerToken[^\n]*cookieToken[^\n]*setDeviceSessionCookie[^\n]*clearDeviceSessionCookie[^\n]*sameOriginMutation[^\n]*\} from '\.\.\/lib\/device-session\.mjs';/
@@ -34,6 +34,13 @@ test('device sessions have an absolute 30-day lifetime instead of sliding foreve
     source,
     /'DEVICE_SESSION_EXPIRED'/
   );
+
+  // The engine alone gets a short sliding idle lifetime. Its MASTER role epoch remains createdAt.
+  assert.match(source, /ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS/);
+  assert.match(source, /updated\.sessionExpiresAt = now \+ ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS \* 1000/);
+  assert.match(source, /remainingSeconds = ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS/);
+  assert.match(source, /sessionExpiresAt: createdAt \+ ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS \* 1000/);
+  assert.match(source, /setDeviceSessionCookie\(res, token, ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS\)/);
 
   // Fresh pairing atomically claims the role, advances the epoch and creates the session with the full lifetime.
   assert.match(source, /const pairSessionScript = \[/);
