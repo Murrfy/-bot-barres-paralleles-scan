@@ -259,7 +259,9 @@ function normalizeActualAlgoOrder(o) {
     type: String(o.orderType || o.type || ''),
     status: String(o.algoStatus || ''),
     origQty: String(o.quantity ?? ''),
-    executedQty: '',
+    executedQty: String(o.executedQty ?? ''),
+    actualOrderId: String(o.actualOrderId ?? ''),
+    actualPrice: String(o.actualPrice ?? ''),
     price: String(o.price ?? ''),
     stopPrice: String(o.triggerPrice ?? ''),
     triggerPrice: String(o.triggerPrice ?? ''),
@@ -269,8 +271,136 @@ function normalizeActualAlgoOrder(o) {
     workingType: String(o.workingType || ''),
     priceMatch: String(o.priceMatch || ''),
     priceProtect: Boolean(o.priceProtect),
+    createTime: number(o.createTime),
+    triggerTime: number(o.triggerTime),
     updateTime: number(o.updateTime ?? o.createTime),
   };
+}
+
+function maxLossRemainderCommandId(algo) {
+  const clientAlgoId=String(algo?.clientAlgoId||'');
+  const actualOrderId=String(algo?.actualOrderId||'');
+  const value=`maxloss-remainder:${clientAlgoId}:${actualOrderId}`;
+  return /^[A-Za-z0-9._:-]{8,128}$/.test(value)?value:'';
+}
+
+function evaluateTriggeredMaxLossRemainder({ position, algo, actualOrder, configuredMaxLossUsd }) {
+  if(!position||!algo||!actualOrder)return null;
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const dir=direction(position);
+  const side=dir==='LONG'?'SELL':'BUY';
+  const positionSide=String(position?.positionSide||'BOTH').toUpperCase();
+  const currentQty=positionQty(position);
+  const entryPrice=number(position?.entryPrice,NaN);
+  const configured=number(configuredMaxLossUsd,NaN);
+  const clientAlgoId=String(algo?.clientAlgoId||'');
+  const algoStatus=String(algo?.status||algo?.algoStatus||'').toUpperCase();
+  const actualOrderId=String(algo?.actualOrderId||'');
+  const originalQty=number(algo?.origQty??algo?.quantity,NaN);
+  const triggerPrice=number(algo?.triggerPrice??algo?.stopPrice,NaN);
+  const triggerTime=number(algo?.triggerTime,0);
+  const positionUpdateTime=number(position?.updateTime,0);
+  if(!symbol||!['LONG','SHORT'].includes(dir)||!(currentQty>0)||!(entryPrice>0)||!(configured>0))return null;
+  if(String(algo?.symbol||'').toUpperCase()!==symbol||
+     String(algo?.side||'').toUpperCase()!==side||
+     String(algo?.positionSide||'BOTH').toUpperCase()!==positionSide||
+     String(algo?.type||algo?.orderType||'').toUpperCase()!=='STOP'||
+     String(algo?.timeInForce||'').toUpperCase()!=='IOC'||
+     !(algo?.reduceOnly===true||algo?.reduceOnly==='true')||
+     algo?.closePosition===true||algo?.closePosition==='true'||
+     String(algo?.priceMatch||'').toUpperCase()!=='OPPONENT'||
+     !['TRIGGERED','FINISHED'].includes(algoStatus)||
+     !/^zth-MAX-[A-Za-z0-9._:-]+$/.test(clientAlgoId)||clientAlgoId.length>36||
+     !actualOrderId||!(originalQty>0)||!(triggerPrice>0))return null;
+  if(positionUpdateTime>0&&triggerTime>0&&triggerTime<positionUpdateTime-120000)return null;
+  const impliedLossUsd=dir==='LONG'
+    ?(entryPrice-triggerPrice)*originalQty
+    :(triggerPrice-entryPrice)*originalQty;
+  if(!(impliedLossUsd>=0)||impliedLossUsd>configured+1e-8||impliedLossUsd>REAL_RISK_LIMITS.maxLossUsd+1e-8)return null;
+
+  const actualStatus=String(actualOrder?.status||'').toUpperCase();
+  const executedQty=number(actualOrder?.executedQty,NaN);
+  const actualOrigQty=number(actualOrder?.origQty,NaN);
+  if(String(actualOrder?.symbol||'').toUpperCase()!==symbol||
+     String(actualOrder?.orderId||'')!==actualOrderId||
+     String(actualOrder?.side||'').toUpperCase()!==side||
+     String(actualOrder?.positionSide||'BOTH').toUpperCase()!==positionSide||
+     String(actualOrder?.type||'').toUpperCase()!=='LIMIT'||
+     String(actualOrder?.timeInForce||'').toUpperCase()!=='IOC'||
+     !(actualOrder?.reduceOnly===true||actualOrder?.reduceOnly==='true')||
+     actualOrder?.closePosition===true||actualOrder?.closePosition==='true'||
+     !(actualOrigQty>0)||Math.abs(actualOrigQty-originalQty)>Math.max(1e-12,originalQty*1e-10)||
+     !(executedQty>=0)||executedQty>originalQty+1e-12)return null;
+
+  const expectedRemaining=Math.max(0,originalQty-executedQty);
+  const quantityMatches=Math.abs(expectedRemaining-currentQty)<=Math.max(1e-12,originalQty*1e-10);
+  if(!quantityMatches)return null;
+  const recoveryCommandId=maxLossRemainderCommandId(algo);
+  if(!recoveryCommandId)return null;
+
+  if(actualStatus==='FILLED'&&currentQty>1e-12){
+    return {
+      kind:'INCONSISTENT',symbol,direction:dir,remainingQuantity:currentQty,
+      originalQuantity:originalQty,executedQuantity:executedQty,
+      clientAlgoId,algoId:String(algo?.algoId||''),actualOrderId,
+      actualOrderStatus:actualStatus,recoveryCommandId,triggerPrice,triggerTime,
+    };
+  }
+  if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(actualStatus))return null;
+  if(!(expectedRemaining>1e-12))return null;
+  return {
+    kind:'REMAINDER',symbol,direction:dir,remainingQuantity:currentQty,
+    originalQuantity:originalQty,executedQuantity:executedQty,
+    clientAlgoId,algoId:String(algo?.algoId||''),actualOrderId,
+    actualOrderStatus:actualStatus,recoveryCommandId,triggerPrice,triggerTime,
+  };
+}
+
+async function detectTriggeredMaxLossRemainders({
+  serverTime,apiKey,secret,positions,missingTargets,controllerState,
+}={}){
+  const missing=new Set(Array.isArray(missingTargets)?missingTargets.map(x=>String(x||'').toUpperCase()):[]);
+  const remainders=[],ambiguous=[],inconsistent=[];
+  for(const position of Array.isArray(positions)?positions:[]){
+    const key=positionKey(position);
+    if(!missing.has(key))continue;
+    const symbol=String(position?.symbol||'').toUpperCase();
+    const configured=configuredMaxLossUsd(controllerState,symbol);
+    if(!(configured>0))continue;
+    const historyRaw=await signedGet('/fapi/v1/allAlgoOrders',apiKey,secret,serverTime,{
+      symbol,
+      startTime:Math.max(0,Number(serverTime)-7*24*60*60*1000),
+      endTime:Number(serverTime),
+      limit:1000,
+    });
+    if(!Array.isArray(historyRaw))throw new Error('BINANCE_ALGO_HISTORY_INVALID');
+    const history=historyRaw
+      .map(normalizeActualAlgoOrder)
+      .filter(algo=>
+        String(algo?.symbol||'').toUpperCase()===symbol&&
+        /^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(algo?.clientAlgoId||''))&&
+        ['TRIGGERED','FINISHED'].includes(String(algo?.status||'').toUpperCase())&&
+        Boolean(String(algo?.actualOrderId||''))
+      )
+      .sort((a,b)=>number(b.triggerTime,b.updateTime)-number(a.triggerTime,a.updateTime))
+      .slice(0,8);
+    const matches=[];
+    for(const algo of history){
+      const actualRaw=await signedGet('/fapi/v1/order',apiKey,secret,serverTime,{
+        symbol,
+        orderId:String(algo.actualOrderId),
+      });
+      const actualOrder={orderClass:'STANDARD',...normalizeActualOrder(actualRaw)};
+      const evidence=evaluateTriggeredMaxLossRemainder({
+        position,algo,actualOrder,configuredMaxLossUsd:configured,
+      });
+      if(evidence?.kind==='INCONSISTENT')inconsistent.push(evidence);
+      if(evidence?.kind==='REMAINDER')matches.push(evidence);
+    }
+    if(matches.length===1)remainders.push(matches[0]);
+    else if(matches.length>1)ambiguous.push(key);
+  }
+  return {remainders,ambiguous,inconsistent};
 }
 
 function expectedPositions(runtimeState) {
@@ -1127,6 +1257,28 @@ export default async function handler(req, res) {
       processingCommands,
       device.deviceId
     );
+    const triggeredRecovery=await detectTriggeredMaxLossRemainders({
+      serverTime,apiKey,secret,positions:actualPositions,
+      missingTargets:result?.differences?.missingMaxLossProtections,
+      controllerState,
+    });
+    result.differences.triggeredMaxLossRemainders=triggeredRecovery.remainders;
+    result.differences.ambiguousTriggeredMaxLossRemainders=triggeredRecovery.ambiguous;
+    result.differences.inconsistentTriggeredMaxLossRemainders=triggeredRecovery.inconsistent;
+    if(triggeredRecovery.remainders.length&&!result.reasons.includes('TRIGGERED_MAX_LOSS_REMAINDER')){
+      result.reasons.push('TRIGGERED_MAX_LOSS_REMAINDER');
+    }
+    if(triggeredRecovery.ambiguous.length&&!result.reasons.includes('AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER')){
+      result.reasons.push('AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER');
+    }
+    if(triggeredRecovery.inconsistent.length&&!result.reasons.includes('INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT')){
+      result.reasons.push('INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT');
+    }
+    if(triggeredRecovery.remainders.length||triggeredRecovery.ambiguous.length||triggeredRecovery.inconsistent.length){
+      result.failClosed=true;
+      result.status='MISMATCH';
+    }
+
     const unsafePositionConfigs = actualPositions
       .filter(position =>
         String(position?.marginType || '').toUpperCase() !== 'ISOLATED' ||
