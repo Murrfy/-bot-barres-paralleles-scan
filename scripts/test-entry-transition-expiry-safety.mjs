@@ -18,8 +18,8 @@ const record={
   engineInstanceId:'engine-instance-test',
 };
 const protection={
-  orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',
-  closePosition:true,reduceOnly:false,triggerPrice:'48000',
+  orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP',
+  timeInForce:'IOC',closePosition:false,reduceOnly:true,origQty:'0.2',priceMatch:'OPPONENT',triggerPrice:'48000',
   clientAlgoId:'zth-MAX-abcdef123456789012345678'
 };
 const entry={
