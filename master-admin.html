@@ -26,7 +26,7 @@ button:disabled{opacity:.5}
 <div class="wrap">
   <div class="card">
     <h1>Zenith — Admin MASTER</h1>
-    <div class="sub">Administration depuis l’iPhone contrôleur ou l’iPad MASTER.</div>
+    <div class="sub">Administration Zenith. Les opérations MASTER et la reprise du contrôleur sont deux fonctions distinctes.</div>
     <div class="notice">Cette page ne modifie pas les réglages du bot. Elle sert uniquement aux opérations administratives critiques.</div>
 
     <a id="backLink" href="/">Retour à Zenith</a>
@@ -44,11 +44,12 @@ button:disabled{opacity:.5}
     <button id="panicBtn" disabled>PANIC STOP</button>
     <button id="clearPanicBtn" disabled hidden>Réarmer la sécurité réelle</button>
     <button id="revokeBtn" disabled hidden>Révoquer MASTER</button>
-    <button id="replaceBtn" disabled hidden>Autoriser le remplacement de l’iPhone</button>
+    <form action="/replace-controller.html" method="get">
+      <button type="submit">Reprendre le contrôle sur cet appareil</button>
+    </form>
 
     <div id="status" class="status">Prêt. Si une position est active, la pause sera mise en attente jusqu’à la fermeture de la dernière position.</div>
-    <div id="recoveryCode" class="status code" hidden></div>
-    <div class="small">Le code temporaire expire après 10 minutes et ne peut servir qu’une seule fois. Le code ADMIN n’est jamais stocké dans le navigateur.</div>
+    <div class="small">La reprise du contrôle ouvre une procédure séparée : elle transfère uniquement le rôle contrôleur et ne déclenche aucune action MASTER, PANIC ou trading.</div>
   </div>
 </div>
 <script>
@@ -72,8 +73,6 @@ function renderActions(){
   $('clearPanicBtn').disabled=!valid||$('clearPanicBtn').hidden||mode!=='PAUSED'||verifiedState.masterLeaseActive!==true||verifiedState.masterSyncFailClosed||verifiedState.masterHeartbeatFresh!==true;
   $('revokeBtn').hidden=adminRole!=='controller';
   $('revokeBtn').disabled=!valid||adminRole!=='controller';
-  $('replaceBtn').hidden=adminRole!=='master';
-  $('replaceBtn').disabled=!valid||adminRole!=='master'||verifiedState.masterLeaseActive!==true;
 }
 
 
@@ -97,7 +96,7 @@ async function verifyMaster(){
     localStorage.removeItem(TOKEN_KEY);
     adminRole=role;
     $('backLink').href=role==='master'?'/master-standby.html':'/';
-    setBox('identity',role==='master'?'iPad MASTER vérifié.':'iPhone contrôleur vérifié.','ok');
+    setBox('identity',role==='master'?'Appareil MASTER vérifié.':'Appareil contrôleur vérifié.','ok');
     return await refreshMasterMode();
   }catch(e){
     adminRole='';verifiedState=null;
@@ -300,47 +299,6 @@ async function revokeMaster(){
   }
 }
 
-async function authorizeReplacement(){
-  if(busy||checking||adminRole!=='master'||!verifiedState||verifiedState.masterLeaseActive!==true)return;
-  const adminCode=$('adminCode').value;
-  if(!adminCode){
-    setBox('status','Entre le code ADMIN MASTER.','err');
-    return;
-  }
-
-  busy=true;renderActions();
-  $('adminCode').value='';
-  setBox('status','Création de l’autorisation temporaire…');
-  $('recoveryCode').hidden=true;
-
-  try{
-    const r=await fetch('/api/zenith-sync?action=controller-replacement-authorize',{
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        Accept:'application/json',
-        
-      },
-      body:JSON.stringify({adminCode})
-    });
-    const q=await r.json().catch(()=>({}));
-    if(!r.ok||q?.ok!==true||!q?.recoveryCode){
-      throw new Error(q?.code||q?.error||('HTTP '+r.status));
-    }
-
-    $('adminCode').value='';
-    setBox('status','Autorisation créée. Utilise ce code sur le nouvel iPhone dans les 10 minutes.','ok');
-    setBox('recoveryCode',q.recoveryCode,'ok');
-    $('recoveryCode').hidden=false;
-  }catch(e){
-    setBox('status','Autorisation refusée : '+String(e?.message||'erreur')+'.','err');
-  }finally{
-    $('adminCode').value='';
-    await verifyMaster();
-    busy=false;renderActions();
-  }
-}
-
 $('pauseBtn').addEventListener('click',()=>setMasterMode('master-pause'));
 $('cancelPauseBtn').addEventListener('click',()=>setMasterMode('master-pause-cancel'));
 $('resumeBtn').addEventListener('click',()=>setMasterMode('master-resume'));
@@ -349,7 +307,6 @@ $('armRealBtn').addEventListener('click',armRealExecution);
 $('panicBtn').addEventListener('click',panicStop);
 $('clearPanicBtn').addEventListener('click',clearPanic);
 $('revokeBtn').addEventListener('click',revokeMaster);
-$('replaceBtn').addEventListener('click',authorizeReplacement);
 // Enter never triggers an unrelated critical operation.
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden){$('adminCode').value='';verifiedState=null;renderActions()}
