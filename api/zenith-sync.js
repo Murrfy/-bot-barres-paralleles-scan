@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
+import { DEVICE_SESSION_MAX_AGE_SECONDS, ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
 import {
   normalizeProtectiveUpdatePayload,
   protectionOnlyMismatchTarget,
@@ -696,6 +696,12 @@ async function roleDeviceId(role) {
 }
 
 function deviceSessionRemainingSeconds(device, now = Date.now()) {
+  if (String(device?.principal || '') === 'engine') {
+    const sessionExpiresAt = Number(device?.sessionExpiresAt || 0);
+    if (Number.isFinite(sessionExpiresAt) && sessionExpiresAt > 0) {
+      return Math.max(0, Math.ceil((sessionExpiresAt - now) / 1000));
+    }
+  }
   const createdAt = Number(device?.createdAt || 0);
   if (!Number.isFinite(createdAt) || createdAt <= 0) return 0;
   const absoluteExpiresAt = createdAt + DEVICE_SESSION_MAX_AGE_SECONDS * 1000;
@@ -704,17 +710,22 @@ function deviceSessionRemainingSeconds(device, now = Date.now()) {
 
 async function touchDevice(device) {
   if (!device?.tokenHash) return { expired:true, remainingSeconds:0 };
-  const remainingSeconds = deviceSessionRemainingSeconds(device);
+  const now = Date.now();
   const key = `${PREFIX}:device:${device.tokenHash}`;
+  let remainingSeconds = deviceSessionRemainingSeconds(device, now);
   if (remainingSeconds <= 0) {
     await redis(['DEL', key]);
     return { expired:true, remainingSeconds:0 };
   }
-  const updated = { ...device, lastSeenAt: Date.now() };
+  const updated = { ...device, lastSeenAt: now };
+  if (String(device?.principal || '') === 'engine') {
+    updated.sessionExpiresAt = now + ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS * 1000;
+    remainingSeconds = ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS;
+  }
   delete updated.tokenHash;
   delete updated.sessionToken;
   await redis(['SET', key, JSON.stringify(updated), 'EX', String(remainingSeconds)]);
-  return { expired:false, remainingSeconds };
+  return { expired:false, remainingSeconds, device:updated };
 }
 
 async function rotateLegacyBearerSession(device) {
@@ -822,7 +833,7 @@ async function requireDevice(req, res, roles, { allowBearer = false, rotateBeare
     return null;
   }
   setDeviceSessionCookie(res, device.sessionToken, session.remainingSeconds);
-  const safeDevice = { ...device };
+  const safeDevice = { ...(session.device || device) };
   delete safeDevice.sessionToken;
   delete safeDevice.credentialSource;
   return safeDevice;
@@ -2522,6 +2533,7 @@ export default async function handler(req, res) {
         deviceName: 'Zenith 24/7 Server Engine',
         createdAt,
         lastSeenAt: createdAt,
+        sessionExpiresAt: createdAt + ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS * 1000,
       };
       const audit = {
         at: createdAt,
@@ -2615,7 +2627,7 @@ export default async function handler(req, res) {
         ENGINE_MASTER_DEVICE_ID,
         String(createdAt),
         JSON.stringify(record),
-        String(DEVICE_SESSION_MAX_AGE_SECONDS),
+        String(ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS),
         instanceId,
         String(ENGINE_INSTANCE_TTL_SECONDS),
         JSON.stringify(audit),
@@ -2656,7 +2668,7 @@ export default async function handler(req, res) {
         return send(res, 500, { ok:false, code:'ENGINE_BOOTSTRAP_FAILED' });
       }
 
-      setDeviceSessionCookie(res, token);
+      setDeviceSessionCookie(res, token, ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS);
       return send(res, 200, {
         ok:true,
         sessionReady:true,
