@@ -34,8 +34,9 @@ const position = { symbol: 'BTCUSDT', positionSide: 'BOTH', positionAmt: '1', en
 const stop = { symbol: 'BTCUSDT', positionSide: 'BOTH', side: 'SELL', type: 'STOP_MARKET',
   orderId: 42, origQty: '1', executedQty: '0', reduceOnly: true, closePosition: false };
 const emergency = { orderClass:'ALGO', symbol:'BTCUSDT', positionSide:'BOTH', side:'SELL',
-  type:'STOP_MARKET', algoId:77, clientAlgoId:'zth-MAX-test', triggerPrice:'49600',
-  reduceOnly:false, closePosition:true, algoStatus:'NEW' };
+  type:'STOP', algoId:77, clientAlgoId:'zth-MAX-test', quantity:'1', origQty:'1',
+  triggerPrice:'49600', timeInForce:'IOC', priceMatch:'OPPONENT',
+  reduceOnly:true, closePosition:false, algoStatus:'NEW' };
 const progressive = { orderClass:'ALGO', symbol:'BTCUSDT', positionSide:'BOTH', side:'SELL',
   type:'STOP', algoId:78, clientAlgoId:'zth-PRO-test', quantity:'1', triggerPrice:'51000',
   reduceOnly:true, closePosition:false, algoStatus:'NEW' };
@@ -55,7 +56,7 @@ test('missing or stale runtime never certifies clean', () => {
 test('unknown Binance activity blocks simulation', () => {
   assert.equal(reconcile(runtime([], [], 'SIMULATION'), [normalized], []).failClosed, true);
 });
-test('matching position requires a valid close-all MAX-LOSS algo stop', () => {
+test('matching position requires a valid LIMIT-IOC MAX-LOSS algo stop', () => {
   const result = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
   assert.equal(result.failClosed, false);
   assert.deepEqual(result.differences.missingMaxLossProtections, []);
@@ -77,14 +78,14 @@ test('progressive STOP alone never substitutes for the emergency MAX-LOSS stop',
   assert.deepEqual(result.differences.missingMaxLossProtections, ['BTCUSDT:LONG']);
 });
 
-test('MAX-LOSS STOP_MARKET must trigger on the loss side of the entry', () => {
+test('MAX-LOSS STOP LIMIT IOC must trigger on the loss side of the entry', () => {
   const wrong = { ...emergency, algoId:79, clientAlgoId:'zth-MAX-wrong', triggerPrice:'51000' };
   const actual = normalizeActualAlgoOrder(wrong);
   const result = reconcile(runtime([position], [wrong]), [normalized], [actual]);
   assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
 });
 
-test('multiple valid MAX-LOSS close-all stops fail closed as ambiguous', () => {
+test('multiple valid MAX-LOSS LIMIT-IOC stops fail closed as ambiguous', () => {
   const second = { ...emergency, algoId:80, clientAlgoId:'zth-MAX-second', triggerPrice:'49700' };
   const result = reconcile(
     runtime([position], [emergency, second]),
@@ -318,7 +319,11 @@ test('missing configured MAX-LOSS fails closed instead of falling back to $400',
 
 
 test('external close-all STOP_MARKET never satisfies Zenith mandatory MAX-LOSS', () => {
-  const external = { ...emergency, algoId:181, clientAlgoId:'manual-max-loss' };
+  const external = {
+    ...emergency, algoId:181, clientAlgoId:'manual-max-loss',
+    type:'STOP_MARKET',timeInForce:'GTC',priceMatch:'NONE',
+    reduceOnly:false,closePosition:true
+  };
   const actual = normalizeActualAlgoOrder(external);
   const result = reconcile(runtime([position], [external]), [normalized], [actual]);
   assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
