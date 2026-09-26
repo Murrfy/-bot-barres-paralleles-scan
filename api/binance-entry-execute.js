@@ -246,12 +246,19 @@ async function finalEntryDispatchGate(masterDeviceId,masterRoleEpoch,expectedArm
   };
 }
 
-function entryReadinessReason(state,masterDeviceId,pendingEntryRecovery=false){
+function entryReadinessReason(state,masterDeviceId,symbol='',side='',pendingEntryRecovery=false){
   if(state.masterMode!=='RUNNING')return state.masterMode==='PAUSE_PENDING'?'MASTER_PAUSE_PENDING':'MASTER_PAUSED';
   if(state.emergencyStopActive)return 'EMERGENCY_STOP_ACTIVE';
   const armReason=validateExecutionArmRecord(state.armRecord,masterDeviceId);
   if(armReason)return armReason;
-  return executionReadiness(state.runtimeState,state.report,masterDeviceId,'',pendingEntryRecovery===true);
+  const wanted=String(symbol||'').toUpperCase();
+  const normalizedSide=String(side||'').toUpperCase();
+  const direction=normalizedSide==='BUY'?'LONG':normalizedSide==='SELL'?'SHORT':'';
+  const executionTarget=wanted&&direction?wanted+':'+direction:wanted;
+  return executionReadiness(
+    state.runtimeState,state.report,masterDeviceId,'',pendingEntryRecovery===true,false,
+    executionTarget,false
+  );
 }
 
 function near(a,b){
@@ -362,7 +369,7 @@ export default async function handler(req,res){
       phase==='SUBMIT_ENTRY'&&
       pendingEntryWriteAheadRecoveryAllowed(before.report,{commandId,symbol,side,limitPrice,maxLoss})
     );
-    const beforeReason=entryReadinessReason(before,master.deviceId,pendingEntryRecovery);
+    const beforeReason=entryReadinessReason(before,master.deviceId,symbol,side,pendingEntryRecovery);
     if(beforeReason)return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:beforeReason,writeAttempted:false});
 
     let apiPermissions=null;
@@ -417,7 +424,7 @@ export default async function handler(req,res){
         });
       }
       const configGateState=await readExecutionState();
-      const configGateReason=entryReadinessReason(configGateState,master.deviceId);
+      const configGateReason=entryReadinessReason(configGateState,master.deviceId,symbol,side);
       if(configGateReason){
         return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:configGateReason,writeAttempted:false});
       }
@@ -464,7 +471,7 @@ export default async function handler(req,res){
       phase==='SUBMIT_ENTRY'&&
       pendingEntryWriteAheadRecoveryAllowed(latest.report,{commandId,symbol,side,limitPrice,maxLoss})
     );
-    const latestReason=entryReadinessReason(latest,master.deviceId,latestRecovery);
+    const latestReason=entryReadinessReason(latest,master.deviceId,symbol,side,latestRecovery);
     if(latestReason)return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:latestReason,writeAttempted:false});
 
     let plan;
