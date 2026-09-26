@@ -24,8 +24,8 @@ const ENGINE_MASTER_DEVICE_ID = 'zenith-server-engine-v1';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
-// Audit gate: keep real execution impossible until every protective sell path is LIMIT-only.
-// MAX-LOSS still uses a Binance STOP_MARKET conditional order on the current architecture.
+// Audit gate: keep real execution impossible until every protective sell path and post-trigger handoff is proven LIMIT-only.
+// The resting MAX-LOSS format is LIMIT-only; trigger-to-residual escalation is still under audit.
 const LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE = false;
 const VERCEL_PRODUCTION_WRITE_ALLOWED = process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main';
 const ZENITH_CONTROL_MUTATION_ALLOWED = !process.env.VERCEL_ENV ||
@@ -1306,8 +1306,12 @@ function runtimeEmergencyProtection(runtimeState, symbol, direction, entryPrice,
     if (String(order?.symbol || '').toUpperCase() !== sym) return false;
     if (String(order?.side || '').toUpperCase() !== expectedSide) return false;
     if (String(order?.positionSide || 'BOTH').toUpperCase() !== 'BOTH') return false;
-    if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') return false;
-    if (!(order?.closePosition === true || order?.closePosition === 'true')) return false;
+    if (String(order?.type || '').toUpperCase() !== 'STOP') return false;
+    if (String(order?.timeInForce || '').toUpperCase() !== 'IOC') return false;
+    if (!(order?.reduceOnly === true || order?.reduceOnly === 'true')) return false;
+    if (order?.closePosition === true || order?.closePosition === 'true') return false;
+    if (String(order?.priceMatch || '').toUpperCase() !== 'OPPONENT') return false;
+    if (Number(order?.origQty || 0) + 1e-12 < qty) return false;
     if (!/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId || ''))) return false;
     if (excludeClientAlgoId && String(order?.clientAlgoId || '') === String(excludeClientAlgoId)) return false;
     const trigger = Number(order?.triggerPrice ?? order?.stopPrice);
@@ -5388,8 +5392,12 @@ export default async function handler(req, res) {
             if (String(order?.positionSide || 'BOTH').toUpperCase() !== 'BOTH') return false;
             if (!numberMatches(order?.triggerPrice ?? order?.stopPrice, payloadStatus.triggerPrice)) return false;
             if (payloadStatus.protectionKind === 'MAX_LOSS') {
-              return String(order?.type || '').toUpperCase() === 'STOP_MARKET' &&
-                (order?.closePosition === true || order?.closePosition === 'true');
+              return String(order?.type || '').toUpperCase() === 'STOP' &&
+                String(order?.timeInForce || '').toUpperCase() === 'IOC' &&
+                (order?.reduceOnly === true || order?.reduceOnly === 'true') &&
+                !(order?.closePosition === true || order?.closePosition === 'true') &&
+                numberMatches(order?.origQty, payloadStatus.quantity) &&
+                String(order?.priceMatch || '').toUpperCase() === 'OPPONENT';
             }
             return String(order?.type || '').toUpperCase() === 'STOP' &&
               String(order?.timeInForce || '').toUpperCase() === 'GTC' &&
