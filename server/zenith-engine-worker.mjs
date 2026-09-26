@@ -26,7 +26,7 @@ import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-prot
 import { planAutomaticTargetExit } from '../lib/auto-target-exit.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
 import { pendingEntryProtectionLossTargets, pendingEntryWriteAheadRecoveryTargets, triggeredMaxLossRemainderTargets } from '../lib/protective-command.mjs';
-import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
+import { REAL_RISK_LIMITS, DEFAULT_MAX_ACTIVE_POSITIONS } from '../lib/risk-policy.mjs';
 import {
   entryWatchDefinition,
   entryWatchIdentity,
@@ -719,13 +719,9 @@ function watchedEntryConfig(symbol){
   const margin=n(token.margin,n(globalSettings.margin,0));
   const leverage=n(token.leverage,n(globalSettings.leverage,0));
   const maxLoss=n(token.maxLoss,n(globalSettings.maxLoss,0));
-  const maxActive=Math.max(
-    1,
-    Math.min(
-      REAL_RISK_LIMITS.maxActivePositions,
-      Math.floor(n(globalSettings.maxActive,REAL_RISK_LIMITS.maxActivePositions))
-    )
-  );
+  const requestedMaxActive=Number(globalSettings.maxActive);
+  if(!Number.isSafeInteger(requestedMaxActive)||requestedMaxActive<1)return null;
+  const maxActive=requestedMaxActive||DEFAULT_MAX_ACTIVE_POSITIONS;
   if(!(margin>0)||!(leverage>0)||!(maxLoss>0))return null;
   return {
     ...definition,
