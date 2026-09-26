@@ -719,9 +719,11 @@ function watchedEntryConfig(symbol){
   const margin=n(token.margin,n(globalSettings.margin,0));
   const leverage=n(token.leverage,n(globalSettings.leverage,0));
   const maxLoss=n(token.maxLoss,n(globalSettings.maxLoss,0));
-  const requestedMaxActive=Number(globalSettings.maxActive);
+  const requestedMaxActive=globalSettings.maxActive==null
+    ?DEFAULT_MAX_ACTIVE_POSITIONS
+    :Number(globalSettings.maxActive);
   if(!Number.isSafeInteger(requestedMaxActive)||requestedMaxActive<1)return null;
-  const maxActive=requestedMaxActive||DEFAULT_MAX_ACTIVE_POSITIONS;
+  const maxActive=requestedMaxActive;
   if(!(margin>0)||!(leverage>0)||!(maxLoss>0))return null;
   return {
     ...definition,
