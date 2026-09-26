@@ -259,20 +259,20 @@ export function conflictingProtectiveOrders(runtimeState, update, kind, allowedI
         id = String(order?.clientOrderId || '');
         samePurpose = !managedExitId(id);
       }else{
-        const trigger=n(order?.triggerPrice??order?.stopPrice,NaN);
-        const limit=n(order?.price,NaN);
-        const priceMatch=String(order?.priceMatch||'NONE').toUpperCase();
+        id = String(order?.clientAlgoId || '');
+        const managedMaxLoss =
+          orderClass === 'ALGO' &&
+          type === 'STOP' &&
+          String(order?.timeInForce || '').toUpperCase() === 'IOC' &&
+          bool(order?.reduceOnly) &&
+          !bool(order?.closePosition) &&
+          String(order?.priceMatch || '').toUpperCase() === 'OPPONENT' &&
+          /^zth-MAX-[A-Za-z0-9._:-]+$/.test(id);
         samePurpose =
           orderClass === 'ALGO' &&
           type === 'STOP' &&
-          String(order?.timeInForce || '').toUpperCase() === 'GTC' &&
           bool(order?.reduceOnly) &&
-          !bool(order?.closePosition) &&
-          trigger>0 &&
-          limit>0 &&
-          Math.abs(limit-trigger)<=Math.max(1e-9,Math.abs(trigger)*1e-10) &&
-          (priceMatch===''||priceMatch==='NONE');
-        id = String(order?.clientAlgoId || '');
+          !managedMaxLoss;
       }
     } else if (wanted === 'MAX_LOSS') {
       samePurpose =
