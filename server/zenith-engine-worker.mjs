@@ -96,6 +96,7 @@ const execution={
 
 const maxLossRemainderRecovery={
   busy:false,
+  writeBusy:false,
   symbol:'',
   lastError:'',
 };
@@ -2136,18 +2137,24 @@ async function recoverTriggeredMaxLossRemainder(report){
   maxLossRemainderRecovery.symbol=target.symbol;
   maxLossRemainderRecovery.busy=true;
   try{
-    const result=await callProtectiveExecute({
-      type:'EXEC_CLOSE_POSITION',
-      commandId:target.recoveryCommandId,
-      symbol:target.symbol,
-      direction:target.direction,
-      quantity:target.remainingQuantity,
-      closeAll:true,
-      exitMode:'PROTECTIVE_IOC',
-      attempt:target.nextAttempt,
-      priceMatch:target.priceMatch,
-      recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER',
-    });
+    let result;
+    maxLossRemainderRecovery.writeBusy=true;
+    try{
+      result=await callProtectiveExecute({
+        type:'EXEC_CLOSE_POSITION',
+        commandId:target.recoveryCommandId,
+        symbol:target.symbol,
+        direction:target.direction,
+        quantity:target.remainingQuantity,
+        closeAll:true,
+        exitMode:'PROTECTIVE_IOC',
+        attempt:target.nextAttempt,
+        priceMatch:target.priceMatch,
+        recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER',
+      });
+    }finally{
+      maxLossRemainderRecovery.writeBusy=false;
+    }
     if(!result.response.ok||result.data?.ok!==true){
       const reason=String(result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status));
       const ambiguous=result.data?.ambiguous===true||result.data?.result?.ambiguous===true;
@@ -2184,6 +2191,7 @@ async function recoverTriggeredMaxLossRemainder(report){
     maxLossRemainderRecovery.lastError='';
     return {handled:true,dispatched:true,reason:'MAX_LOSS_REMAINDER_IOC_DISPATCHED',clientOrderId};
   }finally{
+    maxLossRemainderRecovery.writeBusy=false;
     maxLossRemainderRecovery.busy=false;
     maxLossRemainderRecovery.symbol='';
   }
@@ -3195,7 +3203,7 @@ async function runFullClose(command,raw){
 }
 
 async function commandCycle(){
-  if(execution.busy||stopping)return false;
+  if(execution.busy||maxLossRemainderRecovery.writeBusy||stopping)return false;
   if(!masterExecutionEligible({
     role:'master',
     hidden:false,
