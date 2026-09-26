@@ -11,8 +11,8 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
     "const DEVICE_SESSION_MAX_AGE_SECONDS=60*60*24*30; const deviceTokenCandidates=()=>[]; const setDeviceSessionCookie=()=>{}; const clearDeviceSessionCookie=()=>{}; const sameOriginMutation=()=>true; const validDeviceId=value=>/^[A-Za-z0-9._:-]{8,128}$/.test(String(value||''));\n"
   )
   .replace(
-    /^import \{ normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget \} from '\.\.\/lib\/protective-command\.mjs';\n/m,
-    "const normalizeProtectiveUpdatePayload=()=>{ throw new Error('NOT_USED_BY_COMMAND_SAFETY_TESTS'); }; const protectionOnlyMismatchTarget=()=>''; const protectiveRepairTarget=()=>'';\n"
+    /^import \{[\s\S]*?normalizeProtectiveUpdatePayload[\s\S]*?\} from '\.\.\/lib\/protective-command\.mjs';\n/m,
+    "const normalizeProtectiveUpdatePayload=()=>{ throw new Error('NOT_USED_BY_COMMAND_SAFETY_TESTS'); }; const protectionOnlyMismatchTarget=()=>''; const protectiveRepairTarget=()=>''; const maxLossLocalQuarantineReport=()=>false; const maxLossSymbolQuarantine=()=>null;\n"
   )
   .replace(
     /^import \{ REAL_RISK_LIMITS \} from '\.\.\/lib\/risk-policy\.mjs';\n/m,
