@@ -39,6 +39,26 @@ test('max-loss replacement allows exactly old and new Zenith protections',()=>{
 });
 
 
+test('managed MAX-LOSS coexists with progressive protection and is not a progressive conflict',()=>{
+  const maxLoss={
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',timeInForce:'IOC',quantity:'1',reduceOnly:true,closePosition:false,
+    priceMatch:'OPPONENT',triggerPrice:'49960',clientAlgoId:'zth-MAX-0123456789abcdef'
+  };
+  assert.equal(conflictingProtectiveOrders(runtime([maxLoss]),update,'PROGRESSIVE',[]).length,0);
+});
+
+test('unknown IOC OPPONENT stop is still conservative conflict for progressive placement',()=>{
+  const unknown={
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',timeInForce:'IOC',quantity:'1',reduceOnly:true,closePosition:false,
+    priceMatch:'OPPONENT',triggerPrice:'49960',clientAlgoId:'manual-stop'
+  };
+  const conflicts=conflictingProtectiveOrders(runtime([unknown]),update,'PROGRESSIVE',[]);
+  assert.equal(conflicts.length,1);
+  assert.equal(conflicts[0].clientAlgoId,'manual-stop');
+});
+
 test('progressive replacement temporarily allows only the identified old and new Zenith protections',()=>{
   const orders=[
     {orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP',timeInForce:'GTC',reduceOnly:true,clientAlgoId:'zth-PRO-old'},
