@@ -18,16 +18,17 @@ test('progressive protection is STOP + exact LIMIT GTC at the protected price',(
   assert.equal('closePosition' in p.params,false);
 });
 
-test('max-loss emergency protection is STOP_MARKET close-all without quantity or reduceOnly',()=>{
+test('max-loss emergency protection is STOP IOC reduce-only with opponent price match',()=>{
   const p=buildProtectiveAlgoPlan({
     commandId:'protect-command-123',symbol:'BTCUSDT',direction:'LONG',
     quantity:0.02,triggerPrice:48000,protectionKind:'MAX_LOSS'
   });
-  assert.equal(p.params.type,'STOP_MARKET');
-  assert.equal(p.params.closePosition,'true');
-  assert.equal('quantity' in p.params,false);
-  assert.equal('reduceOnly' in p.params,false);
-  assert.equal('priceMatch' in p.params,false);
+  assert.equal(p.params.type,'STOP');
+  assert.equal(p.params.timeInForce,'IOC');
+  assert.equal(p.params.quantity,'0.02');
+  assert.equal(p.params.reduceOnly,'true');
+  assert.equal(p.params.priceMatch,'OPPONENT');
+  assert.equal('closePosition' in p.params,false);
 });
 
 test('protective algo ids are deterministic and direction maps to opposite side',()=>{

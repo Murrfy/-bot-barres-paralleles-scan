@@ -6,10 +6,11 @@ import { BinanceRequestError } from '../lib/binance-order-writer.mjs';
 function response(body,status=200){return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}})}
 const params={
   algoType:'CONDITIONAL',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
-  type:'STOP_MARKET',triggerPrice:'49000',workingType:'CONTRACT_PRICE',
-  priceProtect:'false',closePosition:'true',clientAlgoId:'zth-MAX-0123456789abcdef01234567'
+  type:'STOP',triggerPrice:'49000',workingType:'CONTRACT_PRICE',
+  priceProtect:'false',timeInForce:'IOC',quantity:'0.02',reduceOnly:'true',
+  priceMatch:'OPPONENT',clientAlgoId:'zth-MAX-0123456789abcdef01234567'
 };
-const existing={algoId:1,algoStatus:'NEW',orderType:'STOP_MARKET',...params};
+const existing={algoId:1,algoStatus:'NEW',orderType:'STOP',...params};
 
 test('algo write lock queries idempotency and never POSTs',async()=>{
   const methods=[];

@@ -22,7 +22,7 @@ test('ready stream exports complete real inventory shape while mode can remain s
       'BTCUSDT:BOTH':{symbol:'BTCUSDT',positionSide:'BOTH',positionAmount:'0.02',entryPrice:'50000',marginType:'isolated',positionLifecycleAt:7,eventTime:10}
     },
     standardOrders:{
-      a:{symbol:'BTCUSDT',orderId:'1',clientOrderId:'zth-1',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',status:'NEW',originalQuantity:'0.02',cumulativeFilledQuantity:'0',reduceOnly:true,closePosition:false,terminal:false,eventTime:11}
+      a:{symbol:'BTCUSDT',orderId:'1',clientOrderId:'zth-1',side:'SELL',positionSide:'BOTH',type:'LIMIT',status:'NEW',originalQuantity:'0.02',cumulativeFilledQuantity:'0',reduceOnly:true,closePosition:false,terminal:false,eventTime:11}
     }
   }));
   assert.equal(out.executionMode,'SIMULATION');
@@ -41,8 +41,8 @@ test('terminal standard and algo orders are excluded from open inventory',()=>{
       b:{symbol:'BTCUSDT',orderId:'2',side:'SELL',positionSide:'BOTH',type:'LIMIT',status:'NEW',terminal:false}
     },
     algoOrders:{
-      a:{symbol:'BTCUSDT',algoId:'10',status:'FINISHED',side:'SELL',positionSide:'BOTH',orderType:'STOP_MARKET'},
-      b:{symbol:'BTCUSDT',algoId:'11',status:'NEW',side:'SELL',positionSide:'BOTH',orderType:'STOP_MARKET',reduceOnly:true}
+      a:{symbol:'BTCUSDT',algoId:'10',status:'FINISHED',side:'SELL',positionSide:'BOTH',orderType:'STOP'},
+      b:{symbol:'BTCUSDT',algoId:'11',status:'NEW',side:'SELL',positionSide:'BOTH',orderType:'STOP',reduceOnly:true}
     }
   }));
   assert.equal(out.openOrderCount,2);

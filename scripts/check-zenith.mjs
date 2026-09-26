@@ -457,11 +457,30 @@ for (const required of [
 }
 const protectiveCommand = fs.readFileSync('lib/protective-command.mjs','utf8');
 const protectiveUpdateIntent = fs.readFileSync('lib/protective-update-intent.mjs','utf8');
-if (!protectiveUpdateIntent.includes("params.type='STOP'") ||
-    !protectiveUpdateIntent.includes("params.timeInForce='GTC'") ||
-    !protectiveUpdateIntent.includes("params.price=String(limit)") ||
-    protectiveUpdateIntent.includes("params.priceMatch='OPPONENT'")) {
-  fail('progressive gain protection must be STOP + explicit LIMIT GTC at the protected price, never OPPONENT');
+const progressiveIntentStart = protectiveUpdateIntent.indexOf("if(kind==='PROGRESSIVE')");
+const maxLossIntentStart = protectiveUpdateIntent.indexOf("}else if(kind==='MAX_LOSS')");
+const maxLossIntentEnd = protectiveUpdateIntent.indexOf("}else{", maxLossIntentStart);
+const progressiveIntentBlock = progressiveIntentStart >= 0 && maxLossIntentStart > progressiveIntentStart
+  ? protectiveUpdateIntent.slice(progressiveIntentStart, maxLossIntentStart)
+  : '';
+const maxLossIntentBlock = maxLossIntentStart >= 0 && maxLossIntentEnd > maxLossIntentStart
+  ? protectiveUpdateIntent.slice(maxLossIntentStart, maxLossIntentEnd)
+  : '';
+if (!progressiveIntentBlock.includes("params.type='STOP'") ||
+    !progressiveIntentBlock.includes("params.timeInForce='GTC'") ||
+    !progressiveIntentBlock.includes("params.price=String(limit)") ||
+    !progressiveIntentBlock.includes("params.reduceOnly='true'") ||
+    progressiveIntentBlock.includes('priceMatch')) {
+  fail('progressive gain protection must be STOP + explicit LIMIT GTC at the protected price, never priceMatch');
+}
+if (!maxLossIntentBlock.includes("params.type='STOP'") ||
+    !maxLossIntentBlock.includes("params.timeInForce='IOC'") ||
+    !maxLossIntentBlock.includes("params.quantity=String(qty)") ||
+    !maxLossIntentBlock.includes("params.reduceOnly='true'") ||
+    !maxLossIntentBlock.includes("params.priceMatch='OPPONENT'") ||
+    maxLossIntentBlock.includes('STOP_MARKET') ||
+    maxLossIntentBlock.includes('closePosition')) {
+  fail('MAX-LOSS must remain a LIMIT-only conditional STOP IOC reduce-only order with exact quantity and OPPONENT priceMatch');
 }
 if (!realProtectionLevels.includes('highestReachedProtectionStage') ||
     !realProtectionLevels.includes('observed + 1e-8 < armProfitUsd') ||

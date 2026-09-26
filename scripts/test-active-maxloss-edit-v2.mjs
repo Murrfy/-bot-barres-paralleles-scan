@@ -96,7 +96,11 @@ test('reconciliation authorizes only the exact processing MAX-LOSS command and e
   assert.match(pending,/claimedBy/);
   assert.match(pending,/controllerDeviceId/);
   assert.match(pending,/protectionKind \|\| ''\)\.toUpperCase\(\) !== 'MAX_LOSS'/);
-  assert.match(pending,/String\(order\?\.type \|\| ''\)\.toUpperCase\(\) === 'STOP_MARKET'/);
+  assert.match(pending,/String\(order\?\.type \|\| ''\)\.toUpperCase\(\) === 'STOP'/);
+  assert.match(pending,/String\(order\?\.timeInForce \|\| ''\)\.toUpperCase\(\) === 'IOC'/);
+  assert.match(pending,/order\?\.reduceOnly === true/);
+  assert.match(pending,/order\?\.closePosition !== true/);
+  assert.match(pending,/String\(order\?\.priceMatch \|\| ''\)\.toUpperCase\(\) === 'OPPONENT'/);
   assert.match(pending,/Boolean\(zenithManagedOrderId\(order\)\)/);
   assert.match(pending,/triggerPrice/);
 });

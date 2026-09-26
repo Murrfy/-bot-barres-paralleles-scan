@@ -52,10 +52,13 @@ test('full-position close escalation has no MARKET fallback',()=>{
 });
 
 
-test('real execution is hard-blocked while MAX-LOSS still contains STOP_MARKET',()=>{
+test('real execution remains hard-blocked until the complete LIMIT-only audit is finished',()=>{
   const sync=fs.readFileSync('api/zenith-sync.js','utf8');
   const protectiveIntent=fs.readFileSync('lib/protective-update-intent.mjs','utf8');
-  assert.match(protectiveIntent,/params\.type='STOP_MARKET'/);
+  assert.doesNotMatch(protectiveIntent,/STOP_MARKET/);
+  assert.match(protectiveIntent,/params\.type='STOP'/);
+  assert.match(protectiveIntent,/params\.timeInForce='IOC'/);
+  assert.match(protectiveIntent,/params\.priceMatch='OPPONENT'/);
   assert.match(sync,/const LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE = false;/);
   const start=sync.indexOf("if (action === 'real-execution-arm'");
   const end=sync.indexOf("if (action === 'emergency-stop-clear'",start);

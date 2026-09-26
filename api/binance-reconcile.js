@@ -267,6 +267,7 @@ function normalizeActualAlgoOrder(o) {
     closePosition: o.closePosition === true || o.closePosition === 'true',
     timeInForce: String(o.timeInForce || ''),
     workingType: String(o.workingType || ''),
+    priceMatch: String(o.priceMatch || ''),
     priceProtect: Boolean(o.priceProtect),
     updateTime: number(o.updateTime ?? o.createTime),
   };
@@ -399,8 +400,12 @@ function authorizedPendingMaxLossEdit(position, actualOrders, processingCommands
       String(order?.symbol || '').toUpperCase() === symbol &&
       String(order?.positionSide || '').toUpperCase() === String(position?.positionSide || '').toUpperCase() &&
       String(order?.side || '').toUpperCase() === expectedSide &&
-      String(order?.type || '').toUpperCase() === 'STOP_MARKET' &&
-      order?.closePosition === true &&
+      String(order?.type || '').toUpperCase() === 'STOP' &&
+      String(order?.timeInForce || '').toUpperCase() === 'IOC' &&
+      order?.reduceOnly === true &&
+      order?.closePosition !== true &&
+      Math.abs(number(order?.origQty, NaN) - quantity) <= 1e-12 &&
+      String(order?.priceMatch || '').toUpperCase() === 'OPPONENT' &&
       Boolean(zenithManagedOrderId(order)) &&
       Math.abs(number(order?.triggerPrice ?? order?.stopPrice, NaN) - triggerPrice) <= Math.max(1e-9, Math.abs(triggerPrice) * 1e-10)
     );
@@ -446,8 +451,11 @@ function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions
       if (String(order?.symbol || '').toUpperCase() !== position.symbol) continue;
       if (String(order?.positionSide || '').toUpperCase() !== String(position.positionSide || '').toUpperCase()) continue;
       if (String(order?.side || '').toUpperCase() !== expectedSide) continue;
-      if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') continue;
-      if (order?.closePosition !== true) continue;
+      if (String(order?.type || '').toUpperCase() !== 'STOP') continue;
+      if (String(order?.timeInForce || '').toUpperCase() !== 'IOC') continue;
+      if (order?.reduceOnly !== true || order?.closePosition === true) continue;
+      if (Math.abs(number(order?.origQty, NaN) - quantity) > 1e-12) continue;
+      if (String(order?.priceMatch || '').toUpperCase() !== 'OPPONENT') continue;
       if (!zenithManagedOrderId(order)) continue;
 
       const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
@@ -630,12 +638,21 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
     if (actual && ['symbol', 'side', 'positionSide', 'type', 'reduceOnly', 'closePosition'].some(field => actual[field] !== expected[field])) orderMismatches.push(key);
   }
   if (orderMismatches.length) reasons.push('BINANCE_ORDER_MISMATCH');
+
+  const forbiddenMarketProtectiveOrders = actualOrders.filter(order => {
+    const type = String(order?.type || '').toUpperCase();
+    if (!['MARKET','STOP_MARKET','TAKE_PROFIT_MARKET','TRAILING_STOP_MARKET'].includes(type)) return false;
+    if (!(order?.reduceOnly === true || order?.closePosition === true)) return false;
+    return actualPositions.some(position => orderProtectsPosition(order, position));
+  });
+  if (forbiddenMarketProtectiveOrders.length) reasons.push('FORBIDDEN_MARKET_PROTECTIVE_ORDER');
+
   const missingProtections = actualPositions.filter(position => !actualOrders.some(order =>
     order.symbol === position.symbol && order.positionSide === position.positionSide &&
     order.side === (position.direction === 'LONG' ? 'SELL' : 'BUY') &&
-    ['STOP', 'STOP_MARKET', 'TRAILING_STOP_MARKET'].includes(String(order.type || '').toUpperCase()) &&
-    (order.reduceOnly === true || order.closePosition === true) &&
-    (order.closePosition === true || number(order.origQty) - number(order.executedQty) >= position.quantity)
+    String(order.type || '').toUpperCase() === 'STOP' &&
+    order.reduceOnly === true && order.closePosition !== true &&
+    number(order.origQty) - number(order.executedQty) >= position.quantity
   )).map(positionKey);
   if (missingProtections.length) reasons.push('MISSING_BINANCE_PROTECTION');
 
@@ -652,8 +669,11 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
       if (String(order?.symbol || '').toUpperCase() !== position.symbol) continue;
       if (String(order?.positionSide || '').toUpperCase() !== String(position.positionSide || '').toUpperCase()) continue;
       if (String(order?.side || '').toUpperCase() !== expectedSide) continue;
-      if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') continue;
-      if (order?.closePosition !== true) continue;
+      if (String(order?.type || '').toUpperCase() !== 'STOP') continue;
+      if (String(order?.timeInForce || '').toUpperCase() !== 'IOC') continue;
+      if (order?.reduceOnly !== true || order?.closePosition === true) continue;
+      if (Math.abs(number(order?.origQty, NaN) - quantity) > 1e-12) continue;
+      if (String(order?.priceMatch || '').toUpperCase() !== 'OPPONENT') continue;
       if (!zenithManagedOrderId(order)) continue;
       const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
       if (!(entryPrice > 0) || !(trigger > 0) || !(quantity > 0)) continue;
@@ -741,11 +761,12 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
         clientAlgoId: transition.protectionClientAlgoId,
         side: String(order.side || (transition.direction === 'LONG' ? 'SELL' : 'BUY')).toUpperCase(),
         positionSide: String(order.positionSide || 'BOTH').toUpperCase(),
-        type: String(order.type || 'STOP_MARKET').toUpperCase(),
+        type: String(order.type || 'STOP').toUpperCase(),
         reduceOnly: order.reduceOnly === true || order.reduceOnly === 'true',
         closePosition: order.closePosition === true || order.closePosition === 'true',
         triggerPrice: String(order.triggerPrice ?? order.stopPrice ?? transition.protectionTriggerPrice),
         price: String(order.price ?? ''),
+        priceMatch: String(order.priceMatch || ''),
         origQty: String(order.origQty ?? ''),
         timeInForce: String(order.timeInForce || ''),
         expiresAt: transition.expiresAt,
@@ -776,6 +797,16 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
       missingOrders,
       orderMismatches,
       orphanZenithProtectiveOrders,
+      forbiddenMarketProtectiveOrders: forbiddenMarketProtectiveOrders.map(order => ({
+        symbol: String(order?.symbol || '').toUpperCase(),
+        side: String(order?.side || '').toUpperCase(),
+        positionSide: String(order?.positionSide || '').toUpperCase(),
+        type: String(order?.type || '').toUpperCase(),
+        clientOrderId: String(order?.clientOrderId || ''),
+        clientAlgoId: String(order?.clientAlgoId || ''),
+        orderId: String(order?.orderId || ''),
+        algoId: String(order?.algoId || ''),
+      })),
       missingProtections,
       missingMaxLossProtections,
       ambiguousMaxLossProtections,

@@ -6,31 +6,36 @@ function runtime(orders=[]) {
   return { data:{ binanceOrders:orders } };
 }
 
-test('LONG entry requires opposite STOP_MARKET closePosition protection below entry',()=>{
+test('LONG entry requires opposite LIMIT-only STOP IOC protection below entry',()=>{
   const r=findCoveringEntryProtection(runtime([{
     orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
-    type:'STOP_MARKET',closePosition:true,reduceOnly:false,triggerPrice:'49000',clientAlgoId:'zth-MAX-protect-1'
+    type:'STOP',timeInForce:'IOC',quantity:'0.02',priceMatch:'OPPONENT',
+    closePosition:false,reduceOnly:true,triggerPrice:'49000',clientAlgoId:'zth-MAX-protect-1'
   }]),{symbol:'BTCUSDT',side:'BUY',quantity:0.02,limitPrice:50000});
   assert.equal(r.ready,true);
   assert.equal(r.order.side,'SELL');
   assert.equal(r.order.triggerPrice,49000);
 });
 
-test('SHORT entry requires opposite STOP_MARKET closePosition protection above entry',()=>{
+test('SHORT entry requires opposite LIMIT-only STOP IOC protection above entry',()=>{
   const r=findCoveringEntryProtection(runtime([{
     orderClass:'ALGO',symbol:'BTCUSDT',side:'BUY',positionSide:'BOTH',
-    type:'STOP_MARKET',closePosition:true,reduceOnly:false,stopPrice:'51000',clientAlgoId:'zth-MAX-protect-2'
+    type:'STOP',timeInForce:'IOC',quantity:'0.02',priceMatch:'OPPONENT',
+    closePosition:false,reduceOnly:true,stopPrice:'51000',clientAlgoId:'zth-MAX-protect-2'
   }]),{symbol:'BTCUSDT',side:'SELL',quantity:0.02,limitPrice:50000});
   assert.equal(r.ready,true);
   assert.equal(r.order.side,'BUY');
 });
 
-test('wrong side, wrong trigger direction, reduceOnly mix, or non-close-all protection fails closed',()=>{
+test('wrong side, trigger direction, reduceOnly, or closePosition shape fails closed',()=>{
+  const base={symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP',timeInForce:'IOC',
+    quantity:'0.02',priceMatch:'OPPONENT',closePosition:false,reduceOnly:true,triggerPrice:'49000',
+    clientAlgoId:'zth-MAX-case'};
   const cases=[
-    {symbol:'BTCUSDT',side:'BUY',positionSide:'BOTH',type:'STOP_MARKET',closePosition:true,reduceOnly:false,triggerPrice:'49000'},
-    {symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',closePosition:true,reduceOnly:false,triggerPrice:'51000'},
-    {symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',closePosition:true,reduceOnly:true,triggerPrice:'49000'},
-    {symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',closePosition:false,reduceOnly:true,triggerPrice:'49000'},
+    {...base,side:'BUY'},
+    {...base,triggerPrice:'51000'},
+    {...base,reduceOnly:false},
+    {...base,closePosition:true},
   ];
   for(const [i,order] of cases.entries()){
     const r=findCoveringEntryProtection(runtime([order]),{symbol:'BTCUSDT',side:'BUY',quantity:0.02,limitPrice:50000});
@@ -58,15 +63,15 @@ test('future entry gate rejects external STOP_MARKET even when price and side ar
 test('entry protection accepts $400 exactly and rejects anything above the hard cap',()=>{
   const safe=findCoveringEntryProtection(runtime([{
     orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
-    type:'STOP_MARKET',closePosition:true,reduceOnly:false,
-    triggerPrice:'49600',clientAlgoId:'zth-MAX-safe'
+    type:'STOP',timeInForce:'IOC',quantity:'1',priceMatch:'OPPONENT',
+    closePosition:false,reduceOnly:true,triggerPrice:'49600',clientAlgoId:'zth-MAX-safe'
   }]),{symbol:'BTCUSDT',side:'BUY',quantity:1,limitPrice:50000});
   assert.equal(safe.ready,true);
 
   const unsafe=findCoveringEntryProtection(runtime([{
     orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
-    type:'STOP_MARKET',closePosition:true,reduceOnly:false,
-    triggerPrice:'49599.99',clientAlgoId:'zth-MAX-too-far'
+    type:'STOP',timeInForce:'IOC',quantity:'1',priceMatch:'OPPONENT',
+    closePosition:false,reduceOnly:true,triggerPrice:'49599.99',clientAlgoId:'zth-MAX-too-far'
   }]),{symbol:'BTCUSDT',side:'BUY',quantity:1,limitPrice:50000});
   assert.equal(unsafe.ready,false);
 });
@@ -74,15 +79,15 @@ test('entry protection accepts $400 exactly and rejects anything above the hard 
 test('SHORT entry gate applies the same managed $400 ceiling',()=>{
   const safe=findCoveringEntryProtection(runtime([{
     orderClass:'ALGO',symbol:'BTCUSDT',side:'BUY',positionSide:'BOTH',
-    type:'STOP_MARKET',closePosition:true,reduceOnly:false,
-    triggerPrice:'50400',clientAlgoId:'zth-MAX-short-safe'
+    type:'STOP',timeInForce:'IOC',quantity:'1',priceMatch:'OPPONENT',
+    closePosition:false,reduceOnly:true,triggerPrice:'50400',clientAlgoId:'zth-MAX-short-safe'
   }]),{symbol:'BTCUSDT',side:'SELL',quantity:1,limitPrice:50000});
   assert.equal(safe.ready,true);
 
   const unsafe=findCoveringEntryProtection(runtime([{
     orderClass:'ALGO',symbol:'BTCUSDT',side:'BUY',positionSide:'BOTH',
-    type:'STOP_MARKET',closePosition:true,reduceOnly:false,
-    triggerPrice:'50400.01',clientAlgoId:'zth-MAX-short-too-far'
+    type:'STOP',timeInForce:'IOC',quantity:'1',priceMatch:'OPPONENT',
+    closePosition:false,reduceOnly:true,triggerPrice:'50400.01',clientAlgoId:'zth-MAX-short-too-far'
   }]),{symbol:'BTCUSDT',side:'SELL',quantity:1,limitPrice:50000});
   assert.equal(unsafe.ready,false);
 });
