@@ -25,7 +25,7 @@ import {
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
 import { planAutomaticTargetExit } from '../lib/auto-target-exit.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
-import { pendingEntryProtectionLossTargets, pendingEntryWriteAheadRecoveryTargets } from '../lib/protective-command.mjs';
+import { pendingEntryProtectionLossTargets, pendingEntryWriteAheadRecoveryTargets, triggeredMaxLossRemainderTargets } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import {
   entryWatchDefinition,
@@ -85,6 +85,11 @@ const execution={
   timer:null,
   lastError:'',
   lastCommandId:'',
+};
+
+const maxLossRemainderRecovery={
+  busy:false,
+  lastError:'',
 };
 
 const autoProtection={
@@ -2105,6 +2110,59 @@ function authorizedMaxLossOverlapReport(report){
   return edit;
 }
 
+
+async function recoverTriggeredMaxLossRemainder(report){
+  const targets=triggeredMaxLossRemainderTargets(report);
+  if(!targets.length)return {handled:false,dispatched:false,reason:'NO_TRIGGERED_MAX_LOSS_REMAINDER'};
+  if(maxLossRemainderRecovery.busy)return {handled:true,dispatched:false,reason:'MAX_LOSS_REMAINDER_RECOVERY_BUSY'};
+  const target=targets[0];
+  maxLossRemainderRecovery.busy=true;
+  try{
+    const result=await callProtectiveExecute({
+      type:'EXEC_CLOSE_POSITION',
+      commandId:target.recoveryCommandId,
+      symbol:target.symbol,
+      direction:target.direction,
+      quantity:target.remainingQuantity,
+      closeAll:true,
+      exitMode:'PROTECTIVE_IOC',
+      attempt:target.nextAttempt,
+      priceMatch:target.priceMatch,
+      recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER',
+    });
+    if(!result.response.ok||result.data?.ok!==true){
+      const reason=String(result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status));
+      maxLossRemainderRecovery.lastError='MAX_LOSS_REMAINDER_'+reason;
+      runtime.error=maxLossRemainderRecovery.lastError;
+      stream.lastError=maxLossRemainderRecovery.lastError;
+      await publishRuntime().catch(()=>{});
+      return {handled:true,dispatched:false,reason:maxLossRemainderRecovery.lastError};
+    }
+    const clientOrderId=String(result.data?.plan?.params?.newClientOrderId||'');
+    if(!clientOrderId){
+      maxLossRemainderRecovery.lastError='MAX_LOSS_REMAINDER_CLIENT_ORDER_ID_MISSING';
+      runtime.error=maxLossRemainderRecovery.lastError;
+      stream.lastError=maxLossRemainderRecovery.lastError;
+      await publishRuntime().catch(()=>{});
+      return {handled:true,dispatched:false,reason:maxLossRemainderRecovery.lastError};
+    }
+    log('MAX_LOSS_REMAINDER_IOC_DISPATCHED',{
+      symbol:target.symbol,
+      direction:target.direction,
+      remainingQuantity:target.remainingQuantity,
+      attempt:target.nextAttempt,
+      priceMatch:target.priceMatch,
+      clientAlgoId:target.clientAlgoId,
+      actualOrderId:target.actualOrderId,
+      clientOrderId,
+    });
+    maxLossRemainderRecovery.lastError='';
+    return {handled:true,dispatched:true,reason:'MAX_LOSS_REMAINDER_IOC_DISPATCHED',clientOrderId};
+  }finally{
+    maxLossRemainderRecovery.busy=false;
+  }
+}
+
 async function reconcile(secondPass=false){
   if(stream.reconcileBusy||!runtime.leaseActive)return false;
   const ws=stream.ws;
@@ -2161,6 +2219,46 @@ async function reconcile(secondPass=false){
       stream.lastError='MAX_LOSS_REPLACEMENT_IN_PROGRESS';
       runtime.error='MAX_LOSS_REPLACEMENT_IN_PROGRESS';
       return userStreamReady(stream.state);
+    }
+
+    const triggeredRemainders=triggeredMaxLossRemainderTargets(data.report);
+    if(triggeredRemainders.length){
+      const recovered=await recoverTriggeredMaxLossRemainder(data.report);
+      if(!recovered.handled||!recovered.dispatched){
+        const reason=String(recovered.reason||'MAX_LOSS_REMAINDER_RECOVERY_FAILED');
+        runtime.error=reason;
+        stream.lastError=reason;
+        await publishRuntime().catch(()=>{});
+        return false;
+      }
+      stream.reconcileBusy=false;
+      await sleep(300);
+      return reconcile(false);
+    }
+
+    const reportReasons=Array.isArray(data.report?.reasons)?data.report.reasons.map(x=>String(x||'')):[];
+    if(reportReasons.includes('TRIGGERED_MAX_LOSS_RECOVERY_PENDING')){
+      runtime.error='TRIGGERED_MAX_LOSS_RECOVERY_PENDING';
+      stream.lastError='TRIGGERED_MAX_LOSS_RECOVERY_PENDING';
+      await publishRuntime().catch(()=>{});
+      stream.reconcileBusy=false;
+      scheduleReconcile(250);
+      return false;
+    }
+    if(reportReasons.some(reason=>[
+      'AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER',
+      'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT',
+      'TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED',
+    ].includes(reason))){
+      const reason=reportReasons.find(value=>[
+        'AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER',
+        'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT',
+        'TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED',
+      ].includes(value))||'MAX_LOSS_REMAINDER_FAIL_CLOSED';
+      runtime.error=reason;
+      stream.lastError=reason;
+      await publishRuntime().catch(()=>{});
+      return false;
     }
 
     const orphanTargets=orphanZenithCleanupOrders(data.report);
@@ -3077,7 +3175,7 @@ async function runFullClose(command,raw){
 }
 
 async function commandCycle(){
-  if(execution.busy||stopping)return false;
+  if(execution.busy||maxLossRemainderRecovery.busy||stopping)return false;
   if(!masterExecutionEligible({
     role:'master',
     hidden:false,
