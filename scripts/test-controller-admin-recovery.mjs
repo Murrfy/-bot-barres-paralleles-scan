@@ -5,6 +5,7 @@ import test from 'node:test';
 const sync=fs.readFileSync('api/zenith-sync.js','utf8');
 const page=fs.readFileSync('replace-controller.html','utf8');
 const index=fs.readFileSync('index.html','utf8');
+const admin=fs.readFileSync('master-admin.html','utf8');
 
 function between(startMarker,endMarker){
   const start=sync.indexOf(startMarker);
@@ -16,7 +17,7 @@ function between(startMarker,endMarker){
 const verifier=between('async function verifyControllerRecoveryAdminCode','function normalizeReplacementCode');
 const endpoint=between("if (action === 'controller-recovery-admin'","if (action === 'whoami'");
 
-test('lost-iPhone recovery uses the server-side ADMIN secret without requiring a MASTER device',()=>{
+test('lost-device recovery uses the server-side ADMIN secret without requiring a MASTER device',()=>{
   assert.ok(endpoint.includes('verifyControllerRecoveryAdminCode(req, res)'));
   assert.equal(endpoint.includes('requireDevice(req, res'),false);
   assert.equal(endpoint.includes('MASTER_LEASE_REQUIRED'),false);
@@ -87,6 +88,16 @@ test('main Zenith page exposes lost-device recovery only when this device is not
   assert.ok(index.includes('href="/replace-controller.html"'));
   assert.ok(index.includes('Reprendre le contrôle sur cet appareil'));
   assert.ok(index.includes("replaceBtn.hidden=controllerIdentity.paired===true"));
+});
+
+test('Administration exposes the generic controller recovery independently from MASTER actions',()=>{
+  assert.ok(admin.includes('id="recoverControllerBtn"'));
+  assert.ok(admin.includes('action="/replace-controller.html"'));
+  assert.ok(admin.includes('Reprendre le contrôle sur cet appareil'));
+  assert.ok(admin.includes('Mettre le MASTER en pause'));
+  assert.ok(admin.includes('Reprendre le MASTER'));
+  assert.ok(admin.includes('PANIC STOP'));
+  assert.ok(admin.includes('Révoquer MASTER'));
 });
 
 test('lost-device recovery path does not invoke PANIC, pause, resume or MASTER replacement',()=>{
