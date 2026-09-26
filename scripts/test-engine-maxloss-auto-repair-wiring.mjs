@@ -46,3 +46,14 @@ test('triggered MAX-LOSS remainder is routed through deterministic LIMIT IOC esc
   const genericRepairAt=worker.indexOf('const repairTarget=missingMaxLossRepairTarget',reconcileStart);
   assert.ok(remainderAt>reconcileStart&&genericRepairAt>remainderAt,'remainder recovery must run before generic MAX-LOSS repair');
 });
+
+
+test('ambiguous MAX-LOSS remainder write triggers immediate read-only reconciliation',()=>{
+  const start=worker.indexOf('async function recoverTriggeredMaxLossRemainder');
+  const end=worker.indexOf('async function reconcile',start);
+  const block=worker.slice(start,end);
+  assert.match(block,/const ambiguous=result\.data\?\.ambiguous===true\|\|result\.data\?\.result\?\.ambiguous===true/);
+  assert.match(block,/const wrote=result\.data\?\.writeAttempted===true/);
+  assert.match(block,/scheduleReconcile\(ambiguous\|\|wrote\?100:500\)/);
+  assert.match(block,/scheduleReconcile\(100\)/);
+});
