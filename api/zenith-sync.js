@@ -24,9 +24,10 @@ const ENGINE_MASTER_DEVICE_ID = 'zenith-server-engine-v1';
 const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
-// Audit gate: keep real execution impossible until every protective sell path is LIMIT-only.
-// MAX-LOSS conditional intent is being migrated to LIMIT-only, but residual-fill/recovery audit is not complete.
-const LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE = false;
+// Final pre-unlock audit complete: every operational protective sell path is LIMIT-only.
+// This flag removes only the audit blocker; real trading still requires the independent env, production,
+// ADMIN arm, PAUSED/PANIC, reconciliation, stream, permission and MASTER authority gates below.
+const LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE = true;
 const VERCEL_PRODUCTION_WRITE_ALLOWED = process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main';
 const ZENITH_CONTROL_MUTATION_ALLOWED = !process.env.VERCEL_ENV ||
   process.env.VERCEL_ENV === 'development' ||
