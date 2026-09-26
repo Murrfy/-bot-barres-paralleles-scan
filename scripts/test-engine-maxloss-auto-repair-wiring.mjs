@@ -57,3 +57,14 @@ test('ambiguous MAX-LOSS remainder write triggers immediate read-only reconcilia
   assert.match(block,/scheduleReconcile\(ambiguous\|\|wrote\?100:500\)/);
   assert.match(block,/scheduleReconcile\(100\)/);
 });
+
+
+test('unresolved MAX-LOSS remainder states explicitly invalidate stream readiness',()=>{
+  const reconcileStart=worker.indexOf('async function reconcile');
+  const block=worker.slice(reconcileStart,worker.indexOf('async function awaitReconciliation',reconcileStart));
+  assert.match(block,/await invalidateStream\('TRIGGERED_MAX_LOSS_RECOVERY_PENDING'\)/);
+  assert.match(block,/AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER/);
+  assert.match(block,/INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT/);
+  assert.match(block,/TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED/);
+  assert.match(block,/await invalidateStream\(reason\)/);
+});
