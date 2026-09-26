@@ -84,9 +84,13 @@ test('reconciliation proof keeps entry identity separate from protection identit
 test('entry API opens fail-closed gate only for exact write-ahead recovery proof',()=>{
   assert.match(api,/pendingEntryWriteAheadRecoveryAllowed/);
   assert.match(api,/phase==='SUBMIT_ENTRY'/);
-  assert.match(api,/entryReadinessReason\(before,master\.deviceId,pendingEntryRecovery\)/);
-  assert.match(api,/entryReadinessReason\(latest,master\.deviceId,latestRecovery\)/);
-  assert.match(api,/executionReadiness\(state\.runtimeState,state\.report,masterDeviceId,'',pendingEntryRecovery===true\)/);
+  assert.match(api,/entryReadinessReason\(before,master\.deviceId,symbol,side,pendingEntryRecovery\)/);
+  assert.match(api,/entryReadinessReason\(latest,master\.deviceId,symbol,side,latestRecovery\)/);
+  const start=api.indexOf('function entryReadinessReason');
+  const end=api.indexOf('function near',start);
+  const block=api.slice(start,end);
+  assert.match(block,/pendingEntryRecovery===true,false,/);
+  assert.match(block,/executionTarget,false/);
 });
 
 test('worker replays the same deterministic LIMIT and never substitutes a new price',()=>{
