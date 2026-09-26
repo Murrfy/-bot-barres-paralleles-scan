@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { REAL_RISK_LIMITS, DEFAULT_MAX_ACTIVE_POSITIONS } from '../lib/risk-policy.mjs';
+import { REAL_RISK_LIMITS, DEFAULT_MAX_ACTIVE_POSITIONS, MAX_ACTIVE_POSITIONS_HARD_CAP } from '../lib/risk-policy.mjs';
 
 const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 const worker=await readFile(new URL('../server/zenith-engine-worker.mjs',import.meta.url),'utf8');
@@ -93,13 +93,13 @@ test('client controls do not advertise values above server real-risk caps',()=>{
   assert.equal(REAL_RISK_LIMITS.maxLeverage,10);
   assert.equal(REAL_RISK_LIMITS.maxMarginUsdt,1000);
   assert.equal(DEFAULT_MAX_ACTIVE_POSITIONS,3);
+  assert.equal(MAX_ACTIVE_POSITIONS_HARD_CAP,3);
   assert.equal('maxActivePositions' in REAL_RISK_LIMITS,false);
   assert.match(html,/id="fLev"[^>]*max="10"/);
   assert.match(html,/id="fMargin"[^>]*max="1000"/);
-  assert.match(html,/id="bMaxActive"[^>]*min="1"[^>]*step="1"/);
-  assert.doesNotMatch(html,/id="bMaxActive"[^>]*max=/);
+  assert.match(html,/id="bMaxActive"[^>]*min="1"[^>]*max="3"[^>]*step="1"/);
+  assert.match(html,/readBotSettings\(\)[\s\S]{0,260}requested>=1&&requested<=3\?requested:3/);
   assert.doesNotMatch(html,/lev=clamp\(n\(t\.leverage,settings\.leverage\),1,125\)/);
-  assert.doesNotMatch(html,/readBotSettings\(\)[\s\S]{0,220}Math\.min/);
 });
 
 test('watched tokens freeze settings while active positions keep only safe controls editable',()=>{
