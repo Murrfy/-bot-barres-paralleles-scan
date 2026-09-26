@@ -688,8 +688,8 @@ if (!index.includes("String(o?.timeInForce||'').toUpperCase()==='GTC'") ||
 if (!protectiveUpdateExecute.includes("import { isLimitIocMaxLossOrder, maxLossAlgoExpected } from '../lib/maxloss-order-shape.mjs'") ||
     !protectiveUpdateExecute.includes('isLimitIocMaxLossOrder(o,{') ||
     !binanceReconcile.includes('isLimitIocMaxLossOrder(order,{') ||
-    !index.includes("String(o?.timeInForce||'').toUpperCase()==='IOC'") ||
-    !index.includes("String(o?.priceMatch||'').toUpperCase()==='OPPONENT'") ||
+    !index.includes("String(x?.timeInForce||'').toUpperCase()==='IOC'") ||
+    !index.includes("String(x?.priceMatch||'').toUpperCase()==='OPPONENT'") ||
     !index.includes('const emergencyReady=Boolean(inv.managedMaxLoss)&&inv.maxLossConflict!==true') ||
     !index.includes('aucune protection MAX-LOSS Zenith unique et confirmée')) {
   fail('protective execution, reconciliation, MASTER and controller must require one canonical Zenith LIMIT IOC MAX-LOSS');
