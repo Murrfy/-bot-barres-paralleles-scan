@@ -1623,7 +1623,7 @@ function commandMayOperateQuarantinedSymbol(type, payload = {}) {
 }
 
 
-async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAgeMs = 10000, executionTarget = '', quarantineOperationAllowed = false) {
+async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAgeMs = 10000, executionTarget = '', quarantineOperationAllowed = false, repairTarget = '') {
   const [reportRaw, runtimeRaw] = await Promise.all([
     redis(['GET', KEY_RECONCILE_LAST]),
     redis(['GET', KEY_STATE]),
@@ -1687,20 +1687,24 @@ async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAge
     };
   }
 
-  if (quarantineOperationAllowed === true && target && protectionOnlyMismatchTarget(report) === target) {
-    return { ok: true, report, runtimeState, runtimeReady, protectiveRepair: true, repairTarget: target };
+  const repair = String(repairTarget || '').toUpperCase();
+  if (repair && protectionOnlyMismatchTarget(report) === repair) {
+    return { ok: true, report, runtimeState, runtimeReady, protectiveRepair: true, repairTarget: repair };
   }
 
   return { ok: false, reason: 'BINANCE_RECONCILIATION_MISMATCH' };
 }
 
-async function realExecutionReadiness(expectedMasterDeviceId = '', executionTarget = '', quarantineOperationAllowed = false) {
+async function realExecutionReadiness(
+  expectedMasterDeviceId = '', executionTarget = '',
+  quarantineOperationAllowed = false, repairTarget = ''
+) {
   if (!expectedMasterDeviceId) return { ok: false, reason: 'MASTER_LEASE_REQUIRED' };
   if (!executionTarget) return { ok: false, reason: 'EXECUTION_TARGET_REQUIRED' };
   const arm = await realExecutionArmStatus(expectedMasterDeviceId);
   if (!arm.armed) return { ok: false, reason: arm.reason };
   const reconciliation = await freshConsistentReconciliation(
-    expectedMasterDeviceId, 10000, executionTarget, quarantineOperationAllowed
+    expectedMasterDeviceId, 10000, executionTarget, quarantineOperationAllowed, repairTarget
   );
   if (!reconciliation.ok) return reconciliation;
   return { ok: true, reconciliation };
@@ -4906,7 +4910,10 @@ export default async function handler(req, res) {
         }
         const executionTarget = executionCommandTarget(type, req.body?.payload);
         const quarantineOperationAllowed = commandMayOperateQuarantinedSymbol(type, req.body?.payload);
-        const readiness = await realExecutionReadiness(activeMaster, executionTarget, quarantineOperationAllowed);
+        const repairTarget = protectiveRepairTarget(type, req.body?.payload);
+        const readiness = await realExecutionReadiness(
+          activeMaster, executionTarget, quarantineOperationAllowed, repairTarget
+        );
         if (!readiness.ok) {
           return send(res, 423, {
             ok: false,
@@ -5171,7 +5178,10 @@ export default async function handler(req, res) {
         }
         const executionTarget = executionCommandTarget(command.type, command.payload);
         const quarantineOperationAllowed = commandMayOperateQuarantinedSymbol(command.type, command.payload);
-        const readiness = await realExecutionReadiness(device.deviceId, executionTarget, quarantineOperationAllowed);
+        const repairTarget = protectiveRepairTarget(command.type, command.payload);
+        const readiness = await realExecutionReadiness(
+          device.deviceId, executionTarget, quarantineOperationAllowed, repairTarget
+        );
         if (!readiness.ok) {
           const deferred = await deferClaimedCommand(
             raw,
@@ -5729,7 +5739,10 @@ export default async function handler(req, res) {
         }
         const executionTarget = executionCommandTarget(command.type, command.payload);
         const quarantineOperationAllowed = commandMayOperateQuarantinedSymbol(command.type, command.payload);
-        const readiness = await realExecutionReadiness(device.deviceId, executionTarget, quarantineOperationAllowed);
+        const repairTarget = protectiveRepairTarget(command.type, command.payload);
+        const readiness = await realExecutionReadiness(
+          device.deviceId, executionTarget, quarantineOperationAllowed, repairTarget
+        );
         if (!readiness.ok) {
           const deferred = await deferClaimedCommand(
             raw,
