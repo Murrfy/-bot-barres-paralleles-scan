@@ -14,6 +14,7 @@ import {
   roleAssignmentKey,
   deviceRoleAssignmentActive,
   DEVICE_SESSION_MAX_AGE_SECONDS,
+  ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS,
 } from '../lib/device-session.mjs';
 
 test('secure cookie is the default credential and Bearer is opt-in migration only', () => {
@@ -111,6 +112,26 @@ test('device session records expire absolutely from original creation time', () 
   assert.equal(DEVICE_SESSION_MAX_AGE_SECONDS,30*24*60*60);
 });
 
+
+
+test('engine session lifetime is sliding while phone sessions remain absolute', () => {
+  const now=1_800_000_000_000;
+  const oldEngine={
+    principal:'engine',
+    createdAt:now-(60*24*60*60*1000),
+    sessionExpiresAt:now+(60*60*1000),
+  };
+  const idleEngine={
+    principal:'engine',
+    createdAt:now-(60*24*60*60*1000),
+    sessionExpiresAt:now-1,
+  };
+  assert.equal(ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS,7*24*60*60);
+  assert.equal(deviceSessionRecordActive(oldEngine,now),true);
+  assert.ok(deviceSessionRemainingSeconds(oldEngine,now)>0);
+  assert.equal(deviceSessionRecordActive(idleEngine,now),false);
+  assert.equal(deviceSessionRemainingSeconds(idleEngine,now),0);
+});
 
 test('role assignment epoch permanently rejects sessions created before reassignment', () => {
   const oldSession={deviceId:'iphone-12345678',role:'controller',createdAt:1_800_000_000_000};
