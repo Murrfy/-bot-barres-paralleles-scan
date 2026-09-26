@@ -11,8 +11,10 @@ test('24/7 engine repairs one exact missing MAX-LOSS before accepting reconcilia
   assert.doesNotMatch(worker,/syncApi\('emergency-stop'/);
   assert.match(worker,/protectionKind:'MAX_LOSS'/);
   assert.match(worker,/phase:'PLACE_NEW'/);
-  assert.match(worker,/STOP_MARKET/);
-  assert.match(worker,/closePosition/);
+  assert.match(worker,/timeInForce\|\|''\)\.toUpperCase\(\)==='IOC'/);
+  assert.match(worker,/reduceOnly===true/);
+  assert.match(worker,/priceMatch\|\|''\)\.toUpperCase\(\)==='OPPONENT'/);
+  assert.doesNotMatch(worker,/type\|\|''\)\.toUpperCase\(\)==='STOP_MARKET'/);
   assert.match(worker,/return reconcile\(true\)/);
 });
 
