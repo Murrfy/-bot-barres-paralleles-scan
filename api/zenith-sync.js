@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
 import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
+import { isLimitIocMaxLossOrder } from '../lib/maxloss-order-shape.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import { jsonStructureStatus, plainJsonObject } from '../lib/json-structure.mjs';
 
@@ -25,7 +26,7 @@ const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
 // Audit gate: keep real execution impossible until every protective sell path is LIMIT-only.
-// MAX-LOSS still uses a Binance STOP_MARKET conditional order on the current architecture.
+// Phase A uses LIMIT IOC MAX-LOSS, but residual-trigger escalation is not yet certified.
 const LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE = false;
 const VERCEL_PRODUCTION_WRITE_ALLOWED = process.env.VERCEL_ENV === 'production' && process.env.VERCEL_GIT_COMMIT_REF === 'main';
 const ZENITH_CONTROL_MUTATION_ALLOWED = !process.env.VERCEL_ENV ||
@@ -1302,13 +1303,12 @@ function runtimeEmergencyProtection(runtimeState, symbol, direction, entryPrice,
   const qty = Math.abs(Number(quantity));
   if (!(entry > 0) || !(qty > 0)) return null;
   return runtimeOpenOrder(runtimeState, order => {
-    if (String(order?.orderClass || '').toUpperCase() !== 'ALGO') return false;
-    if (String(order?.symbol || '').toUpperCase() !== sym) return false;
-    if (String(order?.side || '').toUpperCase() !== expectedSide) return false;
-    if (String(order?.positionSide || 'BOTH').toUpperCase() !== 'BOTH') return false;
-    if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') return false;
-    if (!(order?.closePosition === true || order?.closePosition === 'true')) return false;
-    if (!/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId || ''))) return false;
+    if (!isLimitIocMaxLossOrder(order,{
+      symbol:sym,
+      side:expectedSide,
+      positionSide:'BOTH',
+      quantity:qty,
+    })) return false;
     if (excludeClientAlgoId && String(order?.clientAlgoId || '') === String(excludeClientAlgoId)) return false;
     const trigger = Number(order?.triggerPrice ?? order?.stopPrice);
     if (!(trigger > 0)) return false;
@@ -5388,8 +5388,13 @@ export default async function handler(req, res) {
             if (String(order?.positionSide || 'BOTH').toUpperCase() !== 'BOTH') return false;
             if (!numberMatches(order?.triggerPrice ?? order?.stopPrice, payloadStatus.triggerPrice)) return false;
             if (payloadStatus.protectionKind === 'MAX_LOSS') {
-              return String(order?.type || '').toUpperCase() === 'STOP_MARKET' &&
-                (order?.closePosition === true || order?.closePosition === 'true');
+              return isLimitIocMaxLossOrder(order,{
+                symbol:payloadStatus.symbol,
+                side:expectedSide,
+                positionSide:'BOTH',
+                quantity:payloadStatus.quantity,
+                clientAlgoId:newClientId,
+              });
             }
             return String(order?.type || '').toUpperCase() === 'STOP' &&
               String(order?.timeInForce || '').toUpperCase() === 'GTC' &&
