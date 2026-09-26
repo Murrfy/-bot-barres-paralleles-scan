@@ -756,7 +756,7 @@ function watchedEntryConfig(symbol){
   const requestedMaxActive=globalSettings.maxActive==null
     ?DEFAULT_MAX_ACTIVE_POSITIONS
     :Number(globalSettings.maxActive);
-  if(!Number.isSafeInteger(requestedMaxActive)||requestedMaxActive<1)return null;
+  if(!Number.isSafeInteger(requestedMaxActive)||requestedMaxActive<1||requestedMaxActive>MAX_ACTIVE_POSITIONS_HARD_CAP)return null;
   const maxActive=requestedMaxActive;
   if(!(margin>0)||!(leverage>0)||!(maxLoss>0))return null;
   return {
