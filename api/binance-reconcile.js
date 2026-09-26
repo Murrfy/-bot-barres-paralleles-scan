@@ -269,6 +269,7 @@ function normalizeActualAlgoOrder(o) {
     closePosition: o.closePosition === true || o.closePosition === 'true',
     timeInForce: String(o.timeInForce || ''),
     workingType: String(o.workingType || ''),
+    priceMatch: String(o.priceMatch || ''),
     priceProtect: Boolean(o.priceProtect),
     updateTime: number(o.updateTime ?? o.createTime),
   };
