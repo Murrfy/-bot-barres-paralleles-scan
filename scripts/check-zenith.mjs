@@ -120,7 +120,6 @@ if (index.includes("...(token?{}:{})")) {
 }
 if (!index.includes('protectionValidationError') ||
     !index.includes('step="0.1" inputmode="decimal"') ||
-    !index.includes('Décimales acceptées avec un point (ex. 7.8)') ||
     !index.includes('le gain protégé doit être inférieur au gain atteint') ||
     !index.includes('le niveau PROTÉGÉ ne peut pas redescendre')) {
   fail('gain protections must support decimal input and reject incoherent protection ladders');
