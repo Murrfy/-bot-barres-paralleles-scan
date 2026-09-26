@@ -25,7 +25,13 @@ import {
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
 import { planAutomaticTargetExit } from '../lib/auto-target-exit.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
-import { pendingEntryProtectionLossTargets, pendingEntryWriteAheadRecoveryTargets, triggeredMaxLossRemainderTargets } from '../lib/protective-command.mjs';
+import {
+  pendingEntryProtectionLossTargets,
+  pendingEntryWriteAheadRecoveryTargets,
+  triggeredMaxLossRemainderTargets,
+  maxLossSymbolQuarantines,
+  maxLossSymbolIsQuarantined,
+} from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS, DEFAULT_MAX_ACTIVE_POSITIONS } from '../lib/risk-policy.mjs';
 import {
   entryWatchDefinition,
@@ -78,6 +84,7 @@ const stream={
   restartTimer:null,
   reconnectTimer:null,
   lastError:'',
+  symbolQuarantines:[],
 };
 
 const execution={
@@ -753,6 +760,7 @@ function occupiedRealEntrySlots(){
 function entryWatchMayDispatch(symbol){
   const config=watchedEntryConfig(symbol);
   if(!config||!entryWatch.loaded)return false;
+  if(symbolMaxLossQuarantined(config.symbol))return false;
   if(!runtime.synchronized||!runtime.heartbeatFresh||runtime.mode!=='RUNNING')return false;
   if(!masterExecutionEligible({
     role:'master',
@@ -1071,6 +1079,7 @@ function configuredMaxLossForSymbol(symbol){
 async function ensureAutomaticTargetForPosition(position){
   const symbol=String(position?.symbol||'').toUpperCase();
   if(!symbol||autoTarget.busySymbols.has(symbol))return {ok:true,changed:false,reason:'BUSY_OR_INVALID'};
+  if(symbolMaxLossQuarantined(symbol))return {ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'};
   if(!runtime.synchronized||!runtime.heartbeatFresh)return {ok:true,changed:false,reason:'RUNTIME_NOT_READY'};
   if(!masterExecutionEligible({
     role:'master',hidden:false,leaseActive:runtime.leaseActive,
@@ -1308,6 +1317,7 @@ async function executeAutoProgressive(plan){
 
 async function runAutoProtection(symbol,mark){
   const wanted=String(symbol||'').toUpperCase();
+  if(symbolMaxLossQuarantined(wanted))return false;
   const projection=streamProjection();
   const position=(projection.binancePositions||[])
     .find(row=>String(row?.symbol||'').toUpperCase()===wanted&&Math.abs(n(row?.positionAmt??row?.quantity,0))>0);
@@ -1673,6 +1683,14 @@ async function ensureMarkPriceStream(){
 
 function streamProjection(){
   return runtimeInventoryFromUserStream(stream.state,'REAL');
+}
+
+function symbolQuarantineReport(){
+  return {symbolQuarantines:Array.isArray(stream.symbolQuarantines)?stream.symbolQuarantines:[]};
+}
+
+function symbolMaxLossQuarantined(symbol,direction=''){
+  return maxLossSymbolIsQuarantined(symbolQuarantineReport(),symbol,direction);
 }
 
 function runtimeSnapshot(){
@@ -2181,6 +2199,8 @@ async function reconcile(secondPass=false){
       return false;
     }
 
+    stream.symbolQuarantines=maxLossSymbolQuarantines(data.report);
+
     const pendingProtectionLoss=pendingEntryProtectionLossTargets(data.report);
     if(pendingProtectionLoss.length){
       if(secondPass){
@@ -2229,39 +2249,27 @@ async function reconcile(secondPass=false){
     const triggeredRemainders=triggeredMaxLossRemainderTargets(data.report);
     if(triggeredRemainders.length){
       const recovered=await recoverTriggeredMaxLossRemainder(data.report);
-      if(!recovered.handled||!recovered.dispatched){
-        const reason=String(recovered.reason||'MAX_LOSS_REMAINDER_RECOVERY_FAILED');
-        runtime.error=reason;
-        stream.lastError=reason;
-        await publishRuntime().catch(()=>{});
-        return false;
+      if(recovered.handled&&recovered.dispatched){
+        stream.reconcileBusy=false;
+        await sleep(300);
+        return reconcile(false);
       }
-      stream.reconcileBusy=false;
-      await sleep(300);
-      return reconcile(false);
+      const reason=String(recovered.reason||'MAX_LOSS_REMAINDER_RECOVERY_FAILED');
+      runtime.error='SYMBOL_QUARANTINE_'+reason;
+      stream.lastError=runtime.error;
+      scheduleReconcile(500);
     }
 
-    const reportReasons=Array.isArray(data.report?.reasons)?data.report.reasons.map(x=>String(x||'')):[];
-    if(reportReasons.includes('TRIGGERED_MAX_LOSS_RECOVERY_PENDING')){
-      runtime.error='TRIGGERED_MAX_LOSS_RECOVERY_PENDING';
-      await invalidateStream('TRIGGERED_MAX_LOSS_RECOVERY_PENDING');
-      stream.reconcileBusy=false;
-      scheduleReconcile(250);
-      return false;
-    }
-    if(reportReasons.some(reason=>[
+    const unresolvedLocal=stream.symbolQuarantines.find(row=>[
+      'TRIGGERED_MAX_LOSS_RECOVERY_PENDING',
       'AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER',
       'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT',
       'TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED',
-    ].includes(reason))){
-      const reason=reportReasons.find(value=>[
-        'AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER',
-        'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT',
-        'TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED',
-      ].includes(value))||'MAX_LOSS_REMAINDER_FAIL_CLOSED';
-      runtime.error=reason;
-      await invalidateStream(reason);
-      return false;
+    ].includes(String(row?.reason||'')));
+    if(unresolvedLocal){
+      runtime.error='SYMBOL_QUARANTINE_'+String(unresolvedLocal.symbol||'')+'_'+String(unresolvedLocal.reason||'MAX_LOSS');
+      stream.lastError=runtime.error;
+      scheduleReconcile(String(unresolvedLocal.reason||'')==='TRIGGERED_MAX_LOSS_RECOVERY_PENDING'?250:1500);
     }
 
     const orphanTargets=orphanZenithCleanupOrders(data.report);
@@ -2347,7 +2355,13 @@ async function reconcile(secondPass=false){
       return reconcile(true);
     }
 
-    runtime.error=repairTarget?'PROTECTION_REPAIR_REQUIRED':'';
+    const quarantine=stream.symbolQuarantines[0]||null;
+    runtime.error=repairTarget
+      ?'PROTECTION_REPAIR_REQUIRED'
+      :quarantine
+        ?'SYMBOL_QUARANTINE_'+String(quarantine.symbol||'')+'_'+String(quarantine.reason||'MAX_LOSS')
+        :'';
+    if(!quarantine)stream.lastError='';
     await pruneAutoHighWater().catch(()=>{});
     return userStreamReady(stream.state);
   }catch(error){
@@ -3178,7 +3192,7 @@ async function runFullClose(command,raw){
 }
 
 async function commandCycle(){
-  if(execution.busy||maxLossRemainderRecovery.busy||stopping)return false;
+  if(execution.busy||stopping)return false;
   if(!masterExecutionEligible({
     role:'master',
     hidden:false,
