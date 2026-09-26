@@ -267,6 +267,7 @@ function normalizeActualAlgoOrder(o) {
     closePosition: o.closePosition === true || o.closePosition === 'true',
     timeInForce: String(o.timeInForce || ''),
     workingType: String(o.workingType || ''),
+    priceMatch: String(o.priceMatch || ''),
     priceProtect: Boolean(o.priceProtect),
     updateTime: number(o.updateTime ?? o.createTime),
   };
@@ -399,8 +400,12 @@ function authorizedPendingMaxLossEdit(position, actualOrders, processingCommands
       String(order?.symbol || '').toUpperCase() === symbol &&
       String(order?.positionSide || '').toUpperCase() === String(position?.positionSide || '').toUpperCase() &&
       String(order?.side || '').toUpperCase() === expectedSide &&
-      String(order?.type || '').toUpperCase() === 'STOP_MARKET' &&
-      order?.closePosition === true &&
+      String(order?.type || '').toUpperCase() === 'STOP' &&
+      String(order?.timeInForce || '').toUpperCase() === 'IOC' &&
+      order?.reduceOnly === true &&
+      order?.closePosition !== true &&
+      Math.abs(number(order?.origQty, NaN) - quantity) <= 1e-12 &&
+      String(order?.priceMatch || '').toUpperCase() === 'OPPONENT' &&
       Boolean(zenithManagedOrderId(order)) &&
       Math.abs(number(order?.triggerPrice ?? order?.stopPrice, NaN) - triggerPrice) <= Math.max(1e-9, Math.abs(triggerPrice) * 1e-10)
     );
@@ -446,8 +451,11 @@ function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions
       if (String(order?.symbol || '').toUpperCase() !== position.symbol) continue;
       if (String(order?.positionSide || '').toUpperCase() !== String(position.positionSide || '').toUpperCase()) continue;
       if (String(order?.side || '').toUpperCase() !== expectedSide) continue;
-      if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') continue;
-      if (order?.closePosition !== true) continue;
+      if (String(order?.type || '').toUpperCase() !== 'STOP') continue;
+      if (String(order?.timeInForce || '').toUpperCase() !== 'IOC') continue;
+      if (order?.reduceOnly !== true || order?.closePosition === true) continue;
+      if (Math.abs(number(order?.origQty, NaN) - quantity) > 1e-12) continue;
+      if (String(order?.priceMatch || '').toUpperCase() !== 'OPPONENT') continue;
       if (!zenithManagedOrderId(order)) continue;
 
       const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
@@ -652,8 +660,11 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
       if (String(order?.symbol || '').toUpperCase() !== position.symbol) continue;
       if (String(order?.positionSide || '').toUpperCase() !== String(position.positionSide || '').toUpperCase()) continue;
       if (String(order?.side || '').toUpperCase() !== expectedSide) continue;
-      if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') continue;
-      if (order?.closePosition !== true) continue;
+      if (String(order?.type || '').toUpperCase() !== 'STOP') continue;
+      if (String(order?.timeInForce || '').toUpperCase() !== 'IOC') continue;
+      if (order?.reduceOnly !== true || order?.closePosition === true) continue;
+      if (Math.abs(number(order?.origQty, NaN) - quantity) > 1e-12) continue;
+      if (String(order?.priceMatch || '').toUpperCase() !== 'OPPONENT') continue;
       if (!zenithManagedOrderId(order)) continue;
       const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
       if (!(entryPrice > 0) || !(trigger > 0) || !(quantity > 0)) continue;
@@ -741,11 +752,12 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
         clientAlgoId: transition.protectionClientAlgoId,
         side: String(order.side || (transition.direction === 'LONG' ? 'SELL' : 'BUY')).toUpperCase(),
         positionSide: String(order.positionSide || 'BOTH').toUpperCase(),
-        type: String(order.type || 'STOP_MARKET').toUpperCase(),
+        type: String(order.type || 'STOP').toUpperCase(),
         reduceOnly: order.reduceOnly === true || order.reduceOnly === 'true',
         closePosition: order.closePosition === true || order.closePosition === 'true',
         triggerPrice: String(order.triggerPrice ?? order.stopPrice ?? transition.protectionTriggerPrice),
         price: String(order.price ?? ''),
+        priceMatch: String(order.priceMatch || ''),
         origQty: String(order.origQty ?? ''),
         timeInForce: String(order.timeInForce || ''),
         expiresAt: transition.expiresAt,
