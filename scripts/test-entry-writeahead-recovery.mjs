@@ -25,13 +25,14 @@ function report(overrides={}){
     clientAlgoId:'zth-MAX-1234567890abcdef12345678',
     side:'SELL',
     positionSide:'BOTH',
-    type:'STOP_MARKET',
-    reduceOnly:false,
-    closePosition:true,
+    type:'STOP',
+    reduceOnly:true,
+    closePosition:false,
     triggerPrice:'90',
     price:'',
-    origQty:'',
-    timeInForce:'',
+    priceMatch:'OPPONENT',
+    origQty:'2',
+    timeInForce:'IOC',
     expiresAt:Date.now()+60000,
     ...overrides,
   };
@@ -65,7 +66,8 @@ test('write-ahead recovery refuses any extra reconciliation mismatch or identity
     commandId:'auto-entry-ABCUSDT-1234567890abcdef1234',
     symbol:'ABCUSDT',side:'BUY',limitPrice:101,maxLoss:20,
   }),false);
-  assert.deepEqual(pendingEntryWriteAheadRecoveryTargets(report({closePosition:false})),[]);
+  assert.deepEqual(pendingEntryWriteAheadRecoveryTargets(report({priceMatch:'OPPONENT_5'})),[]);
+  assert.deepEqual(pendingEntryWriteAheadRecoveryTargets(report({reduceOnly:false})),[]);
   assert.deepEqual(pendingEntryWriteAheadRecoveryTargets(report({entrySide:'SELL'})),[]);
 });
 
