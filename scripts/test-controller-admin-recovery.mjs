@@ -71,6 +71,22 @@ test('successful recovery rotates ownership, creates a fresh HttpOnly session an
   assert.equal(endpoint.includes('MASTER_ADMIN_CODE'),false);
 });
 
+test('Administration exposes only the generic recovery UI, not the legacy phone authorization control',()=>{
+  const script=admin.match(/<script>([\s\S]*?)<\/script>/)?.[1]||'';
+  assert.ok(admin.includes('id="recoverControllerBtn"'));
+  assert.ok(admin.includes('Reprendre le contrôle sur cet appareil'));
+  assert.equal(admin.includes('Autoriser le remplacement de l’iPhone'),false);
+  assert.equal(script.includes('authorizeReplacement('),false);
+  assert.equal(script.includes('controller-replacement-authorize'),false);
+});
+
+test('recovery page persists a device-neutral controller identity',()=>{
+  assert.ok(page.includes("id='device-'"));
+  assert.equal(page.includes("id='phone-'"),false);
+  assert.ok(page.includes("deviceName:'Appareil contrôleur Zenith'"));
+  assert.ok(page.includes("localStorage.setItem(DEVICE_NAME_KEY,'Appareil contrôleur Zenith')"));
+});
+
 test('new-device page asks only for ADMIN recovery and stores no ADMIN secret',()=>{
   assert.ok(page.includes('Code administrateur Zenith'));
   assert.ok(page.includes("type=\"password\""));
