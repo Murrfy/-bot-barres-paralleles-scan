@@ -1272,8 +1272,8 @@ if (!sync.includes('execClosePayloadStatus') ||
     !sync.includes("action === 'command-fail'") ||
     !sync.includes("'EXECUTION_ACK_NOT_CONFIRMED'") ||
     !sync.includes('runtimeClosePositionQuantity') ||
-    !sync.includes('freshConsistentReconciliation(device.deviceId)')) {
-  fail('EXEC_CLOSE_POSITION must be full-close only and require fresh reconciled zero-position proof before ACK');
+    !sync.includes("payloadStatus.symbol+':'+payloadStatus.direction,true")) {
+  fail('EXEC_CLOSE_POSITION must be full-close only and require symbol-bound fresh reconciled zero-position proof before ACK');
 }
 
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');
