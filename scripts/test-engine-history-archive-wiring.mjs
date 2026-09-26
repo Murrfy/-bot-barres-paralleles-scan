@@ -15,7 +15,7 @@ test('engine archives real Binance history autonomously without affecting tradin
   assert.match(worker,/const HISTORY_ARCHIVE_MS=6\*60\*60\*1000/);
   assert.match(worker,/let historyArchiveTimer=null/);
 
-  const refresh=block('async function refreshRealHistoryArchive()','async function bootstrapEngineSession');
+  const refresh=block('async function refreshRealHistoryArchive()','async function publicBinanceJson');
   assert.match(refresh,/binanceApi\('\/api\/binance-history'\)/);
   assert.match(refresh,/response\.ok&&data\?\.ok===true/);
   assert.match(refresh,/REAL_HISTORY_ARCHIVE_REFRESHED/);
