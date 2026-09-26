@@ -6,10 +6,11 @@ import { BinanceRequestError } from '../lib/binance-order-writer.mjs';
 function response(body,status=200){return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}})}
 const params={
   algoType:'CONDITIONAL',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
-  type:'STOP_MARKET',triggerPrice:'49000',workingType:'CONTRACT_PRICE',
-  priceProtect:'false',closePosition:'true',clientAlgoId:'zth-MAX-0123456789abcdef01234567'
+  type:'STOP',triggerPrice:'49000',timeInForce:'IOC',workingType:'CONTRACT_PRICE',
+  priceProtect:'false',quantity:'0.02',reduceOnly:'true',priceMatch:'OPPONENT',
+  clientAlgoId:'zth-MAX-0123456789abcdef01234567'
 };
-const existing={algoId:1,algoStatus:'NEW',orderType:'STOP_MARKET',...params};
+const existing={algoId:1,algoStatus:'NEW',orderType:'STOP',...params};
 
 test('algo write lock queries idempotency and never POSTs',async()=>{
   const methods=[];
@@ -114,5 +115,13 @@ test('progressive STOP idempotency verifies the explicit LIMIT price',async()=>{
       fetchImpl:badFetch,apiKey:'k',secret:'s',algoParams:progressive,writesEnabled:true,timestamp:1000
     }),
     e=>e instanceof BinanceRequestError&&e.message==='ALGO_LIMIT_PRICE_MISMATCH'
+  );
+});
+
+test('MAX-LOSS idempotency rejects a non-IOC conditional order',async()=>{
+  const fetchImpl=async()=>response({...existing,timeInForce:'GTC'});
+  await assert.rejects(
+    placeAlgoOrderIdempotent({fetchImpl,apiKey:'k',secret:'s',algoParams:params,writesEnabled:true,timestamp:1000}),
+    e=>e instanceof BinanceRequestError&&e.message==='ALGO_TIME_IN_FORCE_MISMATCH'
   );
 });
