@@ -1245,12 +1245,23 @@ if (!sync.includes("'MASTER_RUNTIME_NOT_REAL'") ||
     !sync.includes("'USER_STREAM_FAIL_CLOSED'") ||
     !sync.includes("'USER_STREAM_RECONCILIATION_REQUIRED'") ||
     !sync.includes('protectionOnlyMismatchTarget(report)') ||
+    !sync.includes('protectiveRepairTarget(type, req.body?.payload)') ||
+    !sync.includes('protectiveRepairTarget(command.type, command.payload)') ||
     !sync.includes('maxLossLocalQuarantineReport(report)') ||
     !sync.includes("'SYMBOL_MAX_LOSS_QUARANTINED'") ||
     !sync.includes('executionCommandTarget(type, req.body?.payload)') ||
     !sync.includes('executionCommandTarget(command.type, command.payload)') ||
     !sync.includes('commandMayOperateQuarantinedSymbol')) {
-  fail('real execution must remain globally fail-closed for global faults while allowing only unrelated symbols or exact repair/close operations during a local MAX-LOSS quarantine');
+  fail('real execution must remain globally fail-closed for global faults while preserving exact repairs and allowing unrelated symbols during a local MAX-LOSS quarantine');
+}
+const quarantineGateStart=sync.indexOf('function commandMayOperateQuarantinedSymbol');
+const quarantineGateEnd=quarantineGateStart>=0?sync.indexOf('\n}',quarantineGateStart)+2:-1;
+const quarantineGate=quarantineGateStart>=0&&quarantineGateEnd>quarantineGateStart
+  ?sync.slice(quarantineGateStart,quarantineGateEnd):'';
+if (!quarantineGate.includes("EXEC_CLOSE_POSITION") ||
+    !quarantineGate.includes("EXEC_CANCEL_ENTRY") ||
+    quarantineGate.includes("EXEC_UPDATE_PROTECTION")) {
+  fail('a triggered MAX-LOSS quarantine may allow close/cancel only; protection edits on that symbol must remain blocked');
 }
 if (!sync.includes('pushDeadLetter') || !sync.includes("redis(['LTRIM', KEY_DEAD")) {
   fail('dead-letter queue must be bounded');
