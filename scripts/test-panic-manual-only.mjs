@@ -31,7 +31,7 @@ test('PANIC is manual-only: backend modules never assert emergency-stop',()=>{
 test('MAX-LOSS repair never force-closes an active position',()=>{
   const worker=fs.readFileSync('server/zenith-engine-worker.mjs','utf8');
   const start=worker.indexOf('async function repairMissingMaxLoss');
-  const end=worker.indexOf('async function reconcile',start);
+  const end=worker.indexOf('function authorizedMaxLossOverlapReport',start);
   assert.ok(start>=0&&end>start);
   const block=worker.slice(start,end);
   assert.doesNotMatch(block,/EXEC_CLOSE_POSITION|runFullClose|MARKET_LAST_RESORT/);

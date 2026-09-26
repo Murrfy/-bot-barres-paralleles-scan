@@ -24,7 +24,25 @@ test('ambiguous or failed repair remains fail-closed without closing the positio
   assert.match(worker,/markMaxLossRepairFailure/);
   assert.match(worker,/AUTO_MAX_LOSS_REPAIR_RECONCILIATION_FAILED/);
   const start=worker.indexOf('async function repairMissingMaxLoss');
-  const end=worker.indexOf('async function reconcile',start);
+  const end=worker.indexOf('function authorizedMaxLossOverlapReport',start);
   const repairBlock=worker.slice(start,end);
   assert.doesNotMatch(repairBlock,/runFullClose|EXEC_CLOSE_POSITION|MARKET_LAST_RESORT|emergency-stop/);
+});
+
+
+test('triggered MAX-LOSS remainder is routed through deterministic LIMIT IOC escalation before generic repair',()=>{
+  assert.match(worker,/triggeredMaxLossRemainderTargets/);
+  assert.match(worker,/recoverTriggeredMaxLossRemainder/);
+  const start=worker.indexOf('async function recoverTriggeredMaxLossRemainder');
+  const end=worker.indexOf('async function reconcile',start);
+  const block=worker.slice(start,end);
+  assert.match(block,/recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER'/);
+  assert.match(block,/exitMode:'PROTECTIVE_IOC'/);
+  assert.match(block,/attempt:target\.nextAttempt/);
+  assert.match(block,/priceMatch:target\.priceMatch/);
+  assert.doesNotMatch(block,/MARKET/);
+  const reconcileStart=worker.indexOf('async function reconcile');
+  const remainderAt=worker.indexOf('const triggeredRemainders=',reconcileStart);
+  const genericRepairAt=worker.indexOf('const repairTarget=missingMaxLossRepairTarget',reconcileStart);
+  assert.ok(remainderAt>reconcileStart&&genericRepairAt>remainderAt,'remainder recovery must run before generic MAX-LOSS repair');
 });
