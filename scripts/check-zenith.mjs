@@ -517,8 +517,14 @@ if (!protectiveUpdateExecute.includes('impliedLossUsd<=REAL_RISK_LIMITS.maxLossU
 if (!index.includes('id="tMaxLoss" type="number" min="2" max="400" step="1"') ||
     !index.includes('requestedMaxLoss>=2&&requestedMaxLoss<=400') ||
     !index.includes('maxLoss:requestedMaxLoss') ||
-    !index.includes('settings.maxLoss=Math.min(400,Math.max(2,n(settings.maxLoss,400)))')) {
-  fail('controller MAX-LOSS settings must expose, validate and migrate to the same hard $400 real-trading cap');
+    !index.includes('settings.maxLoss=Math.min(400,Math.max(2,n(settings.maxLoss,40)))')) {
+  fail('controller MAX-LOSS settings must keep the hard $400 cap while using the locked $40 operational fallback');
+}
+if (!index.includes('targetProfit:40,maxLoss:40,protectionStages:DEFAULT_PROTECTIONS') ||
+    !index.includes('const DEFAULT_PROTECTIONS=[{enabled:true,arm:30,floor:20}]') ||
+    index.includes('if(n(x.settings?.targetProfit)===40)settings.targetProfit=3000') ||
+    index.includes('if(n(x.settings?.maxLoss)===40)settings.maxLoss=400')) {
+  fail('controller operational defaults must remain +40/-40 with protection 1 at +30 -> +20');
 }
 
 if (!protectiveUpdateExecute.includes('NEW_PROGRESSIVE_PROTECTION_NOT_CONFIRMED') ||
