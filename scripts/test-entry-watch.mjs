@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  entryWatchDefinition,entryWatchIdentity,evaluateEntryWatchTick,pruneEntryWatchStates,
+  entryWatchDefinition,entryWatchIdentity,evaluateEntryWatchTick,pruneEntryWatchStates,entryWatchSlotRaceOutcome,
 } from '../lib/entry-watch.mjs';
 
 const def=entryWatchDefinition('btcusdt',{buy:100,validatedAt:1000,armedAbove:true});
@@ -81,4 +81,39 @@ test('pruning removes stale validation identities',()=>{
   const current=evaluateEntryWatchTick({definition:def,price:101,eventId:90,eventTime:10000}).state;
   const stale={...current,identity:'BTCUSDT:999:100'};
   assert.deepEqual(pruneEntryWatchStates({BTCUSDT:current,ETHUSDT:stale},[def]),{BTCUSDT:current});
+});
+
+
+test('slot race never extends the original 50-second deadline',()=>{
+  const inherited=entryWatchSlotRaceOutcome({
+    previousPendingUntil:52100,
+    crossingAt:3000,
+    now:10000,
+  });
+  assert.deepEqual(inherited,{expired:false,pendingUntil:52100,blockedAt:0,deadline:52100});
+
+  const expired=entryWatchSlotRaceOutcome({
+    previousPendingUntil:52100,
+    crossingAt:3000,
+    now:52101,
+  });
+  assert.equal(expired.expired,true);
+  assert.equal(expired.pendingUntil,0);
+  assert.equal(expired.blockedAt,52101);
+  assert.equal(expired.deadline,52100);
+});
+
+test('immediate-trigger slot race starts one 50-second window from the crossing only once',()=>{
+  const first=entryWatchSlotRaceOutcome({
+    previousPendingUntil:0,
+    crossingAt:7000,
+    now:8000,
+  });
+  assert.equal(first.pendingUntil,57000);
+  const retry=entryWatchSlotRaceOutcome({
+    previousPendingUntil:first.pendingUntil,
+    crossingAt:20000,
+    now:21000,
+  });
+  assert.equal(retry.pendingUntil,57000);
 });
