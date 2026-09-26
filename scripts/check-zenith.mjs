@@ -1245,9 +1245,12 @@ if (!sync.includes("'MASTER_RUNTIME_NOT_REAL'") ||
     !sync.includes("'USER_STREAM_FAIL_CLOSED'") ||
     !sync.includes("'USER_STREAM_RECONCILIATION_REQUIRED'") ||
     !sync.includes('protectionOnlyMismatchTarget(report)') ||
-    !sync.includes('protectiveRepairTarget(type, req.body?.payload)') ||
-    !sync.includes('protectiveRepairTarget(command.type, command.payload)')) {
-  fail('real execution must fail closed unless runtime/stream are ready and reconciliation is CLEAN_REAL, except the exact missing-protection repair target');
+    !sync.includes('maxLossLocalQuarantineReport(report)') ||
+    !sync.includes("'SYMBOL_MAX_LOSS_QUARANTINED'") ||
+    !sync.includes('executionCommandTarget(type, req.body?.payload)') ||
+    !sync.includes('executionCommandTarget(command.type, command.payload)') ||
+    !sync.includes('commandMayOperateQuarantinedSymbol')) {
+  fail('real execution must remain globally fail-closed for global faults while allowing only unrelated symbols or exact repair/close operations during a local MAX-LOSS quarantine');
 }
 if (!sync.includes('pushDeadLetter') || !sync.includes("redis(['LTRIM', KEY_DEAD")) {
   fail('dead-letter queue must be bounded');
