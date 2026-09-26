@@ -450,34 +450,34 @@ function evaluateTriggeredMaxLossRemainder({
   };
 }
 
-async function queryRecoveryOrderByClientId({serverTime,apiKey,secret,symbol,clientOrderId}){
-  try{
-    const raw=await signedGet('/fapi/v1/order',apiKey,secret,serverTime,{symbol,origClientOrderId:clientOrderId});
-    return {orderClass:'STANDARD',...normalizeActualOrder(raw)};
-  }catch(error){
-    if(Number(error?.binanceCode)===-2013)return null;
-    throw error;
-  }
-}
-
 async function detectTriggeredMaxLossRemainders({
   serverTime,apiKey,secret,positions,missingTargets,controllerState,
 }={}){
   const missing=new Set(Array.isArray(missingTargets)?missingTargets.map(x=>String(x||'').toUpperCase()):[]);
   const remainders=[],ambiguous=[],inconsistent=[],pending=[],exhausted=[];
+  const historyWindow=Math.max(0,7*24*60*60*1000-60000);
   for(const position of Array.isArray(positions)?positions:[]){
     const key=positionKey(position);
     if(!missing.has(key))continue;
     const symbol=String(position?.symbol||'').toUpperCase();
     const configured=configuredMaxLossUsd(controllerState,symbol);
     if(!(configured>0))continue;
-    const historyRaw=await signedGet('/fapi/v1/allAlgoOrders',apiKey,secret,serverTime,{
+    const historyParams={
       symbol,
-      startTime:Math.max(0,Number(serverTime)-7*24*60*60*1000),
+      startTime:Math.max(0,Number(serverTime)-historyWindow),
       endTime:Number(serverTime),
       limit:1000,
-    });
-    if(!Array.isArray(historyRaw))throw new Error('BINANCE_ALGO_HISTORY_INVALID');
+    };
+    const [historyRaw,standardHistoryRaw]=await Promise.all([
+      signedGet('/fapi/v1/allAlgoOrders',apiKey,secret,serverTime,historyParams),
+      signedGet('/fapi/v1/allOrders',apiKey,secret,serverTime,historyParams),
+    ]);
+    if(!Array.isArray(historyRaw)||!Array.isArray(standardHistoryRaw)){
+      throw new Error('BINANCE_ORDER_HISTORY_INVALID');
+    }
+    const standardHistory=standardHistoryRaw.map(row=>({
+      orderClass:'STANDARD',...normalizeActualOrder(row),
+    }));
     const history=historyRaw
       .map(normalizeActualAlgoOrder)
       .filter(algo=>
@@ -490,19 +490,16 @@ async function detectTriggeredMaxLossRemainders({
       .slice(0,4);
     const matches=[];
     for(const algo of history){
-      const actualRaw=await signedGet('/fapi/v1/order',apiKey,secret,serverTime,{
-        symbol,
-        orderId:String(algo.actualOrderId),
-      });
-      const actualOrder={orderClass:'STANDARD',...normalizeActualOrder(actualRaw)};
+      const actualOrder=standardHistory.find(order=>
+        String(order?.orderId||'')===String(algo.actualOrderId)
+      )||null;
+      if(!actualOrder)continue;
       const recoveryCommandId=maxLossRemainderCommandId(algo);
       const recoveryOrders=[];
       if(recoveryCommandId){
         for(let attempt=1;attempt<=3;attempt++){
           const clientOrderId=recoveryClientOrderId(recoveryCommandId,symbol,attempt);
-          const order=await queryRecoveryOrderByClientId({
-            serverTime,apiKey,secret,symbol,clientOrderId,
-          });
+          const order=standardHistory.find(row=>String(row?.clientOrderId||'')===clientOrderId)||null;
           if(order)recoveryOrders.push({attempt,clientOrderId,order});
         }
       }
