@@ -872,6 +872,7 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
   const definition=entryWatchDefinitionMap().get(wanted);
   if(!definition)return false;
   const previous=entryWatch.states.get(wanted)||null;
+  const previousPendingUntil=Math.max(0,n(previous?.pendingUntil,0));
   const result=evaluateEntryWatchTick({
     definition,
     state:previous,
@@ -947,9 +948,16 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
   if(executed.slotBlocked===true&&executed.prepared!==true){
     const state=entryWatch.states.get(wanted);
     if(state){
+      const crossingAt=Math.max(definition.validatedAt,Math.floor(n(result.signal?.eventTime,eventTime)));
+      const originalDeadline=previousPendingUntil>0?previousPendingUntil:crossingAt+50000;
       state.triggeredAt=0;
-      state.pendingUntil=Math.max(Date.now()+1,n(eventTime,Date.now())+50000);
-      state.blockedAt=0;
+      if(Date.now()<originalDeadline){
+        state.pendingUntil=originalDeadline;
+        state.blockedAt=0;
+      }else{
+        state.pendingUntil=0;
+        state.blockedAt=Date.now();
+      }
       entryWatch.states.set(wanted,state);
       await persistEntryWatchStateNow().catch(()=>false);
     }
