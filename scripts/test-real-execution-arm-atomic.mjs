@@ -24,6 +24,16 @@ test('real execution arm status is fenced by current MASTER role, lease and role
   assert.ok(statusBlock.includes("'REAL_EXECUTION_ARM_ROLE_EPOCH_CHANGED'"));
 });
 
+test('real arm requires the dedicated entry-write switch before committing authority',()=>{
+  assert.ok(sync.includes("const REAL_ENTRY_WRITE_ENABLED = process.env.ZENITH_REAL_ENTRY_WRITE_ENABLED === '1';"));
+  assert.ok(armBlock.includes("if (!REAL_ENTRY_WRITE_ENABLED) return send(res, 423, { ok:false, code:'REAL_ENTRY_WRITE_DISABLED' });"));
+  assert.ok(
+    armBlock.indexOf("if (!REAL_ENTRY_WRITE_ENABLED)") < armBlock.indexOf('const armCommitScript = ['),
+    'entry-write gate must run before the atomic real arm commit'
+  );
+  assert.ok(sync.includes('realEntryWriteEnabled: REAL_ENTRY_WRITE_ENABLED'));
+});
+
 test('real arm commit atomically revalidates MASTER state after slow external checks',()=>{
   for(const required of [
     'const armCommitScript = [',
