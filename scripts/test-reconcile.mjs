@@ -24,8 +24,8 @@ const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
     /^import \{ evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches \} from '\.\.\/lib\/entry-transition\.mjs';\n/m,
     "const entryTransitionOrderIdentity = order => { const s=String(order?.symbol||'').toUpperCase(); if(order?.clientAlgoId)return s+':algo-client:'+String(order.clientAlgoId); if(order?.algoId)return s+':algo:'+String(order.algoId); if(order?.clientOrderId)return s+':client:'+String(order.clientOrderId); if(order?.orderId)return s+':id:'+String(order.orderId); return ''; }; const evaluateEntryTransitionReconciliation = () => ({active:[],invalid:[],expired:[],allowedOrderIdentities:new Set(),missingProtections:[],missingEntries:[]}); const transitionEntryMatches = () => false; const transitionProtectionMatches = () => false;\n"
   );
-const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId } = await import(
-  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId };').toString('base64')
+const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies } = await import(
+  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies };').toString('base64')
 );
 const runtime = (positions = [], orders = [], mode = 'REAL') => ({
   updatedAt: Date.now(), data: { executionMode: mode, binancePositions: positions, binanceOrders: orders },
@@ -141,6 +141,64 @@ test('reconciliation can reconstruct a triggered MAX-LOSS remainder from Binance
   }finally{
     globalThis.fetch=originalFetch;
   }
+});
+
+test('triggered MAX-LOSS anomaly is localized to its exact symbol when no other mismatch exists',()=>{
+  const result=reconcile(runtime([position],[]),[normalized],[]);
+  result.reasons=[
+    'MISSING_BINANCE_PROTECTION',
+    'MISSING_BINANCE_MAX_LOSS_PROTECTION',
+    'TRIGGERED_MAX_LOSS_RECOVERY_PENDING',
+  ];
+  result.failClosed=true;
+  result.status='MISMATCH';
+  result.differences.missingProtections=['BTCUSDT:LONG'];
+  result.differences.missingMaxLossProtections=['BTCUSDT:LONG'];
+
+  localizeTriggeredMaxLossAnomalies(result,{
+    remainders:[],ambiguous:[],inconsistent:[],
+    pending:[{
+      symbol:'BTCUSDT',direction:'LONG',remainingQuantity:0.6,
+      triggerTime:1700000000000,
+    }],
+    exhausted:[],
+  },1700000005000);
+
+  assert.equal(result.failClosed,false);
+  assert.equal(result.status,'CLEAN_REAL_WITH_QUARANTINES');
+  assert.deepEqual(result.reasons,[]);
+  assert.deepEqual(result.symbolQuarantines,[{
+    symbol:'BTCUSDT',direction:'LONG',
+    reason:'TRIGGERED_MAX_LOSS_RECOVERY_PENDING',
+    remainingQuantity:0.6,since:1700000000000,
+  }]);
+});
+
+test('a BTC quarantine never hides an unrelated ETH reconciliation mismatch',()=>{
+  const eth={symbol:'ETHUSDT',positionSide:'BOTH',positionAmt:'1',entryPrice:'2000'};
+  const normalizedEth=normalizeActualPosition(eth);
+  const result=reconcile(runtime([position,eth],[]),[normalized,normalizedEth],[]);
+  result.reasons=[
+    'MISSING_BINANCE_PROTECTION',
+    'MISSING_BINANCE_MAX_LOSS_PROTECTION',
+    'TRIGGERED_MAX_LOSS_RECOVERY_PENDING',
+  ];
+  result.failClosed=true;
+  result.status='MISMATCH';
+  result.differences.missingProtections=['BTCUSDT:LONG','ETHUSDT:LONG'];
+  result.differences.missingMaxLossProtections=['BTCUSDT:LONG','ETHUSDT:LONG'];
+
+  localizeTriggeredMaxLossAnomalies(result,{
+    remainders:[],ambiguous:[],inconsistent:[],
+    pending:[{symbol:'BTCUSDT',direction:'LONG',remainingQuantity:0.6,triggerTime:1700000000000}],
+    exhausted:[],
+  },1700000005000);
+
+  assert.equal(result.failClosed,true);
+  assert.equal(result.status,'MISMATCH');
+  assert.ok(result.reasons.includes('MISSING_BINANCE_PROTECTION'));
+  assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
+  assert.equal(result.symbolQuarantines[0].symbol,'BTCUSDT');
 });
 
 test('fresh simulation with empty Binance inventory is clean', () => {
