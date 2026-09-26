@@ -118,6 +118,7 @@ const autoProtection={
 
 const autoTarget={
   busySymbols:new Set(),
+  suppressedSymbols:new Set(),
   lastError:'',
   lastActionAt:0,
 };
@@ -1106,6 +1107,7 @@ function configuredMaxLossForSymbol(symbol){
 async function ensureAutomaticTargetForPosition(position){
   const symbol=String(position?.symbol||'').toUpperCase();
   if(!symbol||autoTarget.busySymbols.has(symbol))return {ok:true,changed:false,reason:'BUSY_OR_INVALID'};
+  if(autoTarget.suppressedSymbols.has(symbol))return {ok:true,changed:false,reason:'TARGET_UPDATE_IN_PROGRESS'};
   if(symbolMaxLossQuarantined(symbol))return {ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'};
   if(!runtime.synchronized||!runtime.heartbeatFresh)return {ok:true,changed:false,reason:'RUNTIME_NOT_READY'};
   if(!masterExecutionEligible({
@@ -3070,33 +3072,44 @@ async function runProtectiveUpdate(command,raw,dispatch){
     if(!(await applyPendingProtectionTableBeforeConfigCommit(raw,body)))return false;
   }
 
-  let newClientId='';
-  if(maxLoss||progressive){
-    newClientId=await placeNew({deferReconcile:maxLoss});
-    if(!newClientId)return false;
-    if(maxLoss){
-      const overlapReady=await awaitReconciliation();
-      if(overlapReady!==true||userStreamReady(stream.state)!==true){
-        await failCommand(raw,'MAX_LOSS_SAFE_OVERLAP_RECONCILIATION_FAILED');
-        execution.lastError='MAX_LOSS_SAFE_OVERLAP_RECONCILIATION_FAILED';
-        return false;
+  const suppressedTargetSymbol=type==='EXEC_UPDATE_EXIT'&&previousId
+    ?String(body.symbol||'').toUpperCase()
+    :'';
+  if(suppressedTargetSymbol)autoTarget.suppressedSymbols.add(suppressedTargetSymbol);
+  try{
+    let newClientId='';
+    if(maxLoss||progressive){
+      newClientId=await placeNew({deferReconcile:maxLoss});
+      if(!newClientId)return false;
+      if(maxLoss){
+        const overlapReady=await awaitReconciliation();
+        if(overlapReady!==true||userStreamReady(stream.state)!==true){
+          await failCommand(raw,'MAX_LOSS_SAFE_OVERLAP_RECONCILIATION_FAILED');
+          execution.lastError='MAX_LOSS_SAFE_OVERLAP_RECONCILIATION_FAILED';
+          return false;
+        }
       }
+      if(!(await cancelOld(newClientId)))return false;
+    }else{
+      if(!(await cancelOld()))return false;
+      newClientId=await placeNew();
+      if(!newClientId)return false;
     }
-    if(!(await cancelOld(newClientId)))return false;
-  }else{
-    if(!(await cancelOld()))return false;
-    newClientId=await placeNew();
-    if(!newClientId)return false;
+    if(maxLoss&&Number.isFinite(n(body.maxLossUsd,NaN))){
+      return safeAckActiveMaxLossAfterReconcile(raw,{newClientId},body);
+    }
+    if(type==='EXEC_UPDATE_EXIT'&&body.activeConfig){
+      return safeAckActiveConfigAfterReconcile(
+        raw,{newClientId},body,'EXEC_ACTIVE_TARGET_CONFIG_ACK_RETRY'
+      );
+    }
+    return safeAckAfterReconcile(raw,{newClientId},'EXEC_PROTECTIVE_UPDATE_ACK_RETRY');
+  }finally{
+    if(suppressedTargetSymbol){
+      autoTarget.suppressedSymbols.delete(suppressedTargetSymbol);
+      scheduleReconcile(100);
+    }
   }
-  if(maxLoss&&Number.isFinite(n(body.maxLossUsd,NaN))){
-    return safeAckActiveMaxLossAfterReconcile(raw,{newClientId},body);
-  }
-  if(type==='EXEC_UPDATE_EXIT'&&body.activeConfig){
-    return safeAckActiveConfigAfterReconcile(
-      raw,{newClientId},body,'EXEC_ACTIVE_TARGET_CONFIG_ACK_RETRY'
-    );
-  }
-  return safeAckAfterReconcile(raw,{newClientId},'EXEC_PROTECTIVE_UPDATE_ACK_RETRY');
 }
 
 async function waitForFullCloseState({symbol,direction,beforeQuantity,clientOrderId},timeoutMs=2500){
