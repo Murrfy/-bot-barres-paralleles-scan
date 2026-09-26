@@ -371,7 +371,9 @@ function realProtectionInventory(position){
     String(o?.type||'').toUpperCase()===type&&
     flag(o);
   const exitCandidates=standard.filter(sameStandardPurpose);
-  const progressiveCandidates=algo.filter(o=>sameAlgoPurpose(o,'STOP',x=>x?.reduceOnly===true));
+  const progressiveCandidates=algo.filter(o=>sameAlgoPurpose(o,'STOP',x=>
+    x?.reduceOnly===true&&String(x?.timeInForce||'').toUpperCase()==='GTC'
+  ));
   const maxLossCandidates=algo.filter(o=>sameAlgoPurpose(o,'STOP',x=>
     x?.reduceOnly===true&&x?.closePosition!==true&&
     String(x?.timeInForce||'').toUpperCase()==='IOC'&&
