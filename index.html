@@ -2931,6 +2931,10 @@ async function saveToken(){
   if(!(requestedMaxLoss>=2&&requestedMaxLoss<=400)){
     return setStatus('Perte maximale invalide : Zenith réel impose un minimum de 2 $ et un plafond de 400 $.',true);
   }
+  const configuredMargin=Math.max(0,n(old.margin,settings.margin));
+  if(!(configuredMargin>0)||requestedMaxLoss>configuredMargin){
+    return setStatus('Perte maximale invalide : elle ne peut pas dépasser la marge configurée du jeton.',true);
+  }
   if(protectionError)return setStatus(protectionError,true);
   if(realActive)return saveRealActiveTokenSettings(s,realActive,old,protections);
   if(localActive){
