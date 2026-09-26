@@ -730,11 +730,13 @@ if (!deviceSessionSource.includes('allowBearer = false') ||
     (sync.match(/rotateBearer:\s*true/g) || []).length !== 1) {
   fail('legacy Bearer must be one-shot: whoami rotates it to a fresh cookie token and invalidates the old token');
 }
-if (!sync.includes('function deviceSessionRemainingSeconds(device, now = Date.now())') ||
-    !sync.includes('absoluteExpiresAt = createdAt + DEVICE_SESSION_MAX_AGE_SECONDS * 1000') ||
+if (!deviceSessionSource.includes("const engine = String(record?.principal || '') === 'engine'") ||
+    !deviceSessionSource.includes("engine ? Number(record?.lastSeenAt || record?.createdAt || 0) : Number(record?.createdAt || 0)") ||
+    !sync.includes("const engine = String(device?.principal || '') === 'engine'") ||
+    !sync.includes('const renewedSeconds = engine ? DEVICE_SESSION_MAX_AGE_SECONDS : remainingSeconds') ||
     !sync.includes("'DEVICE_SESSION_EXPIRED'") ||
     !sync.includes('setDeviceSessionCookie(res, device.sessionToken, session.remainingSeconds)')) {
-  fail('Zenith device sessions must have an absolute server-enforced lifetime and matching cookie TTL');
+  fail('controller sessions must stay absolute while only the fenced engine session may renew from validated heartbeat activity');
 }
 if (!sync.includes('validDeviceId(deviceId)') ||
     !sync.includes('validDeviceId(newDeviceId)')) {
