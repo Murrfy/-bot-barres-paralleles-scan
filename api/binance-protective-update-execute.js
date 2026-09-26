@@ -207,8 +207,11 @@ export function emergencyProtection(runtimeState,update,entryPrice,excludeClient
     if(String(o?.symbol||'').toUpperCase()!==update.symbol)return false;
     if(String(o?.side||'').toUpperCase()!==side)return false;
     if(String(o?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
-    if(String(o?.type||'').toUpperCase()!=='STOP_MARKET')return false;
-    if(!bool(o?.closePosition))return false;
+    if(String(o?.type||'').toUpperCase()!=='STOP')return false;
+    if(String(o?.timeInForce||'').toUpperCase()!=='IOC')return false;
+    if(!bool(o?.reduceOnly)||bool(o?.closePosition))return false;
+    if(Math.abs(n(o?.origQty??o?.quantity,NaN)-quantity)>1e-12)return false;
+    if(String(o?.priceMatch||'').toUpperCase()!=='OPPONENT')return false;
     const clientAlgoId=String(o?.clientAlgoId||'');
     if(!/^zth-[A-Za-z0-9._:-]+$/.test(clientAlgoId)||clientAlgoId.length>36)return false;
     if(clientAlgoId===String(excludeClientAlgoId||''))return false;
@@ -265,8 +268,11 @@ export function conflictingProtectiveOrders(runtimeState, update, kind, allowedI
     } else if (wanted === 'MAX_LOSS') {
       samePurpose =
         orderClass === 'ALGO' &&
-        type === 'STOP_MARKET' &&
-        bool(order?.closePosition);
+        type === 'STOP' &&
+        String(order?.timeInForce || '').toUpperCase() === 'IOC' &&
+        bool(order?.reduceOnly) &&
+        !bool(order?.closePosition) &&
+        String(order?.priceMatch || '').toUpperCase() === 'OPPONENT';
       id = String(order?.clientAlgoId || '');
     }
 
@@ -466,8 +472,11 @@ export default async function handler(req,res){
           :(previousTrigger-live.entryPrice)*live.liveQuantity;
         if(!previousMaxLoss||
            !/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(previousMaxLoss?.clientAlgoId||''))||
-           String(previousMaxLoss?.type||'').toUpperCase()!=='STOP_MARKET'||
-           !bool(previousMaxLoss?.closePosition)||
+           String(previousMaxLoss?.type||'').toUpperCase()!=='STOP'||
+           String(previousMaxLoss?.timeInForce||'').toUpperCase()!=='IOC'||
+           !bool(previousMaxLoss?.reduceOnly)||bool(previousMaxLoss?.closePosition)||
+           Math.abs(n(previousMaxLoss?.origQty??previousMaxLoss?.quantity,NaN)-live.liveQuantity)>1e-12||
+           String(previousMaxLoss?.priceMatch||'').toUpperCase()!=='OPPONENT'||
            String(previousMaxLoss?.side||'').toUpperCase()!==sideForDirection(update.direction)||
            String(previousMaxLoss?.positionSide||'BOTH').toUpperCase()!=='BOTH'||
            !(previousTrigger>0)||
@@ -624,8 +633,11 @@ export default async function handler(req,res){
           const confirmedTrigger=n(confirmedNew?.triggerPrice??confirmedNew?.stopPrice,NaN);
           if(!newId||!confirmedNew||
              !/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(confirmedNew?.clientAlgoId||''))||
-             String(confirmedNew.type||'').toUpperCase()!=='STOP_MARKET'||
-             !bool(confirmedNew.closePosition)||
+             String(confirmedNew.type||'').toUpperCase()!=='STOP'||
+             String(confirmedNew.timeInForce||'').toUpperCase()!=='IOC'||
+             !bool(confirmedNew.reduceOnly)||bool(confirmedNew.closePosition)||
+             Math.abs(n(confirmedNew.origQty??confirmedNew.quantity,NaN)-update.quantity)>1e-12||
+             String(confirmedNew.priceMatch||'').toUpperCase()!=='OPPONENT'||
              String(confirmedNew.side||'').toUpperCase()!==sideForDirection(update.direction)||
              String(confirmedNew.positionSide||'BOTH').toUpperCase()!=='BOTH'||
              !Number.isFinite(confirmedTrigger)||
@@ -653,10 +665,16 @@ export default async function handler(req,res){
         const expected={
           symbol:update.symbol,side:sideForDirection(update.direction),positionSide:'BOTH',
           clientAlgoId:update.previousClientAlgoId,
-          type:update.protectionKind==='MAX_LOSS'?'STOP_MARKET':'STOP',
+          type:'STOP',
         };
         if(update.protectionKind==='MAX_LOSS'){
-          expected.closePosition='true';
+          expected.timeInForce='IOC';
+          expected.reduceOnly='true';
+          expected.quantity=String(update.quantity);
+          expected.priceMatch='OPPONENT';
+          expected.triggerPrice=String(n(old?.triggerPrice??old?.stopPrice));
+          expected.workingType='CONTRACT_PRICE';
+          expected.priceProtect='false';
         }else{
           const oldPrice=n(old?.price);
           const oldTrigger=n(old?.triggerPrice??old?.stopPrice);
