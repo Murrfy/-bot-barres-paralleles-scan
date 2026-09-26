@@ -371,8 +371,12 @@ function realProtectionInventory(position){
     String(o?.type||'').toUpperCase()===type&&
     flag(o);
   const exitCandidates=standard.filter(sameStandardPurpose);
-  const progressiveCandidates=algo.filter(o=>sameAlgoPurpose(o,'STOP',x=>x?.reduceOnly===true));
-  const maxLossCandidates=algo.filter(o=>sameAlgoPurpose(o,'STOP_MARKET',x=>x?.closePosition===true));
+  const progressiveCandidates=algo.filter(o=>sameAlgoPurpose(o,'STOP',x=>x?.reduceOnly===true&&String(x?.timeInForce||'').toUpperCase()==='GTC'));
+  const maxLossCandidates=algo.filter(o=>sameAlgoPurpose(o,'STOP',x=>
+    x?.reduceOnly===true&&x?.closePosition!==true&&
+    String(x?.timeInForce||'').toUpperCase()==='IOC'&&
+    String(x?.priceMatch||'').toUpperCase()==='OPPONENT'
+  ));
   const exits=exitCandidates.filter(o=>{
     const px=n(o?.price,0),remaining=Math.max(0,n(o?.origQty,0)-n(o?.executedQty,0));
     const profitSide=direction==='LONG'?px>entry:px<entry;
@@ -387,9 +391,9 @@ function realProtectionInventory(position){
       protectedSide&&(!o?.priceMatch||String(o.priceMatch).toUpperCase()==='NONE');
   });
   const maxLoss=maxLossCandidates.filter(o=>{
-    const trigger=n(o?.triggerPrice??o?.stopPrice,0);
+    const trigger=n(o?.triggerPrice??o?.stopPrice,0),oq=n(o?.origQty??o?.quantity,0);
     const lossSide=direction==='LONG'?trigger<entry:trigger>entry;
-    return entry>0&&trigger>0&&lossSide&&o?.reduceOnly!==true;
+    return entry>0&&qty>0&&trigger>0&&lossSide&&realNumberMatches(oq,qty);
   });
   const managed=(candidates,valid,idField)=>
     candidates.length===1&&valid.length===1&&
@@ -2121,8 +2125,12 @@ function masterHasSingleMaxLoss(position,orders,hardMaxLossUsd=400){
     if(String(o?.symbol||'').toUpperCase()!==symbol)return false;
     if(String(o?.side||'').toUpperCase()!==side)return false;
     if(String(o?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
-    if(String(o?.type||'').toUpperCase()!=='STOP_MARKET')return false;
-    if(!(o?.closePosition===true||o?.closePosition==='true'))return false;
+    if(String(o?.type||'').toUpperCase()!=='STOP')return false;
+    if(String(o?.timeInForce||'').toUpperCase()!=='IOC')return false;
+    if(!(o?.reduceOnly===true||o?.reduceOnly==='true'))return false;
+    if(o?.closePosition===true||o?.closePosition==='true')return false;
+    if(String(o?.priceMatch||'').toUpperCase()!=='OPPONENT')return false;
+    if(!realNumberMatches(o?.origQty??o?.quantity,quantity))return false;
     if(!zenithManagedRealId(o?.clientAlgoId))return false;
     const trigger=n(o?.triggerPrice??o?.stopPrice,0);
     if(!(trigger>0))return false;
