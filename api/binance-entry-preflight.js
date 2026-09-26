@@ -174,11 +174,14 @@ export async function runLiveEntryPreflight({
   leverage,
   maxLoss,
   requestedPrice = 0,
+  orderType = 'LIMIT',
   maxActivePositions = REAL_RISK_LIMITS.maxActivePositions,
 } = {}) {
   if (!apiKey || !secret) throw new Error('BINANCE_CREDENTIALS_REQUIRED');
   const sym = String(symbol || '').trim().toUpperCase();
+  const normalizedOrderType = String(orderType || 'LIMIT').toUpperCase();
   if (!/^[A-Z0-9]{3,30}$/.test(sym) ||
+      !['LIMIT','MARKET'].includes(normalizedOrderType) ||
       !(number(margin) > 0) ||
       !(number(leverage) > 0) ||
       !(number(maxLoss) > 0)) {
@@ -220,6 +223,7 @@ export async function runLiveEntryPreflight({
 
   const evaluation = evaluateEntryRisk({
     symbol: sym,
+    orderType: normalizedOrderType,
     margin,
     leverage,
     maxLoss,
@@ -288,8 +292,10 @@ export default async function handler(req, res) {
   const leverage = number(req.query?.leverage);
   const maxLoss = number(req.query?.maxLoss);
   const requestedPrice = number(req.query?.price);
+  const orderType = String(req.query?.orderType || 'LIMIT').toUpperCase();
 
-  if (!/^[A-Z0-9]{3,30}$/.test(symbol) || !(margin > 0) || !(leverage > 0) || !(maxLoss > 0)) {
+  if (!/^[A-Z0-9]{3,30}$/.test(symbol) || !['LIMIT','MARKET'].includes(orderType) ||
+      !(margin > 0) || !(leverage > 0) || !(maxLoss > 0)) {
     return send(res, 400, { ok: false, code: 'PREFLIGHT_REQUEST_INVALID' });
   }
 
@@ -309,6 +315,7 @@ export default async function handler(req, res) {
       leverage,
       maxLoss,
       requestedPrice,
+      orderType,
       maxActivePositions,
     });
     return send(res, 200, {

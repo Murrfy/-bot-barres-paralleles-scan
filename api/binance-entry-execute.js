@@ -386,7 +386,7 @@ export default async function handler(req,res){
     );
     const maxActivePositions=await readConfiguredMaxActivePositions();
     let preflight=await runLiveEntryPreflight({
-      apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:marketEntry?0:limitPrice,maxActivePositions,
+      apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:marketEntry?0:limitPrice,orderType:marketEntry?'MARKET':'LIMIT',maxActivePositions,
     });
     const configOnlyReasons=new Set(['MARGIN_TYPE_NOT_ISOLATED','ACCOUNT_LEVERAGE_MISMATCH']);
     let initialReasons=Array.isArray(preflight.evaluation?.reasons)?preflight.evaluation.reasons:[];
@@ -447,7 +447,7 @@ export default async function handler(req,res){
       await redis(['LTRIM',KEY_AUDIT,'0','199']);
 
       preflight=await runLiveEntryPreflight({
-        apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:marketEntry?0:limitPrice,maxActivePositions,
+        apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice:marketEntry?0:limitPrice,orderType:marketEntry?'MARKET':'LIMIT',maxActivePositions,
       });
       initialReasons=Array.isArray(preflight.evaluation?.reasons)?preflight.evaluation.reasons:[];
       if(preflight.evaluation.ready!==true){
