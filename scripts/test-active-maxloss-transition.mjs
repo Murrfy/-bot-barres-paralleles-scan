@@ -32,8 +32,10 @@ test('pending MAX-LOSS reconciliation authorization is tightly fenced',()=>{
   assert.match(fn,/configuredMarginUsd\(controllerState, symbol\)/);
   assert.match(fn,/requestedMaxLossUsd > configuredMargin \+ 1e-8/);
   assert.match(fn,/matchingNew/);
-  assert.match(fn,/STOP_MARKET/);
-  assert.match(fn,/closePosition === true/);
+  assert.match(fn,/type \|\| ''\)\.toUpperCase\(\) === 'STOP'/);
+  assert.match(fn,/timeInForce \|\| ''\)\.toUpperCase\(\) === 'IOC'/);
+  assert.match(fn,/reduceOnly === true/);
+  assert.match(fn,/priceMatch \|\| ''\)\.toUpperCase\(\) === 'OPPONENT'/);
 });
 
 test('Binance execution independently enforces requested MAX-LOSS and configured margin',()=>{
@@ -51,8 +53,10 @@ test('active MAX-LOSS cancellation requires the exact newly confirmed Zenith sto
   const fn=block(execute,"if(phase==='CANCEL_OLD')","}else{\n        const allowedIds");
   assert.match(fn,/NEW_MAX_LOSS_PROTECTION_NOT_CONFIRMED/);
   assert.match(fn,/\^zth-MAX-/);
-  assert.match(fn,/STOP_MARKET/);
-  assert.match(fn,/closePosition/);
+  assert.match(fn,/NEW_MAX_LOSS_PROTECTION_NOT_CONFIRMED/);
+  assert.match(fn,/timeInForce/);
+  assert.match(fn,/reduceOnly/);
+  assert.match(fn,/priceMatch/);
   assert.match(fn,/sideForDirection\(update\.direction\)/);
   assert.match(fn,/confirmedTrigger-update\.triggerPrice/);
 });
