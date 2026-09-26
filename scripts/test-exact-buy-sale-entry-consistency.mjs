@@ -63,3 +63,26 @@ test('controller UI distinguishes price waiting from slot waiting',()=>{
   assert.match(html,/ATTENTE PRIX/);
   assert.match(html,/N’A PAS DÉMARRÉ — PRIX ≥ VENTE/);
 });
+
+
+test('exact-price profit target drives protection normalization in runtime config',()=>{
+  const cfgStart=html.indexOf('function cfg(symbol)');
+  const cfgEnd=html.indexOf('function exactProfitFor',cfgStart);
+  assert.ok(cfgStart>=0&&cfgEnd>cfgStart);
+  const block=html.slice(cfgStart,cfgEnd);
+  const exactTarget=block.indexOf('base.targetProfit=');
+  const protectionTarget=block.indexOf('const protectionTarget=',exactTarget);
+  const normalize=block.indexOf('base.protectionStages=normalizeProtections',protectionTarget);
+  assert.ok(exactTarget>=0&&protectionTarget>exactTarget&&normalize>protectionTarget);
+  assert.match(block,/normalizeProtections\(t\.protectionStages\|\|settings\.protectionStages,protectionTarget\)/);
+});
+
+test('saving exact buy and sale adds required default protection stages without deleting existing rows',()=>{
+  const start=html.indexOf('async function saveToken()');
+  const end=html.indexOf('function devalidateSelected',start);
+  assert.ok(start>=0&&end>start);
+  const block=html.slice(start,end);
+  assert.match(block,/const savedProtections=buyEnabled&&saleEnabled\?protectionsForTarget\(protections,shown\):protections/);
+  assert.match(block,/protectionStages:savedProtections/);
+  assert.match(html,/function protectionsForTarget\(stages,target,minCount=0\)[\s\S]{0,220}Math\.max\(protectionCountForTarget\(target\),src\.length/);
+});
