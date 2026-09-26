@@ -96,6 +96,7 @@ const execution={
 
 const maxLossRemainderRecovery={
   busy:false,
+  symbol:'',
   lastError:'',
 };
 
@@ -2132,6 +2133,7 @@ async function recoverTriggeredMaxLossRemainder(report){
   if(!targets.length)return {handled:false,dispatched:false,reason:'NO_TRIGGERED_MAX_LOSS_REMAINDER'};
   if(maxLossRemainderRecovery.busy)return {handled:true,dispatched:false,reason:'MAX_LOSS_REMAINDER_RECOVERY_BUSY'};
   const target=targets[0];
+  maxLossRemainderRecovery.symbol=target.symbol;
   maxLossRemainderRecovery.busy=true;
   try{
     const result=await callProtectiveExecute({
@@ -2183,6 +2185,7 @@ async function recoverTriggeredMaxLossRemainder(report){
     return {handled:true,dispatched:true,reason:'MAX_LOSS_REMAINDER_IOC_DISPATCHED',clientOrderId};
   }finally{
     maxLossRemainderRecovery.busy=false;
+    maxLossRemainderRecovery.symbol='';
   }
 }
 
@@ -3224,6 +3227,13 @@ async function commandCycle(){
     }
     if(dispatch.supported!==true){
       await failCommand(raw,dispatch.reason||'MASTER_COMMAND_NOT_IMPLEMENTED');
+      return false;
+    }
+
+    const dispatchSymbol=String(dispatch?.body?.symbol||command?.payload?.symbol||'').toUpperCase();
+    if(maxLossRemainderRecovery.busy&&maxLossRemainderRecovery.symbol&&
+       dispatchSymbol===String(maxLossRemainderRecovery.symbol).toUpperCase()){
+      await requeueCommand(raw,'SYMBOL_MAX_LOSS_RECOVERY_BUSY',500);
       return false;
     }
 
