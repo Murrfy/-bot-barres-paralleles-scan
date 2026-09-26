@@ -70,4 +70,10 @@ test('completed LIMIT-only audit still leaves all explicit real-execution arm ga
     arm.indexOf("if (!REAL_TRADING_ENABLED)"),
     'LIMIT-only audit guard must remain before real-trading arm checks'
   );
+  assert.match(arm,/REAL_ENTRY_WRITE_DISABLED/);
+  assert.ok(
+    arm.indexOf("if (!REAL_ENTRY_WRITE_ENABLED)") <
+    arm.indexOf("if (!VERCEL_PRODUCTION_WRITE_ALLOWED)"),
+    'real-entry write switch must be enabled before production arm'
+  );
 });
