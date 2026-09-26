@@ -4,23 +4,15 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync('api/zenith-sync.js', 'utf8');
 
-test('device sessions have an absolute 30-day lifetime instead of sliding forever', () => {
+test('controller sessions stay absolute while engine heartbeat renews only the engine session', () => {
   assert.match(
     source,
-    /import \{[^\n]*DEVICE_SESSION_MAX_AGE_SECONDS[^\n]*bearerToken[^\n]*cookieToken[^\n]*setDeviceSessionCookie[^\n]*clearDeviceSessionCookie[^\n]*sameOriginMutation[^\n]*\} from '\.\.\/lib\/device-session\.mjs';/
+    /import \{[^\n]*DEVICE_SESSION_MAX_AGE_SECONDS[^\n]*deviceSessionRemainingSeconds[^\n]*bearerToken[^\n]*cookieToken[^\n]*setDeviceSessionCookie[^\n]*clearDeviceSessionCookie[^\n]*sameOriginMutation[^\n]*\} from '\.\.\/lib\/device-session\.mjs';/
   );
 
   assert.match(
     source,
-    /function deviceSessionRemainingSeconds\(device, now = Date\.now\(\)\)/
-  );
-  assert.match(
-    source,
-    /absoluteExpiresAt = createdAt \+ DEVICE_SESSION_MAX_AGE_SECONDS \* 1000/
-  );
-  assert.match(
-    source,
-    /SET', key, JSON\.stringify\(updated\), 'EX', String\(remainingSeconds\)/
+    /SET', key, JSON\.stringify\(updated\), 'EX', String\(renewedSeconds\)/
   );
   assert.match(
     source,
@@ -51,9 +43,17 @@ test('device sessions have an absolute 30-day lifetime instead of sliding foreve
     /JSON\.stringify\(deviceRecord\),\s*String\(DEVICE_SESSION_MAX_AGE_SECONDS\)/
   );
 
-  // The old sliding refresh must never come back.
-  assert.doesNotMatch(
+  // Only the server engine receives a rolling 30-day inactivity window.
+  assert.match(
     source,
-    /device\.tokenHash\}\x60, JSON\.stringify\(updated\), 'EX', String\(DEVICE_SESSION_MAX_AGE_SECONDS\)/
+    /const engine = String\(device\?\.principal \|\| ''\) === 'engine'/
+  );
+  assert.match(
+    source,
+    /const renewedSeconds = engine \? DEVICE_SESSION_MAX_AGE_SECONDS : remainingSeconds/
+  );
+  assert.match(
+    source,
+    /return \{ expired:false, remainingSeconds:renewedSeconds \}/
   );
 });
