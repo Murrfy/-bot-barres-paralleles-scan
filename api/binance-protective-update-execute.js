@@ -448,7 +448,11 @@ export default async function handler(req,res){
       phase==='PLACE_NEW'||
       (phase==='CANCEL_OLD'&&update.protectionKind==='MAX_LOSS'&&String(req.body?.newClientAlgoId||''))
     )?protectiveRepairTarget(type,update):'';
-    const readyReason=executionReadiness(state.runtimeState,state.report,master.deviceId,repairTarget);
+    const executionTarget=update.symbol+':'+update.direction;
+    const readyReason=executionReadiness(
+      state.runtimeState,state.report,master.deviceId,repairTarget,false,false,
+      executionTarget,false
+    );
     if(readyReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readyReason,writeAttempted:false});
 
     const position=runtimePosition(state.runtimeState,update.symbol,update.direction);

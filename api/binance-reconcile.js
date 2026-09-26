@@ -517,6 +517,89 @@ async function detectTriggeredMaxLossRemainders({
   return {remainders,ambiguous,inconsistent,pending,exhausted};
 }
 
+function triggeredMaxLossSymbolQuarantines(recovery, observedAt=Date.now()){
+  const out=[];
+  const seen=new Set();
+  const add=(value,reason)=>{
+    let symbol='',direction='',remainingQuantity=null,since=Number(observedAt)||Date.now();
+    if(typeof value==='string'){
+      const parts=String(value||'').toUpperCase().split(':');
+      symbol=parts[0]||'';
+      direction=parts[1]||'';
+    }else if(value&&typeof value==='object'&&!Array.isArray(value)){
+      symbol=String(value.symbol||'').toUpperCase();
+      direction=String(value.direction||'').toUpperCase();
+      const remaining=Number(value.remainingQuantity);
+      remainingQuantity=Number.isFinite(remaining)?Math.max(0,remaining):null;
+      const triggerTime=Number(value.triggerTime);
+      if(Number.isFinite(triggerTime)&&triggerTime>0)since=triggerTime;
+    }
+    if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(direction))return;
+    const key=symbol+':'+direction;
+    if(seen.has(key))return;
+    seen.add(key);
+    out.push({symbol,direction,reason,remainingQuantity,since});
+  };
+
+  // Highest-severity evidence wins if Binance history somehow produces more than one state
+  // for the same live position during the same reconciliation.
+  for(const row of Array.isArray(recovery?.inconsistent)?recovery.inconsistent:[])add(row,'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT');
+  for(const row of Array.isArray(recovery?.exhausted)?recovery.exhausted:[])add(row,'TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED');
+  for(const row of Array.isArray(recovery?.ambiguous)?recovery.ambiguous:[])add(row,'AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER');
+  for(const row of Array.isArray(recovery?.pending)?recovery.pending:[])add(row,'TRIGGERED_MAX_LOSS_RECOVERY_PENDING');
+  for(const row of Array.isArray(recovery?.remainders)?recovery.remainders:[])add(row,'TRIGGERED_MAX_LOSS_REMAINDER');
+  return out;
+}
+
+function localizeTriggeredMaxLossAnomalies(result,recovery,observedAt=Date.now()){
+  const quarantines=triggeredMaxLossSymbolQuarantines(recovery,observedAt);
+  result.symbolQuarantines=quarantines;
+  if(!quarantines.length)return result;
+
+  const quarantineKeys=new Set(quarantines.map(row=>row.symbol+':'+row.direction));
+  const localReasons=new Set([
+    'TRIGGERED_MAX_LOSS_REMAINDER',
+    'TRIGGERED_MAX_LOSS_RECOVERY_PENDING',
+    'AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER',
+    'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT',
+    'TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED',
+  ]);
+  let reasons=Array.isArray(result.reasons)
+    ?result.reasons.map(value=>String(value||'')).filter(reason=>!localReasons.has(reason))
+    :[];
+
+  const everyTargetQuarantined=(rows=[])=>{
+    const targets=Array.isArray(rows)?rows.map(row=>String(row?.key||row||'').toUpperCase()).filter(Boolean):[];
+    return targets.length>0&&targets.every(target=>quarantineKeys.has(target));
+  };
+
+  if(everyTargetQuarantined(result?.differences?.missingProtections)){
+    reasons=reasons.filter(reason=>reason!=='MISSING_BINANCE_PROTECTION');
+  }
+  if(everyTargetQuarantined(result?.differences?.missingMaxLossProtections)){
+    reasons=reasons.filter(reason=>reason!=='MISSING_BINANCE_MAX_LOSS_PROTECTION');
+  }
+
+  const missingOrders=Array.isArray(result?.differences?.missingOrders)?result.differences.missingOrders:[];
+  if(missingOrders.length&&missingOrders.every(order=>{
+    const symbol=String(order?.symbol||'').toUpperCase();
+    const side=String(order?.side||'').toUpperCase();
+    const direction=side==='SELL'?'LONG':side==='BUY'?'SHORT':'';
+    const id=String(order?.clientAlgoId||order?.clientOrderId||'');
+    return quarantineKeys.has(symbol+':'+direction)&&
+      /^zth-MAX-[A-Za-z0-9._:-]+$/.test(id)&&
+      String(order?.type||'').toUpperCase()==='STOP'&&
+      order?.reduceOnly===true;
+  })){
+    reasons=reasons.filter(reason=>reason!=='MISSING_BINANCE_ORDER');
+  }
+
+  result.reasons=[...new Set(reasons)];
+  result.failClosed=result.reasons.length>0;
+  result.status=result.failClosed?'MISMATCH':'CLEAN_REAL_WITH_QUARANTINES';
+  return result;
+}
+
 function expectedPositions(runtimeState) {
   const data = runtimeState?.data || {};
   const list = Array.isArray(data.binancePositions) ? data.binancePositions : [];
@@ -1381,27 +1464,7 @@ export default async function handler(req, res) {
     result.differences.inconsistentTriggeredMaxLossRemainders=triggeredRecovery.inconsistent;
     result.differences.pendingTriggeredMaxLossRemainders=triggeredRecovery.pending;
     result.differences.exhaustedTriggeredMaxLossRemainders=triggeredRecovery.exhausted;
-    if(triggeredRecovery.remainders.length&&!result.reasons.includes('TRIGGERED_MAX_LOSS_REMAINDER')){
-      result.reasons.push('TRIGGERED_MAX_LOSS_REMAINDER');
-    }
-    if(triggeredRecovery.ambiguous.length&&!result.reasons.includes('AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER')){
-      result.reasons.push('AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER');
-    }
-    if(triggeredRecovery.inconsistent.length&&!result.reasons.includes('INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT')){
-      result.reasons.push('INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT');
-    }
-    if(triggeredRecovery.pending.length&&!result.reasons.includes('TRIGGERED_MAX_LOSS_RECOVERY_PENDING')){
-      result.reasons.push('TRIGGERED_MAX_LOSS_RECOVERY_PENDING');
-    }
-    if(triggeredRecovery.exhausted.length&&!result.reasons.includes('TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED')){
-      result.reasons.push('TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED');
-    }
-    if(triggeredRecovery.remainders.length||triggeredRecovery.ambiguous.length||
-       triggeredRecovery.inconsistent.length||triggeredRecovery.pending.length||
-       triggeredRecovery.exhausted.length){
-      result.failClosed=true;
-      result.status='MISMATCH';
-    }
+    localizeTriggeredMaxLossAnomalies(result,triggeredRecovery,started);
 
     const unsafePositionConfigs = actualPositions
       .filter(position =>

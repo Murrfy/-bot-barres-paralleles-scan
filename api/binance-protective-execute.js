@@ -2,7 +2,14 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
-import { protectionOnlyMismatchTarget, protectiveRepairTarget, pendingEntryProtectionLossCancelAllowed, triggeredMaxLossRemainderRecoveryAllowed } from '../lib/protective-command.mjs';
+import {
+  protectionOnlyMismatchTarget,
+  protectiveRepairTarget,
+  pendingEntryProtectionLossCancelAllowed,
+  triggeredMaxLossRemainderRecoveryAllowed,
+  maxLossLocalQuarantineReport,
+  maxLossSymbolQuarantine,
+} from '../lib/protective-command.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
 
@@ -163,7 +170,11 @@ function protectiveModeReason(mode){
   if(normalized==='RUNNING'||normalized==='PAUSE_PENDING')return '';
   return 'MASTER_PAUSED';
 }
-function executionReadiness(runtimeState,report,masterDeviceId,repairTarget='',pendingEntryCancelRecovery=false,maxLossRemainderRecovery=false){
+function executionReadiness(
+  runtimeState,report,masterDeviceId,repairTarget='',
+  pendingEntryCancelRecovery=false,maxLossRemainderRecovery=false,
+  executionTarget='',quarantineOperationAllowed=false
+){
   const age=Date.now()-Number(runtimeState?.updatedAt||0);
   if(!runtimeState?.data||String(runtimeState?.masterDeviceId||'')!==String(masterDeviceId))return 'MASTER_RUNTIME_WRONG_DEVICE';
   if(!Number.isFinite(age)||age<0||age>30000)return 'MASTER_RUNTIME_STALE';
@@ -187,8 +198,17 @@ function executionReadiness(runtimeState,report,masterDeviceId,repairTarget='',p
 
   if(pendingEntryCancelRecovery===true||maxLossRemainderRecovery===true)return '';
 
-  const target=String(repairTarget||'').toUpperCase();
-  if(target&&protectionOnlyMismatchTarget(report)===target)return '';
+  const repair=String(repairTarget||'').toUpperCase();
+  if(repair&&protectionOnlyMismatchTarget(report)===repair)return '';
+
+  if(maxLossLocalQuarantineReport(report)){
+    const target=String(executionTarget||'').toUpperCase();
+    if(!target)return 'EXECUTION_TARGET_REQUIRED';
+    const [symbol,direction='']=target.split(':');
+    const quarantine=maxLossSymbolQuarantine(report,symbol,direction);
+    if(quarantine&&quarantineOperationAllowed!==true)return 'SYMBOL_MAX_LOSS_QUARANTINED';
+    return '';
+  }
 
   return 'BINANCE_RECONCILIATION_MISMATCH';
 }
@@ -261,8 +281,17 @@ export default async function handler(req,res){
   if(maxLossRemainderRecovery&&String(master?.principal||'')!=='engine'){
     return send(res,423,{ok:false,code:'MAX_LOSS_REMAINDER_RECOVERY_ENGINE_REQUIRED',writeAttempted:false});
   }
+  const executionSymbol=String(req.body?.symbol||'').toUpperCase();
+  const executionDirection=String(req.body?.direction||'').toUpperCase();
+  const executionTarget=['LONG','SHORT'].includes(executionDirection)
+    ?executionSymbol+':'+executionDirection
+    :executionSymbol;
+  const quarantineOperationAllowed=
+    type==='EXEC_CANCEL_ENTRY'||type==='EXEC_CLOSE_POSITION'||
+    pendingEntryCancelRecovery||maxLossRemainderRecovery;
   const readinessReason=executionReadiness(
-    runtimeState,report,master.deviceId,repairTarget,pendingEntryCancelRecovery,maxLossRemainderRecovery
+    runtimeState,report,master.deviceId,repairTarget,pendingEntryCancelRecovery,maxLossRemainderRecovery,
+    executionTarget,quarantineOperationAllowed
   );
   if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
 

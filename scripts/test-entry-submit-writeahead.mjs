@@ -25,3 +25,15 @@ test('write-ahead transition remains exact and short-lived',()=>{
   assert.match(api,/ENTRY_TRANSITION_SUBMIT_STATE_INVALID/);
   assert.match(api,/writeAttempted:false,ambiguous:false/);
 });
+
+
+test('real entry readiness is scoped to the requested symbol during a local MAX-LOSS quarantine',()=>{
+  assert.match(api,/entryReadinessReason\(before,master\.deviceId,symbol,side,pendingEntryRecovery\)/);
+  assert.match(api,/entryReadinessReason\(configGateState,master\.deviceId,symbol,side\)/);
+  assert.match(api,/entryReadinessReason\(latest,master\.deviceId,symbol,side,latestRecovery\)/);
+  const start=api.indexOf('function entryReadinessReason');
+  const end=api.indexOf('function near',start);
+  const block=api.slice(start,end);
+  assert.match(block,/const executionTarget=wanted&&direction\?wanted\+'\:'\+direction:wanted/);
+  assert.match(block,/executionTarget,false/);
+});

@@ -1,6 +1,12 @@
 import crypto from 'node:crypto';
 import { DEVICE_SESSION_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
-import { normalizeProtectiveUpdatePayload, protectionOnlyMismatchTarget, protectiveRepairTarget } from '../lib/protective-command.mjs';
+import {
+  normalizeProtectiveUpdatePayload,
+  protectionOnlyMismatchTarget,
+  protectiveRepairTarget,
+  maxLossLocalQuarantineReport,
+  maxLossSymbolQuarantine,
+} from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import { jsonStructureStatus, plainJsonObject } from '../lib/json-structure.mjs';
@@ -1602,7 +1608,22 @@ function executionRuntimeReadinessStatus(runtimeState, expectedMasterDeviceId = 
   return { ready: true, reason: 'EXECUTION_RUNTIME_READY', runtime };
 }
 
-async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAgeMs = 10000, repairTarget = '') {
+function executionCommandTarget(type, payload = {}) {
+  const symbol = String(payload?.symbol || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{3,30}$/.test(symbol)) return '';
+  const direction = String(payload?.direction || '').toUpperCase();
+  return ['LONG','SHORT'].includes(direction) ? symbol + ':' + direction : symbol;
+}
+
+function commandMayOperateQuarantinedSymbol(type, payload = {}) {
+  const commandType = String(type || '').toUpperCase();
+  if (commandType === 'EXEC_CLOSE_POSITION') return payload?.closeAll === true;
+  if (commandType === 'EXEC_CANCEL_ENTRY') return true;
+  return false;
+}
+
+
+async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAgeMs = 10000, executionTarget = '', quarantineOperationAllowed = false, repairTarget = '') {
   const [reportRaw, runtimeRaw] = await Promise.all([
     redis(['GET', KEY_RECONCILE_LAST]),
     redis(['GET', KEY_STATE]),
@@ -1640,19 +1661,50 @@ async function freshConsistentReconciliation(expectedMasterDeviceId = '', maxAge
     report.reasons.length === 0;
   if (clean) return { ok: true, report, runtimeState, runtimeReady, protectiveRepair: false };
 
-  const target = String(repairTarget || '').toUpperCase();
-  if (target && protectionOnlyMismatchTarget(report) === target) {
-    return { ok: true, report, runtimeState, runtimeReady, protectiveRepair: true, repairTarget: target };
+  const target = String(executionTarget || '').toUpperCase();
+  if (maxLossLocalQuarantineReport(report)) {
+    if (!target) {
+      return { ok: false, reason: 'EXECUTION_TARGET_REQUIRED' };
+    }
+    const [symbol, direction = ''] = target.split(':');
+    const quarantine = maxLossSymbolQuarantine(report, symbol, direction);
+    if (quarantine && quarantineOperationAllowed !== true) {
+      return {
+        ok: false,
+        reason: 'SYMBOL_MAX_LOSS_QUARANTINED',
+        symbol: quarantine.symbol,
+        direction: quarantine.direction,
+        quarantineReason: quarantine.reason,
+      };
+    }
+    return {
+      ok: true,
+      report,
+      runtimeState,
+      runtimeReady,
+      localQuarantines: true,
+      quarantineOperation: Boolean(quarantine),
+    };
+  }
+
+  const repair = String(repairTarget || '').toUpperCase();
+  if (repair && protectionOnlyMismatchTarget(report) === repair) {
+    return { ok: true, report, runtimeState, runtimeReady, protectiveRepair: true, repairTarget: repair };
   }
 
   return { ok: false, reason: 'BINANCE_RECONCILIATION_MISMATCH' };
 }
 
-async function realExecutionReadiness(expectedMasterDeviceId = '', repairTarget = '') {
+async function realExecutionReadiness(
+  expectedMasterDeviceId = '', executionTarget = '',
+  quarantineOperationAllowed = false, repairTarget = ''
+) {
   if (!expectedMasterDeviceId) return { ok: false, reason: 'MASTER_LEASE_REQUIRED' };
   const arm = await realExecutionArmStatus(expectedMasterDeviceId);
   if (!arm.armed) return { ok: false, reason: arm.reason };
-  const reconciliation = await freshConsistentReconciliation(expectedMasterDeviceId, 10000, repairTarget);
+  const reconciliation = await freshConsistentReconciliation(
+    expectedMasterDeviceId, 10000, executionTarget, quarantineOperationAllowed, repairTarget
+  );
   if (!reconciliation.ok) return reconciliation;
   return { ok: true, reconciliation };
 }
@@ -4855,8 +4907,12 @@ export default async function handler(req, res) {
             pairingDisabled: PAIRING_DISABLED,
           });
         }
+        const executionTarget = executionCommandTarget(type, req.body?.payload);
+        const quarantineOperationAllowed = commandMayOperateQuarantinedSymbol(type, req.body?.payload);
         const repairTarget = protectiveRepairTarget(type, req.body?.payload);
-        const readiness = await realExecutionReadiness(activeMaster, repairTarget);
+        const readiness = await realExecutionReadiness(
+          activeMaster, executionTarget, quarantineOperationAllowed, repairTarget
+        );
         if (!readiness.ok) {
           return send(res, 423, {
             ok: false,
@@ -5119,8 +5175,12 @@ export default async function handler(req, res) {
             recovery,
           });
         }
+        const executionTarget = executionCommandTarget(command.type, command.payload);
+        const quarantineOperationAllowed = commandMayOperateQuarantinedSymbol(command.type, command.payload);
         const repairTarget = protectiveRepairTarget(command.type, command.payload);
-        const readiness = await realExecutionReadiness(device.deviceId, repairTarget);
+        const readiness = await realExecutionReadiness(
+          device.deviceId, executionTarget, quarantineOperationAllowed, repairTarget
+        );
         if (!readiness.ok) {
           const deferred = await deferClaimedCommand(
             raw,
@@ -5214,7 +5274,9 @@ export default async function handler(req, res) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
         }
 
-        const readiness = await freshConsistentReconciliation(device.deviceId);
+        const readiness = await freshConsistentReconciliation(
+          device.deviceId,10000,symbol+':LONG',false
+        );
         if (!readiness.ok) {
           return send(res, 409, {
             ok:false,
@@ -5310,7 +5372,9 @@ export default async function handler(req, res) {
             !['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus)) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
         }
-        const readiness = await freshConsistentReconciliation(device.deviceId);
+        const readiness = await freshConsistentReconciliation(
+          device.deviceId,10000,symbol,true
+        );
         if (!readiness.ok) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_RECONCILIATION_REQUIRED', reason:readiness.reason });
         }
@@ -5344,7 +5408,9 @@ export default async function handler(req, res) {
             !newClientId.startsWith(expectedProofPrefix)) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
         }
-        const readiness = await freshConsistentReconciliation(device.deviceId);
+        const readiness = await freshConsistentReconciliation(
+          device.deviceId,10000,payloadStatus.symbol+':'+payloadStatus.direction,false
+        );
         if (!readiness.ok) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_RECONCILIATION_REQUIRED', reason:readiness.reason });
         }
@@ -5452,7 +5518,9 @@ export default async function handler(req, res) {
         if (!payloadStatus.ok) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PAYLOAD_INVALID', reason:payloadStatus.reason });
         }
-        const readiness = await freshConsistentReconciliation(device.deviceId);
+        const readiness = await freshConsistentReconciliation(
+          device.deviceId,10000,payloadStatus.symbol+':'+payloadStatus.direction,false
+        );
         if (!readiness.ok) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_RECONCILIATION_REQUIRED', reason:readiness.reason });
         }
@@ -5502,7 +5570,9 @@ export default async function handler(req, res) {
           return send(res, 409, { ok:false, code:'EXECUTION_ACK_PROOF_INVALID' });
         }
 
-        const readiness = await freshConsistentReconciliation(device.deviceId);
+        const readiness = await freshConsistentReconciliation(
+          device.deviceId,10000,payloadStatus.symbol+':'+payloadStatus.direction,true
+        );
         if (!readiness.ok) {
           return send(res, 409, {
             ok:false,
@@ -5676,7 +5746,12 @@ export default async function handler(req, res) {
           await rejectClaimedCommand(raw, 'EXECUTION_LOCKED_' + gate.reason, {}, device);
           return send(res, 200, { ok: true, requeued: false, executionRejected: true, executionReason: gate.reason });
         }
-        const readiness = await realExecutionReadiness(device.deviceId);
+        const executionTarget = executionCommandTarget(command.type, command.payload);
+        const quarantineOperationAllowed = commandMayOperateQuarantinedSymbol(command.type, command.payload);
+        const repairTarget = protectiveRepairTarget(command.type, command.payload);
+        const readiness = await realExecutionReadiness(
+          device.deviceId, executionTarget, quarantineOperationAllowed, repairTarget
+        );
         if (!readiness.ok) {
           const deferred = await deferClaimedCommand(
             raw,

@@ -94,6 +94,37 @@ test('execution readiness allows exact protective repair but nothing broader',()
   assert.equal(executionReadiness(rt,mixed,'master-1','BTCUSDT:LONG'),'BINANCE_RECONCILIATION_MISMATCH');
 });
 
+test('symbol-local MAX-LOSS quarantine blocks BTC but leaves ETH protective execution ready',()=>{
+  const rt=runtime();
+  rt.data.binancePositions.push({symbol:'ETHUSDT',positionSide:'BOTH',positionAmt:'1',entryPrice:'2000'});
+  const local={
+    version:2,observedAt:Date.now(),status:'CLEAN_REAL_WITH_QUARANTINES',failClosed:false,reasons:[],
+    actual:{positions:2,orders:0},
+    differences:{
+      missingProtections:['BTCUSDT:LONG'],
+      missingMaxLossProtections:['BTCUSDT:LONG'],
+    },
+    symbolQuarantines:[{
+      symbol:'BTCUSDT',direction:'LONG',reason:'TRIGGERED_MAX_LOSS_RECOVERY_PENDING',
+      remainingQuantity:0.02,since:Date.now()-1000,
+    }],
+    runtimeDataHash:hash(rt.data),
+  };
+
+  assert.equal(
+    executionReadiness(rt,local,'master-1','',false,false,'ETHUSDT:LONG',false),
+    ''
+  );
+  assert.equal(
+    executionReadiness(rt,local,'master-1','',false,false,'BTCUSDT:LONG',false),
+    'SYMBOL_MAX_LOSS_QUARANTINED'
+  );
+  assert.equal(
+    executionReadiness(rt,local,'master-1','',false,false,'BTCUSDT:LONG',true),
+    ''
+  );
+});
+
 test('repair path still requires fresh stream and exact runtime hash',()=>{
   const rt=runtime(),r=report(rt);
   const disconnected=structuredClone(rt);

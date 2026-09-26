@@ -59,12 +59,42 @@ test('ambiguous MAX-LOSS remainder write triggers immediate read-only reconcilia
 });
 
 
-test('unresolved MAX-LOSS remainder states explicitly invalidate stream readiness',()=>{
+test('unresolved MAX-LOSS remainder states quarantine only the affected symbol',()=>{
   const reconcileStart=worker.indexOf('async function reconcile');
   const block=worker.slice(reconcileStart,worker.indexOf('async function awaitReconciliation',reconcileStart));
-  assert.match(block,/await invalidateStream\('TRIGGERED_MAX_LOSS_RECOVERY_PENDING'\)/);
+  assert.match(block,/stream\.symbolQuarantines=maxLossSymbolQuarantines\(data\.report\)/);
+  assert.match(block,/const unresolvedLocal=stream\.symbolQuarantines\.find/);
   assert.match(block,/AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER/);
   assert.match(block,/INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT/);
   assert.match(block,/TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED/);
-  assert.match(block,/await invalidateStream\(reason\)/);
+  assert.doesNotMatch(block,/await invalidateStream\('TRIGGERED_MAX_LOSS_RECOVERY_PENDING'\)/);
+  const localStart=block.indexOf('const unresolvedLocal=');
+  const localEnd=block.indexOf('const orphanTargets=',localStart);
+  const localBlock=block.slice(localStart,localEnd);
+  assert.doesNotMatch(localBlock,/invalidateStream/);
+});
+
+test('entry watch and automatic gain logic skip only a quarantined symbol',()=>{
+  assert.match(worker,/if\(symbolMaxLossQuarantined\(config\.symbol\)\)return false/);
+  assert.match(worker,/if\(symbolMaxLossQuarantined\(symbol\)\)return \{ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'\}/);
+  assert.match(worker,/if\(symbolMaxLossQuarantined\(wanted\)\)return false/);
+});
+
+
+test('MAX-LOSS recovery serializes only the brief write globally and the recovering symbol logically',()=>{
+  const start=worker.indexOf('async function commandCycle');
+  const end=worker.indexOf('function startCommandLoop',start);
+  const block=worker.slice(start,end);
+  assert.match(block,/if\(execution\.busy\|\|maxLossRemainderRecovery\.writeBusy\|\|stopping\)return false/);
+  assert.doesNotMatch(block,/execution\.busy\|\|maxLossRemainderRecovery\.busy\|\|stopping/);
+  assert.match(block,/const dispatchSymbol=/);
+  assert.match(block,/maxLossRemainderRecovery\.busy&&maxLossRemainderRecovery\.symbol/);
+  assert.match(block,/dispatchSymbol===String\(maxLossRemainderRecovery\.symbol\)\.toUpperCase\(\)/);
+  assert.match(block,/requeueCommand\(raw,'SYMBOL_MAX_LOSS_RECOVERY_BUSY',500\)/);
+
+  const recoverStart=worker.indexOf('async function recoverTriggeredMaxLossRemainder');
+  const recoverEnd=worker.indexOf('async function reconcile',recoverStart);
+  const recoverBlock=worker.slice(recoverStart,recoverEnd);
+  assert.match(recoverBlock,/maxLossRemainderRecovery\.writeBusy=true/);
+  assert.match(recoverBlock,/maxLossRemainderRecovery\.writeBusy=false/);
 });

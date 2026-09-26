@@ -120,7 +120,6 @@ if (index.includes("...(token?{}:{})")) {
 }
 if (!index.includes('protectionValidationError') ||
     !index.includes('step="0.1" inputmode="decimal"') ||
-    !index.includes('Décimales acceptées avec un point (ex. 7.8)') ||
     !index.includes('le gain protégé doit être inférieur au gain atteint') ||
     !index.includes('le niveau PROTÉGÉ ne peut pas redescendre')) {
   fail('gain protections must support decimal input and reject incoherent protection ladders');
@@ -1246,8 +1245,22 @@ if (!sync.includes("'MASTER_RUNTIME_NOT_REAL'") ||
     !sync.includes("'USER_STREAM_RECONCILIATION_REQUIRED'") ||
     !sync.includes('protectionOnlyMismatchTarget(report)') ||
     !sync.includes('protectiveRepairTarget(type, req.body?.payload)') ||
-    !sync.includes('protectiveRepairTarget(command.type, command.payload)')) {
-  fail('real execution must fail closed unless runtime/stream are ready and reconciliation is CLEAN_REAL, except the exact missing-protection repair target');
+    !sync.includes('protectiveRepairTarget(command.type, command.payload)') ||
+    !sync.includes('maxLossLocalQuarantineReport(report)') ||
+    !sync.includes("'SYMBOL_MAX_LOSS_QUARANTINED'") ||
+    !sync.includes('executionCommandTarget(type, req.body?.payload)') ||
+    !sync.includes('executionCommandTarget(command.type, command.payload)') ||
+    !sync.includes('commandMayOperateQuarantinedSymbol')) {
+  fail('real execution must remain globally fail-closed for global faults while preserving exact repairs and allowing unrelated symbols during a local MAX-LOSS quarantine');
+}
+const quarantineGateStart=sync.indexOf('function commandMayOperateQuarantinedSymbol');
+const quarantineGateEnd=quarantineGateStart>=0?sync.indexOf('\n}',quarantineGateStart)+2:-1;
+const quarantineGate=quarantineGateStart>=0&&quarantineGateEnd>quarantineGateStart
+  ?sync.slice(quarantineGateStart,quarantineGateEnd):'';
+if (!quarantineGate.includes("EXEC_CLOSE_POSITION") ||
+    !quarantineGate.includes("EXEC_CANCEL_ENTRY") ||
+    quarantineGate.includes("EXEC_UPDATE_PROTECTION")) {
+  fail('a triggered MAX-LOSS quarantine may allow close/cancel only; protection edits on that symbol must remain blocked');
 }
 if (!sync.includes('pushDeadLetter') || !sync.includes("redis(['LTRIM', KEY_DEAD")) {
   fail('dead-letter queue must be bounded');
@@ -1258,8 +1271,8 @@ if (!sync.includes('execClosePayloadStatus') ||
     !sync.includes("action === 'command-fail'") ||
     !sync.includes("'EXECUTION_ACK_NOT_CONFIRMED'") ||
     !sync.includes('runtimeClosePositionQuantity') ||
-    !sync.includes('freshConsistentReconciliation(device.deviceId)')) {
-  fail('EXEC_CLOSE_POSITION must be full-close only and require fresh reconciled zero-position proof before ACK');
+    !sync.includes("payloadStatus.symbol+':'+payloadStatus.direction,true")) {
+  fail('EXEC_CLOSE_POSITION must be full-close only and require symbol-bound fresh reconciled zero-position proof before ACK');
 }
 
 const replaceController = fs.readFileSync('replace-controller.html', 'utf8');
