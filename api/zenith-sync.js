@@ -90,6 +90,8 @@ const COMMAND_MAX_AGE_MS = 2 * 60 * 1000;
 const COMMAND_QUEUE_MAX = 100;
 const COMMAND_PAYLOAD_MAX_BYTES = 16 * 1024;
 const COMMAND_RAW_MAX_BYTES = 64 * 1024;
+const ENGINE_ENTRY_WATCH_STATE_MAX_BYTES = 250000;
+const ENGINE_HIGH_WATER_STATE_MAX_BYTES = 250000;
 const DEAD_LETTER_MAX = 500;
 
 function send(res, status, body) {
@@ -4098,9 +4100,6 @@ export default async function handler(req, res) {
         return send(res, 400, { ok:false, code:'ENGINE_ENTRY_WATCH_INVALID' });
       }
       const keys = Object.keys(states);
-      if (keys.length > 100) {
-        return send(res, 413, { ok:false, code:'ENGINE_ENTRY_WATCH_TOO_MANY_STATES', maxEntries:100 });
-      }
       const cleanStates = {};
       for (const rawSymbol of keys) {
         const symbol = String(rawSymbol || '').toUpperCase();
@@ -4139,7 +4138,7 @@ export default async function handler(req, res) {
         };
       }
       const statesRaw = JSON.stringify(cleanStates);
-      if (Buffer.byteLength(statesRaw, 'utf8') > 64 * 1024) {
+      if (Buffer.byteLength(statesRaw, 'utf8') > ENGINE_ENTRY_WATCH_STATE_MAX_BYTES) {
         return send(res, 413, { ok:false, code:'ENGINE_ENTRY_WATCH_TOO_LARGE' });
       }
       const updatedAt = Date.now();
@@ -4283,9 +4282,6 @@ export default async function handler(req, res) {
         return send(res, 400, { ok:false, code:'ENGINE_HIGH_WATER_INVALID' });
       }
       const keys = Object.keys(entries);
-      if (keys.length > 20) {
-        return send(res, 413, { ok:false, code:'ENGINE_HIGH_WATER_TOO_MANY_ENTRIES', maxEntries:20 });
-      }
       const cleanEntries = {};
       for (const key of keys) {
         if (!/^[A-Za-z0-9._:+-]{8,200}$/.test(key)) {
@@ -4298,7 +4294,7 @@ export default async function handler(req, res) {
         cleanEntries[key] = value;
       }
       const entriesRaw = JSON.stringify(cleanEntries);
-      if (Buffer.byteLength(entriesRaw, 'utf8') > 16 * 1024) {
+      if (Buffer.byteLength(entriesRaw, 'utf8') > ENGINE_HIGH_WATER_STATE_MAX_BYTES) {
         return send(res, 413, { ok:false, code:'ENGINE_HIGH_WATER_TOO_LARGE' });
       }
       const updatedAt = Date.now();
