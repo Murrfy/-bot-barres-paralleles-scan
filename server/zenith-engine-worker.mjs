@@ -27,6 +27,7 @@ import { planAutomaticTargetExit } from '../lib/auto-target-exit.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
 import { pendingEntryProtectionLossTargets, pendingEntryWriteAheadRecoveryTargets } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
+import { isLimitIocMaxLossOrder } from '../lib/maxloss-order-shape.mjs';
 import {
   entryWatchDefinition,
   entryWatchIdentity,
@@ -994,12 +995,9 @@ function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.ma
   const cap=n(hardMaxLossUsd,0);
   if(!(quantity>0)||!(entry>0)||!(cap>0))return false;
   const rows=(Array.isArray(orders)?orders:[]).filter(order=>{
-    if(String(order?.orderClass||'').toUpperCase()!=='ALGO')return false;
-    if(String(order?.symbol||'').toUpperCase()!==symbol)return false;
-    if(String(order?.side||'').toUpperCase()!==side)return false;
-    if(String(order?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
-    if(String(order?.type||'').toUpperCase()!=='STOP_MARKET')return false;
-    if(!(order?.closePosition===true||order?.closePosition==='true'))return false;
+    if(!isLimitIocMaxLossOrder(order,{
+      symbol,side,positionSide:'BOTH',quantity,
+    }))return false;
     if(!zenithManagedRealId(order?.clientAlgoId))return false;
     const trigger=n(order?.triggerPrice??order?.stopPrice,0);
     if(!(trigger>0))return false;
@@ -2052,14 +2050,14 @@ async function repairMissingMaxLoss(report){
   const expectedSide=plan.direction==='LONG'?'SELL':'BUY';
   const valid=Boolean(
     order&&
-    String(order?.symbol||'').toUpperCase()===plan.symbol&&
-    String(order?.side||'').toUpperCase()===expectedSide&&
-    String(order?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
-    String(order?.type||'').toUpperCase()==='STOP_MARKET'&&
-    (order?.closePosition===true||order?.closePosition==='true')&&
-    !(order?.reduceOnly===true||order?.reduceOnly==='true')&&
-    realNumberMatches(order?.triggerPrice??order?.stopPrice,plan.triggerPrice)&&
-    /^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId||clientId))
+    isLimitIocMaxLossOrder(order,{
+      symbol:plan.symbol,
+      side:expectedSide,
+      positionSide:'BOTH',
+      quantity:plan.quantity,
+      clientAlgoId:clientId,
+    })&&
+    realNumberMatches(order?.triggerPrice??order?.stopPrice,plan.triggerPrice)
   );
   if(!valid){
     const reason='AUTO_MAX_LOSS_REPAIR_NOT_STREAM_CONFIRMED';
