@@ -52,14 +52,14 @@ test('full-position close escalation has no MARKET fallback',()=>{
 });
 
 
-test('real execution remains hard-blocked until the complete LIMIT-only audit is finished',()=>{
+test('completed LIMIT-only audit still leaves all explicit real-execution arm gates in place',()=>{
   const sync=fs.readFileSync('api/zenith-sync.js','utf8');
   const protectiveIntent=fs.readFileSync('lib/protective-update-intent.mjs','utf8');
   assert.doesNotMatch(protectiveIntent,/STOP_MARKET/);
   assert.match(protectiveIntent,/params\.type='STOP'/);
   assert.match(protectiveIntent,/params\.timeInForce='IOC'/);
   assert.match(protectiveIntent,/params\.priceMatch='OPPONENT'/);
-  assert.match(sync,/const LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE = false;/);
+  assert.match(sync,/const LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE = true;/);
   const start=sync.indexOf("if (action === 'real-execution-arm'");
   const end=sync.indexOf("if (action === 'emergency-stop-clear'",start);
   assert.ok(start>=0&&end>start,'real-execution-arm block missing');
@@ -68,6 +68,12 @@ test('real execution remains hard-blocked until the complete LIMIT-only audit is
   assert.ok(
     arm.indexOf('LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_REQUIRED') <
     arm.indexOf("if (!REAL_TRADING_ENABLED)"),
-    'LIMIT-only audit gate must run before real-trading arm checks'
+    'LIMIT-only audit guard must remain before real-trading arm checks'
+  );
+  assert.match(arm,/REAL_ENTRY_WRITE_DISABLED/);
+  assert.ok(
+    arm.indexOf("if (!REAL_ENTRY_WRITE_ENABLED)") <
+    arm.indexOf("if (!VERCEL_PRODUCTION_WRITE_ALLOWED)"),
+    'real-entry write switch must be enabled before production arm'
   );
 });

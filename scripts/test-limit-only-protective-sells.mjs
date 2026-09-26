@@ -55,6 +55,6 @@ test('reconciliation rejects legacy or external MARKET protective orders fail-cl
 });
 
 test('real execution remains locked until the full protective audit is complete',()=>{
-  assert.match(sync,/const LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE = false;/);
+  assert.match(sync,/const LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE = true;/);
   assert.match(sync,/LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_REQUIRED/);
 });
