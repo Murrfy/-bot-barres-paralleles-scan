@@ -3,6 +3,7 @@ import test from 'node:test';
 
 process.env.UPSTASH_REDIS_REST_URL='https://redis.test';
 process.env.UPSTASH_REDIS_REST_TOKEN='test-only';
+process.env.ZENITH_PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED='1';
 
 const {default:handler}=await import('../api/binance-entry-execute.js?rate-test='+Date.now());
 

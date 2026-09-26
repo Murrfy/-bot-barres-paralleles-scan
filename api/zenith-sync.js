@@ -31,6 +31,8 @@ const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
 const REAL_ENTRY_WRITE_ENABLED = process.env.ZENITH_REAL_ENTRY_WRITE_ENABLED === '1';
+const PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED =
+  process.env.ZENITH_PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED === '1';
 // Final pre-unlock audit complete: every operational protective sell path is LIMIT-only.
 // This flag removes only the audit blocker; real trading still requires the independent env, production,
 // ADMIN arm, PAUSED/PANIC, reconciliation, stream, permission and MASTER authority gates below.
@@ -3705,6 +3707,9 @@ export default async function handler(req, res) {
       if (!LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE) {
         return send(res, 423, { ok:false, code:'LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_REQUIRED' });
       }
+      if (!PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED) {
+        return send(res, 423, { ok:false, code:'PREENTRY_REDUCE_ONLY_STOP_COMPAT_REQUIRED' });
+      }
       if (!REAL_TRADING_ENABLED) return send(res, 423, { ok:false, code:'REAL_TRADING_DISABLED' });
       if (!BINANCE_WRITE_ENABLED) return send(res, 423, { ok:false, code:'BINANCE_WRITE_DISABLED' });
       if (!REAL_ENTRY_WRITE_ENABLED) return send(res, 423, { ok:false, code:'REAL_ENTRY_WRITE_DISABLED' });
@@ -3781,6 +3786,7 @@ export default async function handler(req, res) {
         reconciliationObservedAt:Number(reconciliation?.report?.observedAt || 0),
         binanceApiPermissionsVerifiedAt:Date.now(),
         binanceApiIpRestricted:apiPermissions?.ipRestrict === true,
+        preEntryReduceOnlyStopCompatVerified:true,
         adminSecretPolicyVersion:1,
       };
       const armCommitScript = [
@@ -4000,6 +4006,7 @@ export default async function handler(req, res) {
         realTradingEnabled: REAL_TRADING_ENABLED,
         binanceWriteEnabled: BINANCE_WRITE_ENABLED,
         realEntryWriteEnabled: REAL_ENTRY_WRITE_ENABLED,
+        preEntryReduceOnlyStopCompatVerified: PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED,
         realExecutionArmed: armStatus.armed,
         realExecutionArmReason: armStatus.reason,
         realExecutionArmedAt: Number(armStatus.record?.armedAt || 0),

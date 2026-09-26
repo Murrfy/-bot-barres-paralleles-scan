@@ -310,6 +310,8 @@ jobs:
         run: node --test scripts/test-protective-arm-gate.mjs
       - name: Test final MASTER gate before protective Binance writes
         run: node --test scripts/test-protective-final-master-gate.mjs
+      - name: Test pre-entry reduce-only STOP compatibility gate
+        run: node --test scripts/test-preentry-reduceonly-compat-gate.mjs
       - name: Test atomic real execution arm commit
         run: node --test scripts/test-real-execution-arm-atomic.mjs
       - name: Test protective close confirmation and escalation

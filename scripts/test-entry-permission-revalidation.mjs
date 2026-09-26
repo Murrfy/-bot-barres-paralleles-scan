@@ -7,6 +7,7 @@ process.env.UPSTASH_REDIS_REST_TOKEN='test-only';
 process.env.BINANCE_TRADING_API_KEY=['api','key','test'].join('-');
 process.env.BINANCE_TRADING_API_SECRET=['sec','ret'].join('');
 process.env.VERCEL_GIT_COMMIT_SHA='sha-prod';
+process.env.ZENITH_PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED='1';
 
 const {default:handler}=await import('../api/binance-entry-execute.js?permission-revalidation-test='+Date.now());
 
