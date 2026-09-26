@@ -26,12 +26,17 @@ button:disabled{opacity:.5}
 <div class="wrap">
   <div class="card">
     <h1>Zenith — Admin MASTER</h1>
-    <div class="sub">Administration depuis l’iPhone contrôleur ou l’iPad MASTER.</div>
+    <div class="sub">Administration Zenith. Les opérations MASTER restent distinctes du transfert de contrôleur.</div>
     <div class="notice">Cette page ne modifie pas les réglages du bot. Elle sert uniquement aux opérations administratives critiques.</div>
 
     <a id="backLink" href="/">Retour à Zenith</a>
     <div id="identity" class="status">Vérification de l’appareil…</div>
     <div id="masterMode" class="status">État MASTER…</div>
+
+    <form action="/replace-controller.html" method="get">
+      <button id="recoverControllerBtn" type="submit">Reprendre le contrôle sur cet appareil</button>
+    </form>
+    <div class="small">Perte ou changement d’appareil uniquement : ce transfert ne déclenche ni PANIC, ni pause, ni STOP, ni révocation MASTER et ne touche pas aux positions ou protections.</div>
 
     <label for="adminCode">Code ADMIN MASTER</label>
     <input id="adminCode" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Code administrateur">
