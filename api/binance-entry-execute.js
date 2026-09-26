@@ -25,7 +25,9 @@ const KEY_MASTER_MODE=`${PREFIX}:master-mode`;
 const KEY_EMERGENCY_STOP=`${PREFIX}:safety:emergency-stop`;
 const KEY_CONTROLLER_STATE=`${PREFIX}:controller-state`;
 const KEY_ENTRY_TRANSITIONS=`${PREFIX}:entry-transitions`;
+const KEY_ENTRY_SLOT_RESERVATIONS=`${PREFIX}:entry-slot-reservations`;
 const KEY_ENGINE_INSTANCE=`${PREFIX}:engine-instance`;
+const ENTRY_SLOT_RESERVATION_TTL_MS=30*1000;
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -189,6 +191,103 @@ async function readExecutionState(){
     masterMode:String(modeRaw||'PAUSED').toUpperCase(),
     emergencyStopActive:panicRaw===null||panicRaw===undefined||panicRaw===''||String(panicRaw)!=='0',
   };
+}
+
+function entrySlotReservationMember(commandId,symbol){
+  return String(symbol||'').toUpperCase()+'|'+String(commandId||'');
+}
+
+async function reserveEntrySlot({commandId,symbol,maxActivePositions,observedOccupiedSlots}={}){
+  const maxActive=Number(maxActivePositions);
+  const occupied=Number(observedOccupiedSlots);
+  if(!/^[A-Za-z0-9._:-]{8,128}$/.test(String(commandId||''))||
+     !/^[A-Z0-9]{3,30}$/.test(String(symbol||'').toUpperCase())||
+     !Number.isSafeInteger(maxActive)||maxActive<1||
+     !Number.isSafeInteger(occupied)||occupied<0){
+    return {ok:false,reason:'ENTRY_SLOT_RESERVATION_INPUT_INVALID'};
+  }
+  const now=Date.now();
+  const expiresAt=now+ENTRY_SLOT_RESERVATION_TTL_MS;
+  const member=entrySlotReservationMember(commandId,symbol);
+  const script=[
+    "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])",
+    "local member = ARGV[2]",
+    "local existing = redis.call('ZSCORE', KEYS[1], member)",
+    "if existing then",
+    "  redis.call('ZADD', KEYS[1], ARGV[3], member)",
+    "  redis.call('EXPIRE', KEYS[1], ARGV[6])",
+    "  return {2, tonumber(redis.call('ZCARD', KEYS[1]) or '0')}",
+    "end",
+    "local rows = redis.call('ZRANGE', KEYS[1], 0, -1)",
+    "local prefix = ARGV[7] .. '|'",
+    "for _, row in ipairs(rows) do",
+    "  if string.sub(row, 1, string.len(prefix)) == prefix then return {-1, #rows} end",
+    "end",
+    "local reservations = tonumber(redis.call('ZCARD', KEYS[1]) or '0')",
+    "local occupied = tonumber(ARGV[4]) or -1",
+    "local maxActive = tonumber(ARGV[5]) or 0",
+    "if occupied < 0 or maxActive < 1 then return {-2, reservations} end",
+    "if occupied + reservations >= maxActive then return {0, reservations} end",
+    "redis.call('ZADD', KEYS[1], ARGV[3], member)",
+    "redis.call('EXPIRE', KEYS[1], ARGV[6])",
+    "return {1, reservations + 1}"
+  ].join('\n');
+  const result=await redis([
+    'EVAL',script,'1',
+    KEY_ENTRY_SLOT_RESERVATIONS,
+    String(now),
+    member,
+    String(expiresAt),
+    String(occupied),
+    String(maxActive),
+    String(Math.ceil((ENTRY_SLOT_RESERVATION_TTL_MS*2)/1000)),
+    String(symbol||'').toUpperCase(),
+  ]);
+  const code=Number(Array.isArray(result)?result[0]:-99);
+  const reservations=Number(Array.isArray(result)?result[1]:0)||0;
+  return {
+    ok:code===1||code===2,
+    acquired:code===1,
+    renewed:code===2,
+    reservations,
+    member,
+    reason:code===0
+      ?'MAX_ACTIVE_POSITIONS_REACHED'
+      :code===-1
+        ?'SYMBOL_ENTRY_SLOT_ALREADY_RESERVED'
+        :code===-2
+          ?'ENTRY_SLOT_RESERVATION_INPUT_INVALID'
+          :'ENTRY_SLOT_RESERVATION_FAILED',
+  };
+}
+
+async function releaseEntrySlotReservation(commandId,symbol){
+  const member=entrySlotReservationMember(commandId,symbol);
+  return Number(await redis(['ZREM',KEY_ENTRY_SLOT_RESERVATIONS,member]))>0;
+}
+
+async function reserveAndRecheckEntrySlot({
+  commandId,symbol,maxActivePositions,preflight,apiKey,secret,
+  margin,leverage,maxLoss,requestedPrice,orderType,
+}={}){
+  const occupied=Number(preflight?.evaluation?.normalized?.occupiedPositionSlots);
+  const reservation=await reserveEntrySlot({
+    commandId,symbol,maxActivePositions,observedOccupiedSlots:occupied,
+  });
+  if(!reservation.ok)return {ok:false,reservation,preflight:null};
+
+  const fresh=await runLiveEntryPreflight({
+    apiKey,secret,symbol,margin,leverage,maxLoss,requestedPrice,orderType,maxActivePositions,
+  });
+  if(fresh?.evaluation?.ready!==true){
+    await releaseEntrySlotReservation(commandId,symbol).catch(()=>false);
+    return {
+      ok:false,
+      reservation:{...reservation,reason:'ENTRY_SLOT_FINAL_PREFLIGHT_REJECTED'},
+      preflight:fresh,
+    };
+  }
+  return {ok:true,reservation,preflight:fresh};
 }
 
 async function finalEntryDispatchGate(masterDeviceId,masterRoleEpoch,expectedArmRaw,expectedControllerRevision){
@@ -494,10 +593,34 @@ export default async function handler(req,res){
           writeAttempted:false,plan,
         });
       }
+      const slotGate=await reserveAndRecheckEntrySlot({
+        commandId,symbol,maxActivePositions,preflight,apiKey,secret,
+        margin,leverage,maxLoss,requestedPrice:0,orderType:'MARKET',
+      });
+      if(!slotGate.ok){
+        return send(res,409,{
+          ok:false,code:'ENTRY_SLOT_RESERVATION_BLOCKED',
+          reason:slotGate.reservation?.reason||'ENTRY_SLOT_RESERVATION_FAILED',
+          reasons:Array.isArray(slotGate.preflight?.evaluation?.reasons)?slotGate.preflight.evaluation.reasons:[],
+          writeAttempted:false,
+        });
+      }
+      preflight=slotGate.preflight;
+      try{
+        plan=buildEntryOrderPlan({
+          command:{id:commandId,symbol,side,orderType:'MARKET',margin,leverage,maxLoss},
+          riskSnapshot:{ready:true,observedAt:preflight.observedAt,normalized:preflight.evaluation.normalized},
+          now:Date.now(),
+        });
+      }catch(e){
+        await releaseEntrySlotReservation(commandId,symbol).catch(()=>false);
+        return send(res,409,{ok:false,code:e?.message||'ENTRY_PLAN_INVALID',writeAttempted:false});
+      }
       const dispatchGate=await finalEntryDispatchGate(
         master.deviceId,master.roleIssuedAt,latest.armRaw,latest.armRecord?.controllerRevision
       );
       if(!dispatchGate.ok){
+        await releaseEntrySlotReservation(commandId,symbol).catch(()=>false);
         return send(res,423,{
           ok:false,code:'MARKET_ENTRY_COMMIT_BLOCKED',reason:dispatchGate.reason,
           writeAttempted:false,plan,
@@ -586,10 +709,24 @@ export default async function handler(req,res){
           writeAttempted:false,plan,protectionPlan,
         });
       }
+      const slotGate=await reserveAndRecheckEntrySlot({
+        commandId,symbol,maxActivePositions,preflight,apiKey,secret,
+        margin,leverage,maxLoss,requestedPrice:limitPrice,orderType:'LIMIT',
+      });
+      if(!slotGate.ok){
+        return send(res,409,{
+          ok:false,code:'ENTRY_SLOT_RESERVATION_BLOCKED',
+          reason:slotGate.reservation?.reason||'ENTRY_SLOT_RESERVATION_FAILED',
+          reasons:Array.isArray(slotGate.preflight?.evaluation?.reasons)?slotGate.preflight.evaluation.reasons:[],
+          writeAttempted:false,plan,protectionPlan,
+        });
+      }
+      preflight=slotGate.preflight;
       const dispatchGate=await finalEntryDispatchGate(
         master.deviceId,master.roleIssuedAt,latest.armRaw,latest.armRecord?.controllerRevision
       );
       if(!dispatchGate.ok){
+        await releaseEntrySlotReservation(commandId,symbol).catch(()=>false);
         return send(res,423,{
           ok:false,code:'ENTRY_PROTECTION_COMMIT_BLOCKED',reason:dispatchGate.reason,
           writeAttempted:false,plan,protectionPlan,
@@ -645,10 +782,24 @@ export default async function handler(req,res){
       });
     }
 
+    const slotGate=await reserveAndRecheckEntrySlot({
+      commandId,symbol,maxActivePositions,preflight,apiKey,secret,
+      margin,leverage,maxLoss,requestedPrice:limitPrice,orderType:'LIMIT',
+    });
+    if(!slotGate.ok){
+      return send(res,409,{
+        ok:false,code:'ENTRY_SLOT_RESERVATION_BLOCKED',
+        reason:slotGate.reservation?.reason||'ENTRY_SLOT_RESERVATION_FAILED',
+        reasons:Array.isArray(slotGate.preflight?.evaluation?.reasons)?slotGate.preflight.evaluation.reasons:[],
+        writeAttempted:false,plan,protection:exactOrder,
+      });
+    }
+    preflight=slotGate.preflight;
     const dispatchGate=await finalEntryDispatchGate(
       master.deviceId,master.roleIssuedAt,latest.armRaw,storedTransition.controllerRevision
     );
     if(!dispatchGate.ok){
+      await releaseEntrySlotReservation(commandId,symbol).catch(()=>false);
       return send(res,423,{
         ok:false,code:'ENTRY_EXECUTION_COMMIT_BLOCKED',reason:dispatchGate.reason,
         writeAttempted:false,plan,protection:exactOrder,
