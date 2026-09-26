@@ -203,3 +203,40 @@ test('unknown Binance auto-add margin state fails closed', () => {
   assert.ok(r.reasons.includes('AUTO_ADD_MARGIN_UNKNOWN'));
   assert.equal(r.normalized.autoAddMargin,null);
 });
+
+
+test('MARKET entry uses MARKET_LOT_SIZE instead of LIMIT LOT_SIZE', () => {
+  const seed=base();
+  const symbolInfo=structuredClone(seed.symbolInfo);
+  symbolInfo.filters.push({
+    filterType:'MARKET_LOT_SIZE',
+    minQty:'0.03',
+    maxQty:'100',
+    stepSize:'0.03',
+  });
+  const limit=evaluateEntryRisk(base({symbolInfo,orderType:'LIMIT'}));
+  const market=evaluateEntryRisk(base({symbolInfo,orderType:'MARKET'}));
+  assert.equal(limit.ready,true);
+  assert.equal(limit.normalized.quantity,0.2);
+  assert.equal(limit.normalized.quantityFilterType,'LOT_SIZE');
+  assert.equal(market.ready,true);
+  assert.equal(market.normalized.quantity,0.18);
+  assert.equal(market.normalized.quantityFilterType,'MARKET_LOT_SIZE');
+  assert.equal(market.normalized.quantityStepSize,0.03);
+});
+
+test('MARKET entry fails closed when Binance MARKET_LOT_SIZE is unavailable', () => {
+  const r=evaluateEntryRisk(base({orderType:'MARKET'}));
+  assert.equal(r.ready,false);
+  assert.ok(r.reasons.includes('MARKET_LOT_SIZE_MISSING'));
+  assert.equal(r.normalized.quantity,0);
+});
+
+test('entry API explicitly labels LIMIT versus MARKET before live risk evaluation', () => {
+  const source=fs.readFileSync('api/binance-entry-execute.js','utf8');
+  const matches=source.match(/orderType:marketEntry\?'MARKET':'LIMIT'/g)||[];
+  assert.equal(matches.length,2);
+  const preflight=fs.readFileSync('api/binance-entry-preflight.js','utf8');
+  assert.match(preflight,/orderType = 'LIMIT'/);
+  assert.match(preflight,/orderType: normalizedOrderType/);
+});
