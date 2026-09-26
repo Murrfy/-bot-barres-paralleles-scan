@@ -99,16 +99,36 @@ test('device IDs are bounded and restricted to safe characters', () => {
 });
 
 
-test('device session records expire absolutely from original creation time', () => {
+test('controller sessions still expire absolutely from original creation time', () => {
   const now=1_800_000_000_000;
-  const recent={createdAt:now-(10*24*60*60*1000)};
-  const expired={createdAt:now-((30*24*60*60*1000)+1)};
+  const recent={role:'controller',createdAt:now-(10*24*60*60*1000),lastSeenAt:now-1000};
+  const expired={role:'controller',createdAt:now-((30*24*60*60*1000)+1),lastSeenAt:now-1000};
   assert.equal(deviceSessionRecordActive(recent,now),true);
   assert.ok(deviceSessionRemainingSeconds(recent,now)>0);
   assert.equal(deviceSessionRecordActive(expired,now),false);
   assert.equal(deviceSessionRemainingSeconds(expired,now),0);
   assert.equal(deviceSessionRecordActive({},now),false);
   assert.equal(DEVICE_SESSION_MAX_AGE_SECONDS,30*24*60*60);
+});
+
+test('engine session remains active from recent validated heartbeat and expires after engine inactivity', () => {
+  const now=1_800_000_000_000;
+  const engineActive={
+    role:'master',
+    principal:'engine',
+    createdAt:now-(90*24*60*60*1000),
+    lastSeenAt:now-8000,
+  };
+  const engineInactive={
+    role:'master',
+    principal:'engine',
+    createdAt:now-(90*24*60*60*1000),
+    lastSeenAt:now-((30*24*60*60*1000)+1),
+  };
+  assert.equal(deviceSessionRecordActive(engineActive,now),true);
+  assert.ok(deviceSessionRemainingSeconds(engineActive,now)>29*24*60*60);
+  assert.equal(deviceSessionRecordActive(engineInactive,now),false);
+  assert.equal(deviceSessionRemainingSeconds(engineInactive,now),0);
 });
 
 
