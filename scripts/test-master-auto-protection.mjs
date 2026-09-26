@@ -57,10 +57,43 @@ test('MASTER never downgrades an already higher Zenith protection',()=>{
   const existing=[{
     orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
     type:'STOP',timeInForce:'GTC',reduceOnly:true,
-    triggerPrice:'300',price:'300',priceMatch:'NONE',clientAlgoId:'zth-PRO-existing'
+    triggerPrice:'300',price:'300',origQty:'1',executedQty:'0',priceMatch:'NONE',clientAlgoId:'zth-PRO-existing'
   }];
   const r=evaluateMasterAutoProgressiveProtection({
     position:long,markPrice:145,protectionStages:stages,currentOrders:existing,priceFilter:filter
+  });
+  assert.equal(r.action,'NONE');
+  assert.equal(r.reason,'PROTECTION_ALREADY_AT_OR_ABOVE_STAGE');
+});
+
+test('progressive protection is replaced when its remaining quantity no longer covers the live position',()=>{
+  const existing=[{
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',timeInForce:'GTC',reduceOnly:true,
+    triggerPrice:'139.8',price:'139.8',origQty:'1',executedQty:'0',priceMatch:'NONE',
+    clientAlgoId:'zth-PRO-oldqty'
+  }];
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:{...long,positionAmt:'2'},markPrice:125,protectionStages:stages,
+    currentOrders:existing,priceFilter:filter
+  });
+  assert.equal(r.action,'REPLACE');
+  assert.equal(r.reason,'PROGRESSIVE_QUANTITY_REFRESH_REQUIRED');
+  assert.equal(r.live.quantity,2);
+  assert.equal(r.previousClientAlgoId,'zth-PRO-oldqty');
+  assert.equal(r.level.quantity,2);
+});
+
+test('progressive protection with matching remaining quantity can remain in place',()=>{
+  const existing=[{
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',timeInForce:'GTC',reduceOnly:true,
+    triggerPrice:'139.8',price:'139.8',origQty:'2',executedQty:'0',priceMatch:'NONE',
+    clientAlgoId:'zth-PRO-rightqty'
+  }];
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:{...long,positionAmt:'2'},markPrice:125,protectionStages:stages,
+    currentOrders:existing,priceFilter:filter
   });
   assert.equal(r.action,'NONE');
   assert.equal(r.reason,'PROTECTION_ALREADY_AT_OR_ABOVE_STAGE');
