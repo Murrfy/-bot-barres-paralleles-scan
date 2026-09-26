@@ -32,6 +32,7 @@ import {
   entryWatchIdentity,
   evaluateEntryWatchTick,
   pruneEntryWatchStates,
+  entryWatchSlotRaceOutcome,
 } from '../lib/entry-watch.mjs';
 
 const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
@@ -947,11 +948,18 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
   if(executed.slotBlocked===true&&executed.prepared!==true){
     const state=entryWatch.states.get(wanted);
     if(state){
+      const retry=entryWatchSlotRaceOutcome({
+        previousPendingUntil:n(previous?.pendingUntil,0),
+        crossingAt:n(result.signal?.eventTime,n(eventTime,Date.now())),
+        now:Date.now(),
+      });
       state.triggeredAt=0;
-      state.pendingUntil=Math.max(Date.now()+1,n(eventTime,Date.now())+50000);
-      state.blockedAt=0;
+      state.pendingUntil=retry.pendingUntil;
+      state.blockedAt=retry.blockedAt;
       entryWatch.states.set(wanted,state);
+      entryWatch.lastError=retry.expired?'ENTRY_TRIGGER_EXPIRED':'ENTRY_WAITING_FOR_POSITION_SLOT';
       await persistEntryWatchStateNow().catch(()=>false);
+      if(retry.expired)log('ENTRY_WATCH_EXPIRED',{symbol:wanted,buy:definition.buy,reason:'SLOT_RACE'});
     }
   }
   log('AUTO_ENTRY_FAILED',{symbol:wanted,reason:executed.reason||'UNKNOWN'});
