@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { evaluateEntryRisk, REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
+import { evaluateEntryRisk, REAL_RISK_LIMITS, DEFAULT_MAX_ACTIVE_POSITIONS } from '../lib/risk-policy.mjs';
 
 function base(overrides = {}) {
   return {
@@ -105,11 +105,18 @@ test('protective orders never consume a new position slot', () => {
   assert.equal(r.reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'),false);
 });
 
-test('invalid configured maxActive fails closed instead of raising the server cap', () => {
-  const r = evaluateEntryRisk(base({ maxActivePositions:4 }));
+test('configured maxActive has no Zenith hard ceiling', () => {
+  const r = evaluateEntryRisk(base({ maxActivePositions:50 }));
+  assert.equal(r.ready,true);
+  assert.equal(r.normalized.maxActivePositions,50);
+  assert.equal(r.reasons.includes('MAX_ACTIVE_CONFIG_INVALID'),false);
+});
+
+test('invalid configured maxActive still fails closed', () => {
+  const r = evaluateEntryRisk(base({ maxActivePositions:0 }));
   assert.equal(r.ready,false);
   assert.ok(r.reasons.includes('MAX_ACTIVE_CONFIG_INVALID'));
-  assert.equal(r.normalized.maxActivePositions,REAL_RISK_LIMITS.maxActivePositions);
+  assert.equal(r.normalized.maxActivePositions,DEFAULT_MAX_ACTIVE_POSITIONS);
 });
 
 

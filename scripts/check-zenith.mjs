@@ -436,14 +436,15 @@ if (!entryProtectionGate.includes("import { REAL_RISK_LIMITS } from './risk-poli
     !entryProtectionGate.includes('impliedLossUsd > REAL_RISK_LIMITS.maxLossUsd + 1e-8')) {
   fail('future real-entry protection gate must require a Zenith-managed emergency stop within the shared $400 cap');
 }
-if (!riskPolicy.includes('maxActivePositions: 3') ||
+if (!riskPolicy.includes('DEFAULT_MAX_ACTIVE_POSITIONS = 3') ||
+    riskPolicy.includes('maxActivePositions: 3') ||
     !riskPolicy.includes('maxLeverage: 10') ||
     !riskPolicy.includes('maxMarginUsdt: 1000') ||
     !riskPolicy.includes('maxNotionalUsdt: 10000') ||
     !riskPolicy.includes('maxLossUsd: 400') ||
     !riskPolicy.includes('POSITION_MODE_HEDGE_UNSUPPORTED') ||
     !riskPolicy.includes('MARGIN_TYPE_NOT_ISOLATED')) {
-  fail('real-entry risk policy must enforce server-side position, leverage, margin, notional, loss, position-mode and isolated-margin gates');
+  fail('real-entry risk policy must keep default position concurrency plus leverage, margin, notional, loss, position-mode and isolated-margin gates');
 }
 
 const realProtectionLevels = fs.readFileSync('lib/real-protection-levels.mjs','utf8');

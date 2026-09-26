@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
-import { evaluateEntryRisk, REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
+import { evaluateEntryRisk, REAL_RISK_LIMITS, DEFAULT_MAX_ACTIVE_POSITIONS } from '../lib/risk-policy.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -158,7 +158,7 @@ export async function readConfiguredMaxActivePositions() {
   let state = null;
   try { state = raw ? JSON.parse(raw) : null; } catch {}
   const value = Number(state?.data?.settings?.maxActive);
-  if (!Number.isInteger(value) || value < 1 || value > REAL_RISK_LIMITS.maxActivePositions) {
+  if (!Number.isSafeInteger(value) || value < 1) {
     const e = new Error('MAX_ACTIVE_CONFIG_INVALID');
     e.code = 'MAX_ACTIVE_CONFIG_INVALID';
     throw e;
@@ -175,7 +175,7 @@ export async function runLiveEntryPreflight({
   maxLoss,
   requestedPrice = 0,
   orderType = 'LIMIT',
-  maxActivePositions = REAL_RISK_LIMITS.maxActivePositions,
+  maxActivePositions = DEFAULT_MAX_ACTIVE_POSITIONS,
 } = {}) {
   if (!apiKey || !secret) throw new Error('BINANCE_CREDENTIALS_REQUIRED');
   const sym = String(symbol || '').trim().toUpperCase();

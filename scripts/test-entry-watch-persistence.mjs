@@ -21,10 +21,11 @@ test('GET is engine-only and fenced by instance, lease and restart authorization
   assert.match(get,/KEY_ENGINE_AUTHORIZED/);
 });
 
-test('POST persists exact pending and expiry state and is bounded',()=>{
+test('POST persists exact pending and expiry state without a token-count cap',()=>{
   const post=block("if (action === 'engine-entry-watch-state' && req.method === 'POST')","if (action === 'engine-protection-high-water' && req.method === 'GET')");
-  assert.match(post,/keys\.length > 100/);
-  assert.match(post,/64 \* 1024/);
+  assert.doesNotMatch(post,/keys\.length > 100/);
+  assert.doesNotMatch(post,/ENGINE_ENTRY_WATCH_TOO_MANY_STATES/);
+  assert.match(post,/ENGINE_ENTRY_WATCH_STATE_MAX_BYTES/);
   assert.match(post,/pendingUntil/);
   assert.match(post,/blockedAt/);
   assert.match(post,/identity !== symbol \+ ':' \+ String\(validatedAt\) \+ ':' \+ String\(buy\)/);
