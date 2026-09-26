@@ -2132,11 +2132,17 @@ async function recoverTriggeredMaxLossRemainder(report){
     });
     if(!result.response.ok||result.data?.ok!==true){
       const reason=String(result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status));
+      const ambiguous=result.data?.ambiguous===true||result.data?.result?.ambiguous===true;
+      const wrote=result.data?.writeAttempted===true;
       maxLossRemainderRecovery.lastError='MAX_LOSS_REMAINDER_'+reason;
       runtime.error=maxLossRemainderRecovery.lastError;
       stream.lastError=maxLossRemainderRecovery.lastError;
       await publishRuntime().catch(()=>{});
-      return {handled:true,dispatched:false,reason:maxLossRemainderRecovery.lastError};
+      scheduleReconcile(ambiguous||wrote?100:500);
+      return {
+        handled:true,dispatched:false,reason:maxLossRemainderRecovery.lastError,
+        ambiguous,wrote,
+      };
     }
     const clientOrderId=String(result.data?.plan?.params?.newClientOrderId||'');
     if(!clientOrderId){
@@ -2144,6 +2150,7 @@ async function recoverTriggeredMaxLossRemainder(report){
       runtime.error=maxLossRemainderRecovery.lastError;
       stream.lastError=maxLossRemainderRecovery.lastError;
       await publishRuntime().catch(()=>{});
+      scheduleReconcile(100);
       return {handled:true,dispatched:false,reason:maxLossRemainderRecovery.lastError};
     }
     log('MAX_LOSS_REMAINDER_IOC_DISPATCHED',{
