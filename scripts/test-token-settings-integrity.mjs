@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
+import { REAL_RISK_LIMITS, DEFAULT_MAX_ACTIVE_POSITIONS } from '../lib/risk-policy.mjs';
 
 const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 const worker=await readFile(new URL('../server/zenith-engine-worker.mjs',import.meta.url),'utf8');
@@ -92,12 +92,14 @@ test('MAX-LOSS repair prefers per-token maxLoss before global maxLoss',()=>{
 test('client controls do not advertise values above server real-risk caps',()=>{
   assert.equal(REAL_RISK_LIMITS.maxLeverage,10);
   assert.equal(REAL_RISK_LIMITS.maxMarginUsdt,1000);
-  assert.equal(REAL_RISK_LIMITS.maxActivePositions,3);
+  assert.equal(DEFAULT_MAX_ACTIVE_POSITIONS,3);
+  assert.equal('maxActivePositions' in REAL_RISK_LIMITS,false);
   assert.match(html,/id="fLev"[^>]*max="10"/);
   assert.match(html,/id="fMargin"[^>]*max="1000"/);
-  assert.match(html,/id="bMaxActive"[^>]*max="3"/);
+  assert.match(html,/id="bMaxActive"[^>]*min="1"[^>]*step="1"/);
+  assert.doesNotMatch(html,/id="bMaxActive"[^>]*max=/);
   assert.doesNotMatch(html,/lev=clamp\(n\(t\.leverage,settings\.leverage\),1,125\)/);
-  assert.doesNotMatch(html,/settings\.maxActive\|\|3\)\),1,20/);
+  assert.doesNotMatch(html,/readBotSettings\(\)[\s\S]{0,220}Math\.min/);
 });
 
 test('watched tokens freeze settings while active positions keep only safe controls editable',()=>{
