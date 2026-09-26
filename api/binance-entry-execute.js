@@ -43,6 +43,8 @@ const REAL_TRADING_ENABLED=process.env.ZENITH_REAL_TRADING_ENABLED==='1';
 const BINANCE_WRITE_ENABLED=process.env.ZENITH_BINANCE_WRITE_ENABLED==='1';
 const PAIRING_DISABLED=process.env.ZENITH_PAIRING_DISABLED==='1';
 const REAL_ENTRY_WRITE_ENABLED=process.env.ZENITH_REAL_ENTRY_WRITE_ENABLED==='1';
+const PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED=
+  process.env.ZENITH_PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED==='1';
 const VERCEL_PRODUCTION_WRITE_ALLOWED=process.env.VERCEL_ENV==='production'&&process.env.VERCEL_GIT_COMMIT_REF==='main';
 const ENTRY_EXECUTION_RATE_LIMIT_PER_MINUTE=6;
 const BINANCE_API_BASE='https://api.binance.com';
@@ -422,6 +424,12 @@ export default async function handler(req,res){
   );
   if(!requestValid){
     return send(res,400,{ok:false,code:phaseProvided?'ENTRY_EXECUTION_REQUEST_INVALID':'ENTRY_PHASE_REQUIRED',writeAttempted:false});
+  }
+  if(!PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED){
+    return send(res,423,{
+      ok:false,code:'PREENTRY_REDUCE_ONLY_STOP_COMPAT_REQUIRED',
+      writeAttempted:false,
+    });
   }
 
   try{
