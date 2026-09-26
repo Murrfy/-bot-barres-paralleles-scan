@@ -69,10 +69,26 @@ test('listenKey expiry and disconnect both require reconciliation',()=>{
   assert.equal(r.state.needsReconciliation,true);
 });
 
-test('ALGO_UPDATE is tracked separately from standard orders',()=>{
-  const r=applyUserDataEvent(readyState(),{e:'ALGO_UPDATE',E:1800,T:1799,o:{s:'BTCUSDT',ai:77,ca:'protect-77',X:'NEW',o:'STOP_MARKET',S:'SELL',ps:'BOTH',sp:'49000',ia:true}});
+test('ALGO_UPDATE uses current Binance algo identifiers and execution fields',()=>{
+  const r=applyUserDataEvent(readyState(),{e:'ALGO_UPDATE',E:1800,T:1799,o:{
+    s:'BTCUSDT',aid:77,caid:'protect-77',X:'TRIGGERED',o:'STOP',S:'SELL',ps:'BOTH',
+    f:'IOC',q:'0.02',tp:'49000',p:'0',pm:'OPPONENT',R:true,cp:false,
+    ai:'9001',ap:'48999.5',aq:'0.01',act:'LIMIT',tt:1798,gtd:0,rm:'',ia:false
+  }});
   assert.equal(Object.keys(r.state.algoOrders).length,1);
-  assert.equal(r.state.algoOrders['BTCUSDT:algo:77'].activated,true);
+  const order=r.state.algoOrders['BTCUSDT:algo:77'];
+  assert.equal(order.clientAlgoId,'protect-77');
+  assert.equal(order.orderType,'STOP');
+  assert.equal(order.triggerPrice,'49000');
+  assert.equal(order.timeInForce,'IOC');
+  assert.equal(order.priceMatch,'OPPONENT');
+  assert.equal(order.reduceOnly,true);
+  assert.equal(order.closePosition,false);
+  assert.equal(order.actualOrderId,'9001');
+  assert.equal(order.averagePrice,'48999.5');
+  assert.equal(order.executedQuantity,'0.01');
+  assert.equal(order.actualOrderType,'LIMIT');
+  assert.equal(order.triggerTime,1798);
 });
 
 test('explicit reconciliation invalidation keeps connection but fails closed',()=>{
