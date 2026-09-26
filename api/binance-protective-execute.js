@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
 import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
-import { protectionOnlyMismatchTarget, protectiveRepairTarget, pendingEntryProtectionLossCancelAllowed } from '../lib/protective-command.mjs';
+import { protectionOnlyMismatchTarget, protectiveRepairTarget, pendingEntryProtectionLossCancelAllowed, triggeredMaxLossRemainderRecoveryAllowed } from '../lib/protective-command.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
 
@@ -145,6 +145,12 @@ function runtimeEntryOrder(runtimeState,symbol,clientOrderId){
     String(o?.clientOrderId||'')===clientOrderId
   )||null;
 }
+function certifiedReportPosition(report,symbol,dir){
+  const list=Array.isArray(report?.certifiedPositions)?report.certifiedPositions:[];
+  return list.find(p=>
+    String(p?.symbol||'').toUpperCase()===symbol&&direction(p)===dir&&quantity(p)>0
+  )||null;
+}
 function validateExecutionArmRecord(record,masterDeviceId,deploymentSha=DEPLOYMENT_SHA){
   if(!deploymentSha)return 'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING';
   if(!record||record.version!==1)return 'REAL_EXECUTION_NOT_ARMED';
@@ -157,7 +163,7 @@ function protectiveModeReason(mode){
   if(normalized==='RUNNING'||normalized==='PAUSE_PENDING')return '';
   return 'MASTER_PAUSED';
 }
-function executionReadiness(runtimeState,report,masterDeviceId,repairTarget='',pendingEntryCancelRecovery=false){
+function executionReadiness(runtimeState,report,masterDeviceId,repairTarget='',pendingEntryCancelRecovery=false,maxLossRemainderRecovery=false){
   const age=Date.now()-Number(runtimeState?.updatedAt||0);
   if(!runtimeState?.data||String(runtimeState?.masterDeviceId||'')!==String(masterDeviceId))return 'MASTER_RUNTIME_WRONG_DEVICE';
   if(!Number.isFinite(age)||age<0||age>30000)return 'MASTER_RUNTIME_STALE';
@@ -165,7 +171,7 @@ function executionReadiness(runtimeState,report,masterDeviceId,repairTarget='',p
   if(String(data.executionMode||data.mode||'').toUpperCase()!=='REAL')return 'MASTER_RUNTIME_NOT_REAL';
   const stream=data.userStream;
   if(!stream||stream.connected!==true)return 'USER_STREAM_NOT_READY';
-  if(pendingEntryCancelRecovery!==true&&
+  if(pendingEntryCancelRecovery!==true&&maxLossRemainderRecovery!==true&&
      (stream.ready!==true||stream.failClosed!==false||stream.needsReconciliation!==false)){
     return 'USER_STREAM_NOT_READY';
   }
@@ -179,7 +185,7 @@ function executionReadiness(runtimeState,report,masterDeviceId,repairTarget='',p
   const clean=report.status==='CLEAN_REAL'&&report.failClosed===false&&report.reasons.length===0;
   if(clean)return '';
 
-  if(pendingEntryCancelRecovery===true)return '';
+  if(pendingEntryCancelRecovery===true||maxLossRemainderRecovery===true)return '';
 
   const target=String(repairTarget||'').toUpperCase();
   if(target&&protectionOnlyMismatchTarget(report)===target)return '';
@@ -250,8 +256,13 @@ export default async function handler(req,res){
   if(pendingEntryCancelRecovery&&String(master?.principal||'')!=='engine'){
     return send(res,423,{ok:false,code:'ENTRY_PROTECTION_RECOVERY_ENGINE_REQUIRED',writeAttempted:false});
   }
+  const maxLossRemainderRecovery=type==='EXEC_CLOSE_POSITION'&&
+    triggeredMaxLossRemainderRecoveryAllowed(report,req.body);
+  if(maxLossRemainderRecovery&&String(master?.principal||'')!=='engine'){
+    return send(res,423,{ok:false,code:'MAX_LOSS_REMAINDER_RECOVERY_ENGINE_REQUIRED',writeAttempted:false});
+  }
   const readinessReason=executionReadiness(
-    runtimeState,report,master.deviceId,repairTarget,pendingEntryCancelRecovery
+    runtimeState,report,master.deviceId,repairTarget,pendingEntryCancelRecovery,maxLossRemainderRecovery
   );
   if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
 
@@ -323,7 +334,9 @@ export default async function handler(req,res){
     return send(res,400,{ok:false,code:'PROTECTIVE_REQUEST_INVALID',writeAttempted:false});
   }
 
-  const livePosition=runtimePosition(runtimeState,symbol,dir);
+  const livePosition=maxLossRemainderRecovery
+    ?certifiedReportPosition(report,symbol,dir)
+    :runtimePosition(runtimeState,symbol,dir);
   const liveQty=quantity(livePosition);
   if(!livePosition||!(liveQty>0))return send(res,409,{ok:false,code:'POSITION_NOT_FOUND',writeAttempted:false});
   if(requestedQty>liveQty+1e-12)return send(res,409,{ok:false,code:'CLOSE_QUANTITY_EXCEEDS_POSITION',liveQuantity:liveQty,writeAttempted:false});
