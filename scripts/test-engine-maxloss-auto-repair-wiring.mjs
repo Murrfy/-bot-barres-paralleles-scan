@@ -81,13 +81,20 @@ test('entry watch and automatic gain logic skip only a quarantined symbol',()=>{
 });
 
 
-test('MAX-LOSS recovery serializes only commands on the same symbol',()=>{
+test('MAX-LOSS recovery serializes only the brief write globally and the recovering symbol logically',()=>{
   const start=worker.indexOf('async function commandCycle');
   const end=worker.indexOf('function startCommandLoop',start);
   const block=worker.slice(start,end);
-  assert.doesNotMatch(block,/if\(execution\.busy\|\|maxLossRemainderRecovery\.busy\|\|stopping\)/);
+  assert.match(block,/if\(execution\.busy\|\|maxLossRemainderRecovery\.writeBusy\|\|stopping\)return false/);
+  assert.doesNotMatch(block,/execution\.busy\|\|maxLossRemainderRecovery\.busy\|\|stopping/);
   assert.match(block,/const dispatchSymbol=/);
   assert.match(block,/maxLossRemainderRecovery\.busy&&maxLossRemainderRecovery\.symbol/);
   assert.match(block,/dispatchSymbol===String\(maxLossRemainderRecovery\.symbol\)\.toUpperCase\(\)/);
   assert.match(block,/requeueCommand\(raw,'SYMBOL_MAX_LOSS_RECOVERY_BUSY',500\)/);
+
+  const recoverStart=worker.indexOf('async function recoverTriggeredMaxLossRemainder');
+  const recoverEnd=worker.indexOf('async function reconcile',recoverStart);
+  const recoverBlock=worker.slice(recoverStart,recoverEnd);
+  assert.match(recoverBlock,/maxLossRemainderRecovery\.writeBusy=true/);
+  assert.match(recoverBlock,/maxLossRemainderRecovery\.writeBusy=false/);
 });
