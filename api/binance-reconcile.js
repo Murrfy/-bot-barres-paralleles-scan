@@ -3,6 +3,7 @@ import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, de
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import { evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches } from '../lib/entry-transition.mjs';
+import { isLimitIocMaxLossOrder } from '../lib/maxloss-order-shape.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -243,6 +244,7 @@ function normalizeActualOrder(o) {
     closePosition: o.closePosition === true || o.closePosition === 'true',
     timeInForce: String(o.timeInForce || ''),
     workingType: String(o.workingType || ''),
+    priceMatch: String(o.priceMatch || ''),
     priceProtect: Boolean(o.priceProtect),
     updateTime: number(o.updateTime ?? o.time),
   };
@@ -267,6 +269,7 @@ function normalizeActualAlgoOrder(o) {
     closePosition: o.closePosition === true || o.closePosition === 'true',
     timeInForce: String(o.timeInForce || ''),
     workingType: String(o.workingType || ''),
+    priceMatch: String(o.priceMatch || ''),
     priceProtect: Boolean(o.priceProtect),
     updateTime: number(o.updateTime ?? o.createTime),
   };
@@ -398,9 +401,12 @@ function authorizedPendingMaxLossEdit(position, actualOrders, processingCommands
       String(order?.orderClass || '').toUpperCase() === 'ALGO' &&
       String(order?.symbol || '').toUpperCase() === symbol &&
       String(order?.positionSide || '').toUpperCase() === String(position?.positionSide || '').toUpperCase() &&
-      String(order?.side || '').toUpperCase() === expectedSide &&
-      String(order?.type || '').toUpperCase() === 'STOP_MARKET' &&
-      order?.closePosition === true &&
+      isLimitIocMaxLossOrder(order,{
+        symbol,
+        side:expectedSide,
+        positionSide:String(position?.positionSide || 'BOTH').toUpperCase(),
+        quantity,
+      }) &&
       Boolean(zenithManagedOrderId(order)) &&
       Math.abs(number(order?.triggerPrice ?? order?.stopPrice, NaN) - triggerPrice) <= Math.max(1e-9, Math.abs(triggerPrice) * 1e-10)
     );
@@ -444,10 +450,12 @@ function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions
     for (const order of Array.isArray(actualOrders) ? actualOrders : []) {
       if (String(order?.orderClass || '').toUpperCase() !== 'ALGO') continue;
       if (String(order?.symbol || '').toUpperCase() !== position.symbol) continue;
-      if (String(order?.positionSide || '').toUpperCase() !== String(position.positionSide || '').toUpperCase()) continue;
-      if (String(order?.side || '').toUpperCase() !== expectedSide) continue;
-      if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') continue;
-      if (order?.closePosition !== true) continue;
+      if (!isLimitIocMaxLossOrder(order,{
+        symbol:position.symbol,
+        side:expectedSide,
+        positionSide:String(position.positionSide || 'BOTH').toUpperCase(),
+        quantity,
+      })) continue;
       if (!zenithManagedOrderId(order)) continue;
 
       const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
@@ -650,10 +658,12 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
     for (const order of actualOrders) {
       if (String(order?.orderClass || '').toUpperCase() !== 'ALGO') continue;
       if (String(order?.symbol || '').toUpperCase() !== position.symbol) continue;
-      if (String(order?.positionSide || '').toUpperCase() !== String(position.positionSide || '').toUpperCase()) continue;
-      if (String(order?.side || '').toUpperCase() !== expectedSide) continue;
-      if (String(order?.type || '').toUpperCase() !== 'STOP_MARKET') continue;
-      if (order?.closePosition !== true) continue;
+      if (!isLimitIocMaxLossOrder(order,{
+        symbol:position.symbol,
+        side:expectedSide,
+        positionSide:String(position.positionSide || 'BOTH').toUpperCase(),
+        quantity,
+      })) continue;
       if (!zenithManagedOrderId(order)) continue;
       const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
       if (!(entryPrice > 0) || !(trigger > 0) || !(quantity > 0)) continue;
@@ -741,11 +751,12 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
         clientAlgoId: transition.protectionClientAlgoId,
         side: String(order.side || (transition.direction === 'LONG' ? 'SELL' : 'BUY')).toUpperCase(),
         positionSide: String(order.positionSide || 'BOTH').toUpperCase(),
-        type: String(order.type || 'STOP_MARKET').toUpperCase(),
+        type: String(order.type || 'STOP').toUpperCase(),
         reduceOnly: order.reduceOnly === true || order.reduceOnly === 'true',
         closePosition: order.closePosition === true || order.closePosition === 'true',
         triggerPrice: String(order.triggerPrice ?? order.stopPrice ?? transition.protectionTriggerPrice),
         price: String(order.price ?? ''),
+        priceMatch: String(order.priceMatch || ''),
         origQty: String(order.origQty ?? ''),
         timeInForce: String(order.timeInForce || ''),
         expiresAt: transition.expiresAt,

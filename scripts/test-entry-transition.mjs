@@ -17,8 +17,9 @@ const base={
   engineInstanceId:'engine-instance-test',
 };
 const protection={
-  orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP_MARKET',
-  closePosition:true,reduceOnly:false,triggerPrice:'48000',
+  orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'STOP',
+  timeInForce:'IOC',priceMatch:'OPPONENT',quantity:'0.2',
+  closePosition:false,reduceOnly:true,triggerPrice:'48000',
   clientAlgoId:'zth-MAX-abcdef123456789012345678'
 };
 const entry={
@@ -45,7 +46,9 @@ test('only exact MAX-LOSS identity is accepted for the prepared transition',()=>
   assert.equal(transitionProtectionMatches(protection,tr),true);
   assert.equal(transitionProtectionMatches({...protection,clientAlgoId:'zth-MAX-other'},tr),false);
   assert.equal(transitionProtectionMatches({...protection,triggerPrice:'47999'},tr),false);
-  assert.equal(transitionProtectionMatches({...protection,closePosition:false},tr),false);
+  assert.equal(transitionProtectionMatches({...protection,timeInForce:'GTC'},tr),false);
+  assert.equal(transitionProtectionMatches({...protection,priceMatch:'OPPONENT_5'},tr),false);
+  assert.equal(transitionProtectionMatches({...protection,quantity:'0.1'},tr),false);
 });
 
 test('ENTRY_SUBMITTED accepts only exact deterministic LIMIT leg',()=>{

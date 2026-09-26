@@ -23,6 +23,10 @@ const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
   .replace(
     /^import \{ evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches \} from '\.\.\/lib\/entry-transition\.mjs';\n/m,
     "const entryTransitionOrderIdentity = order => { const s=String(order?.symbol||'').toUpperCase(); if(order?.clientAlgoId)return s+':algo-client:'+String(order.clientAlgoId); if(order?.algoId)return s+':algo:'+String(order.algoId); if(order?.clientOrderId)return s+':client:'+String(order.clientOrderId); if(order?.orderId)return s+':id:'+String(order.orderId); return ''; }; const evaluateEntryTransitionReconciliation = () => ({active:[],invalid:[],expired:[],allowedOrderIdentities:new Set(),missingProtections:[],missingEntries:[]}); const transitionEntryMatches = () => false; const transitionProtectionMatches = () => false;\n"
+  )
+  .replace(
+    /^import \{ isLimitIocMaxLossOrder \} from '\.\.\/lib\/maxloss-order-shape\.mjs';\n/m,
+    "const isLimitIocMaxLossOrder = (o,{symbol='',side='',positionSide='BOTH',quantity=NaN}={}) => { const b=v=>v===true||v==='true'; const u=v=>String(v??'').toUpperCase(); const num=v=>Number(v); if(!o||u(o.orderClass||'ALGO')!=='ALGO'||(symbol&&u(o.symbol)!==u(symbol))||(side&&u(o.side)!==u(side))||u(o.positionSide||'BOTH')!==u(positionSide)||u(o.orderType||o.type)!=='STOP'||u(o.timeInForce)!=='IOC'||!b(o.reduceOnly)||b(o.closePosition)||u(o.priceMatch)!=='OPPONENT'||!/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(o.clientAlgoId||''))) return false; if(Number.isFinite(num(quantity))){ const q=num(o.origQty??o.quantity); if(!(q>0)||Math.abs(q-num(quantity))>Math.max(1e-9,Math.abs(num(quantity))*1e-10)) return false; } return true; };\n"
   );
 const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder } = await import(
   'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder };').toString('base64')
@@ -34,8 +38,8 @@ const position = { symbol: 'BTCUSDT', positionSide: 'BOTH', positionAmt: '1', en
 const stop = { symbol: 'BTCUSDT', positionSide: 'BOTH', side: 'SELL', type: 'STOP_MARKET',
   orderId: 42, origQty: '1', executedQty: '0', reduceOnly: true, closePosition: false };
 const emergency = { orderClass:'ALGO', symbol:'BTCUSDT', positionSide:'BOTH', side:'SELL',
-  type:'STOP_MARKET', algoId:77, clientAlgoId:'zth-MAX-test', triggerPrice:'49600',
-  reduceOnly:false, closePosition:true, algoStatus:'NEW' };
+  type:'STOP', timeInForce:'IOC', priceMatch:'OPPONENT', algoId:77, clientAlgoId:'zth-MAX-test',
+  quantity:'1', triggerPrice:'49600', reduceOnly:true, closePosition:false, algoStatus:'NEW' };
 const progressive = { orderClass:'ALGO', symbol:'BTCUSDT', positionSide:'BOTH', side:'SELL',
   type:'STOP', algoId:78, clientAlgoId:'zth-PRO-test', quantity:'1', triggerPrice:'51000',
   reduceOnly:true, closePosition:false, algoStatus:'NEW' };
@@ -55,7 +59,7 @@ test('missing or stale runtime never certifies clean', () => {
 test('unknown Binance activity blocks simulation', () => {
   assert.equal(reconcile(runtime([], [], 'SIMULATION'), [normalized], []).failClosed, true);
 });
-test('matching position requires a valid close-all MAX-LOSS algo stop', () => {
+test('matching position requires a valid LIMIT IOC MAX-LOSS algo stop', () => {
   const result = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
   assert.equal(result.failClosed, false);
   assert.deepEqual(result.differences.missingMaxLossProtections, []);
@@ -70,14 +74,14 @@ test('missing protection blocks even if runtime did not declare it', () => {
   assert.ok(result.reasons.includes('MISSING_BINANCE_PROTECTION'));
   assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
 });
-test('progressive STOP alone never substitutes for the emergency MAX-LOSS stop', () => {
+test('progressive STOP GTC never substitutes for the MAX-LOSS STOP IOC', () => {
   const result = reconcile(runtime([position], [progressive]), [normalized], [normalizedProgressive]);
   assert.equal(result.reasons.includes('MISSING_BINANCE_PROTECTION'), false);
   assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
   assert.deepEqual(result.differences.missingMaxLossProtections, ['BTCUSDT:LONG']);
 });
 
-test('MAX-LOSS STOP_MARKET must trigger on the loss side of the entry', () => {
+test('MAX-LOSS LIMIT IOC must trigger on the loss side of the entry', () => {
   const wrong = { ...emergency, algoId:79, clientAlgoId:'zth-MAX-wrong', triggerPrice:'51000' };
   const actual = normalizeActualAlgoOrder(wrong);
   const result = reconcile(runtime([position], [wrong]), [normalized], [actual]);
