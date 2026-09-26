@@ -152,6 +152,7 @@ function normalizeStandardOrder(o){
     closePosition:bool(o.closePosition),
     timeInForce:String(o.timeInForce||''),
     workingType:String(o.workingType||''),
+    priceMatch:String(o.priceMatch||''),
     priceProtect:bool(o.priceProtect),
     updateTime:n(o.updateTime??o.time),
   };
