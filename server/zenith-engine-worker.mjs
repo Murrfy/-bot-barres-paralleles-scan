@@ -754,15 +754,18 @@ function watchedEntryConfig(symbol){
   const margin=n(token.margin,n(globalSettings.margin,0));
   const leverage=n(token.leverage,n(globalSettings.leverage,0));
   const maxLoss=n(token.maxLoss,n(globalSettings.maxLoss,0));
+  const exactSaleEnabled=token.exactSaleEnabled===true;
+  const exactSalePrice=exactSaleEnabled?n(token.exactSalePrice,0):0;
   const requestedMaxActive=globalSettings.maxActive==null
     ?DEFAULT_MAX_ACTIVE_POSITIONS
     :Number(globalSettings.maxActive);
   if(!Number.isSafeInteger(requestedMaxActive)||requestedMaxActive<1||requestedMaxActive>MAX_ACTIVE_POSITIONS_HARD_CAP)return null;
   const maxActive=requestedMaxActive;
   if(!(margin>0)||!(leverage>0)||!(maxLoss>0))return null;
+  if(exactSaleEnabled&&!(exactSalePrice>definition.buy))return null;
   return {
     ...definition,
-    margin,leverage,maxLoss,maxActive,
+    margin,leverage,maxLoss,maxActive,exactSaleEnabled,exactSalePrice,
   };
 }
 
@@ -826,6 +829,9 @@ async function executeWatchedEntry(config,{limitPrice=config.buy,delayedCurrentP
   const symbol=config.symbol;
   const effectiveLimitPrice=n(limitPrice,0);
   if(!(effectiveLimitPrice>0))return {ok:false,reason:'ENTRY_LIMIT_PRICE_INVALID'};
+  if(config.exactSaleEnabled===true&&!(n(config.exactSalePrice,0)>effectiveLimitPrice)){
+    return {ok:false,reason:'ENTRY_EXACT_SALE_NOT_ABOVE_LIMIT',exactSaleBlocked:true};
+  }
   if(entryWatch.busySymbols.has(symbol))return {ok:false,reason:'ENTRY_ALREADY_BUSY'};
   if(!entryWatchMayDispatch(symbol))return {ok:false,reason:'ENTRY_SLOT_OR_RUNTIME_NOT_READY',slotBlocked:true};
 
@@ -926,6 +932,32 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
   if(result.action==='TRIGGER'&&result.signal?.delayedCurrentPrice===true){
     try{
       const quote=await currentBestAsk(wanted);
+      const delayedConfig=watchedEntryConfig(wanted);
+      if(!delayedConfig){
+        const retryState={
+          ...result.state,
+          triggeredAt:0,
+          pendingUntil:Math.max(n(previous?.pendingUntil,0),n(eventTime,Date.now())+1),
+          blockedAt:0,
+        };
+        entryWatch.states.set(wanted,retryState);
+        entryWatch.lastError='ENTRY_CONFIG_INVALID';
+        scheduleEntryWatchSave(250);
+        return true;
+      }
+      if(delayedConfig.exactSaleEnabled===true&&!(n(delayedConfig.exactSalePrice,0)>quote.askPrice)){
+        const retryState={
+          ...result.state,
+          lastPrice:quote.askPrice,
+          triggeredAt:0,
+          pendingUntil:Math.max(n(previous?.pendingUntil,0),n(eventTime,Date.now())+1),
+          blockedAt:0,
+        };
+        entryWatch.states.set(wanted,retryState);
+        entryWatch.lastError='ENTRY_WAITING_EXACT_SALE_PRICE';
+        scheduleEntryWatchSave(250);
+        return true;
+      }
       result.signal.limitPrice=quote.askPrice;
       result.signal.observedBestAsk=quote.askPrice;
       result.signal.observedBestAskQty=quote.askQty;
@@ -980,6 +1012,20 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
   if(executed.ok){
     scheduleEntryWatchSave(250);
     return true;
+  }
+
+  if(executed.exactSaleBlocked===true){
+    const state=entryWatch.states.get(wanted);
+    if(state){
+      state.triggeredAt=0;
+      state.pendingUntil=0;
+      state.blockedAt=Date.now();
+      entryWatch.states.set(wanted,state);
+      entryWatch.lastError=executed.reason||'ENTRY_EXACT_SALE_NOT_ABOVE_LIMIT';
+      await persistEntryWatchStateNow().catch(()=>false);
+    }
+    log('ENTRY_WATCH_BLOCKED',{symbol:wanted,buy:definition.buy,reason:'EXACT_SALE_NOT_ABOVE_LIMIT'});
+    return false;
   }
 
   // A slot can disappear between the crossing decision and Binance preflight. Preserve the
