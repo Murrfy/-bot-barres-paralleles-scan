@@ -289,12 +289,10 @@ function autoPositionKey(position){
   const amount=n(position?.positionAmt??position?.quantity,0);
   const symbol=String(position?.symbol||'').toUpperCase();
   const direction=amount>=0?'LONG':'SHORT';
-  const qty=Math.abs(amount);
-  const entry=n(position?.entryPrice,0);
   const lifecycle=Math.max(0,Math.floor(n(
     position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,0
   )));
-  return `${symbol}:${direction}:${qty}:${entry}:${lifecycle}`;
+  return `${symbol}:${direction}:${lifecycle}`;
 }
 function observedLinearPnl(position,mark){
   const amount=n(position?.positionAmt??position?.quantity,0);
