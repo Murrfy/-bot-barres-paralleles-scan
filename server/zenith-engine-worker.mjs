@@ -1923,6 +1923,31 @@ async function markMaxLossRepairFailure(reason,symbol=''){
   scheduleReconcile(1500);
   return code;
 }
+function symbolOrphanCleanupQuarantined(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  return Boolean(wanted&&stream.symbolQuarantines.some(row=>
+    String(row?.symbol||'').toUpperCase()===wanted&&
+    String(row?.reason||'').toUpperCase()==='ORPHAN_PROTECTION_CLEANUP_PENDING'
+  ));
+}
+
+async function markOrphanCleanupFailure(reason,symbol=''){
+  const code=String(reason||'ORPHAN_CLEANUP_FAILED');
+  const wanted=String(symbol||'').toUpperCase();
+  if(symbolOrphanCleanupQuarantined(wanted)){
+    runtime.error='SYMBOL_QUARANTINE_'+wanted+'_'+code;
+    stream.lastError=runtime.error;
+    await publishRuntime().catch(()=>{});
+    scheduleReconcile(1500);
+    return code;
+  }
+  runtime.error=code;
+  stream.lastError=code;
+  await invalidateStream(code).catch(()=>{});
+  scheduleReconcile(1500);
+  return code;
+}
+
 async function waitForWriteAheadEntryEvidence(target,timeoutMs=5000){
   const deadline=Date.now()+Math.max(500,n(timeoutMs,5000));
   let lastOrder=null;
@@ -2376,7 +2401,10 @@ async function reconcile(secondPass=false){
     const orphanTargets=orphanZenithCleanupOrders(data.report);
     if(orphanTargets.length){
       if(secondPass){
-        await invalidateStream('ORPHAN_CLEANUP_RECONCILIATION_FAILED');
+        await markOrphanCleanupFailure(
+          'ORPHAN_CLEANUP_RECONCILIATION_FAILED',
+          orphanTargets[0]?.symbol
+        );
         return false;
       }
       const expiredEntryOrphans=expiredEntryOrphanProtections(data.report);
@@ -2394,7 +2422,7 @@ async function reconcile(secondPass=false){
         const cleaned=await callProtectiveUpdateExecute(body);
         if(!cleaned.response.ok||cleaned.data?.ok!==true){
           const reason='ORPHAN_CLEANUP_'+String(cleaned.data?.code||('HTTP_'+cleaned.response.status));
-          await invalidateStream(reason);
+          await markOrphanCleanupFailure(reason,target.symbol);
           return false;
         }
         const clientId=target.orderClass==='ALGO'?target.clientAlgoId:target.clientOrderId;
@@ -2408,7 +2436,7 @@ async function reconcile(secondPass=false){
           ?['CANCELED','EXPIRED','REJECTED'].includes(status)
           :['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status);
         if(!safe){
-          await invalidateStream('ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED');
+          await markOrphanCleanupFailure('ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED',target.symbol);
           return false;
         }
         const expiredEntry=expiredEntryOrphans.find(row=>
