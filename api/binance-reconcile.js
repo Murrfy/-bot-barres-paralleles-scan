@@ -843,14 +843,6 @@ function zenithScopeSymbols(runtimeState,controllerState,entryTransitions=[],pro
     const symbol=String(value||'').toUpperCase();
     if(/^[A-Z0-9]{3,30}$/.test(symbol))out.add(symbol);
   };
-  const runtimeData=runtimeState?.data&&typeof runtimeState.data==='object'?runtimeState.data:{};
-  for(const key of ['binancePositions','openPositions']){
-    for(const row of Array.isArray(runtimeData[key])?runtimeData[key]:[])add(row?.symbol);
-  }
-  for(const key of ['binanceOrders','openOrders']){
-    for(const row of Array.isArray(runtimeData[key])?runtimeData[key]:[])add(row?.symbol);
-  }
-
   const controllerData=controllerState?.data&&typeof controllerState.data==='object'?controllerState.data:{};
   for(const key of ['tokenSettings','manualTokens','validated']){
     const rows=controllerData[key]&&typeof controllerData[key]==='object'&&!Array.isArray(controllerData[key])
@@ -867,6 +859,25 @@ function zenithScopeSymbols(runtimeState,controllerState,entryTransitions=[],pro
     if(zenithManagedOrderId(order))add(order?.symbol);
   }
   return out;
+}
+
+function runtimeStateWithinScope(runtimeState,scopeSymbols) {
+  if(!runtimeState||typeof runtimeState!=='object')return runtimeState;
+  const next=JSON.parse(JSON.stringify(runtimeState));
+  const data=next?.data&&typeof next.data==='object'?next.data:null;
+  if(!data)return next;
+  const allowed=symbol=>scopeSymbols.has(String(symbol||'').toUpperCase());
+  if(Array.isArray(data.binancePositions))data.binancePositions=data.binancePositions.filter(row=>allowed(row?.symbol));
+  if(Array.isArray(data.openPositions))data.openPositions=data.openPositions.filter(row=>allowed(row?.symbol));
+  if(Array.isArray(data.binanceOrders))data.binanceOrders=data.binanceOrders.filter(row=>
+    allowed(row?.symbol)||Boolean(zenithManagedOrderId(row))
+  );
+  if(Array.isArray(data.openOrders))data.openOrders=data.openOrders.filter(row=>
+    allowed(row?.symbol)||Boolean(zenithManagedOrderId(row))
+  );
+  data.activePositions=Array.isArray(data.binancePositions)?data.binancePositions.length:Number(data.activePositions||0);
+  data.openOrderCount=Array.isArray(data.binanceOrders)?data.binanceOrders.length:Number(data.openOrderCount||0);
+  return next;
 }
 
 function orderProtectsPosition(order, position) {
@@ -1738,8 +1749,9 @@ export default async function handler(req, res) {
       .map(normalizeActualAlgoOrder);
 
     const actualOrders = [...standardOrders, ...algoOrders];
+    const scopedRuntimeState=runtimeStateWithinScope(runtimeState,scopeSymbols);
     const result = enforceConfiguredMaxLossSafety(
-      reconcile(runtimeState, actualPositions, actualOrders, entryTransitions),
+      reconcile(scopedRuntimeState, actualPositions, actualOrders, entryTransitions),
       controllerState,
       actualPositions,
       actualOrders,
