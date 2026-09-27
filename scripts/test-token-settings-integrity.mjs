@@ -186,7 +186,7 @@ test('global defaults stay visible and are copied only by explicit action',()=>{
 
 
 test('live Binance positions lock unsafe token controls on the iPhone',()=>{
-  const helpers=block('function controllerRealPositionBySymbol(symbol)','function masterRealPositionBySymbol(symbol)');
+  const helpers=block('function controllerRealPositionBySymbol(symbol)','function trackedSymbols()');
   assert.match(helpers,/binanceAccount\.positions/);
   assert.match(helpers,/anyActivePositionBySymbol\(symbol\)/);
   const locks=block('function setTokenFieldsEnabled()','function updateTokenPreview()');
@@ -213,7 +213,7 @@ test('live Binance positions lock unsafe token controls on the iPhone',()=>{
 });
 
 test('live Binance target preview uses actual entry quantity and direction',()=>{
-  const helpers=block('function controllerRealPositionBySymbol(symbol)','function masterRealPositionBySymbol(symbol)');
+  const helpers=block('function controllerRealPositionBySymbol(symbol)','function trackedSymbols()');
   assert.match(helpers,/realPositionPnlAtPrice\(position,mark\)/);
   assert.match(helpers,/realPositionPriceForPnl\(position,pnl\)/);
   assert.match(helpers,/amount>0\?1:-1/);
@@ -258,17 +258,14 @@ test('special TradFi and future perpetual symbols remain discoverable in Futures
 });
 
 
-test('real-only UI exposes no simulation controls or local fake position path',()=>{
+test('real-only UI contains no simulation controls or local fake position path',()=>{
   assert.doesNotMatch(html,/<button[^>]+id="resetSimBtn"/);
   assert.doesNotMatch(html,/Positions actives — simulation/);
   assert.doesNotMatch(html,/simulation uniquement/);
   assert.match(html,/argent réel uniquement|réel uniquement/);
-  const create=block('function createPosition(s,entry,source)','function closePosition');
-  assert.match(create,/Simulation supprimée/);
-  assert.match(create,/return null/);
-  const close=block('function closePosition','async function currentMarketPrice');
-  assert.match(close,/Simulation supprimée/);
-  assert.match(close,/return false/);
+  assert.doesNotMatch(html,/function createPosition\(/);
+  assert.doesNotMatch(html,/function closePosition\(/);
+  assert.doesNotMatch(html,/Simulation supprimée/);
 });
 
 
