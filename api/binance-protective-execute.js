@@ -219,7 +219,7 @@ function validSaleRemainderRecord(row){
      !/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)||
      !['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER'].includes(sourceReason)||
      !(initialQuantity>0)||!(attemptQuantity>0)||attemptQuantity>initialQuantity+1e-12||
-     nextAttempt<0||nextAttempt>4)return false;
+     nextAttempt<0||nextAttempt>3)return false;
   if(sourceReason==='PARTIAL_TARGET_REMAINDER'){
     const id=String(row.previousClientOrderId||'');
     if(!/^zth-EXI-[A-Za-z0-9._:-]+$/.test(id)||id.length>36)return false;
@@ -262,9 +262,13 @@ async function beginSaleRemainderRecovery(row){
     "if raw then",
     "  local ok, value = pcall(cjson.decode, raw)",
     "  if not ok then return {'ERR','INVALID'} end",
-    "  if tostring(value.commandId or '') ~= ARGV[2] then return {'ERR','CONFLICT'} end",
-    "  if string.upper(tostring(value.sourceReason or '')) ~= ARGV[3] then return {'ERR','CONFLICT'} end",
-    "  return {'OK',raw}",
+    "  if tonumber(value.expiresAt or 0) < tonumber(ARGV[5]) then",
+    "    redis.call('HDEL', KEYS[1], ARGV[1])",
+    "  else",
+    "    if tostring(value.commandId or '') ~= ARGV[2] then return {'ERR','CONFLICT'} end",
+    "    if string.upper(tostring(value.sourceReason or '')) ~= ARGV[3] then return {'ERR','CONFLICT'} end",
+    "    return {'OK',raw}",
+    "  end",
     "end",
     "redis.call('HSET', KEYS[1], ARGV[1], ARGV[4])",
     "redis.call('EXPIRE', KEYS[1], 7200)",
@@ -272,7 +276,7 @@ async function beginSaleRemainderRecovery(row){
   ].join('\n');
   const result=await redis([
     'EVAL',script,'1',KEY_SALE_REMAINDER_RECOVERIES,
-    field,String(row.commandId),String(row.sourceReason),JSON.stringify(row),
+    field,String(row.commandId),String(row.sourceReason),JSON.stringify(row),String(Date.now()),
   ]);
   if(!Array.isArray(result)||String(result[0])!=='OK'){
     throw new Error(String(result?.[1]||'SALE_REMAINDER_STATE_CONFLICT'));
@@ -766,6 +770,12 @@ export default async function handler(req,res){
           });
         }
 
+        if(attempt>=3){
+          return send(res,409,{
+            ok:false,code:'SALE_REMAINDER_MARKET_RECOVERY_EXHAUSTED',
+            writeAttempted:wrote,remainingQuantity:liveRemaining,attempts,
+          });
+        }
         recoveryState=await advanceSaleRemainderRecovery(recoveryState,liveRemaining);
       }
 
