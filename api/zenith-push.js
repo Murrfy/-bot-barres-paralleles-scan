@@ -243,7 +243,7 @@ async function syncMaxLossStates(positions,now=Date.now()){
       data:{url:'/',symbol,state:'RED'},
     });
     events.push({symbol,event:'PERSISTENT_RED',...result});
-    if(result.sent===0&&result.failed>0){
+    if(result.sent===0){
       const latest=parseJson(await redis(['HGET',KEY_MAXLOSS_ALERTS,symbol]));
       if(Number(latest?.notifiedAt||0)===claimAt){
         await writeAlertState(symbol,{...state,notifiedAt:0,updatedAt:Date.now()});
@@ -285,6 +285,9 @@ export default async function handler(req,res){
       if(!subscription)return send(res,400,{ok:false,code:'PUSH_SUBSCRIPTION_INVALID'});
       await ensureVapid();
       const field=sha256(subscription.endpoint);
+      for(const existing of await subscriptionsForDevice(device.deviceId)){
+        if(existing.field!==field)await redis(['HDEL',KEY_SUBSCRIPTIONS,existing.field]);
+      }
       const record={
         version:1,
         deviceId:String(device.deviceId),
