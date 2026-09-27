@@ -193,6 +193,7 @@
     </section>
   </div>
 </div>
+<script src="/zenith-notifications.js" defer></script>
 <script>
 "use strict";
 const STORAGE_KEY='zenith_final3_v3_20260921';
@@ -3091,122 +3092,6 @@ async function instantBuySelected(){
 async function manualClose(){
   setStatus('Fermeture locale interdite : utilise uniquement la fermeture réelle Binance.',true);
 }
-
-let zenithPushRegistrationPromise=null;
-function pushKeyBytes(value){
-  const text=String(value||'').replace(/-/g,'+').replace(/_/g,'/');
-  const padded=text+'='.repeat((4-text.length%4)%4);
-  const raw=atob(padded),out=new Uint8Array(raw.length);
-  for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);
-  return out;
-}
-function pushSupported(){
-  return 'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
-}
-function iosHomeScreenRequired(){
-  const ios=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-  if(!ios)return false;
-  return !(window.matchMedia?.('(display-mode: standalone)')?.matches||navigator.standalone===true);
-}
-async function zenithPushRegistration(){
-  if(!pushSupported())throw new Error('PUSH_NON_PRIS_EN_CHARGE');
-  if(!zenithPushRegistrationPromise){
-    zenithPushRegistrationPromise=navigator.serviceWorker.register('/zenith-sw.js',{scope:'/'})
-      .then(()=>navigator.serviceWorker.ready)
-      .catch(error=>{zenithPushRegistrationPromise=null;throw error});
-  }
-  return zenithPushRegistrationPromise;
-}
-async function zenithPushApi(action,{method='GET',body}={}){
-  const response=await fetch('/api/zenith-push?action='+encodeURIComponent(action),{
-    method,cache:'no-store',
-    headers:{Accept:'application/json',...(body!==undefined?{'Content-Type':'application/json'}:{})},
-    ...(body!==undefined?{body:JSON.stringify(body)}:{}),
-  });
-  const data=await response.json().catch(()=>({}));
-  if(!response.ok||data?.ok!==true)throw new Error(data?.code||('HTTP_'+response.status));
-  return data;
-}
-async function refreshPushAlertUi(){
-  const btn=$('pushAlertBtn'),status=$('pushAlertStatus');
-  if(!btn||!status)return;
-  if(!pushSupported()){
-    btn.disabled=true;
-    status.textContent='Notifications non prises en charge sur cet appareil.';
-    return;
-  }
-  if(iosHomeScreenRequired()){
-    btn.disabled=false;
-    btn.textContent='Activer notifications';
-    status.textContent='Sur iPhone, ouvre Zenith depuis l’écran d’accueil pour activer les notifications.';
-    return;
-  }
-  try{
-    const registration=await zenithPushRegistration();
-    const [subscription,config]=await Promise.all([
-      registration.pushManager.getSubscription(),
-      zenithPushApi('config'),
-    ]);
-    const active=Boolean(subscription&&config.subscribed&&Notification.permission==='granted');
-    btn.disabled=false;
-    btn.textContent=active?'Désactiver notifications':'Activer notifications';
-    status.textContent=active
-      ?`Alerte active : notification après ${Math.round(n(config.thresholdSeconds,60))} s de MAX-LOSS rouge continu.`
-      :Notification.permission==='denied'
-        ?'Notifications refusées dans les réglages iPhone.'
-        :'Aucune notification MAX-LOSS active.';
-  }catch(error){
-    btn.disabled=false;
-    btn.textContent='Activer notifications';
-    status.textContent='Notifications Zenith indisponibles : '+String(error?.message||'erreur')+'.';
-  }
-}
-async function togglePushAlerts(){
-  const btn=$('pushAlertBtn'),status=$('pushAlertStatus');
-  if(!btn||!status)return;
-  if(iosHomeScreenRequired()){
-    status.textContent='Ajoute/ouvre Zenith depuis l’écran d’accueil, puis appuie à nouveau sur ce bouton.';
-    return;
-  }
-  btn.disabled=true;
-  try{
-    const registration=await zenithPushRegistration();
-    const existing=await registration.pushManager.getSubscription();
-    if(existing&&Notification.permission==='granted'){
-      const endpoint=existing.endpoint;
-      await zenithPushApi('unsubscribe',{method:'POST',body:{endpoint}});
-      await existing.unsubscribe();
-      status.textContent='Notifications MAX-LOSS désactivées.';
-      return;
-    }
-
-    const permission=await Notification.requestPermission();
-    if(permission!=='granted'){
-      status.textContent=permission==='denied'
-        ?'Notifications refusées dans les réglages iPhone.'
-        :'Autorisation de notification non accordée.';
-      return;
-    }
-    const config=await zenithPushApi('config');
-    let subscription=await registration.pushManager.getSubscription();
-    if(!subscription){
-      subscription=await registration.pushManager.subscribe({
-        userVisibleOnly:true,
-        applicationServerKey:pushKeyBytes(config.publicKey),
-      });
-    }
-    await zenithPushApi('subscribe',{
-      method:'POST',
-      body:{subscription:subscription.toJSON()},
-    });
-    status.textContent=`Alerte active : notification après ${Math.round(n(config.thresholdSeconds,60))} s de MAX-LOSS rouge continu.`;
-  }catch(error){
-    status.textContent='Activation impossible : '+String(error?.message||'erreur')+'.';
-  }finally{
-    btn.disabled=false;
-    await refreshPushAlertUi();
-  }
-}
 function tickPosition(){return false}
 function expireWaitingSignals(){let changed=false;const now=Date.now();for(const [s,m] of Object.entries(missedSignals)){if(m?.state==='waiting'&&now>=n(m.expiresAt)){m.state='expired';delete validated[s];changed=true}}if(changed){save();syncRealtime()}}
 function startWaitingSignal(s){const v=validated[s];if(!v||missedSignals[s]?.state)return;missedSignals[s]={state:'waiting',startedAt:Date.now(),expiresAt:Date.now()+50000,buy:n(v.buy)};save();renderAll();setStatus(`${s} : prix d’achat touché mais limite de positions atteinte. Délai d’activation : 50 secondes.`,true);setTimeout(()=>{const m=missedSignals[s];if(m?.state==='waiting'&&Date.now()>=n(m.expiresAt)){m.state='expired';delete validated[s];save();syncRealtime();renderAll();setStatus(`${s} : N’A PAS DÉMARRÉ — aucune place libérée pendant les 50 secondes.`,true)}},50100)}
@@ -3255,9 +3140,9 @@ $('manualTokenAddBtn').onclick=addManualToken;$('manualTokenInput').addEventList
 $('showProtectionsToggle').addEventListener('change',()=>{settings.showProtections=$('showProtectionsToggle').checked;applyProtectionVisibility();saveLocalOnly()});
 $('adminCodeCancel').onclick=()=>closeAdminCodeModal(null);$('adminCodeConfirm').onclick=submitAdminCodeModal;$('adminCodeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submitAdminCodeModal()}else if(e.key==='Escape'){e.preventDefault();closeAdminCodeModal(null)}});$('adminCodeModal').addEventListener('pointerdown',e=>{if(e.target===e.currentTarget)closeAdminCodeModal(null)});
 $('masterAuthorizeBtn').onclick=controllerAuthorizeMaster;$('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('masterRevokeBtn').onclick=controllerRevokeMaster;$('panicClearBtn').onclick=controllerClearPanic;
-$('refreshHistoryBtn').onclick=()=>refreshBinanceHistory();$('pushAlertBtn').onclick=togglePushAlerts;
+$('refreshHistoryBtn').onclick=()=>refreshBinanceHistory();
 document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio();if(controllerIdentity.role==='master')syncMasterWakeLock(true)},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls();if(controllerIdentity.role==='master'){syncMasterWakeLock(true);masterRuntimeCycle();ensureMasterUserStream();masterExecutionCycle()}}else if(controllerIdentity.role==='master'){releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length){renderPositions();renderHistory()}if(Object.values(missedSignals).some(x=>x?.state==='waiting')||Object.keys(serverEntryWatch?.states||{}).length)renderTable()},1000);
-load();restoreRealProtectiveUpdatePending();applyTheme();renderAll();void refreshPushAlertUi();for(const [key,pending] of realProtectiveUpdatePending.entries())void checkRealTrackedCommandStatus(key,pending);ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startBinanceHistory();startControllerIdentityCheck();
+load();restoreRealProtectiveUpdatePending();applyTheme();renderAll();for(const [key,pending] of realProtectiveUpdatePending.entries())void checkRealTrackedCommandStatus(key,pending);ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startBinanceHistory();startControllerIdentityCheck();
 </script>
 </body>
 </html>
