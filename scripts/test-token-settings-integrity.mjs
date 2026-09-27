@@ -161,6 +161,16 @@ test('BOT save persists editable global margin and leverage without touching per
   assert.doesNotMatch(saveBot,/tokenSettings\s*=/);
 });
 
+test('BOT trading defaults cannot change while a position or watched entry is active',()=>{
+  const saveBot=block('function readBotSettings()','async function saveSelectedAsDefaults()');
+  assert.match(saveBot,/tradingChanged=/);
+  assert.match(saveBot,/next\.margin/);
+  assert.match(saveBot,/next\.leverage/);
+  assert.match(saveBot,/next\.maxActive/);
+  assert.match(saveBot,/openPositions\.length\|\|n\(binanceAccount\.realPositions\)>0\|\|Object\.keys\(validated\)\.length/);
+  assert.match(saveBot,/Réglages BOT de trading verrouillés/);
+});
+
 test('load preserves explicitly saved global margin values',()=>{
   const load=block('function load()','async function jf(path)');
   assert.doesNotMatch(load,/x\.settings\?\.margin\)===100[^\n]*settings\.margin=1000/);
