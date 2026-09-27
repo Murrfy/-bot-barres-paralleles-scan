@@ -92,6 +92,11 @@ test('push delivery is isolated from trading and service worker always shows a n
   assert.match(alertBlock,/device\.principal !== 'engine'/);
   assert.match(alertBlock,/hasMasterLease\(device\.deviceId\)/);
   assert.doesNotMatch(alertBlock,/EXEC_|BINANCE_|command-|emergency-stop|master-pause|master-resume/);
+  assert.match(sync,/PUSH_MAXLOSS_PERSIST_MS = 60 \* 1000/);
+  assert.match(sync,/PUSH_MESSAGE_TTL_SECONDS = 30 \* 24 \* 60 \* 60/);
+  assert.match(sync,/TTL:'2592000'/);
+  assert.equal((sync.match(/tag:'zenith-maxloss-state'/g)||[]).length,2);
+  assert.match(sync,/Topic:queued\.row\.tag/);
 
   const reconcileStart=worker.indexOf('async function reconcile');
   const reconcileEnd=worker.indexOf('async function awaitReconciliation',reconcileStart);
