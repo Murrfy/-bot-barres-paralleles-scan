@@ -3023,18 +3023,28 @@ export default async function handler(req, res) {
 
       const recoveryScript = [
         "local currentController = tostring(redis.call('GET', KEYS[1]) or '')",
-        "if currentController ~= ARGV[1] then return {-1, currentController, 0, 0} end",
-        "local pendingCount = tonumber(redis.call('LLEN', KEYS[4]) or '0') or 0",
-        "local processingCount = tonumber(redis.call('LLEN', KEYS[5]) or '0') or 0",
-        "if pendingCount > 0 or processingCount > 0 then",
-        "  return {-3, currentController, pendingCount, processingCount}",
+        "if currentController ~= ARGV[1] then return {-1, currentController, 0} end",
+        "local now = tonumber(ARGV[7]) or 0",
+        "local claimTtl = tonumber(ARGV[8]) or 0",
+        "local freshProcessing = 0",
+        "local rows = redis.call('LRANGE', KEYS[5], 0, -1)",
+        "for _, raw in ipairs(rows) do",
+        "  local ok, command = pcall(cjson.decode, raw)",
+        "  if ok and tostring(command['deviceId'] or '') == ARGV[1] then",
+        "    local claimedAt = tonumber(command['claimedAt'] or 0) or 0",
+        "    local expiresAt = tonumber(command['expiresAt'] or 0) or 0",
+        "    if claimedAt > 0 and now - claimedAt <= claimTtl and (expiresAt <= 0 or now <= expiresAt) then",
+        "      freshProcessing = freshProcessing + 1",
+        "    end",
+        "  end",
         "end",
+        "if freshProcessing > 0 then return {-3, currentController, freshProcessing} end",
         "redis.call('SET', KEYS[1], ARGV[2])",
         "redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[4])",
         "redis.call('SET', KEYS[3], ARGV[5])",
         "redis.call('LPUSH', KEYS[6], ARGV[6])",
         "redis.call('LTRIM', KEYS[6], 0, 199)",
-        "return {1, currentController, 0, 0}"
+        "return {1, currentController, 0}"
       ].join('\n');
 
       const result = await redis([
@@ -3051,6 +3061,8 @@ export default async function handler(req, res) {
         String(DEVICE_SESSION_MAX_AGE_SECONDS),
         String(createdAt),
         JSON.stringify(audit),
+        String(createdAt),
+        String(COMMAND_CLAIM_TTL_MS),
       ]);
 
       const code = Number(Array.isArray(result) ? result[0] : 0);
@@ -3060,14 +3072,19 @@ export default async function handler(req, res) {
       if (code === -3) {
         return send(res, 409, {
           ok: false,
-          code: 'CONTROLLER_RECOVERY_DRAIN_REQUIRED',
-          pendingCommands: Number(Array.isArray(result) ? result[2] : 0) || 0,
-          processingCommands: Number(Array.isArray(result) ? result[3] : 0) || 0,
+          code: 'CONTROLLER_RECOVERY_COMMAND_IN_FLIGHT',
+          processingCommands: Number(Array.isArray(result) ? result[2] : 0) || 0,
+          retryAfterSeconds: Math.max(1, Math.ceil(COMMAND_CLAIM_TTL_MS / 1000)),
         });
       }
       if (code !== 1) {
         return send(res, 500, { ok: false, code: 'CONTROLLER_RECOVERY_FAILED' });
       }
+
+      let quarantined = { pending: 0, processing: 0 };
+      try {
+        quarantined = await quarantineCommandsForDevice(oldControllerDeviceId);
+      } catch {}
 
       let state = null;
       try {
@@ -3082,6 +3099,7 @@ export default async function handler(req, res) {
         device: deviceRecord,
         state,
         previousControllerDeviceId: String(result[1] || oldControllerDeviceId),
+        quarantined,
       });
     }
 
