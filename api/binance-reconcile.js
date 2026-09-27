@@ -1616,7 +1616,7 @@ function certifiedSaleRemainderRecoveries(records,positions,now=Date.now()){
       row?.version===1&&field===expectedField&&
       /^[A-Z0-9]{3,30}$/.test(symbol)&&['LONG','SHORT'].includes(dir)&&
       /^[A-Za-z0-9._:-]{8,128}$/.test(commandId)&&
-      ['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER'].includes(sourceReason)&&
+      ['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER','TRIGGERED_MAX_LOSS_REMAINDER'].includes(sourceReason)&&
       initialQuantity>0&&attemptQuantity>0&&attemptQuantity<=initialQuantity+Math.max(1e-12,initialQuantity*1e-10)&&
       nextAttempt>=0&&nextAttempt<=3&&
       createdAt>0&&updatedAt>=createdAt&&expiresAt>=updatedAt;
@@ -1624,9 +1624,12 @@ function certifiedSaleRemainderRecoveries(records,positions,now=Date.now()){
     if(sourceReason==='PARTIAL_TARGET_REMAINDER'){
       const id=String(row?.previousClientOrderId||'');
       sourceValid=/^zth-EXI-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
-    }else if(sourceReason==='TRIGGERED_PROGRESSIVE_REMAINDER'){
+    }else if(sourceReason==='TRIGGERED_PROGRESSIVE_REMAINDER'||sourceReason==='TRIGGERED_MAX_LOSS_REMAINDER'){
       const algo=String(row?.clientAlgoId||'');
-      sourceValid=/^zth-PRO-[A-Za-z0-9._:-]+$/.test(algo)&&algo.length<=36&&Boolean(String(row?.actualOrderId||''));
+      const pattern=sourceReason==='TRIGGERED_MAX_LOSS_REMAINDER'
+        ?/^zth-MAX-[A-Za-z0-9._:-]+$/
+        :/^zth-PRO-[A-Za-z0-9._:-]+$/;
+      sourceValid=pattern.test(algo)&&algo.length<=36&&Boolean(String(row?.actualOrderId||''));
     }
     if(!commonValid||!sourceValid||seen.has(expectedField)){
       invalid.push({field,symbol,direction:dir,commandId});
