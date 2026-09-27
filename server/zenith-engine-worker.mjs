@@ -378,6 +378,54 @@ async function userStreamApi(action,method='GET'){
 async function binanceApi(path,{method='GET',body}={}){
   return http(path,{method,body});
 }
+async function pushApi(action,body){
+  return http('/api/zenith-push?action='+encodeURIComponent(action),{method:'POST',body});
+}
+
+async function syncPersistentMaxLossPushAlerts(){
+  if(stopping||!runtime.leaseActive||!sessionCookie)return false;
+  try{
+    const projection=streamProjection();
+    const orders=Array.isArray(projection.binanceOrders)?projection.binanceOrders:[];
+    const positions=[];
+    for(const position of Array.isArray(projection.binancePositions)?projection.binancePositions:[]){
+      const amount=n(position?.positionAmt??position?.quantity,0);
+      if(!(amount>0))continue;
+      const symbol=String(position?.symbol||'').toUpperCase();
+      if(!/^[A-Z0-9]{3,30}$/.test(symbol))continue;
+      const quarantine=(Array.isArray(stream.symbolQuarantines)?stream.symbolQuarantines:[])
+        .find(row=>String(row?.symbol||'').toUpperCase()===symbol)||null;
+      const cap=configuredMaxLossForSymbol(symbol);
+      const safeCount=cap>0?safeMaxLossOrders(position,orders,cap).length:0;
+      const red=Boolean(quarantine)||safeCount!==1;
+      const reason=quarantine
+        ?String(quarantine.reason||'MAX_LOSS_QUARANTINED')
+        :!(cap>0)
+          ?'MAX_LOSS_CONFIG_UNAVAILABLE'
+          :safeCount===0
+            ?'MAX_LOSS_NOT_CONFIRMED'
+            :'MAX_LOSS_NOT_UNIQUE';
+      positions.push({symbol,red,reason:red?reason:''});
+    }
+    const {response,data}=await pushApi('maxloss-sync',{positions});
+    if(!response.ok||data?.ok!==true){
+      log('MAX_LOSS_PUSH_SYNC_FAILED',{code:String(data?.code||('HTTP_'+response.status))});
+      return false;
+    }
+    if(Array.isArray(data.events)&&data.events.length){
+      for(const event of data.events)log('MAX_LOSS_PUSH_EVENT',{
+        symbol:String(event?.symbol||''),
+        event:String(event?.event||''),
+        sent:n(event?.sent,0),
+        failed:n(event?.failed,0),
+      });
+    }
+    return true;
+  }catch(error){
+    logError('MAX_LOSS_PUSH_SYNC_FAILED',error);
+    return false;
+  }
+}
 
 async function refreshRealHistoryArchive(){
   if(stopping||!runtime.leaseActive||!sessionCookie)return false;
@@ -2627,6 +2675,7 @@ async function reconcile(secondPass=false){
     }
 
     stream.symbolQuarantines=maxLossSymbolQuarantines(data.report);
+    void syncPersistentMaxLossPushAlerts();
 
     const pendingProtectionLoss=pendingEntryProtectionLossTargets(data.report);
     if(pendingProtectionLoss.length){
