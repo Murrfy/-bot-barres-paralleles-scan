@@ -495,11 +495,11 @@ export default async function handler(req,res){
     const attempts=[];
     try{
       for(let attempt=0;attempt<4&&remaining>1e-12;attempt++){
-        if(!(await requireFinalProtectiveMaster(res,master)))return;
         const marketPlan=buildExitOrderPlan({
           commandId,symbol,direction:dir,quantity:remaining,
           exitMode:'REMAINDER_MARKET',attempt,
         });
+        if(!(await requireFinalProtectiveMaster(res,master)))return;
         const marketResult=await placeStandardOrderIdempotent({
           apiKey,secret,orderParams:marketPlan.params,writesEnabled:true,timestamp:Date.now(),
         });
