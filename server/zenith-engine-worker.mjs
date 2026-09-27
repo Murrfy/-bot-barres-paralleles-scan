@@ -433,7 +433,7 @@ async function applyControllerState(controllerState){
 }
 
 function validActiveProtectionStages(stages){
-  if(!Array.isArray(stages)||stages.length<1||stages.length>200)return false;
+  if(!Array.isArray(stages)||stages.length<1)return false;
   let previousArm=-Infinity,previousFloor=-Infinity;
   for(const row of stages){
     if(!row||typeof row!=='object'||Array.isArray(row))return false;
