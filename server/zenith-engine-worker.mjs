@@ -1132,11 +1132,20 @@ async function failClosedAutoProtection(reason){
   await invalidateStream(code).catch(()=>{});
 }
 
+function localAutoTargetFailure(symbol,reason,{changed=false}={}){
+  const wanted=String(symbol||'').toUpperCase();
+  const code='AUTO_TARGET_'+String(reason||'LOCAL_FAILURE');
+  autoTarget.lastError=code;
+  log('AUTO_TARGET_LOCAL_FAILURE',{symbol:wanted,reason:code,changed:changed===true});
+  return {ok:true,changed:changed===true,reason:code,local:true};
+}
+
 async function failClosedAutoTarget(reason){
   const code='AUTO_TARGET_'+String(reason||'FAIL_CLOSED');
   autoTarget.lastError=code;
   runtime.error=code;
   await invalidateStream(code).catch(()=>{});
+  scheduleReconcile(250);
   return {ok:false,reason:code};
 }
 
@@ -1166,10 +1175,10 @@ async function ensureAutomaticTargetForPosition(position){
   const projection=streamProjection();
   const orders=Array.isArray(projection.binanceOrders)?projection.binanceOrders:[];
   const configuredMaxLoss=configuredMaxLossForSymbol(symbol);
-  if(!(configuredMaxLoss>0))return failClosedAutoTarget('MAX_LOSS_CONFIG_UNAVAILABLE');
+  if(!(configuredMaxLoss>0))return localAutoTargetFailure(symbol,'MAX_LOSS_CONFIG_UNAVAILABLE');
   const maxLossConfirmed=uniqueManagedMaxLoss(position,orders,configuredMaxLoss);
   const priceFilter=await ensurePriceFilter(symbol);
-  if(!priceFilter)return failClosedAutoTarget('PRICE_FILTER_UNAVAILABLE');
+  if(!priceFilter)return localAutoTargetFailure(symbol,'PRICE_FILTER_UNAVAILABLE');
 
   const tokenSettings=runtime.config?.tokenSettings&&typeof runtime.config.tokenSettings==='object'
     ?runtime.config.tokenSettings:{};
@@ -1184,7 +1193,7 @@ async function ensureAutomaticTargetForPosition(position){
     autoTarget.lastError='';
     return {ok:true,changed:false,reason:plan.reason};
   }
-  if(!['PLACE','REPLACE'].includes(plan.action))return failClosedAutoTarget(plan.reason||'PLAN_BLOCKED');
+  if(!['PLACE','REPLACE'].includes(plan.action))return localAutoTargetFailure(symbol,plan.reason||'PLAN_BLOCKED');
 
   autoTarget.busySymbols.add(symbol);
   try{
@@ -1194,7 +1203,7 @@ async function ensureAutomaticTargetForPosition(position){
       const live=activePlan.live;
       const previousClientOrderId=String(activePlan.previousClientOrderId||'');
       if(!/^zth-EXI-[A-Za-z0-9._:-]+$/.test(previousClientOrderId)){
-        return failClosedAutoTarget('PREVIOUS_CLIENT_ORDER_ID_INVALID');
+        return localAutoTargetFailure(symbol,'PREVIOUS_CLIENT_ORDER_ID_INVALID');
       }
       const commandId=`auto-target-refresh-${live.symbol}-${live.direction}-${live.lifecycleAt||0}`;
       const canceled=await callProtectiveUpdateExecute({
@@ -1207,7 +1216,7 @@ async function ensureAutomaticTargetForPosition(position){
         if(canceled.data?.writeAttempted===true||canceled.data?.ambiguous===true||canceled.data?.result?.ambiguous===true){
           return failClosedAutoTarget(reason+'_AMBIGUOUS');
         }
-        return failClosedAutoTarget(reason);
+        return localAutoTargetFailure(symbol,reason);
       }
       const terminal=await waitForStreamOrder({kind:'STANDARD',clientId:previousClientOrderId,terminal:true},3000);
       const terminalStatus=String(
@@ -1240,7 +1249,7 @@ async function ensureAutomaticTargetForPosition(position){
         return {ok:true,changed:true,reason:'TARGET_REFRESH_ALREADY_SATISFIED'};
       }
       if(activePlan.action!=='PLACE'){
-        return failClosedAutoTarget(activePlan.reason||'TARGET_REFRESH_REPLAN_BLOCKED');
+        return localAutoTargetFailure(symbol,activePlan.reason||'TARGET_REFRESH_REPLAN_BLOCKED',{changed:true});
       }
     }
 
@@ -1258,7 +1267,7 @@ async function ensureAutomaticTargetForPosition(position){
       if(placed.data?.writeAttempted===true||placed.data?.ambiguous===true||placed.data?.result?.ambiguous===true){
         return failClosedAutoTarget(reason+'_AMBIGUOUS');
       }
-      return failClosedAutoTarget(reason);
+      return localAutoTargetFailure(symbol,reason);
     }
 
     const clientId=String(placed.data?.plan?.params?.newClientOrderId||'');
