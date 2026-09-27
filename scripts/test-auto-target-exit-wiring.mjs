@@ -62,3 +62,36 @@ test('replacement target gets a distinct deterministic identity from live quanti
   assert.match(worker,/targetIdentity=sha256Hex\(`\$\{live\.quantity\}\|\$\{activePlan\.targetPrice\}`\)\.slice\(0,12\)/);
   assert.match(worker,/auto-target-\$\{live\.symbol\}-\$\{live\.direction\}-\$\{live\.lifecycleAt\|\|0\}-\$\{targetIdentity\}/);
 });
+
+
+test('automatic target keeps no-write symbol failures local but still fail-closes ambiguous writes',()=>{
+  const localStart=worker.indexOf('function localAutoTargetFailure');
+  const failStart=worker.indexOf('async function failClosedAutoTarget',localStart);
+  const configStart=worker.indexOf('function configuredMaxLossForSymbol',failStart);
+  assert.ok(localStart>=0&&failStart>localStart&&configStart>failStart);
+  const localBlock=worker.slice(localStart,failStart);
+  const failBlock=worker.slice(failStart,configStart);
+  assert.match(localBlock,/return \{ok:true,changed:changed===true,reason:code,local:true\}/);
+  assert.doesNotMatch(localBlock,/invalidateStream/);
+  assert.match(failBlock,/invalidateStream\(code\)/);
+  assert.match(failBlock,/scheduleReconcile\(250\)/);
+
+  const start=worker.indexOf('async function ensureAutomaticTargetForPosition');
+  const end=worker.indexOf('async function ensureAutomaticTargets',start);
+  const block=worker.slice(start,end);
+  assert.match(block,/localAutoTargetFailure\(symbol,'MAX_LOSS_CONFIG_UNAVAILABLE'\)/);
+  assert.match(block,/localAutoTargetFailure\(symbol,'PRICE_FILTER_UNAVAILABLE'\)/);
+  assert.match(block,/localAutoTargetFailure\(symbol,plan\.reason\|\|'PLAN_BLOCKED'\)/);
+  assert.match(block,/localAutoTargetFailure\(symbol,'PREVIOUS_CLIENT_ORDER_ID_INVALID'\)/);
+  assert.match(block,/return failClosedAutoTarget\(reason\+'_AMBIGUOUS'\)/);
+  assert.match(block,/return failClosedAutoTarget\('PREVIOUS_TARGET_CANCEL_NOT_CONFIRMED'\)/);
+  assert.match(block,/return failClosedAutoTarget\('CLIENT_ORDER_ID_INVALID'\)/);
+  assert.match(block,/if\(!valid\)return failClosedAutoTarget\('ORDER_NOT_STREAM_CONFIRMED'\)/);
+});
+
+test('post-cancel local replan failure forces an immediate reconciliation pass',()=>{
+  const start=worker.indexOf('async function ensureAutomaticTargetForPosition');
+  const end=worker.indexOf('async function ensureAutomaticTargets',start);
+  const block=worker.slice(start,end);
+  assert.match(block,/localAutoTargetFailure\(symbol,activePlan\.reason\|\|'TARGET_REFRESH_REPLAN_BLOCKED',\{changed:true\}\)/);
+});
