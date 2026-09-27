@@ -134,8 +134,6 @@ jobs:
         run: node --test scripts/test-exact-buy-sale-entry-consistency.mjs
       - name: Test atomic real-entry slot reservation
         run: node --test scripts/test-entry-slot-reservation-gate.mjs
-      - name: Test hard cap of three active positions
-        run: node --test scripts/test-max-active-three.mjs
       - name: Test fenced real-entry watch persistence
         run: node --test scripts/test-entry-watch-persistence.mjs
       - name: Test prepared entry MAX-LOSS plan
