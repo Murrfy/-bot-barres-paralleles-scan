@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="manifest" href="/manifest.webmanifest">
 <meta name="robots" content="noindex,nofollow">
 <title>Zenith — Admin MASTER</title>
 <style>
@@ -49,6 +50,10 @@ button:disabled{opacity:.5}
     <button id="panicBtn" disabled>PANIC STOP</button>
     <button id="clearPanicBtn" disabled hidden>Réarmer la sécurité réelle</button>
     <button id="revokeBtn" disabled hidden>Révoquer MASTER</button>
+
+    <div class="small">Alerte iPhone si une MAX-LOSS reste rouge plus de 60 secondes.</div>
+    <button id="maxLossNotificationsBtn" type="button">Activer les notifications MAX-LOSS</button>
+    <div id="maxLossNotificationsStatus" class="status">Notifications MAX-LOSS : vérification…</div>
 
     <div id="status" class="status">Prêt. Si une position est active, la pause sera mise en attente jusqu’à la fermeture de la dernière position.</div>
   </div>
@@ -316,5 +321,6 @@ document.addEventListener('visibilitychange',()=>{
 setInterval(()=>{if(!document.hidden&&!busy&&!checking)verifyMaster()},30000);
 verifyMaster();
 </script>
+<script src="/notifications.js" defer></script>
 </body>
 </html>
