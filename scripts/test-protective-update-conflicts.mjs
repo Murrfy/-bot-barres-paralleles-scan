@@ -90,6 +90,21 @@ test('server refuses cancel-old progressive until the replacement STOP+LIMIT is 
 });
 
 
+
+test('cancel-old progressive verifies the stale order own quantity after a partial exit',async()=>{
+  const api=await readFile(new URL('../api/binance-protective-update-execute.js',import.meta.url),'utf8');
+  const cancelPhase=api.indexOf("if(phase==='CANCEL_OLD')");
+  const expectedAt=api.indexOf("const expected={",cancelPhase);
+  const maxLossAt=api.indexOf("if(update.protectionKind==='MAX_LOSS'){",expectedAt);
+  const progressiveElse=api.indexOf("}else{",maxLossAt);
+  const progressiveEnd=api.indexOf("if(!(await requireFinalProtectiveMaster(res,master)))return;",progressiveElse);
+  const progressiveBlock=api.slice(progressiveElse,progressiveEnd);
+  assert.match(progressiveBlock,/const previousQuantity=n\(old\?\.origQty\?\?old\?\.quantity,NaN\)/);
+  assert.match(progressiveBlock,/PREVIOUS_PROGRESSIVE_QUANTITY_INVALID/);
+  assert.match(progressiveBlock,/expected\.quantity=String\(previousQuantity\)/);
+  assert.doesNotMatch(progressiveBlock,/expected\.quantity=String\(update\.quantity\)/);
+});
+
 test('emergency protection validator accepts $400 but rejects anything above the hard cap',()=>{
   const base={orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
     type:'STOP',timeInForce:'IOC',quantity:'1',reduceOnly:true,closePosition:false,priceMatch:'OPPONENT',clientAlgoId:'zth-MAX-cap'};
