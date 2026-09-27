@@ -80,10 +80,12 @@ test('triggered MAX-LOSS remainder recovery is bound to exact certified MARKET c
     type:'EXEC_CLOSE_POSITION',symbol:'BTCUSDT',direction:'LONG',quantity:0.3,closeAll:true,
     commandId:rows[0].recoveryCommandId,recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER',
     exitMode:'REMAINDER_MARKET',
+    clientAlgoId:rows[0].clientAlgoId,actualOrderId:rows[0].actualOrderId,
   };
   assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,payload),true);
   assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,{...payload,exitMode:'PROTECTIVE_IOC'}),false);
   assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,{...payload,quantity:0.31}),false);
+  assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,{...payload,actualOrderId:'wrong'}),false);
   assert.deepEqual(triggeredMaxLossRemainderTargets({...report,certifiedPositions:[{...report.certifiedPositions[0],quantity:0.31}]}),[]);
   const unsafe={...report,reasons:[...report.reasons,'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT']};
   assert.deepEqual(triggeredMaxLossRemainderTargets(unsafe),[]);
@@ -113,10 +115,12 @@ test('triggered progressive remainder recovery is bound to exact certified Binan
   const payload={
     type:'EXEC_CLOSE_POSITION',symbol:'BTCUSDT',direction:'LONG',quantity:0.3,closeAll:true,
     commandId:rows[0].recoveryCommandId,recoveryReason:'TRIGGERED_PROGRESSIVE_REMAINDER',
-    exitMode:'REMAINDER_MARKET'
+    exitMode:'REMAINDER_MARKET',
+    clientAlgoId:rows[0].clientAlgoId,actualOrderId:rows[0].actualOrderId,
   };
   assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,payload),true);
   assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,{...payload,quantity:0.31}),false);
+  assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,{...payload,clientAlgoId:'zth-PRO-wrong'}),false);
   assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,{...payload,recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER'}),false);
   assert.deepEqual(triggeredProgressiveRemainderTargets({...report,certifiedPositions:[{...report.certifiedPositions[0],quantity:0.31}]}),[]);
 });
