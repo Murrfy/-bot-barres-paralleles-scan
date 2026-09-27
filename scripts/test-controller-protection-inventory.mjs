@@ -92,9 +92,9 @@ test('SHORT uses mirrored profit and loss sides',()=>{
 });
 
 
-test('external valid MAX-LOSS remains a conflict and is never managed by Zenith',()=>{
+test('external valid MAX-LOSS is accepted after a manual Binance repair',()=>{
   const inv=inventory(account({maxLoss:{...validMaxLoss,clientAlgoId:'manual-max-loss'}}),long);
   assert.equal(inv.maxLoss.length,1);
-  assert.equal(inv.maxLossConflict,true);
-  assert.equal(inv.managedMaxLoss,null);
+  assert.equal(inv.maxLossConflict,false);
+  assert.equal(inv.managedMaxLoss.clientAlgoId,'manual-max-loss');
 });
