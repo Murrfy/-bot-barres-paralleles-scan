@@ -98,3 +98,14 @@ test('MAX-LOSS recovery serializes only the brief write globally and the recover
   assert.match(recoverBlock,/maxLossRemainderRecovery\.writeBusy=true/);
   assert.match(recoverBlock,/maxLossRemainderRecovery\.writeBusy=false/);
 });
+
+
+test('failed repair stays local when its symbol is already quarantined',()=>{
+  const start=worker.indexOf('async function markMaxLossRepairFailure');
+  const end=worker.indexOf('async function waitForWriteAheadEntryEvidence',start);
+  assert.ok(start>=0&&end>start);
+  const block=worker.slice(start,end);
+  assert.match(block,/const localQuarantine=Boolean\(wanted&&symbolMaxLossQuarantined\(wanted\)\)/);
+  assert.match(block,/if\(localQuarantine\)[\s\S]*await publishRuntime\(\)\.catch/);
+  assert.match(block,/else\{[\s\S]*await invalidateStream\(code\)\.catch/);
+});
