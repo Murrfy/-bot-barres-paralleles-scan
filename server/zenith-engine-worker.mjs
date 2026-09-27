@@ -1321,6 +1321,89 @@ function configuredMaxLossForSymbol(symbol){
   return value>0?Math.min(value,REAL_RISK_LIMITS.maxLossUsd):NaN;
 }
 
+async function executePartialTargetRemainder(plan){
+  const live=plan?.live||{};
+  const symbol=String(live.symbol||'').toUpperCase();
+  const previousClientOrderId=String(plan?.previousClientOrderId||'');
+  if(!symbol||!/^zth-EXI-[A-Za-z0-9._:-]+$/.test(previousClientOrderId)){
+    return {ok:false,changed:false,reason:'PARTIAL_REMAINDER_IDENTITY_INVALID'};
+  }
+  if(autoTarget.busySymbols.has(symbol)){
+    return {ok:false,changed:false,reason:'PARTIAL_REMAINDER_BUSY'};
+  }
+
+  autoTarget.busySymbols.add(symbol);
+  try{
+    const commandId='auto-remainder-'+symbol+'-'+sha256Hex(previousClientOrderId).slice(0,16);
+    const closed=await callProtectiveExecute({
+      type:'EXEC_CLOSE_POSITION',
+      commandId,
+      symbol,
+      direction:live.direction,
+      quantity:live.quantity,
+      closeAll:true,
+      exitMode:'REMAINDER_MARKET',
+      recoveryReason:'PARTIAL_TARGET_REMAINDER',
+      previousClientOrderId,
+    });
+    if(!closed.response.ok||closed.data?.ok!==true||closed.data?.remainderMarketClosed!==true){
+      const reason='AUTO_TARGET_PARTIAL_REMAINDER_'+String(
+        closed.data?.code||closed.data?.reason||closed.data?.error||('HTTP_'+closed.response.status)
+      );
+      autoTarget.lastError=reason;
+      if(closed.data?.writeAttempted===true||closed.data?.ambiguous===true){
+        return failClosedAutoTarget(reason);
+      }
+      scheduleReconcile(250);
+      return {ok:false,changed:false,reason};
+    }
+
+    autoTarget.lastError='';
+    autoTarget.lastActionAt=Date.now();
+    log('AUTO_TARGET_PARTIAL_REMAINDER_MARKET_CLOSED',{
+      symbol,
+      direction:live.direction,
+      requestedQuantity:live.quantity,
+      executedBefore:n(plan?.executedQuantity,0),
+      previousClientOrderId,
+      attempts:Array.isArray(closed.data?.attempts)?closed.data.attempts.length:1,
+    });
+    return {ok:true,changed:true,reason:'PARTIAL_TARGET_REMAINDER_MARKET_CLOSED'};
+  }finally{
+    autoTarget.busySymbols.delete(symbol);
+  }
+}
+
+function partialTargetRemainderPlan(position){
+  const projection=streamProjection();
+  const orders=Array.isArray(projection.binanceOrders)?projection.binanceOrders:[];
+  const tokenSettings=runtime.config?.tokenSettings&&typeof runtime.config.tokenSettings==='object'
+    ?runtime.config.tokenSettings:{};
+  const globalSettings=runtime.config?.settings&&typeof runtime.config.settings==='object'
+    ?runtime.config.settings:{};
+  return planAutomaticTargetExit({
+    position,currentOrders:orders,tokenSettings,settings:globalSettings,
+    priceFilter:null,maxLossConfirmed:false,
+  });
+}
+
+async function recoverImmediatePartialTargetRemainder(){
+  const positions=(streamProjection().binancePositions||[])
+    .filter(position=>Math.abs(n(position?.positionAmt??position?.quantity,0))>0);
+  for(const position of positions){
+    let plan;
+    try{plan=partialTargetRemainderPlan(position)}
+    catch(error){
+      autoTarget.lastError='PARTIAL_REMAINDER_PLAN_'+cleanReason(error?.message||'FAILED','FAILED');
+      continue;
+    }
+    if(plan?.action!=='CLOSE_REMAINDER_MARKET')continue;
+    const result=await executePartialTargetRemainder(plan);
+    return {handled:true,...result};
+  }
+  return {handled:false,ok:true,changed:false,reason:'NO_PARTIAL_TARGET_REMAINDER'};
+}
+
 async function ensureAutomaticTargetForPosition(position){
   const symbol=String(position?.symbol||'').toUpperCase();
   if(!symbol||autoTarget.busySymbols.has(symbol))return {ok:true,changed:false,reason:'BUSY_OR_INVALID'};
@@ -1356,48 +1439,7 @@ async function ensureAutomaticTargetForPosition(position){
   }
 
   if(plan.action==='CLOSE_REMAINDER_MARKET'){
-    const live=plan.live;
-    const previousClientOrderId=String(plan.previousClientOrderId||'');
-    if(!/^zth-EXI-[A-Za-z0-9._:-]+$/.test(previousClientOrderId)){
-      return localAutoTargetFailure(symbol,'PARTIAL_REMAINDER_PREVIOUS_ID_INVALID');
-    }
-    autoTarget.busySymbols.add(symbol);
-    try{
-      const commandId='auto-remainder-'+live.symbol+'-'+sha256Hex(previousClientOrderId).slice(0,16);
-      const closed=await callProtectiveExecute({
-        type:'EXEC_CLOSE_POSITION',
-        commandId,
-        symbol:live.symbol,
-        direction:live.direction,
-        quantity:live.quantity,
-        closeAll:true,
-        exitMode:'REMAINDER_MARKET',
-        recoveryReason:'PARTIAL_TARGET_REMAINDER',
-        previousClientOrderId,
-      });
-      if(!closed.response.ok||closed.data?.ok!==true||closed.data?.remainderMarketClosed!==true){
-        const reason='PARTIAL_REMAINDER_'+String(
-          closed.data?.code||closed.data?.reason||closed.data?.error||('HTTP_'+closed.response.status)
-        );
-        if(closed.data?.writeAttempted===true||closed.data?.ambiguous===true){
-          return failClosedAutoTarget(reason);
-        }
-        scheduleReconcile(250);
-        return localAutoTargetFailure(symbol,reason);
-      }
-      autoTarget.lastError='';
-      autoTarget.lastActionAt=Date.now();
-      log('AUTO_TARGET_PARTIAL_REMAINDER_MARKET_CLOSED',{
-        symbol:live.symbol,direction:live.direction,
-        requestedQuantity:live.quantity,
-        executedBefore:n(plan.executedQuantity,0),
-        previousClientOrderId,
-        attempts:Array.isArray(closed.data?.attempts)?closed.data.attempts.length:1,
-      });
-      return {ok:true,changed:true,reason:'PARTIAL_TARGET_REMAINDER_MARKET_CLOSED'};
-    }finally{
-      autoTarget.busySymbols.delete(symbol);
-    }
+    return executePartialTargetRemainder(plan);
   }
 
   if(!['PLACE','REPLACE'].includes(plan.action))return localAutoTargetFailure(symbol,plan.reason||'PLAN_BLOCKED');
@@ -2725,6 +2767,14 @@ async function reconcile(secondPass=false){
     }
 
     stream.symbolQuarantines=maxLossSymbolQuarantines(data.report);
+
+    const partialTargetRemainder=await recoverImmediatePartialTargetRemainder();
+    if(partialTargetRemainder.handled){
+      if(partialTargetRemainder.ok!==true)return false;
+      stream.reconcileBusy=false;
+      await sleep(100);
+      return reconcile(false);
+    }
 
     const pendingProtectionLoss=pendingEntryProtectionLossTargets(data.report);
     if(pendingProtectionLoss.length){
