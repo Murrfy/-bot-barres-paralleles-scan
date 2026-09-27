@@ -968,8 +968,8 @@ function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions
       if (order?.reduceOnly !== true || order?.closePosition === true) continue;
       if (Math.abs(number(order?.origQty, NaN) - quantity) > 1e-12) continue;
       if (String(order?.priceMatch || '').toUpperCase() !== 'OPPONENT') continue;
-      if (!zenithManagedOrderId(order)) continue;
-
+      // A manually corrected Binance MAX-LOSS is acceptable when the live order itself
+      // satisfies every Zenith safety constraint; ownership of the client id is not safety proof.
       const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
       if (!(entryPrice > 0) || !(trigger > 0) || !(quantity > 0)) continue;
       const lossSide = position.direction === 'LONG' ? trigger < entryPrice : trigger > entryPrice;
@@ -1186,7 +1186,8 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
       if (order?.reduceOnly !== true || order?.closePosition === true) continue;
       if (Math.abs(number(order?.origQty, NaN) - quantity) > 1e-12) continue;
       if (String(order?.priceMatch || '').toUpperCase() !== 'OPPONENT') continue;
-      if (!zenithManagedOrderId(order)) continue;
+      // Accept a unique external Binance MAX-LOSS when its actual live parameters are
+      // exactly safe; STOP_MARKET and other non-LIMIT protective forms remain forbidden.
       const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
       if (!(entryPrice > 0) || !(trigger > 0) || !(quantity > 0)) continue;
       const lossSide = position.direction === 'LONG' ? trigger < entryPrice : trigger > entryPrice;
