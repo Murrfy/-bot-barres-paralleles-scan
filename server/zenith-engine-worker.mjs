@@ -2051,6 +2051,41 @@ function symbolMaxLossQuarantined(symbol,direction=''){
   return maxLossSymbolIsQuarantined(symbolQuarantineReport(),symbol,direction);
 }
 
+function maxLossRedSymbolsFromReport(report){
+  const diff=report?.differences&&typeof report.differences==='object'?report.differences:{};
+  const symbols=new Set();
+  const add=value=>{
+    const symbol=String(value||'').split(':')[0].trim().toUpperCase();
+    if(/^[A-Z0-9]{3,30}$/.test(symbol))symbols.add(symbol);
+  };
+  for(const key of ['missingMaxLossProtections','ambiguousMaxLossProtections','configuredMaxLossUnavailable']){
+    for(const row of Array.isArray(diff[key])?diff[key]:[])add(row);
+  }
+  for(const row of Array.isArray(diff.unsafeMaxLossProtections)?diff.unsafeMaxLossProtections:[]){
+    add(row?.symbol||row?.key);
+  }
+  return [...symbols].sort();
+}
+
+async function syncPersistentMaxLossAlerts(report){
+  try{
+    const result=await syncApi('engine-maxloss-alert-sync',{
+      method:'POST',
+      body:{symbols:maxLossRedSymbolsFromReport(report)},
+    });
+    if(!result.response.ok||result.data?.ok!==true){
+      log('MAX_LOSS_PUSH_SYNC_SKIPPED',{
+        reason:String(result.data?.code||('HTTP_'+result.response.status)),
+      });
+      return false;
+    }
+    return true;
+  }catch(error){
+    logError('MAX_LOSS_PUSH_SYNC_FAILED',error);
+    return false;
+  }
+}
+
 function runtimeSnapshot(){
   const projection=streamProjection();
   const executionMode='REAL';
@@ -2627,6 +2662,8 @@ async function reconcile(secondPass=false){
     }
 
     stream.symbolQuarantines=maxLossSymbolQuarantines(data.report);
+    // Notification telemetry is deliberately non-blocking: it has no authority over trading.
+    void syncPersistentMaxLossAlerts(data.report);
 
     const pendingProtectionLoss=pendingEntryProtectionLossTargets(data.report);
     if(pendingProtectionLoss.length){
