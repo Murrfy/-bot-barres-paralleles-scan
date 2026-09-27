@@ -114,6 +114,21 @@ test('cancel-old MAX-LOSS may use the exact transition repair target only with a
 });
 
 
+
+test('cancel-old MAX-LOSS verifies the stale order own quantity, not the new live quantity',async()=>{
+  const api=await readFile(new URL('../api/binance-protective-update-execute.js',import.meta.url),'utf8');
+  const cancelPhase=api.indexOf("if(phase==='CANCEL_OLD')");
+  const expectedAt=api.indexOf("const expected={",cancelPhase);
+  const maxLossAt=api.indexOf("if(update.protectionKind==='MAX_LOSS'){",expectedAt);
+  const progressiveElse=api.indexOf("}else{",maxLossAt);
+  const maxLossCancelBlock=api.slice(maxLossAt,progressiveElse);
+  assert.ok(cancelPhase>=0&&expectedAt>cancelPhase&&maxLossAt>expectedAt&&progressiveElse>maxLossAt);
+  assert.match(maxLossCancelBlock,/const previousQuantity=n\(old\?\.origQty\?\?old\?\.quantity,NaN\)/);
+  assert.match(maxLossCancelBlock,/PREVIOUS_MAX_LOSS_QUANTITY_INVALID/);
+  assert.match(maxLossCancelBlock,/expected\.quantity=String\(previousQuantity\)/);
+  assert.doesNotMatch(maxLossCancelBlock,/expected\.quantity=String\(update\.quantity\)/);
+});
+
 test('progressive placement blocks a standard reduce-only LIMIT that is not a Zenith exit target',()=>{
   const pending={
     orderClass:'STANDARD',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',

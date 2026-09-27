@@ -841,9 +841,13 @@ export default async function handler(req,res){
           type:'STOP',
         };
         if(update.protectionKind==='MAX_LOSS'){
+          const previousQuantity=n(old?.origQty??old?.quantity,NaN);
+          if(!(previousQuantity>0)){
+            return send(res,409,{ok:false,code:'PREVIOUS_MAX_LOSS_QUANTITY_INVALID',writeAttempted:false});
+          }
           expected.timeInForce='IOC';
           expected.reduceOnly='true';
-          expected.quantity=String(update.quantity);
+          expected.quantity=String(previousQuantity);
           expected.priceMatch='OPPONENT';
           expected.triggerPrice=String(n(old?.triggerPrice??old?.stopPrice));
           expected.workingType='CONTRACT_PRICE';
