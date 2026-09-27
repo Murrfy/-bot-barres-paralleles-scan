@@ -186,6 +186,8 @@ jobs:
         run: node --test scripts/test-maxloss-auto-repair.mjs
       - name: Test 24/7 MAX-LOSS repair wiring
         run: node --test scripts/test-engine-maxloss-auto-repair-wiring.mjs
+      - name: Test triggered MAX-LOSS remainder MARKET close
+        run: node --test scripts/test-triggered-maxloss-market-remainder.mjs
       - name: Test server progressive auto-protection
         run: node --test scripts/test-engine-worker-auto-protection.mjs
       - name: Test triggered progressive remainder recovery
