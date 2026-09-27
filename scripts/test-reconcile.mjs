@@ -261,6 +261,16 @@ test('matching position accepts a valid LIMIT-only MAX-LOSS algo STOP IOC', () =
   assert.deepEqual(result.differences.missingMaxLossProtections, []);
   assert.deepEqual(result.differences.ambiguousMaxLossProtections, []);
 });
+
+test('manual Binance repair is accepted when the live MAX-LOSS is uniquely safe and LIMIT-only', () => {
+  const manual = normalizeActualAlgoOrder({...emergency,algoId:177,clientAlgoId:'manual-max-loss'});
+  const result = reconcile(runtime([position], [manual]), [normalized], [manual]);
+  assert.equal(result.failClosed, false);
+  assert.equal(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'),false);
+  assert.deepEqual(result.differences.missingMaxLossProtections, []);
+  assert.deepEqual(result.differences.ambiguousMaxLossProtections, []);
+});
+
 test('quantity changes and missing positions block', () => {
   assert.ok(reconcile(runtime([{ ...position, positionAmt: '2' }], [emergency]), [normalized], [normalizedEmergency]).reasons.includes('BINANCE_POSITION_QUANTITY_MISMATCH'));
   assert.ok(reconcile(runtime([position]), [], []).reasons.includes('MISSING_BINANCE_POSITION'));
@@ -551,6 +561,18 @@ test('reconciliation accepts MAX-LOSS exactly within the configured per-token ca
   assert.equal(result.reasons.includes('CONFIGURED_MAX_LOSS_UNAVAILABLE'),false);
   assert.equal(result.differences.missingMaxLossProtections.length,0);
 });
+
+test('configured cap also accepts an exact safe manual Binance MAX-LOSS', () => {
+  const manual = normalizeActualAlgoOrder({...emergency,algoId:178,clientAlgoId:'manual-max-loss',triggerPrice:'49900'});
+  const baseResult = reconcile(runtime([position], [manual]), [normalized], [manual]);
+  const controllerState = {data:{settings:{maxLoss:400},tokenSettings:{BTCUSDT:{maxLoss:100}}}};
+  const result = enforceConfiguredMaxLossSafety(baseResult,controllerState,[normalized],[manual]);
+  assert.equal(result.failClosed,false);
+  assert.equal(result.reasons.includes('MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT'),false);
+  assert.equal(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'),false);
+  assert.equal(result.differences.missingMaxLossProtections.length,0);
+});
+
 
 test('missing configured MAX-LOSS fails closed instead of falling back to $400', () => {
   const baseResult = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
