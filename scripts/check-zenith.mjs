@@ -432,6 +432,22 @@ const orderIntent = fs.readFileSync('lib/order-intent.mjs', 'utf8');
 for (const required of ['deterministicClientOrderId','CLIENT_ORDER_ID_MAX_LENGTH = 36',"writeAllowed: false","reduceOnly: 'true'","priceMatch = 'OPPONENT'"]) {
   if (!orderIntent.includes(required)) fail(`order planning safety invariant missing: ${required}`);
 }
+if (!orderIntent.includes("mode === 'REMAINDER_MARKET'") ||
+    !orderIntent.includes("leg:'EXIT_REMAINDER_MARKET'") ||
+    !orderIntent.includes("params.type = 'MARKET'") ||
+    !orderIntent.includes("params.newOrderRespType = 'RESULT'") ||
+    orderIntent.includes('MARKET_LAST_RESORT')) {
+  fail('MARKET sell must remain restricted to the deterministic partial-remainder recovery mode');
+}
+if (!protectiveExecute.includes('function partialTargetRemainderProof') ||
+    !protectiveExecute.includes("'PARTIAL_TARGET_REMAINDER'") ||
+    !protectiveExecute.includes("'PARTIAL_TARGET_REMAINDER_ENGINE_REQUIRED'") ||
+    !protectiveExecute.includes("'PARTIAL_TARGET_REMAINDER_PROOF_REQUIRED'") ||
+    !protectiveExecute.includes("exitMode==='REMAINDER_MARKET'") ||
+    !protectiveExecute.includes('sameQuantity(remaining,requestedQty)')) {
+  fail('partial-remainder MARKET close must stay engine-only and exact-proof-bound');
+}
+
 if (!orderIntent.includes("ENTRY_PREFLIGHT_MAX_AGE_MS = 5000") ||
     !orderIntent.includes("'ENTRY_PREFLIGHT_STALE'") ||
     !orderIntent.includes("'POSITION_MODE_NOT_ONE_WAY'") ||
@@ -509,7 +525,7 @@ if (!protectiveUpdateIntent.includes("workingType:'CONTRACT_PRICE'") ||
 
 const protectiveUpdateExecute = fs.readFileSync('api/binance-protective-update-execute.js','utf8');
 for (const [label, source, expectedCalls] of [
-  ['protective execute', protectiveExecute, 2],
+  ['protective execute', protectiveExecute, 3],
   ['protective update', protectiveUpdateExecute, 7],
 ]) {
   for (const required of [

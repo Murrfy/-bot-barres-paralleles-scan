@@ -121,7 +121,7 @@ test('managed target is refreshed when average entry changes the calculated targ
   assert.ok(plan.actualTargetProfitUsd>=25);
 });
 
-test('partially executed target is kept when its remaining quantity exactly matches the live position',()=>{
+test('partially executed target requests immediate MARKET close of the exact live remainder',()=>{
   const plan=planAutomaticTargetExit({
     position:{...longPosition,positionAmt:'1'},
     currentOrders:[{
@@ -132,6 +132,10 @@ test('partially executed target is kept when its remaining quantity exactly matc
     tokenSettings:{BTCUSDT:{targetProfit:25}},settings:{targetProfit:100},
     priceFilter,maxLossConfirmed:true,
   });
-  assert.equal(plan.action,'NONE');
-  assert.equal(plan.reason,'MANAGED_TARGET_ALREADY_OPEN');
+  assert.equal(plan.action,'CLOSE_REMAINDER_MARKET');
+  assert.equal(plan.reason,'PARTIAL_TARGET_REMAINDER');
+  assert.equal(plan.executedQuantity,1);
+  assert.equal(plan.remainingQuantity,1);
+  assert.equal(plan.live.quantity,1);
+  assert.equal(plan.previousClientOrderId,'zth-EXI-partialtarget123');
 });

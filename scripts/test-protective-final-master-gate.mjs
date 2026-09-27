@@ -20,8 +20,8 @@ function gateInvariant(source,label,expectedCalls){
   assert.equal((source.match(/await requireFinalProtectiveMaster\(res,master\)/g)||[]).length,expectedCalls,label+' unexpected final gate call count');
 }
 
-test('protective close and entry-cancel writes revalidate current MASTER immediately before Binance',()=>{
-  gateInvariant(execute,'protective execute',2);
+test('protective close, partial-remainder MARKET and entry-cancel writes revalidate current MASTER immediately before Binance',()=>{
+  gateInvariant(execute,'protective execute',3);
   for(const writer of ['cancelEntryOrderIdempotent({','placeStandardOrderIdempotent({']){
     const at=execute.indexOf(writer);
     assert.ok(at>=0,writer+' missing');

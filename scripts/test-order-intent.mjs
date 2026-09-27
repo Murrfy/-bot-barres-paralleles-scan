@@ -95,7 +95,18 @@ test('protective exit uses LIMIT IOC OPPONENT without explicit price',()=>{
   assert.equal(p.params.reduceOnly,'true');
 });
 
-test('MARKET exit planning is forbidden',()=>{
+test('MARKET sell exists only for audited partial-remainder recovery',()=>{
+  const p=buildExitOrderPlan({
+    commandId:'cmd-12345678',symbol:'BTCUSDT',direction:'LONG',
+    quantity:0.02,exitMode:'REMAINDER_MARKET',attempt:0
+  });
+  assert.equal(p.params.side,'SELL');
+  assert.equal(p.params.type,'MARKET');
+  assert.equal(p.params.reduceOnly,'true');
+  assert.equal(p.params.newOrderRespType,'RESULT');
+  assert.equal('price' in p.params,false);
+  assert.equal('timeInForce' in p.params,false);
+  assert.equal('priceMatch' in p.params,false);
   assert.throws(
     ()=>buildExitOrderPlan({commandId:'cmd-12345678',symbol:'BTCUSDT',direction:'SHORT',quantity:0.02,exitMode:'MARKET_LAST_RESORT'}),
     /EXIT_MODE_INVALID/
