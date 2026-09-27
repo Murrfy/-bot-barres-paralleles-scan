@@ -313,7 +313,7 @@ export default async function handler(req,res){
       const device=await requireDevice(req,['master']);
       if(!device||String(device.principal||'')!=='engine')return send(res,403,{ok:false,code:'ENGINE_PRINCIPAL_REQUIRED'});
       const positions=req.body?.positions;
-      if(!Array.isArray(positions)||positions.length>500){
+      if(!Array.isArray(positions)){
         return send(res,400,{ok:false,code:'MAXLOSS_PUSH_POSITIONS_INVALID'});
       }
       const result=await syncMaxLossStates(positions);
@@ -322,7 +322,9 @@ export default async function handler(req,res){
 
     return send(res,404,{ok:false,code:'ACTION_NOT_FOUND'});
   }catch(error){
-    const code=String(error?.code||error?.message||'PUSH_INTERNAL_ERROR').slice(0,120);
+    const raw=String(error?.code||'');
+    const code=['UPSTASH_NOT_CONFIGURED','REDIS_ERROR','ENGINE_INSTANCE_FENCED','MASTER_LEASE_REQUIRED']
+      .includes(raw)?raw:'PUSH_BACKEND_ERROR';
     const status=['ENGINE_INSTANCE_FENCED','MASTER_LEASE_REQUIRED'].includes(code)?409:503;
     return send(res,status,{ok:false,code});
   }
