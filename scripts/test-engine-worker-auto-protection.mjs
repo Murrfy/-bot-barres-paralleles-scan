@@ -72,7 +72,7 @@ test('high-water is persisted before autonomous protective mutation',()=>{
   assert.ok(execute.indexOf('persistAutoHighWaterNow') < execute.indexOf("phase:'PLACE_NEW'"));
 });
 
-test('auto-protection requires synchronized armed current MASTER, ready stream and unique MAX-LOSS',()=>{
+test('auto-protection requires synchronized armed current MASTER, ready stream and one safe MAX-LOSS',()=>{
   const block=between('async function runAutoProtection','function scheduleMarkReconnect');
   assert.ok(block.includes('runtime.synchronized'));
   assert.ok(block.includes('runtime.heartbeatFresh'));
@@ -80,10 +80,11 @@ test('auto-protection requires synchronized armed current MASTER, ready stream a
   assert.ok(block.includes('realExecutionArmed:runtime.realExecutionArmed'));
   assert.ok(block.includes('userStreamReady:userStreamReady(stream.state)'));
   assert.ok(block.includes('uniqueManagedMaxLoss(position,orders)'));
-  assert.ok(worker.includes("String(order?.type||'').toUpperCase()!=='STOP'"));
-  assert.ok(worker.includes("String(order?.timeInForce||'').toUpperCase()!=='IOC'"));
-  assert.ok(worker.includes("String(order?.priceMatch||'').toUpperCase()!=='OPPONENT'"));
-  assert.ok(worker.includes('zenithManagedRealId(order?.clientAlgoId)'));
+  const maxLossCheck=between('function uniqueManagedMaxLoss','function rememberPriceFilters');
+  assert.ok(maxLossCheck.includes("String(order?.type||'').toUpperCase()!=='STOP'"));
+  assert.ok(maxLossCheck.includes("String(order?.timeInForce||'').toUpperCase()!=='IOC'"));
+  assert.ok(maxLossCheck.includes("String(order?.priceMatch||'').toUpperCase()!=='OPPONENT'"));
+  assert.equal(maxLossCheck.includes('zenithManagedRealId(order?.clientAlgoId)'),false);
 });
 
 test('replacement confirms new exact LIMIT protection before canceling old',()=>{

@@ -42,6 +42,13 @@ test('iPhone builds progressive and max-loss protection updates',()=>{
   const maxLoss=buildControllerUpdateProtectionCommand(longPosition,48000,'MAX_LOSS','zth-MAX-abcdef');
   assert.equal(maxLoss.payload.protectionKind,'MAX_LOSS');
   assert.equal(maxLoss.payload.triggerPrice,48000);
+
+  const manualTakeover=buildControllerUpdateProtectionCommand(longPosition,48000,'MAX_LOSS','manual-max-loss');
+  assert.equal(manualTakeover.payload.previousClientAlgoId,'manual-max-loss');
+  assert.throws(
+    ()=>buildControllerUpdateProtectionCommand(longPosition,50500,'PROGRESSIVE','manual-protection'),
+    /PREVIOUS_PROTECTION_ID_INVALID/
+  );
 });
 
 test('protection trigger side is direction-safe',()=>{

@@ -11,7 +11,12 @@ test('central ACK emergency validation requires live quantity and shared hard ca
   assert.match(sync,/Math\.abs\(Number\(position\?\.positionAmt\|\|position\?\.quantity\|\|0\)\)/);
 });
 
-test('central ACK emergency validation requires Zenith-managed MAX-LOSS',()=>{
-  assert.match(sync,/\^zth-MAX-\[A-Za-z0-9\._:-\]\+\$/);
+test('central ACK emergency validation accepts a safe Binance MAX-LOSS regardless of client-id owner',()=>{
+  const start=sync.indexOf('function runtimeEmergencyProtection');
+  const end=sync.indexOf('function commandExpired',start);
+  const block=sync.slice(start,end);
+  assert.match(block,/const clientAlgoId = String\(order\?\.clientAlgoId \|\| ''\)/);
+  assert.match(block,/if \(!clientAlgoId \|\| clientAlgoId\.length > 36\) return false/);
+  assert.doesNotMatch(block,/\^zth-MAX-/);
   assert.match(sync,/import \{ REAL_RISK_LIMITS \} from '\.\.\/lib\/risk-policy\.mjs'/);
 });

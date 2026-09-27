@@ -1356,8 +1356,9 @@ function runtimeEmergencyProtection(runtimeState, symbol, direction, entryPrice,
     if (order?.closePosition === true || order?.closePosition === 'true') return false;
     if (!numberMatches(order?.origQty ?? order?.quantity, qty)) return false;
     if (String(order?.priceMatch || '').toUpperCase() !== 'OPPONENT') return false;
-    if (!/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId || ''))) return false;
-    if (excludeClientAlgoId && String(order?.clientAlgoId || '') === String(excludeClientAlgoId)) return false;
+    const clientAlgoId = String(order?.clientAlgoId || '');
+    if (!clientAlgoId || clientAlgoId.length > 36) return false;
+    if (excludeClientAlgoId && clientAlgoId === String(excludeClientAlgoId)) return false;
     const trigger = Number(order?.triggerPrice ?? order?.stopPrice);
     if (!(trigger > 0)) return false;
     const lossSide = dir === 'LONG' ? trigger < entry : trigger > entry;

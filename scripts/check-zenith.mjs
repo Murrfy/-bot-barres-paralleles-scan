@@ -699,21 +699,22 @@ if (!index.includes("String(o?.timeInForce||'').toUpperCase()==='GTC'") ||
   fail('iPhone protection inventory must classify exit/progressive/MAX-LOSS orders with strict identity and price-side rules');
 }
 
-if (!protectiveUpdateExecute.includes("/^zth-[A-Za-z0-9._:-]+$/.test(clientAlgoId)") ||
-    !binanceReconcile.includes('if (!zenithManagedOrderId(order)) continue;') ||
-    !index.includes('if(!zenithManagedRealId(o?.clientAlgoId))return false;') ||
+if (!protectiveUpdateExecute.includes("if(!clientAlgoId||clientAlgoId.length>36)return false") ||
+    binanceReconcile.includes('if (!zenithManagedOrderId(order)) continue;') ||
+    index.includes('if(!zenithManagedRealId(o?.clientAlgoId))return false;') ||
     !index.includes('const emergencyReady=Boolean(inv.managedMaxLoss)&&inv.maxLossConflict!==true') ||
-    !index.includes('aucune protection MAX-LOSS Zenith unique et confirmée')) {
-  fail('protective execution, reconciliation, MASTER and controller must require a unique Zenith-managed MAX-LOSS');
+    !index.includes('aucune protection MAX-LOSS unique et confirmée sur Binance')) {
+  fail('protective execution, reconciliation, MASTER and controller must accept one uniquely safe Binance MAX-LOSS without weakening order-shape checks');
 }
 
 const sync = fs.readFileSync('api/zenith-sync.js', 'utf8');
 const deviceSessionSource = fs.readFileSync('lib/device-session.mjs', 'utf8');
 if (!sync.includes("import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs'") ||
     !sync.includes('function runtimeEmergencyProtection(runtimeState, symbol, direction, entryPrice, quantity, excludeClientAlgoId') ||
-    !sync.includes("/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId || ''))") ||
+    !sync.includes("if (!clientAlgoId || clientAlgoId.length > 36) return false") ||
+    sync.includes("/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId || ''))") ||
     !sync.includes('impliedLossUsd <= REAL_RISK_LIMITS.maxLossUsd + 1e-8')) {
-  fail('central execution ACK must independently require a Zenith-managed emergency stop within the shared $400 cap');
+  fail('central execution ACK must independently accept one safe Binance emergency stop within the shared $400 cap');
 }
 if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
     !sync.includes('setDeviceSessionCookie(res, token)') ||

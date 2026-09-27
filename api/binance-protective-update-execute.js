@@ -214,7 +214,7 @@ export function emergencyProtection(runtimeState,update,entryPrice,excludeClient
     if(Math.abs(n(o?.origQty??o?.quantity,NaN)-quantity)>1e-12)return false;
     if(String(o?.priceMatch||'').toUpperCase()!=='OPPONENT')return false;
     const clientAlgoId=String(o?.clientAlgoId||'');
-    if(!/^zth-[A-Za-z0-9._:-]+$/.test(clientAlgoId)||clientAlgoId.length>36)return false;
+    if(!clientAlgoId||clientAlgoId.length>36)return false;
     if(clientAlgoId===String(excludeClientAlgoId||''))return false;
     const trigger=n(o?.triggerPrice??o?.stopPrice);
     if(!(trigger>0)||!(entryPrice>0)||!(quantity>0))return false;
@@ -499,7 +499,7 @@ export default async function handler(req,res){
           ?(live.entryPrice-previousTrigger)*live.liveQuantity
           :(previousTrigger-live.entryPrice)*live.liveQuantity;
         if(!previousMaxLoss||
-           !/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(previousMaxLoss?.clientAlgoId||''))||
+           !String(previousMaxLoss?.clientAlgoId||'')||String(previousMaxLoss?.clientAlgoId||'').length>36||
            String(previousMaxLoss?.type||'').toUpperCase()!=='STOP'||
            String(previousMaxLoss?.timeInForce||'').toUpperCase()!=='IOC'||
            !bool(previousMaxLoss?.reduceOnly)||bool(previousMaxLoss?.closePosition)||

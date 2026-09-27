@@ -28,7 +28,7 @@ test('progressive and max-loss triggers stay on their correct side of entry',()=
   assert.throws(()=>validateUpdateAgainstLivePosition({...maxLoss,triggerPrice:51000},position),/LONG_MAX_LOSS_TRIGGER_NOT_BELOW_ENTRY/);
 });
 
-test('only Zenith-managed previous ids may be replaced automatically',()=>{
+test('external ids stay blocked except a verified Binance MAX-LOSS takeover target',()=>{
   assert.throws(()=>normalizeProtectiveUpdatePayload('EXEC_UPDATE_EXIT',{
     symbol:'BTCUSDT',direction:'LONG',quantity:0.02,targetPrice:51000,previousClientOrderId:'manual-order-1'
   }),/PREVIOUS_EXIT_ID_INVALID/);
@@ -36,6 +36,11 @@ test('only Zenith-managed previous ids may be replaced automatically',()=>{
     symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:50500,limitPrice:50500,protectionKind:'PROGRESSIVE',
     previousClientAlgoId:'manual-protection'
   }),/PREVIOUS_PROTECTION_ID_INVALID/);
+  const adopted=normalizeProtectiveUpdatePayload('EXEC_UPDATE_PROTECTION',{
+    symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:48000,protectionKind:'MAX_LOSS',
+    previousClientAlgoId:'manual-max-loss'
+  });
+  assert.equal(adopted.previousClientAlgoId,'manual-max-loss');
 });
 
 

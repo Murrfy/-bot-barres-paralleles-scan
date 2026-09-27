@@ -1093,7 +1093,8 @@ function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.ma
     if(order?.closePosition===true||order?.closePosition==='true')return false;
     if(!realNumberMatches(order?.origQty??order?.quantity,quantity))return false;
     if(String(order?.priceMatch||'').toUpperCase()!=='OPPONENT')return false;
-    if(!zenithManagedRealId(order?.clientAlgoId))return false;
+    // The safety decision comes from the live Binance order parameters, not from who
+    // generated the client id. This lets a manually repaired MAX-LOSS restore protection.
     const trigger=n(order?.triggerPrice??order?.stopPrice,0);
     if(!(trigger>0))return false;
     const lossSide=direction==='LONG'?trigger<entry:trigger>entry;
