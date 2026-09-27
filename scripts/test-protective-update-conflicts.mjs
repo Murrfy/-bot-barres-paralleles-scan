@@ -114,6 +114,18 @@ test('cancel-old MAX-LOSS may use the exact transition repair target only with a
 });
 
 
+
+test('cancel-old MAX-LOSS verifies the stale order own quantity, not the new live quantity',async()=>{
+  const api=await readFile(new URL('../api/binance-protective-update-execute.js',import.meta.url),'utf8');
+  assert.match(api,/const previousQuantity=n\(old\?\.origQty\?\?old\?\.quantity,NaN\)/);
+  assert.match(api,/PREVIOUS_MAX_LOSS_QUANTITY_INVALID/);
+  assert.match(api,/expected\.quantity=String\(previousQuantity\)/);
+  assert.doesNotMatch(
+    api.slice(api.indexOf("if(update.protectionKind==='MAX_LOSS'){",api.indexOf("phase==='CANCEL_OLD'"))),
+    /expected\.quantity=String\(update\.quantity\)/
+  );
+});
+
 test('progressive placement blocks a standard reduce-only LIMIT that is not a Zenith exit target',()=>{
   const pending={
     orderClass:'STANDARD',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
