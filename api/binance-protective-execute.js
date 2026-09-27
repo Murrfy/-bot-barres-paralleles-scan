@@ -12,6 +12,7 @@ import {
 } from '../lib/protective-command.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
+import { revalidateBinanceTradingApiPermissions } from '../lib/binance-api-permissions.mjs';
 
 const PREFIX='zenith:v1';
 const KEY_MASTER=`${PREFIX}:master`;
@@ -241,6 +242,20 @@ export default async function handler(req,res){
     }
   }catch{
     return send(res,503,{ok:false,code:'BINANCE_BACKOFF_STATE_UNAVAILABLE',writeAttempted:false});
+  }
+
+  const permissionStatus=await revalidateBinanceTradingApiPermissions(apiKey,secret);
+  if(!permissionStatus.ok){
+    return send(
+      res,
+      permissionStatus.code==='BINANCE_API_PERMISSION_REVALIDATION_BLOCKED'?423:503,
+      {
+        ok:false,
+        code:permissionStatus.code,
+        ...(permissionStatus.blockers?.length?{blockers:permissionStatus.blockers}:{}),
+        writeAttempted:false,
+      }
+    );
   }
 
   const [runtimeRaw,reportRaw,armRaw,masterModeRaw]=await Promise.all([
