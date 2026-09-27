@@ -59,8 +59,14 @@ test('auto-protection high-water is scoped to the exact Binance position lifecyc
 });
 
 
-test('MASTER auto protection requires a unique Zenith-managed MAX-LOSS',()=>{
-  assert.match(html,/if\(!zenithManagedRealId\(o\?\.clientAlgoId\)\)return false/);
+test('MASTER auto protection requires one uniquely safe Binance MAX-LOSS',()=>{
+  const start=html.indexOf('function masterHasSingleMaxLoss');
+  const end=html.indexOf('function pruneMasterAutoProtectionHighWater',start);
+  const block=html.slice(start,end);
+  assert.match(block,/String\(o\?\.type\|\|''\)\.toUpperCase\(\)!=='STOP'/);
+  assert.match(block,/String\(o\?\.timeInForce\|\|''\)\.toUpperCase\(\)!=='IOC'/);
+  assert.match(block,/String\(o\?\.priceMatch\|\|''\)\.toUpperCase\(\)!=='OPPONENT'/);
+  assert.doesNotMatch(block,/zenithManagedRealId\(o\?\.clientAlgoId\)/);
   assert.match(html,/const emergencyReady=Boolean\(inv\.managedMaxLoss\)&&inv\.maxLossConflict!==true/);
-  assert.match(html,/aucune protection MAX-LOSS Zenith unique et confirmée/);
+  assert.match(html,/aucune protection MAX-LOSS unique et confirmée sur Binance/);
 });
