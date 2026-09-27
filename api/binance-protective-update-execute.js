@@ -17,6 +17,7 @@ import {
 } from '../lib/binance-algo-writer.mjs';
 import { validateExecutionArmRecord, protectiveModeReason, executionReadiness } from './binance-protective-execute.js';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
+import { revalidateBinanceTradingApiPermissions } from '../lib/binance-api-permissions.mjs';
 
 const BASE='https://fapi.binance.com';
 const PREFIX='zenith:v1';
@@ -367,6 +368,20 @@ export default async function handler(req,res){
     }
   }catch{
     return send(res,503,{ok:false,code:'BINANCE_BACKOFF_STATE_UNAVAILABLE',writeAttempted:false});
+  }
+
+  const permissionStatus=await revalidateBinanceTradingApiPermissions(apiKey,secret);
+  if(!permissionStatus.ok){
+    return send(
+      res,
+      permissionStatus.code==='BINANCE_API_PERMISSION_REVALIDATION_BLOCKED'?423:503,
+      {
+        ok:false,
+        code:permissionStatus.code,
+        ...(permissionStatus.blockers?.length?{blockers:permissionStatus.blockers}:{}),
+        writeAttempted:false,
+      }
+    );
   }
 
   if(orphanCleanup){
