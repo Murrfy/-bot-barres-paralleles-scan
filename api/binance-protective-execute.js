@@ -219,7 +219,8 @@ function protectiveModeReason(mode){
 function executionReadiness(
   runtimeState,report,masterDeviceId,repairTarget='',
   pendingEntryCancelRecovery=false,maxLossRemainderRecovery=false,
-  executionTarget='',quarantineOperationAllowed=false
+  executionTarget='',quarantineOperationAllowed=false,
+  partialTargetRemainderRecovery=false
 ){
   const age=Date.now()-Number(runtimeState?.updatedAt||0);
   if(!runtimeState?.data||String(runtimeState?.masterDeviceId||'')!==String(masterDeviceId))return 'MASTER_RUNTIME_WRONG_DEVICE';
@@ -229,6 +230,7 @@ function executionReadiness(
   const stream=data.userStream;
   if(!stream||stream.connected!==true)return 'USER_STREAM_NOT_READY';
   if(pendingEntryCancelRecovery!==true&&maxLossRemainderRecovery!==true&&
+     partialTargetRemainderRecovery!==true&&
      (stream.ready!==true||stream.failClosed!==false||stream.needsReconciliation!==false)){
     return 'USER_STREAM_NOT_READY';
   }
@@ -242,7 +244,8 @@ function executionReadiness(
   const clean=report.status==='CLEAN_REAL'&&report.failClosed===false&&report.reasons.length===0;
   if(clean)return '';
 
-  if(pendingEntryCancelRecovery===true||maxLossRemainderRecovery===true)return '';
+  if(pendingEntryCancelRecovery===true||maxLossRemainderRecovery===true||
+     partialTargetRemainderRecovery===true)return '';
 
   const repair=String(repairTarget||'').toUpperCase();
   if(repair&&protectionOnlyMismatchTarget(report)===repair)return '';
@@ -354,10 +357,10 @@ export default async function handler(req,res){
     :executionSymbol;
   const quarantineOperationAllowed=
     type==='EXEC_CANCEL_ENTRY'||type==='EXEC_CLOSE_POSITION'||
-    pendingEntryCancelRecovery||maxLossRemainderRecovery;
+    pendingEntryCancelRecovery||maxLossRemainderRecovery||Boolean(partialTargetRemainder);
   const readinessReason=executionReadiness(
     runtimeState,report,master.deviceId,repairTarget,pendingEntryCancelRecovery,maxLossRemainderRecovery,
-    executionTarget,quarantineOperationAllowed
+    executionTarget,quarantineOperationAllowed,Boolean(partialTargetRemainder)
   );
   if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
 
