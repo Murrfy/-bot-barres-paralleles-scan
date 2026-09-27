@@ -336,6 +336,25 @@ async function clearSaleRemainderRecovery(row){
   ].join('\n');
   return Number(await redis(['EVAL',script,'1',KEY_SALE_REMAINDER_RECOVERIES,field,String(row.commandId)]))===1;
 }
+function marketAttemptIdentityMatches(order,plan){
+  const expected=plan?.params||{};
+  const same=(a,b)=>{
+    const x=Number(a),y=Number(b);
+    return Number.isFinite(x)&&Number.isFinite(y)&&
+      Math.abs(x-y)<=Math.max(1e-12,Math.abs(y)*1e-10);
+  };
+  return Boolean(
+    order&&
+    String(order?.symbol||'').toUpperCase()===String(expected.symbol||'').toUpperCase()&&
+    String(order?.clientOrderId||'')===String(expected.newClientOrderId||'')&&
+    String(order?.side||'').toUpperCase()===String(expected.side||'').toUpperCase()&&
+    String(order?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
+    String(order?.type||'').toUpperCase()==='MARKET'&&
+    (order?.reduceOnly===true||order?.reduceOnly==='true')&&
+    same(order?.origQty??order?.quantity,expected.quantity)
+  );
+}
+
 async function waitMarketAttemptTerminal({apiKey,secret,symbol,clientOrderId,initialOrder}){
   let order=initialOrder||null;
   for(let i=0;i<5;i++){
@@ -711,15 +730,31 @@ export default async function handler(req,res){
         const priorAttemptAlreadyReduced=
           liveRemaining<attemptQuantity-Math.max(1e-12,attemptQuantity*1e-10);
         if(priorAttemptAlreadyReduced){
-          marketResult=await placeStandardOrderIdempotent({
-            apiKey,secret,orderParams:marketPlan.params,writesEnabled:false,timestamp:Date.now(),
-          });
-          if(marketResult.disposition!=='EXISTING'){
+          let existing=null;
+          try{
+            existing=await queryOrderByClientId({
+              apiKey,secret,symbol,
+              clientOrderId:String(marketPlan.params.newClientOrderId||''),
+              timestamp:Date.now(),
+            });
+          }catch(e){
+            if(Number(e?.code)===-2013){
+              return send(res,409,{
+                ok:false,code:'SALE_REMAINDER_PREVIOUS_ATTEMPT_NOT_FOUND',
+                writeAttempted:wrote,attempt,attemptQuantity,liveQuantity:liveRemaining,
+              });
+            }
+            throw e;
+          }
+          if(!marketAttemptIdentityMatches(existing,marketPlan)){
             return send(res,409,{
-              ok:false,code:'SALE_REMAINDER_PREVIOUS_ATTEMPT_NOT_FOUND',
+              ok:false,code:'SALE_REMAINDER_PREVIOUS_ATTEMPT_IDENTITY_MISMATCH',
               writeAttempted:wrote,attempt,attemptQuantity,liveQuantity:liveRemaining,
             });
           }
+          marketResult={
+            ok:true,disposition:'EXISTING',writeAttempted:false,order:existing,
+          };
         }else{
           if(!(await requireFinalProtectiveMaster(res,master)))return;
           marketResult=await placeStandardOrderIdempotent({
