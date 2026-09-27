@@ -138,3 +138,34 @@ test('worker gets active-symbol PRICE_FILTER metadata from fenced runtime snapsh
 test('server auto-protection is declared migrated only after implementation is present',()=>{
   assert.ok(worker.includes('autoProtectionMoved:true'));
 });
+
+
+test('worker records reached protection stages while MAX-LOSS is red before returning',()=>{
+  const start=worker.indexOf('async function runAutoProtection');
+  const end=worker.indexOf('function activeProtectionSymbols',start);
+  const block=worker.slice(start,end);
+  const observe=block.indexOf('const highWater=observeAutoHighWater(position,mark)');
+  const red=block.indexOf('if(maxLossRed)');
+  const returnRed=block.indexOf("autoProtection.lastError=symbolMaxLossQuarantined",red);
+  assert.ok(observe>=0&&red>observe&&returnRed>red);
+  assert.match(block,/highestReachedProtectionStage\(protectionStages,highWater\)/);
+  assert.match(block,/autoProtection\.redHighWater\.set\(highWaterKey,nextRed\)/);
+  assert.match(block,/await persistAutoHighWaterNow\(\)/);
+  const redBlock=block.slice(red,block.indexOf("if(autoProtection.busySymbols",red));
+  assert.doesNotMatch(redBlock,/executeAutoProgressive|callProtectiveUpdateExecute/);
+});
+
+test('worker passes red high-water only into progressive planning and clears it only after satisfaction',()=>{
+  const start=worker.indexOf('async function runAutoProtection');
+  const end=worker.indexOf('function activeProtectionSymbols',start);
+  const block=worker.slice(start,end);
+  assert.match(block,/redBlockedHighWaterProfitUsd:n\(autoProtection\.redHighWater\.get\(highWaterKey\),NaN\)/);
+  assert.match(block,/plan\.redRecoverySatisfied===true&&autoProtection\.redHighWater\.delete\(highWaterKey\)/);
+});
+
+test('red high-water is persisted in the same fenced state and pruned with its position',()=>{
+  assert.match(worker,/redHighWater:new Map\(\)/);
+  assert.match(worker,/if\(key\.startsWith\('red:'\)\)autoProtection\.redHighWater\.set/);
+  assert.match(worker,/entries\['red:'\+key\]=Number\(value\)/);
+  assert.match(worker,/autoProtection\.redHighWater\.delete\(key\)/);
+});
