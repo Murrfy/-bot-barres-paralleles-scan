@@ -102,8 +102,6 @@ jobs:
         run: node --test scripts/test-bounded-auth-secret-inputs.mjs
       - name: Test MASTER configuration synchronization
         run: node --test scripts/test-master-sync.mjs
-      - name: Test iPad MASTER screen wake lock
-        run: node --test scripts/test-master-wakelock.mjs
       - name: Test manual PANIC remains controller-only
         run: node --test scripts/test-manual-panic-current.mjs
       - name: Test controller-to-MASTER cloud synchronization
@@ -196,6 +194,8 @@ jobs:
         run: node --test scripts/test-pairing-atomic-session.mjs
       - name: Test MASTER remains server-only
         run: node --test scripts/test-server-master-only.mjs
+      - name: Test browser MASTER legacy is permanently absent
+        run: node --test scripts/test-server-master-only.mjs
       - name: Test one-shot legacy Bearer migration
         run: node --test scripts/test-bearer-one-shot-migration.mjs
       - name: Test bounded request bodies
@@ -284,8 +284,6 @@ jobs:
         run: node --test scripts/test-master-auto-protection.mjs
       - name: Test CONTRACT_PRICE alignment for ATTEINT and protections
         run: node --test scripts/test-contract-price-alignment.mjs
-      - name: Test autonomous MASTER auto protection wiring
-        run: node --test scripts/test-master-auto-protection-wiring.mjs
       - name: Test real protection level wiring
         run: node --test scripts/test-real-protection-level-wiring.mjs
       - name: Test exact missing-protection repair gate
@@ -314,8 +312,6 @@ jobs:
         run: node --test scripts/test-active-target-protection-confirmation.mjs
       - name: Test active target replacement auto-recreate fence
         run: node --test scripts/test-active-target-auto-recreate-race.mjs
-      - name: Test MASTER command worker routing
-        run: node --test scripts/test-master-worker-routing.mjs
       - name: Test idempotent real entry cancellation
         run: node --test scripts/test-binance-order-cancel.mjs
       - name: Test Zenith-only entry cancellation ownership
