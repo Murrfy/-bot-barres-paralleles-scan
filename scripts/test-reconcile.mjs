@@ -24,8 +24,8 @@ const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
     /^import \{ evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches \} from '\.\.\/lib\/entry-transition\.mjs';\n/m,
     "const entryTransitionOrderIdentity = order => { const s=String(order?.symbol||'').toUpperCase(); if(order?.clientAlgoId)return s+':algo-client:'+String(order.clientAlgoId); if(order?.algoId)return s+':algo:'+String(order.algoId); if(order?.clientOrderId)return s+':client:'+String(order.clientOrderId); if(order?.orderId)return s+':id:'+String(order.orderId); return ''; }; const evaluateEntryTransitionReconciliation = () => ({active:[],invalid:[],expired:[],allowedOrderIdentities:new Set(),missingProtections:[],missingEntries:[]}); const transitionEntryMatches = () => false; const transitionProtectionMatches = () => false;\n"
   );
-const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies, zenithScopeSymbols, runtimeStateWithinScope } = await import(
-  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies, zenithScopeSymbols, runtimeStateWithinScope };').toString('base64')
+const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies, zenithScopeSymbols, runtimeStateWithinScope } = await import(
+  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies, zenithScopeSymbols, runtimeStateWithinScope };').toString('base64')
 );
 const runtime = (positions = [], orders = [], mode = 'REAL') => ({
   updatedAt: Date.now(), data: { executionMode: mode, binancePositions: positions, binanceOrders: orders },
@@ -90,7 +90,7 @@ test('pure manual Binance symbol with no Zenith registration or zth order remain
 });
 
 
-test('triggered MAX-LOSS partial IOC resumes at the exact next LIMIT IOC attempt',()=>{
+test('triggered MAX-LOSS partial IOC certifies the exact live remainder for MARKET recovery',()=>{
   const live={...normalized,positionAmt:'0.3',quantity:0.3,updateTime:1700000005000};
   const algo=normalizeActualAlgoOrder({
     symbol:'BTCUSDT',positionSide:'BOTH',side:'SELL',orderType:'STOP',
@@ -102,30 +102,21 @@ test('triggered MAX-LOSS partial IOC resumes at the exact next LIMIT IOC attempt
   const original=normalizeActualOrder({
     symbol:'BTCUSDT',orderId:'9001',clientOrderId:'binance-triggered',
     side:'SELL',positionSide:'BOTH',type:'LIMIT',status:'EXPIRED',
-    origQty:'1',executedQty:'0.4',reduceOnly:true,closePosition:false,timeInForce:'IOC'
-  });
-  const commandId='maxloss-remainder:zth-MAX-restart:9001';
-  const attempt1Id=recoveryClientOrderId(commandId,'BTCUSDT',1);
-  const attempt1=normalizeActualOrder({
-    symbol:'BTCUSDT',orderId:'9002',clientOrderId:attempt1Id,
-    side:'SELL',positionSide:'BOTH',type:'LIMIT',status:'EXPIRED',
-    origQty:'0.6',executedQty:'0.3',reduceOnly:true,closePosition:false,timeInForce:'IOC'
+    origQty:'1',executedQty:'0.7',reduceOnly:true,closePosition:false,timeInForce:'IOC'
   });
   const evidence=evaluateTriggeredMaxLossRemainder({
-    position:live,algo,actualOrder:original,
-    recoveryOrders:[{attempt:1,clientOrderId:attempt1Id,order:attempt1}],
-    configuredMaxLossUsd:400,
+    position:live,algo,actualOrder:original,configuredMaxLossUsd:400,
   });
   assert.equal(evidence.kind,'REMAINDER');
   assert.equal(evidence.remainingQuantity,0.3);
   assert.equal(evidence.executedQuantity,0.7);
-  assert.equal(evidence.nextAttempt,2);
-  assert.equal(evidence.priceMatch,'OPPONENT_10');
-  assert.equal(evidence.recoveryCommandId,commandId);
+  assert.equal(evidence.recoveryCommandId,'maxloss-remainder:zth-MAX-restart:9001');
+  assert.equal('nextAttempt' in evidence,false);
+  assert.equal('priceMatch' in evidence,false);
 });
 
-test('triggered MAX-LOSS with no prior recovery starts at OPPONENT_5, never repeats OPPONENT',()=>{
-  const live={...normalized,positionAmt:'0.6',quantity:0.6,updateTime:1700000005000};
+test('triggered MAX-LOSS zero-fill IOC certifies the full live quantity as MARKET remainder',()=>{
+  const live={...normalized,positionAmt:'1',quantity:1,updateTime:1700000005000};
   const algo=normalizeActualAlgoOrder({
     symbol:'BTCUSDT',positionSide:'BOTH',side:'SELL',orderType:'STOP',
     algoId:7001,clientAlgoId:'zth-MAX-restart',quantity:'1',
@@ -135,15 +126,17 @@ test('triggered MAX-LOSS with no prior recovery starts at OPPONENT_5, never repe
   });
   const original=normalizeActualOrder({
     symbol:'BTCUSDT',orderId:'9001',side:'SELL',positionSide:'BOTH',
-    type:'LIMIT',status:'EXPIRED',origQty:'1',executedQty:'0.4',
+    type:'LIMIT',status:'EXPIRED',origQty:'1',executedQty:'0',
     reduceOnly:true,closePosition:false,timeInForce:'IOC'
   });
   const evidence=evaluateTriggeredMaxLossRemainder({
-    position:live,algo,actualOrder:original,recoveryOrders:[],configuredMaxLossUsd:400,
+    position:live,algo,actualOrder:original,configuredMaxLossUsd:400,
   });
   assert.equal(evidence.kind,'REMAINDER');
-  assert.equal(evidence.nextAttempt,1);
-  assert.equal(evidence.priceMatch,'OPPONENT_5');
+  assert.equal(evidence.remainingQuantity,1);
+  assert.equal(evidence.executedQuantity,0);
+  assert.equal('nextAttempt' in evidence,false);
+  assert.equal('priceMatch' in evidence,false);
 });
 
 test('reconciliation can reconstruct a triggered MAX-LOSS remainder from Binance history after restart',async()=>{
@@ -176,8 +169,12 @@ test('reconciliation can reconstruct a triggered MAX-LOSS remainder from Binance
       controllerState:{data:{tokenSettings:{BTCUSDT:{maxLoss:400}},settings:{}}},
     });
     assert.equal(found.remainders.length,1);
-    assert.equal(found.remainders[0].nextAttempt,1);
-    assert.equal(found.remainders[0].priceMatch,'OPPONENT_5');
+    assert.equal(found.remainders[0].remainingQuantity,0.6);
+    assert.equal(found.remainders[0].executedQuantity,0.4);
+    assert.equal('nextAttempt' in found.remainders[0],false);
+    assert.equal('priceMatch' in found.remainders[0],false);
+    assert.equal(found.pending.length,0);
+    assert.equal(found.exhausted.length,0);
     assert.equal(found.ambiguous.length,0);
     assert.equal(found.inconsistent.length,0);
   }finally{
