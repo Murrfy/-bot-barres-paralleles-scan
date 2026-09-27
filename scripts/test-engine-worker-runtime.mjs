@@ -110,3 +110,31 @@ test('automatic progressive protection is now owned by the server worker',()=>{
   assert.ok(worker.includes("../lib/master-auto-protection.mjs"));
   assert.ok(worker.includes('autoProtectionMoved:true'));
 });
+
+
+test('worker ignores Binance symbols outside Zenith scope but preserves manual close events for tracked symbols',()=>{
+  assert.ok(worker.includes('function configuredZenithSymbols()'));
+  assert.ok(worker.includes('function liveZenithScopeSymbols()'));
+  assert.ok(worker.includes('function filterRuntimeSnapshotToZenith(snapshot)'));
+  assert.ok(worker.includes('function filterUserStreamPayloadToZenith(payload)'));
+  assert.ok(worker.includes("return scope.has(symbol)||zenithManagedRealId(id)?payload:null;"));
+  assert.ok(worker.includes("const positions=(Array.isArray(account.P)?account.P:[]).filter(row=>"));
+  assert.ok(worker.includes("scope.has(String(row?.s||'').toUpperCase())"));
+  assert.ok(worker.includes("if(!positions.length)return null;"));
+  assert.ok(worker.includes("const snapshot=filterRuntimeSnapshotToZenith(data.snapshot);"));
+  assert.ok(worker.includes("reason:'OUTSIDE_ZENITH_SCOPE'"));
+});
+
+test('tracked stream positions remain in scope until a Binance zero-quantity ACCOUNT_UPDATE removes them',()=>{
+  const scopeBlock=worker.slice(
+    worker.indexOf('function liveZenithScopeSymbols(){'),
+    worker.indexOf('function filterRuntimeSnapshotToZenith',worker.indexOf('function liveZenithScopeSymbols(){'))
+  );
+  assert.ok(scopeBlock.includes('Object.values(state.positions||{})'));
+  const filterBlock=worker.slice(
+    worker.indexOf('function filterUserStreamPayloadToZenith(payload){'),
+    worker.indexOf('function autoPositionKey',worker.indexOf('function filterUserStreamPayloadToZenith(payload){'))
+  );
+  assert.ok(filterBlock.includes("if(type==='ACCOUNT_UPDATE')"));
+  assert.ok(filterBlock.includes('P:positions'));
+});

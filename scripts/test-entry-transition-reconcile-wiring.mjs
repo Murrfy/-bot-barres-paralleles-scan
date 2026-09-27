@@ -8,7 +8,8 @@ test('reconciliation loads server-owned entry transition records and passes them
   assert.match(reconcile,/KEY_ENTRY_TRANSITIONS/);
   assert.match(reconcile,/redis\(\['HGETALL', KEY_ENTRY_TRANSITIONS\]\)/);
   assert.match(reconcile,/parseEntryTransitionStore\(entryTransitionRaw\)/);
-  assert.match(reconcile,/reconcile\(runtimeState, actualPositions, actualOrders, entryTransitions\)/);
+  assert.match(reconcile,/const scopedRuntimeState=runtimeStateWithinScope\(runtimeState,scopeSymbols\)/);
+  assert.match(reconcile,/reconcile\(scopedRuntimeState, actualPositions, actualOrders, entryTransitions\)/);
 });
 
 test('only exact transition order identities are exempted from untracked/orphan classification',()=>{
