@@ -58,6 +58,35 @@ test('partial entry fill refresh cancels old managed target, rereads live positi
   assert.match(block,/position:latestPosition,currentOrders:latestOrders/);
 });
 
+test('partial target remainder is persisted before old target cancellation and closed only with LIMIT IOC',()=>{
+  const start=worker.indexOf('async function closePartialAutomaticTargetRemainder');
+  const end=worker.indexOf('async function ensureAutomaticTargetForPosition',start);
+  assert.ok(start>=0&&end>start);
+  const block=worker.slice(start,end);
+  assert.match(block,/PROTECTIVE_CLOSE_ATTEMPTS/);
+  assert.match(block,/exitMode:policy\.exitMode/);
+  assert.match(block,/priceMatch:policy\.priceMatch/);
+  assert.match(block,/type:'EXEC_CLOSE_POSITION'/);
+  assert.match(block,/closeAll:true/);
+  assert.match(block,/PARTIAL_REMAINDER_RETRY_PENDING/);
+  assert.match(block,/rollPartialTargetRemainderGeneration\(marker\)/);
+  assert.doesNotMatch(block,/MARKET/);
+
+  const ensureStart=worker.indexOf('async function ensureAutomaticTargetForPosition');
+  const ensureEnd=worker.indexOf('async function ensureAutomaticTargets',ensureStart);
+  const ensureBlock=worker.slice(ensureStart,ensureEnd);
+  const persist=ensureBlock.indexOf('persistPartialTargetRemainder(plan.live,plan.previousClientOrderId)');
+  const close=ensureBlock.indexOf('closePartialAutomaticTargetRemainder(',persist);
+  assert.ok(persist>=0&&close>persist,'remainder close intent must persist before execution');
+});
+
+test('partial target close intent survives restart state and blocks a new entry on the same symbol',()=>{
+  assert.match(worker,/remainderClosures:new Map\(\)/);
+  assert.match(worker,/key\.startsWith\('close:'\).*remainderClosures\.set/s);
+  assert.match(worker,/entries\['close:'\+key\]=Number\(value\)/);
+  assert.match(worker,/autoTarget\.remainderClosures\.keys\(\).*startsWith\(config\.symbol\+':'\)/s);
+});
+
 test('replacement target gets a distinct deterministic identity from live quantity and target price',()=>{
   assert.match(worker,/targetIdentity=sha256Hex\(`\$\{live\.quantity\}\|\$\{activePlan\.targetPrice\}`\)\.slice\(0,12\)/);
   assert.match(worker,/auto-target-\$\{live\.symbol\}-\$\{live\.direction\}-\$\{live\.lifecycleAt\|\|0\}-\$\{targetIdentity\}/);
