@@ -125,6 +125,16 @@ test('worker ignores Binance symbols outside Zenith scope but preserves manual c
   assert.ok(worker.includes("reason:'OUTSIDE_ZENITH_SCOPE'"));
 });
 
+test('protection high-water key is stable across quantity and entry-price changes within one lifecycle',()=>{
+  const start=worker.indexOf('function autoPositionKey(position){');
+  const end=worker.indexOf('function observedLinearPnl',start);
+  assert.ok(start>=0&&end>start);
+  const block=worker.slice(start,end);
+  assert.match(block,/return `\$\{symbol\}:\$\{direction\}:\$\{lifecycle\}`/);
+  assert.doesNotMatch(block,/const qty=/);
+  assert.doesNotMatch(block,/const entry=/);
+});
+
 test('tracked stream positions remain in scope until a Binance zero-quantity ACCOUNT_UPDATE removes them',()=>{
   const scopeBlock=worker.slice(
     worker.indexOf('function liveZenithScopeSymbols(){'),
