@@ -56,3 +56,38 @@ test('terminal status carries committed active config proof back to the iPhone',
   assert.match(complete,/controllerRevision:controllerCommit\.nextRevision/);
   assert.match(complete,/controllerStateHash:controllerCommit\.nextStateHash/);
 });
+
+test('restart recovery immediately ACKs an already-flat close before claim TTL or command expiry',()=>{
+  const helperStart=sync.indexOf('async function recoverSatisfiedProcessingClose');
+  const helperEnd=sync.indexOf('async function recoverStaleProcessing',helperStart);
+  assert.ok(helperStart>=0&&helperEnd>helperStart,'recovered close helper missing');
+  const helper=sync.slice(helperStart,helperEnd);
+  assert.match(helper,/EXEC_CLOSE_POSITION/);
+  assert.match(helper,/execClosePayloadStatus/);
+  assert.match(helper,/freshConsistentReconciliation/);
+  assert.match(helper,/runtimeClosePositionQuantity/);
+  assert.match(helper,/currentQuantity>1e-12/);
+  assert.match(helper,/completeProcessingCommandAtomic\(raw,commandId,device\)/);
+  assert.match(helper,/EXEC_CLOSE_RECOVERED_CONFIRMED/);
+
+  const recoveryStart=sync.indexOf('async function recoverStaleProcessing');
+  const recoveryEnd=sync.indexOf('async function claimNextCommand',recoveryStart);
+  const recovery=sync.slice(recoveryStart,recoveryEnd);
+  const satisfiedAt=recovery.indexOf('recoverSatisfiedProcessingClose(raw,command,device)');
+  const expiredAt=recovery.indexOf('commandExpired(command,now)');
+  const ttlAt=recovery.indexOf('COMMAND_CLAIM_TTL_MS');
+  assert.ok(satisfiedAt>=0&&expiredAt>satisfiedAt,'flat close must be finalized before command expiry');
+  assert.ok(ttlAt>expiredAt,'flat close must be finalized before the 90-second stale-claim gate');
+  assert.match(recovery,/recoveredClose \+= 1/);
+});
+
+test('restart recovery never auto-ACKs a close while Binance still shows live quantity',()=>{
+  const start=sync.indexOf('async function recoverSatisfiedProcessingClose');
+  const end=sync.indexOf('async function recoverStaleProcessing',start);
+  const helper=sync.slice(start,end);
+  assert.match(helper,/if\(currentQuantity>1e-12\)return \{handled:false,completed:false\}/);
+  const completeAt=helper.indexOf('completeProcessingCommandAtomic');
+  const quantityGateAt=helper.indexOf('currentQuantity>1e-12');
+  assert.ok(quantityGateAt>=0&&completeAt>quantityGateAt);
+});
+
