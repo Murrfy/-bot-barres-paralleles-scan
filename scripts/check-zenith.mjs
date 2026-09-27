@@ -770,8 +770,8 @@ if (!sync.includes("process.env.ZENITH_REAL_TRADING_ENABLED === '1'") ||
     !sync.includes("'BINANCE_WRITE_DISABLED'")) {
   fail('api/zenith-sync.js must keep both explicit real-trading and Binance-write environment locks');
 }
-if (!sync.includes("'SIMULATION_LOCKED'")) {
-  fail('api/zenith-sync.js must expose SIMULATION_LOCKED when real trading is not armed');
+if (!sync.includes("'REAL_EXECUTION_DISABLED'") || sync.includes("'SIMULATION_LOCKED'")) {
+  fail('api/zenith-sync.js must expose REAL_EXECUTION_DISABLED and must not retain legacy simulation execution state');
 }
 if (!sync.includes("KEY_EMERGENCY_STOP")) {
   fail('api/zenith-sync.js must keep the persistent emergency-stop key');
@@ -979,15 +979,11 @@ if (!engineWorker.includes("syncApi('master-heartbeat'") ||
   fail('24/7 server engine must own heartbeat, configuration ACK, runtime publication, commands and Binance user stream');
 }
 
-if (!index.includes('function renderPositions(){return false}') ||
-    !index.includes('function createPosition(s,entry,source)') ||
-    !index.includes('Simulation supprimée') ||
-    !index.includes('return null') ||
-    !index.includes('function closePosition()') ||
-    !index.includes('return false') ||
-    index.includes('<button id="resetSimBtn"') ||
-    index.includes('Positions actives — simulation')) {
-  fail('real-only Zenith must not expose, create, close, or render simulated positions');
+for (const forbidden of [
+  'function createPosition(','function closePosition(','function renderPositions(',
+  'Simulation supprimée','Aucune simulation','resetSimBtn','Positions actives — simulation'
+]) {
+  if (index.includes(forbidden)) fail(`real-only Zenith must not retain local simulation relic: ${forbidden}`);
 }
 if (!engineWorker.includes('async function commandCycle()') ||
     !engineWorker.includes("syncApi('command-next',{method:'POST'") ||
