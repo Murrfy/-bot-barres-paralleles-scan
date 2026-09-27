@@ -97,8 +97,8 @@ test('cancel-old progressive verifies the stale order own quantity after a parti
   const expectedAt=api.indexOf("const expected={",cancelPhase);
   const maxLossAt=api.indexOf("if(update.protectionKind==='MAX_LOSS'){",expectedAt);
   const progressiveElse=api.indexOf("}else{",maxLossAt);
-  const progressiveEnd=api.indexOf("        }",progressiveElse+8);
-  const progressiveBlock=api.slice(progressiveElse,progressiveEnd+9);
+  const progressiveEnd=api.indexOf("if(!(await requireFinalProtectiveMaster(res,master)))return;",progressiveElse);
+  const progressiveBlock=api.slice(progressiveElse,progressiveEnd);
   assert.match(progressiveBlock,/const previousQuantity=n\(old\?\.origQty\?\?old\?\.quantity,NaN\)/);
   assert.match(progressiveBlock,/PREVIOUS_PROGRESSIVE_QUANTITY_INVALID/);
   assert.match(progressiveBlock,/expected\.quantity=String\(previousQuantity\)/);
