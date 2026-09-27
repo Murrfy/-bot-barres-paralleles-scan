@@ -195,3 +195,88 @@ test('unknown IOC STOP remains conservative and cannot masquerade as managed MAX
   assert.equal(r.action,'BLOCK');
   assert.equal(r.reason,'EXTERNAL_PROGRESSIVE_PROTECTION');
 });
+
+
+test('MAX-LOSS red memory falls back to the highest protection still executable',()=>{
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:long,
+    markPrice:160,
+    protectionStages:stages,
+    currentOrders:[],
+    priceFilter:filter,
+    previousHighWaterProfitUsd:110,
+    redBlockedHighWaterProfitUsd:110,
+  });
+  assert.equal(r.action,'REPLACE');
+  assert.equal(r.redRecoveryActive,true);
+  assert.equal(r.stage.armProfitUsd,40);
+  assert.equal(r.stage.protectedProfitUsd,39.8);
+  assert.equal(r.redRecoverySatisfied,false);
+});
+
+test('MAX-LOSS red memory upgrades to the originally reached stage once executable again',()=>{
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:long,
+    markPrice:220,
+    protectionStages:stages,
+    currentOrders:[],
+    priceFilter:filter,
+    previousHighWaterProfitUsd:110,
+    redBlockedHighWaterProfitUsd:110,
+  });
+  assert.equal(r.action,'REPLACE');
+  assert.equal(r.stage.armProfitUsd,105);
+  assert.equal(r.stage.protectedProfitUsd,100);
+  assert.equal(r.redRecoverySatisfied,true);
+});
+
+test('fallback is never used without a MAX-LOSS red memory marker',()=>{
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:long,
+    markPrice:160,
+    protectionStages:stages,
+    currentOrders:[],
+    priceFilter:filter,
+    previousHighWaterProfitUsd:110,
+  });
+  assert.equal(r.action,'REPLACE');
+  assert.equal(r.stage.armProfitUsd,105);
+  assert.equal(r.redRecoveryActive,false);
+});
+
+test('lower fallback protection keeps the red debt until the higher reached stage is secured',()=>{
+  const existing=[{
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',timeInForce:'GTC',reduceOnly:true,
+    triggerPrice:'139.8',price:'139.8',origQty:'1',executedQty:'0',
+    priceMatch:'NONE',clientAlgoId:'zth-PRO-red-fallback'
+  }];
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:long,
+    markPrice:160,
+    protectionStages:stages,
+    currentOrders:existing,
+    priceFilter:filter,
+    previousHighWaterProfitUsd:110,
+    redBlockedHighWaterProfitUsd:110,
+  });
+  assert.equal(r.action,'NONE');
+  assert.equal(r.reason,'PROTECTION_ALREADY_AT_OR_ABOVE_STAGE');
+  assert.equal(r.stage.armProfitUsd,40);
+  assert.equal(r.redRecoverySatisfied,false);
+});
+
+test('red recovery waits if even the first reached floor is no longer executable',()=>{
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:long,
+    markPrice:120,
+    protectionStages:stages,
+    currentOrders:[],
+    priceFilter:filter,
+    previousHighWaterProfitUsd:110,
+    redBlockedHighWaterProfitUsd:110,
+  });
+  assert.equal(r.action,'NONE');
+  assert.equal(r.reason,'RED_MAX_LOSS_REACHED_STAGE_NOT_CURRENTLY_EXECUTABLE');
+  assert.equal(r.redRecoverySatisfied,false);
+});

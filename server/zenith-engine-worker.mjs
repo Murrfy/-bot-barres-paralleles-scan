@@ -25,6 +25,7 @@ import {
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
 import { planAutomaticTargetExit } from '../lib/auto-target-exit.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
+import { highestReachedProtectionStage } from '../lib/real-protection-levels.mjs';
 import {
   pendingEntryProtectionLossTargets,
   pendingEntryWriteAheadRecoveryTargets,
@@ -105,6 +106,7 @@ const maxLossRemainderRecovery={
 
 const autoProtection={
   highWater:new Map(),
+  redHighWater:new Map(),
   authorizationAt:0,
   highWaterLoaded:false,
   highWaterLoadPromise:null,
@@ -659,10 +661,14 @@ async function loadAutoHighWater(force=false){
     }
     autoProtection.authorizationAt=n(result.data.authorizationAt,0);
     autoProtection.highWater.clear();
+    autoProtection.redHighWater.clear();
     const entries=result.data.entries&&typeof result.data.entries==='object'?result.data.entries:{};
-    for(const [key,value] of Object.entries(entries)){
+    for(const [rawKey,value] of Object.entries(entries)){
       const amount=Number(value);
-      if(Number.isFinite(amount))autoProtection.highWater.set(key,amount);
+      if(!Number.isFinite(amount))continue;
+      const key=String(rawKey||'');
+      if(key.startsWith('red:'))autoProtection.redHighWater.set(key.slice(4),amount);
+      else autoProtection.highWater.set(key,amount);
     }
     autoProtection.highWaterLoaded=autoProtection.authorizationAt>0;
     return autoProtection.highWaterLoaded;
@@ -681,6 +687,9 @@ async function persistAutoHighWaterNow(){
     for(const [key,value] of autoProtection.highWater.entries()){
       if(Number.isFinite(Number(value)))entries[key]=Number(value);
     }
+    for(const [key,value] of autoProtection.redHighWater.entries()){
+      if(Number.isFinite(Number(value)))entries['red:'+key]=Number(value);
+    }
     const result=await syncApi('engine-protection-high-water',{
       method:'POST',
       body:{authorizationAt:autoProtection.authorizationAt,entries},
@@ -692,6 +701,7 @@ async function persistAutoHighWaterNow(){
         autoProtection.highWaterLoaded=false;
         autoProtection.authorizationAt=0;
         autoProtection.highWater.clear();
+        autoProtection.redHighWater.clear();
       }
       return false;
     }
@@ -1157,6 +1167,13 @@ async function pruneAutoHighWater(){
   for(const key of [...autoProtection.highWater.keys()]){
     if(!active.has(key)){
       autoProtection.highWater.delete(key);
+      autoProtection.redHighWater.delete(key);
+      changed=true;
+    }
+  }
+  for(const key of [...autoProtection.redHighWater.keys()]){
+    if(!active.has(key)){
+      autoProtection.redHighWater.delete(key);
       changed=true;
     }
   }
@@ -1550,28 +1567,11 @@ async function executeAutoProgressive(plan){
 async function runAutoProtection(symbol,mark){
   const wanted=String(symbol||'').toUpperCase();
   if(markStream.recoveryBlockedSymbols.has(wanted))return false;
-  if(symbolMaxLossQuarantined(wanted))return false;
+
   const projection=streamProjection();
   const position=(projection.binancePositions||[])
     .find(row=>String(row?.symbol||'').toUpperCase()===wanted&&Math.abs(n(row?.positionAmt??row?.quantity,0))>0);
   if(!position)return false;
-
-  if(!autoProtection.highWaterLoaded){
-    const loaded=await loadAutoHighWater();
-    if(!loaded)return false;
-  }
-  const highWater=observeAutoHighWater(position,mark);
-  if(autoProtection.busySymbols.has(wanted))return false;
-
-  if(!runtime.synchronized||!runtime.heartbeatFresh)return false;
-  if(!masterExecutionEligible({
-    role:'master',
-    hidden:false,
-    leaseActive:runtime.leaseActive,
-    realExecutionArmed:runtime.realExecutionArmed,
-    userStreamReady:userStreamReady(stream.state),
-    mode:runtime.mode,
-  }))return false;
 
   const tokenSettings=runtime.config?.tokenSettings&&typeof runtime.config.tokenSettings==='object'
     ?runtime.config.tokenSettings:{};
@@ -1585,11 +1585,55 @@ async function runAutoProtection(symbol,mark){
       :null;
   if(!protectionStages)return false;
 
+  if(!autoProtection.highWaterLoaded){
+    const loaded=await loadAutoHighWater();
+    if(!loaded)return false;
+  }
+
+  const highWaterKey=autoPositionKey(position);
+  const previousHighWater=n(autoProtection.highWater.get(highWaterKey),NaN);
+  const highWater=observeAutoHighWater(position,mark);
+  if(!Number.isFinite(highWater))return false;
+  const highWaterAdvanced=!Number.isFinite(previousHighWater)||highWater>previousHighWater+1e-8;
+
   const orders=Array.isArray(projection.binanceOrders)?projection.binanceOrders:[];
-  if(!uniqueManagedMaxLoss(position,orders)){
-    autoProtection.lastError='AUTO_MAX_LOSS_NOT_UNIQUE';
+  const maxLossRed=symbolMaxLossQuarantined(wanted)||!uniqueManagedMaxLoss(position,orders);
+
+  if(maxLossRed){
+    const reached=highestReachedProtectionStage(protectionStages,highWater);
+    let redAdvanced=false;
+    if(reached){
+      const previousRed=n(autoProtection.redHighWater.get(highWaterKey),NaN);
+      const nextRed=Number.isFinite(previousRed)?Math.max(previousRed,highWater):highWater;
+      if(!Number.isFinite(previousRed)||nextRed>previousRed+1e-8){
+        autoProtection.redHighWater.set(highWaterKey,nextRed);
+        redAdvanced=true;
+      }
+    }
+    if(highWaterAdvanced||redAdvanced){
+      if(!(await persistAutoHighWaterNow())){
+        autoProtection.lastError='AUTO_RED_HIGH_WATER_NOT_PERSISTED';
+        return false;
+      }
+    }
+    autoProtection.lastError=symbolMaxLossQuarantined(wanted)
+      ?'AUTO_MAX_LOSS_QUARANTINED'
+      :'AUTO_MAX_LOSS_NOT_UNIQUE';
     return false;
   }
+
+  if(autoProtection.busySymbols.has(wanted))return false;
+
+  if(!runtime.synchronized||!runtime.heartbeatFresh)return false;
+  if(!masterExecutionEligible({
+    role:'master',
+    hidden:false,
+    leaseActive:runtime.leaseActive,
+    realExecutionArmed:runtime.realExecutionArmed,
+    userStreamReady:userStreamReady(stream.state),
+    mode:runtime.mode,
+  }))return false;
+
   const priceFilter=await ensurePriceFilter(wanted);
   if(!priceFilter){
     autoProtection.lastError='AUTO_PRICE_FILTER_UNAVAILABLE';
@@ -1605,6 +1649,7 @@ async function runAutoProtection(symbol,mark){
       currentOrders:orders,
       priceFilter,
       previousHighWaterProfitUsd:highWater,
+      redBlockedHighWaterProfitUsd:n(autoProtection.redHighWater.get(highWaterKey),NaN),
     });
   }catch(error){
     autoProtection.lastError=String(error?.message||'AUTO_PROTECTION_PLAN_FAILED');
@@ -1616,13 +1661,29 @@ async function runAutoProtection(symbol,mark){
     return false;
   }
   if(plan.action!=='REPLACE'){
+    if(plan.redRecoverySatisfied===true&&autoProtection.redHighWater.delete(highWaterKey)){
+      if(!(await persistAutoHighWaterNow())){
+        autoProtection.lastError='AUTO_RED_HIGH_WATER_CLEAR_NOT_PERSISTED';
+        return false;
+      }
+    }
     autoProtection.lastError='';
     return false;
   }
 
   autoProtection.busySymbols.add(wanted);
-  try{return await executeAutoProgressive(plan)}
-  finally{autoProtection.busySymbols.delete(wanted)}
+  try{
+    const changed=await executeAutoProgressive(plan);
+    if(changed===true&&plan.redRecoverySatisfied===true&&autoProtection.redHighWater.delete(highWaterKey)){
+      if(!(await persistAutoHighWaterNow())){
+        autoProtection.lastError='AUTO_RED_HIGH_WATER_CLEAR_NOT_PERSISTED';
+        return false;
+      }
+    }
+    return changed;
+  }finally{
+    autoProtection.busySymbols.delete(wanted);
+  }
 }
 
 function activeProtectionSymbols(){

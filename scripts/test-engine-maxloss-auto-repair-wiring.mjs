@@ -74,10 +74,18 @@ test('unresolved MAX-LOSS remainder states quarantine only the affected symbol',
   assert.doesNotMatch(localBlock,/invalidateStream/);
 });
 
-test('entry watch and automatic gain logic skip only a quarantined symbol',()=>{
+test('entry watch and target logic skip a quarantined symbol while gain logic records red high-water without writing',()=>{
   assert.match(worker,/if\(symbolMaxLossQuarantined\(config\.symbol\)\)return false/);
   assert.match(worker,/if\(symbolMaxLossQuarantined\(symbol\)\)return \{ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'\}/);
-  assert.match(worker,/if\(symbolMaxLossQuarantined\(wanted\)\)return false/);
+  const start=worker.indexOf('async function runAutoProtection');
+  const end=worker.indexOf('function activeProtectionSymbols',start);
+  const block=worker.slice(start,end);
+  assert.match(block,/const maxLossRed=symbolMaxLossQuarantined\(wanted\)\|\|!uniqueManagedMaxLoss/);
+  const redStart=block.indexOf('if(maxLossRed)');
+  const redEnd=block.indexOf('if(autoProtection.busySymbols',redStart);
+  const redBlock=block.slice(redStart,redEnd);
+  assert.match(redBlock,/autoProtection\.redHighWater\.set/);
+  assert.doesNotMatch(redBlock,/executeAutoProgressive|callProtectiveUpdateExecute/);
 });
 
 
