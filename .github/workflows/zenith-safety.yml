@@ -194,8 +194,6 @@ jobs:
         run: node --test scripts/test-pairing-atomic-session.mjs
       - name: Test MASTER remains server-only
         run: node --test scripts/test-server-master-only.mjs
-      - name: Test browser MASTER legacy is permanently absent
-        run: node --test scripts/test-server-master-only.mjs
       - name: Test one-shot legacy Bearer migration
         run: node --test scripts/test-bearer-one-shot-migration.mjs
       - name: Test bounded request bodies
