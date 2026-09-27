@@ -64,6 +64,31 @@ test('partial entry and exit fills produce weighted actual prices and summed fee
   assert.equal(r.netUsdt,11.92);
 });
 
+test('partial Zenith LIMIT exit plus MARKET remainder is archived as one closed trade',()=>{
+  const rows=buildZenithClosedTradeHistory({
+    orders:[
+      order(50,'zth-ENT-partialmarketaaaaaaaaa'),
+      order(51,'zth-EXI-partiallimitbbbbbbbbb'),
+      order(52,'zth-EXI-remaindermarketcccccc')
+    ],
+    trades:[
+      trade({id:1,orderId:50,side:'BUY',qty:1,price:100,commission:.04,time:1000}),
+      trade({id:2,orderId:51,side:'SELL',qty:.4,price:110,realizedPnl:4,commission:.018,time:2000}),
+      trade({id:3,orderId:52,side:'SELL',qty:.6,price:109.5,realizedPnl:5.7,commission:.027,time:2100}),
+    ],
+  });
+  assert.equal(rows.length,1);
+  const r=rows[0];
+  assert.equal(r.closedQuantity,1);
+  assert.ok(Math.abs(r.exitPrice-(.4*110+.6*109.5))<1e-12);
+  assert.ok(Math.abs(r.grossRealizedPnl-9.7)<1e-12);
+  assert.ok(Math.abs(r.commissionUsdt-.085)<1e-12);
+  assert.ok(Math.abs(r.netUsdt-9.615)<1e-12);
+  assert.equal(r.closingOrderId,'52');
+  assert.equal(r.closingClientOrderId,'zth-EXI-remaindermarketcccccc');
+  assert.equal(mergeTradeHistory(rows,rows,500).length,1);
+});
+
 test('Zenith entry closed manually on Binance is still archived once with the real Binance result',()=>{
   const rows=buildZenithClosedTradeHistory({
     orders:[
