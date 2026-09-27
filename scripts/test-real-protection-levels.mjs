@@ -46,6 +46,17 @@ test('linear price/PnL conversion is symmetric for LONG and SHORT',()=>{
   assert.equal(pnlAtLinearPrice({entryPrice:3000,quantity:2,direction:'SHORT',price:1500}),3000);
 });
 
+
+test('100 USDT margin at x10 does not multiply real PnL by leverage twice',()=>{
+  // 100 USDT margin at x10 gives about 1,000 USDT notional.
+  // At entry 100, Binance quantity is 10. A -4% move to 96 is exactly -40 USDT PnL.
+  const quantity=10;
+  const pnl=pnlAtLinearPrice({entryPrice:100,quantity,direction:'LONG',price:96});
+  assert.equal(pnl,-40);
+  assert.notEqual(pnl,-400);
+  assert.equal(priceForLinearPnl({entryPrice:100,quantity,direction:'LONG',pnlUsd:-40}),96);
+});
+
 test('automatic max loss can never exceed hard server limit',()=>{
   assert.throws(()=>buildRealProtectionLevels({
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'},
