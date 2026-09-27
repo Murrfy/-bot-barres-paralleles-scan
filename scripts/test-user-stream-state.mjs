@@ -144,14 +144,20 @@ test('position lifecycle survives non-core updates but changes after flat-and-re
   assert.notEqual(r.state.positions['BTCUSDT:BOTH'].positionLifecycleAt,2299);
 });
 
-test('changing quantity or entry starts a new position lifecycle',()=>{
+test('partial quantity and average-entry changes stay in the same lifecycle until flat',()=>{
   let s=readyState();
   let r=applyUserDataEvent(s,{e:'ACCOUNT_UPDATE',E:2700,T:2699,a:{m:'ORDER',P:[
     {s:'ETHUSDT',pa:'1',ep:'2000',bep:'2001',up:'0',mt:'isolated',iw:'100',ps:'BOTH'}
   ]}});
   assert.equal(r.state.positions['ETHUSDT:BOTH'].positionLifecycleAt,2699);
+
   r=applyUserDataEvent(r.state,{e:'ACCOUNT_UPDATE',E:2800,T:2799,a:{m:'ORDER',P:[
     {s:'ETHUSDT',pa:'2',ep:'2005',bep:'2006',up:'0',mt:'isolated',iw:'200',ps:'BOTH'}
   ]}});
-  assert.equal(r.state.positions['ETHUSDT:BOTH'].positionLifecycleAt,2799);
+  assert.equal(r.state.positions['ETHUSDT:BOTH'].positionLifecycleAt,2699);
+
+  r=applyUserDataEvent(r.state,{e:'ACCOUNT_UPDATE',E:2900,T:2899,a:{m:'ORDER',P:[
+    {s:'ETHUSDT',pa:'0.5',ep:'2005',bep:'2006',up:'0',mt:'isolated',iw:'50',ps:'BOTH'}
+  ]}});
+  assert.equal(r.state.positions['ETHUSDT:BOTH'].positionLifecycleAt,2699);
 });
