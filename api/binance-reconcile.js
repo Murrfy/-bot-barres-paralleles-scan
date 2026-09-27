@@ -1187,7 +1187,7 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
       if (Math.abs(number(order?.origQty, NaN) - quantity) > 1e-12) continue;
       if (String(order?.priceMatch || '').toUpperCase() !== 'OPPONENT') continue;
       // Accept a unique external Binance MAX-LOSS when its actual live parameters are
-      // exactly safe; STOP_MARKET and other non-LIMIT protective forms remain forbidden.
+      // exactly safe; forbidden market protective forms remain rejected.
       const trigger = number(order?.triggerPrice ?? order?.stopPrice, NaN);
       if (!(entryPrice > 0) || !(trigger > 0) || !(quantity > 0)) continue;
       const lossSide = position.direction === 'LONG' ? trigger < entryPrice : trigger > entryPrice;
