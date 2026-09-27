@@ -1170,6 +1170,7 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
           direction:row.direction,
           protectionClientAlgoId:row.protectionClientAlgoId,
           entryClientOrderId:row.entryClientOrderId,
+          createdAt:row.createdAt,
           expiresAt:row.expiresAt,
         })),
         invalidReasons: transitionState.invalid.map(row => String(row.reason || 'ENTRY_TRANSITION_INVALID')),
@@ -1296,11 +1297,13 @@ async function pruneExpiredEntryTransitionAtomic(row) {
   const direction=String(row?.direction||'').toUpperCase();
   const protectionClientAlgoId=String(row?.protectionClientAlgoId||'');
   const entryClientOrderId=String(row?.entryClientOrderId||'');
+  const createdAt=Number(row?.createdAt);
   const expiresAt=Number(row?.expiresAt);
   if(!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)||
      !['PROTECTION_PREPARED','ENTRY_SUBMITTED'].includes(state)||
      !/^[A-Z0-9]{3,30}$/.test(symbol)||
      !['LONG','SHORT'].includes(direction)||
+     !Number.isFinite(createdAt)||createdAt<=0||
      !Number.isFinite(expiresAt)||expiresAt<=0)return 0;
   const script=[
     "local raw = redis.call('HGET', KEYS[1], ARGV[1])",
@@ -1311,15 +1314,16 @@ async function pruneExpiredEntryTransitionAtomic(row) {
     "if string.upper(tostring(value['state'] or '')) ~= ARGV[2] then return -3 end",
     "if string.upper(tostring(value['symbol'] or '')) ~= ARGV[3] then return -4 end",
     "if string.upper(tostring(value['direction'] or '')) ~= ARGV[4] then return -5 end",
-    "if tonumber(value['expiresAt'] or 0) ~= tonumber(ARGV[5]) then return -6 end",
-    "if tostring(value['protectionClientAlgoId'] or '') ~= ARGV[6] then return -7 end",
-    "if tostring(value['entryClientOrderId'] or '') ~= ARGV[7] then return -8 end",
+    "if tonumber(value['createdAt'] or 0) ~= tonumber(ARGV[5]) then return -6 end",
+    "if tonumber(value['expiresAt'] or 0) ~= tonumber(ARGV[6]) then return -7 end",
+    "if tostring(value['protectionClientAlgoId'] or '') ~= ARGV[7] then return -8 end",
+    "if tostring(value['entryClientOrderId'] or '') ~= ARGV[8] then return -9 end",
     "redis.call('HDEL', KEYS[1], ARGV[1])",
     "return 1"
   ].join('\n');
   return Number(await redis([
     'EVAL',script,'1',KEY_ENTRY_TRANSITIONS,
-    commandId,state,symbol,direction,String(expiresAt),
+    commandId,state,symbol,direction,String(createdAt),String(expiresAt),
     protectionClientAlgoId,entryClientOrderId,
   ]));
 }
