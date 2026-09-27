@@ -405,10 +405,10 @@ function realProtectionInventory(position){
     exits,progressive,maxLoss,
     managedExit:managed(exitCandidates,exits,'clientOrderId'),
     managedProgressive:managed(progressiveCandidates,progressive,'clientAlgoId'),
-    managedMaxLoss:managed(maxLossCandidates,maxLoss,'clientAlgoId'),
+    managedMaxLoss:maxLossCandidates.length===1&&maxLoss.length===1?maxLoss[0]:null,
     exitConflict:conflict(exitCandidates,exits,'clientOrderId'),
     progressiveConflict:conflict(progressiveCandidates,progressive,'clientAlgoId'),
-    maxLossConflict:conflict(maxLossCandidates,maxLoss,'clientAlgoId'),
+    maxLossConflict:maxLossCandidates.length>1||(maxLossCandidates.length===1&&maxLoss.length!==1),
   };
 }
 function realUpdatePendingKey(position,kind){
@@ -601,7 +601,7 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
   }
   if((normalizedKind==='EXIT'||normalizedKind==='PROGRESSIVE')&&
      (!inv.managedMaxLoss||inv.maxLossConflict)){
-    return setStatus(`${position.symbol} : modification refusée — aucune protection MAX-LOSS Zenith unique et confirmée.`,true);
+    return setStatus(`${position.symbol} : modification refusée — aucune protection MAX-LOSS unique et confirmée sur Binance.`,true);
   }
 
   let current=normalizedKind==='EXIT'
@@ -728,7 +728,7 @@ async function queueRealActiveConfigUpdate(position,activeConfig){
   }
   const inv=realProtectionInventory(position);
   if(!inv.managedMaxLoss||inv.maxLossConflict){
-    return setStatus(`${position.symbol} : protections non modifiées — aucune MAX-LOSS Zenith unique et confirmée.`,true);
+    return setStatus(`${position.symbol} : protections non modifiées — aucune MAX-LOSS unique et confirmée sur Binance.`,true);
   }
   if(inv.progressiveConflict){
     return setStatus(`${position.symbol} : protections non modifiées — protection gain concurrente ou externe détectée.`,true);
@@ -2139,7 +2139,6 @@ function masterHasSingleMaxLoss(position,orders,hardMaxLossUsd=400){
     if(o?.closePosition===true||o?.closePosition==='true')return false;
     if(!realNumberMatches(o?.origQty??o?.quantity,quantity))return false;
     if(String(o?.priceMatch||'').toUpperCase()!=='OPPONENT')return false;
-    if(!zenithManagedRealId(o?.clientAlgoId))return false;
     const trigger=n(o?.triggerPrice??o?.stopPrice,0);
     if(!(trigger>0))return false;
     const lossSide=direction==='LONG'?trigger<entry:trigger>entry;
@@ -2861,7 +2860,7 @@ async function saveSelectedAsDefaults(){
 async function saveRealActiveTokenSettings(s,position,old,protections){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('Modification réelle refusée : iPhone contrôleur non vérifié.',true);
   const inv=realProtectionInventory(position);
-  if(!inv.managedMaxLoss||inv.maxLossConflict)return setStatus(s+' : modification refusée — aucune MAX-LOSS Zenith unique et confirmée.',true);
+  if(!inv.managedMaxLoss||inv.maxLossConflict)return setStatus(s+' : modification refusée — aucune MAX-LOSS unique et confirmée sur Binance.',true);
   if(inv.progressiveConflict)return setStatus(s+' : protections non modifiées — protection gain concurrente ou externe détectée.',true);
 
   const saleEnabled=$('tExactSale').checked,salePrice=Math.max(0,parsePrice($('tExactSalePrice').value));
