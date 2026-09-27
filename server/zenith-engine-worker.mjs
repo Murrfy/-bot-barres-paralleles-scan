@@ -1948,6 +1948,34 @@ async function markOrphanCleanupFailure(reason,symbol=''){
   return code;
 }
 
+function symbolEntryTransitionQuarantined(symbol,reason){
+  const wanted=String(symbol||'').toUpperCase();
+  const wantedReason=String(reason||'').toUpperCase();
+  return Boolean(wanted&&wantedReason&&stream.symbolQuarantines.some(row=>
+    String(row?.symbol||'').toUpperCase()===wanted&&
+    String(row?.reason||'').toUpperCase()===wantedReason
+  ));
+}
+
+async function markEntryTransitionRecoveryFailure(reason,symbol='',quarantineReason=''){
+  const code=String(reason||'ENTRY_TRANSITION_RECOVERY_FAILED');
+  const wanted=String(symbol||'').toUpperCase();
+  if(symbolEntryTransitionQuarantined(wanted,quarantineReason)){
+    runtime.error='SYMBOL_QUARANTINE_'+wanted+'_'+code;
+    stream.lastError=runtime.error;
+    entryWatch.lastError=code;
+    await publishRuntime().catch(()=>{});
+    scheduleReconcile(1500);
+    return code;
+  }
+  runtime.error=code;
+  stream.lastError=code;
+  entryWatch.lastError=code;
+  await invalidateStream(code).catch(()=>{});
+  scheduleReconcile(1500);
+  return code;
+}
+
 async function waitForWriteAheadEntryEvidence(target,timeoutMs=5000){
   const deadline=Date.now()+Math.max(500,n(timeoutMs,5000));
   let lastOrder=null;
@@ -2014,21 +2042,21 @@ async function recoverPendingEntryWriteAhead(report){
     const returnedId=String(submitted.data?.plan?.params?.newClientOrderId||'');
     if(returnedId!==target.entryClientOrderId){
       const reason='ENTRY_WRITEAHEAD_CLIENT_ID_MISMATCH';
-      await invalidateStream(reason);
+      await markEntryTransitionRecoveryFailure(reason,target.symbol,'ENTRY_WRITEAHEAD_RECOVERY_PENDING');
       return {handled:true,recovered:false,count,reason};
     }
     const returnedOrder=submitted.data?.result?.order||{};
     const returnedStatus=String(returnedOrder?.status||'').toUpperCase();
     if(['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(returnedStatus)){
       const reason='ENTRY_WRITEAHEAD_EXISTING_ORDER_TERMINAL_'+returnedStatus;
-      await invalidateStream(reason);
+      await markEntryTransitionRecoveryFailure(reason,target.symbol,'ENTRY_WRITEAHEAD_RECOVERY_PENDING');
       return {handled:true,recovered:false,count,reason};
     }
 
     const evidence=await waitForWriteAheadEntryEvidence(target,5000);
     if(!evidence||['TERMINAL_UNSAFE','POSITION_MISMATCH','UNKNOWN_ORDER'].includes(evidence.kind)){
       const reason='ENTRY_WRITEAHEAD_EVIDENCE_'+String(evidence?.kind||'MISSING');
-      await invalidateStream(reason);
+      await markEntryTransitionRecoveryFailure(reason,target.symbol,'ENTRY_WRITEAHEAD_RECOVERY_PENDING');
       return {handled:true,recovered:false,count,reason};
     }
 
@@ -2330,7 +2358,11 @@ async function reconcile(secondPass=false){
     const pendingProtectionLoss=pendingEntryProtectionLossTargets(data.report);
     if(pendingProtectionLoss.length){
       if(secondPass){
-        await invalidateStream('ENTRY_PROTECTION_LOSS_CANCEL_RECONCILIATION_FAILED');
+        await markEntryTransitionRecoveryFailure(
+          'ENTRY_PROTECTION_LOSS_CANCEL_RECONCILIATION_FAILED',
+          pendingProtectionLoss[0]?.symbol,
+          'ENTRY_PROTECTION_RECOVERY_PENDING'
+        );
         return false;
       }
       const recovered=await cancelPendingEntriesMissingPreparedProtection(data.report);
@@ -2343,7 +2375,11 @@ async function reconcile(secondPass=false){
     const writeAheadRecovery=pendingEntryWriteAheadRecoveryTargets(data.report);
     if(writeAheadRecovery.length){
       if(secondPass){
-        await invalidateStream('ENTRY_WRITEAHEAD_RECOVERY_RECONCILIATION_FAILED');
+        await markEntryTransitionRecoveryFailure(
+          'ENTRY_WRITEAHEAD_RECOVERY_RECONCILIATION_FAILED',
+          writeAheadRecovery[0]?.symbol,
+          'ENTRY_WRITEAHEAD_RECOVERY_PENDING'
+        );
         return false;
       }
       const recovered=await recoverPendingEntryWriteAhead(data.report);

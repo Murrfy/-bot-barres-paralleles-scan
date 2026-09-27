@@ -707,6 +707,84 @@ function localizeOrphanProtectionAnomalies(result,observedAt=Date.now()){
   return result;
 }
 
+function localizeEntryTransitionRecoveryAnomalies(result,observedAt=Date.now()){
+  if(!result||result.version!==2&&result.version!==undefined)return result;
+  if(Array.isArray(result.symbolQuarantines)&&result.symbolQuarantines.length)return result;
+
+  const reasons=Array.isArray(result.reasons)?result.reasons.map(value=>String(value||'')):[];
+  const entryDiff=result?.differences?.entryTransitions&&typeof result.differences.entryTransitions==='object'
+    ?result.differences.entryTransitions:{};
+  const since=Number(observedAt)||Date.now();
+
+  const setLocalized=(rows,reason)=>{
+    const quarantines=[];
+    const seen=new Set();
+    for(const row of rows){
+      if(!row||typeof row!=='object'||Array.isArray(row))return false;
+      const symbol=String(row.symbol||'').toUpperCase();
+      const direction=String(row.direction||'').toUpperCase();
+      if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(direction))return false;
+      const key=symbol+':'+direction;
+      if(seen.has(key))continue;
+      seen.add(key);
+      quarantines.push({symbol,direction,reason,remainingQuantity:null,since});
+    }
+    if(!quarantines.length)return false;
+    result.symbolQuarantines=quarantines;
+    result.reasons=[];
+    result.failClosed=false;
+    result.status='CLEAN_REAL_WITH_QUARANTINES';
+    return true;
+  };
+
+  if(reasons.includes('ENTRY_TRANSITION_PROTECTION_MISSING')){
+    const allowed=new Set(['ENTRY_TRANSITION_PROTECTION_MISSING','MISSING_BINANCE_ORDER']);
+    if(reasons.some(reason=>!allowed.has(reason)))return result;
+    const rows=Array.isArray(entryDiff.missingProtectionPendingEntries)
+      ?entryDiff.missingProtectionPendingEntries:[];
+    if(!rows.length)return result;
+    for(const row of rows){
+      const symbol=String(row?.symbol||'').toUpperCase();
+      const direction=String(row?.direction||'').toUpperCase();
+      const entryId=String(row?.entryClientOrderId||'');
+      const protectionId=String(row?.protectionClientAlgoId||'');
+      if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(direction)||
+         !/^zth-ENT-[A-Za-z0-9._:-]+$/.test(entryId)||entryId.length>36||
+         !/^zth-MAX-[A-Za-z0-9._:-]+$/.test(protectionId)||protectionId.length>36)return result;
+    }
+    if(reasons.includes('MISSING_BINANCE_ORDER')){
+      const missingOrders=Array.isArray(result?.differences?.missingOrders)?result.differences.missingOrders:[];
+      if(!missingOrders.length)return result;
+      if(missingOrders.some(order=>{
+        const symbol=String(order?.symbol||'').toUpperCase();
+        const id=String(order?.clientAlgoId||order?.clientOrderId||'');
+        return !rows.some(row=>String(row?.symbol||'').toUpperCase()===symbol&&String(row?.protectionClientAlgoId||'')===id);
+      }))return result;
+    }
+    setLocalized(rows,'ENTRY_PROTECTION_RECOVERY_PENDING');
+    return result;
+  }
+
+  if(reasons.length===1&&reasons[0]==='ENTRY_TRANSITION_ENTRY_MISSING'){
+    const rows=Array.isArray(entryDiff.entryMissingPreparedProtections)
+      ?entryDiff.entryMissingPreparedProtections:[];
+    if(!rows.length)return result;
+    for(const row of rows){
+      const symbol=String(row?.symbol||'').toUpperCase();
+      const direction=String(row?.direction||'').toUpperCase();
+      const side=String(row?.entrySide||'').toUpperCase();
+      const entryId=String(row?.entryClientOrderId||'');
+      const protectionId=String(row?.protectionClientAlgoId||'');
+      if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(direction)||
+         !['BUY','SELL'].includes(side)||(side==='BUY'?'LONG':'SHORT')!==direction||
+         !/^zth-ENT-[A-Za-z0-9._:-]+$/.test(entryId)||entryId.length>36||
+         !/^zth-MAX-[A-Za-z0-9._:-]+$/.test(protectionId)||protectionId.length>36)return result;
+    }
+    setLocalized(rows,'ENTRY_WRITEAHEAD_RECOVERY_PENDING');
+  }
+  return result;
+}
+
 function expectedPositions(runtimeState) {
   const data = runtimeState?.data || {};
   const list = Array.isArray(data.binancePositions) ? data.binancePositions : [];
@@ -1633,6 +1711,7 @@ export default async function handler(req, res) {
     localizeTriggeredMaxLossAnomalies(result,triggeredRecovery,started);
     localizeMissingMaxLossRepair(result,started);
     localizeOrphanProtectionAnomalies(result,started);
+    localizeEntryTransitionRecoveryAnomalies(result,started);
 
     const unsafePositionConfigs = actualPositions
       .filter(position =>
