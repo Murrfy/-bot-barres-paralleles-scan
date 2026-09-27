@@ -57,12 +57,21 @@ test('short one-way position quantity is read from signed amount',()=>{
   assert.equal(streamPositionQuantity(s,'BTCUSDT','LONG'),0);
 });
 
-test('all protective close escalation attempts remain LIMIT IOC only',()=>{
-  assert.deepEqual(PROTECTIVE_CLOSE_ATTEMPTS.map(x=>x.exitMode),[
-    'PROTECTIVE_IOC','PROTECTIVE_IOC','PROTECTIVE_IOC','PROTECTIVE_IOC'
-  ]);
-  assert.deepEqual(PROTECTIVE_CLOSE_ATTEMPTS.map(x=>x.priceMatch),[
-    'OPPONENT','OPPONENT_5','OPPONENT_10','OPPONENT_20'
-  ]);
+test('protective close uses one LIMIT IOC before proof-bound MARKET remainder recovery',()=>{
+  assert.deepEqual(PROTECTIVE_CLOSE_ATTEMPTS.map(x=>x.exitMode),['PROTECTIVE_IOC']);
+  assert.deepEqual(PROTECTIVE_CLOSE_ATTEMPTS.map(x=>x.priceMatch),['OPPONENT']);
   assert.equal(PROTECTIVE_CLOSE_ATTEMPTS.some(x=>String(x.exitMode).includes('MARKET')),false);
+});
+
+test('zero-fill terminal IOC still authorizes immediate remainder recovery',()=>{
+  const s=ready({
+    positions:{p:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmount:'0.02'}},
+    standardOrders:{a:{clientOrderId:'cid-1',status:'EXPIRED'}}
+  });
+  const r=evaluateFullProtectiveClose({
+    state:s,symbol:'BTCUSDT',direction:'LONG',beforeQuantity:0.02,clientOrderId:'cid-1'
+  });
+  assert.equal(r.progressed,false);
+  assert.equal(r.safeToRetry,true);
+  assert.equal(r.afterQuantity,0.02);
 });
