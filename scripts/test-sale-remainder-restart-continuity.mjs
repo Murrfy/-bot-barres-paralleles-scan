@@ -24,9 +24,11 @@ test('restart with a smaller live quantity re-queries the same deterministic att
   assert.match(execute,/priorAttemptAlreadyReduced/);
   assert.match(execute,/liveRemaining<attemptQuantity/);
   const reduced=execute.slice(execute.indexOf('if(priorAttemptAlreadyReduced)'),execute.indexOf('}else{',execute.indexOf('if(priorAttemptAlreadyReduced)')));
-  assert.match(reduced,/writesEnabled:false/);
-  assert.match(reduced,/marketResult\.disposition!=='EXISTING'/);
+  assert.match(reduced,/queryOrderByClientId/);
+  assert.match(reduced,/marketAttemptIdentityMatches/);
+  assert.doesNotMatch(reduced,/placeStandardOrderIdempotent/);
   assert.match(execute,/SALE_REMAINDER_PREVIOUS_ATTEMPT_NOT_FOUND/);
+  assert.match(execute,/SALE_REMAINDER_PREVIOUS_ATTEMPT_IDENTITY_MISMATCH/);
   assert.match(execute,/waitMarketAttemptTerminal/);
   assert.match(execute,/SALE_REMAINDER_MARKET_ATTEMPT_PENDING/);
 });
