@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import {
   protectionOnlyMismatchTarget,
+  missingMaxLossRepairTarget,
   protectiveRepairTarget,
   exactProtectiveRepairAllowed,
 } from '../lib/protective-command.mjs';
@@ -175,4 +176,29 @@ test('multiple ambiguous MAX-LOSS targets remain fail-closed',()=>{
     }
   };
   assert.equal(protectionOnlyMismatchTarget(report),'');
+});
+
+
+test('local missing MAX-LOSS quarantine exposes only its exact repair target',()=>{
+  const rt=runtime();
+  const local={
+    version:2,observedAt:Date.now(),status:'CLEAN_REAL_WITH_QUARANTINES',failClosed:false,reasons:[],
+    actual:{positions:1,orders:0},
+    differences:{
+      missingProtections:['BTCUSDT:LONG'],
+      missingMaxLossProtections:['BTCUSDT:LONG'],
+      ambiguousMaxLossProtections:[],
+      unsafeMaxLossProtections:[],
+      configuredMaxLossUnavailable:[],
+    },
+    symbolQuarantines:[{
+      symbol:'BTCUSDT',direction:'LONG',reason:'MISSING_MAX_LOSS_REPAIR_PENDING',
+      remainingQuantity:null,since:Date.now()-1000,
+    }],
+    runtimeDataHash:hash(rt.data),
+  };
+  assert.equal(protectionOnlyMismatchTarget(local),'BTCUSDT:LONG');
+  assert.equal(missingMaxLossRepairTarget(local),'BTCUSDT:LONG');
+  assert.equal(executionReadiness(rt,local,'master-1','BTCUSDT:LONG'),'');
+  assert.equal(executionReadiness(rt,local,'master-1','ETHUSDT:LONG'),'EXECUTION_TARGET_REQUIRED');
 });

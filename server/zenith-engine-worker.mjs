@@ -1900,11 +1900,17 @@ function repairPriceFilters(){
   return Object.fromEntries([...autoProtection.priceFilters.entries()].map(([symbol,filter])=>[symbol,clone(filter)]));
 }
 
-async function markMaxLossRepairFailure(reason){
+async function markMaxLossRepairFailure(reason,symbol=''){
   const code=String(reason||'AUTO_MAX_LOSS_REPAIR_FAIL_CLOSED');
-  runtime.error=code;
-  stream.lastError=code;
-  await invalidateStream(code).catch(()=>{});
+  const wanted=String(symbol||'').toUpperCase();
+  const localQuarantine=Boolean(wanted&&symbolMaxLossQuarantined(wanted));
+  runtime.error=localQuarantine?'SYMBOL_QUARANTINE_'+wanted+'_'+code:code;
+  stream.lastError=runtime.error;
+  if(localQuarantine){
+    await publishRuntime().catch(()=>{});
+  }else{
+    await invalidateStream(code).catch(()=>{});
+  }
   scheduleReconcile(1500);
   return code;
 }
@@ -2113,7 +2119,8 @@ async function repairMissingMaxLoss(report){
 
   if(plan.action!=='REPAIR'){
     const reason=await markMaxLossRepairFailure(
-      'AUTO_MAX_LOSS_REPAIR_'+String(plan.reason||'BLOCKED')
+      'AUTO_MAX_LOSS_REPAIR_'+String(plan.reason||'BLOCKED'),
+      symbol
     );
     return {handled:true,repaired:false,reason};
   }
@@ -2134,7 +2141,7 @@ async function repairMissingMaxLoss(report){
     const reason='AUTO_MAX_LOSS_REPAIR_PLACE_'+String(
       placed.data?.code||placed.data?.reason||placed.data?.error||('HTTP_'+placed.response.status)
     );
-    await markMaxLossRepairFailure(reason);
+    await markMaxLossRepairFailure(reason,plan.symbol);
     return {handled:true,repaired:false,reason};
   }
 
@@ -2145,7 +2152,7 @@ async function repairMissingMaxLoss(report){
   );
   if(!clientId){
     const reason='AUTO_MAX_LOSS_REPAIR_CLIENT_ID_MISSING';
-    await markMaxLossRepairFailure(reason);
+    await markMaxLossRepairFailure(reason,plan.symbol);
     return {handled:true,repaired:false,reason};
   }
 
@@ -2167,7 +2174,7 @@ async function repairMissingMaxLoss(report){
   );
   if(!valid){
     const reason='AUTO_MAX_LOSS_REPAIR_NOT_STREAM_CONFIRMED';
-    await markMaxLossRepairFailure(reason);
+    await markMaxLossRepairFailure(reason,plan.symbol);
     return {handled:true,repaired:false,reason};
   }
 
