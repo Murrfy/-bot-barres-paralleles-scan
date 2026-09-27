@@ -453,6 +453,15 @@ if (!protectiveExecute.includes('triggeredProgressiveRemainderRecoveryAllowed') 
     !protectiveExecute.includes("recoveryReason:String(req.body?.recoveryReason||'')")) {
   fail('triggered progressive remainder MARKET recovery must stay report-proof-bound and engine-only');
 }
+if (!protectiveExecute.includes('triggeredMaxLossRemainderRecoveryAllowed') ||
+    !protectiveExecute.includes("'MAX_LOSS_REMAINDER_RECOVERY_ENGINE_REQUIRED'") ||
+    !protectiveExecute.includes('maxLossRemainderRecovery') ||
+    !engineWorker.includes("recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER'") ||
+    !engineWorker.includes("exitMode:'REMAINDER_MARKET'") ||
+    !engineWorker.includes('MAX_LOSS_REMAINDER_MARKET_CLOSED') ||
+    engineWorker.includes('MAX_LOSS_REMAINDER_IOC_DISPATCHED')) {
+  fail('triggered MAX-LOSS remainder must close only through certified engine-only MARKET recovery');
+}
 
 if (!orderIntent.includes("ENTRY_PREFLIGHT_MAX_AGE_MS = 5000") ||
     !orderIntent.includes("'ENTRY_PREFLIGHT_STALE'") ||
