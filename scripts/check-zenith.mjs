@@ -115,9 +115,10 @@ for (const legacyPath of ['pair-master.html','master-standby.html']) {
   if (fs.existsSync(legacyPath)) fail(`obsolete browser MASTER artifact must stay deleted: ${legacyPath}`);
 }
 for (const forbidden of [
-  'IPAD MASTER','masterWakeBadge','startMasterRuntimeLoop','masterRuntimeState',
+  'IPAD MASTER','iPad MASTER','masterWakeBadge','startMasterRuntimeLoop','masterRuntimeState',
   'masterUserStream','masterExecution','masterStreamProjection',
-  'localSimulationEntryAllowed',"controllerIdentity.role==='master'"
+  'localSimulationEntryAllowed','masterRealPositionBySymbol','scheduleMasterAutoProtection',
+  'Simulation supprimée','SIMULATION_LOCKED',"controllerIdentity.role==='master'"
 ]) {
   if (index.includes(forbidden)) fail(`browser MASTER runtime must stay absent from index.html: ${forbidden}`);
 }
