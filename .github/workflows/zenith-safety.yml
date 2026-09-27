@@ -158,6 +158,8 @@ jobs:
         run: node --test scripts/test-entry-dispatch-final-gate.mjs
       - name: Test Binance trading-key permission revalidation before real entry
         run: node --test scripts/test-entry-permission-revalidation.mjs
+      - name: Test Binance permission revalidation on all real writes
+        run: node --test scripts/test-all-write-permission-revalidation.mjs
       - name: Test MASTER-only entry preflight HTTP access
         run: node --test scripts/test-entry-preflight-auth.mjs
       - name: Test secure device session
