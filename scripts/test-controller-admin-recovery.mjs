@@ -41,23 +41,33 @@ test('public ADMIN recovery is bounded and brute-force protected',()=>{
   assert.ok(verifier.includes('incrementWithExpiry(key, MASTER_ADMIN_LOCK_SECONDS)'));
 });
 
-test('controller role transfer is atomic and refuses recovery while command queues are not drained',()=>{
+test('controller role transfer ignores pending/stale commands but briefly blocks a genuinely in-flight command',()=>{
   assert.ok(endpoint.includes('const recoveryScript = ['));
   assert.ok(endpoint.includes("local currentController = tostring(redis.call('GET', KEYS[1]) or '')"));
-  assert.ok(endpoint.includes("local pendingCount = tonumber(redis.call('LLEN', KEYS[4]) or '0') or 0"));
-  assert.ok(endpoint.includes("local processingCount = tonumber(redis.call('LLEN', KEYS[5]) or '0') or 0"));
-  const drainGuard=endpoint.indexOf('if pendingCount > 0 or processingCount > 0 then');
+  assert.ok(endpoint.includes("local rows = redis.call('LRANGE', KEYS[5], 0, -1)"));
+  assert.ok(endpoint.includes("local claimedAt = tonumber(command['claimedAt'] or 0) or 0"));
+  assert.ok(endpoint.includes("now - claimedAt <= claimTtl"));
+  assert.ok(endpoint.includes("if freshProcessing > 0 then return {-3, currentController, freshProcessing} end"));
+  const inFlightGuard=endpoint.indexOf('if freshProcessing > 0 then');
   const roleWrite=endpoint.indexOf("redis.call('SET', KEYS[1], ARGV[2])");
   const sessionWrite=endpoint.indexOf("redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[4])");
   const epochWrite=endpoint.indexOf("redis.call('SET', KEYS[3], ARGV[5])");
-  assert.ok(drainGuard>=0&&roleWrite>drainGuard);
+  assert.ok(inFlightGuard>=0&&roleWrite>inFlightGuard);
   assert.ok(sessionWrite>roleWrite);
   assert.ok(epochWrite>sessionWrite);
-  assert.ok(endpoint.includes("'CONTROLLER_RECOVERY_DRAIN_REQUIRED'"));
+  assert.ok(endpoint.includes("'CONTROLLER_RECOVERY_COMMAND_IN_FLIGHT'"));
+  assert.ok(endpoint.includes('COMMAND_CLAIM_TTL_MS'));
+  assert.ok(endpoint.includes('quarantineCommandsForDevice(oldControllerDeviceId)'));
+  assert.ok(endpoint.includes('quarantined,'));
   assert.ok(endpoint.includes('KEY_CONTROLLER_DEVICE'));
   assert.ok(endpoint.includes("roleAssignmentKey(PREFIX, 'controller')"));
-  assert.ok(endpoint.includes('KEY_PENDING'));
   assert.ok(endpoint.includes('KEY_PROCESSING'));
+});
+
+test('ADMIN recovery does not let a lost controller pending queue block takeover',()=>{
+  assert.equal(endpoint.includes("local pendingCount = tonumber(redis.call('LLEN', KEYS[4]) or '0') or 0"),false);
+  assert.equal(endpoint.includes('if pendingCount > 0 or processingCount > 0 then'),false);
+  assert.ok(endpoint.includes('quarantineCommandsForDevice(oldControllerDeviceId)'));
 });
 
 test('successful recovery rotates ownership, creates a fresh HttpOnly session and audits without the ADMIN code',()=>{
