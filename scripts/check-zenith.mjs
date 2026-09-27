@@ -421,11 +421,17 @@ if (!protectiveExecute.includes("'FULL_CLOSE_QUANTITY_REQUIRED'") ||
 }
 
 const protectiveCloseState = fs.readFileSync('lib/protective-close-state.mjs','utf8');
-for (const required of ["OPPONENT_5","OPPONENT_10","OPPONENT_20","safeToRetry","inconsistentFilled","terminalSeen"]) {
+for (const required of ["PROTECTIVE_IOC","priceMatch:'OPPONENT'","safeToRetry","inconsistentFilled","terminalSeen"]) {
   if (!protectiveCloseState.includes(required)) fail(`protective close state invariant missing: ${required}`);
 }
-if (protectiveCloseState.includes('MARKET_LAST_RESORT')) {
-  fail('protective close state must never include a MARKET fallback');
+for (const forbidden of ["OPPONENT_5","OPPONENT_10","OPPONENT_20","MARKET_LAST_RESORT"]) {
+  if (protectiveCloseState.includes(forbidden)) fail(`protective close must not retain legacy escalation: ${forbidden}`);
+}
+if (!engineWorker.includes("recoveryReason:'INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'") ||
+    !engineWorker.includes("recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER'") ||
+    !engineWorker.includes("exitMode:'REMAINDER_MARKET'") ||
+    engineWorker.includes('MAX_LOSS_REMAINDER_IOC_DISPATCHED')) {
+  fail('every confirmed incomplete protective/MAX-LOSS sale must use the proof-bound MARKET remainder path');
 }
 
 const orderIntent = fs.readFileSync('lib/order-intent.mjs', 'utf8');
@@ -452,6 +458,15 @@ if (!protectiveExecute.includes('triggeredProgressiveRemainderRecoveryAllowed') 
     !protectiveExecute.includes('progressiveRemainderRecovery') ||
     !protectiveExecute.includes("recoveryReason:String(req.body?.recoveryReason||'')")) {
   fail('triggered progressive remainder MARKET recovery must stay report-proof-bound and engine-only');
+}
+if (!protectiveExecute.includes('triggeredMaxLossRemainderRecoveryAllowed') ||
+    !protectiveExecute.includes("'MAX_LOSS_REMAINDER_RECOVERY_ENGINE_REQUIRED'") ||
+    !protectiveExecute.includes('async function incompleteProtectiveCloseRemainderProof') ||
+    !protectiveExecute.includes("'INCOMPLETE_PROTECTIVE_REMAINDER_PROOF_REQUIRED'") ||
+    !protectiveExecute.includes("'INCOMPLETE_PROTECTIVE_REMAINDER_ENGINE_REQUIRED'") ||
+    !protectiveExecute.includes("'TRIGGERED_MAX_LOSS_REMAINDER'") ||
+    !protectiveExecute.includes("'INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'")) {
+  fail('MAX-LOSS and manual-close remainder MARKET recovery must stay exact-proof-bound and engine-only');
 }
 
 if (!orderIntent.includes("ENTRY_PREFLIGHT_MAX_AGE_MS = 5000") ||
