@@ -80,7 +80,7 @@ test('auto-protection requires synchronized armed current MASTER, ready stream a
   assert.ok(block.includes('realExecutionArmed:runtime.realExecutionArmed'));
   assert.ok(block.includes('userStreamReady:userStreamReady(stream.state)'));
   assert.ok(block.includes('uniqueManagedMaxLoss(position,orders)'));
-  const maxLossCheck=between('function uniqueManagedMaxLoss','function rememberPriceFilters');
+  const maxLossCheck=between('function safeMaxLossOrders','function uniqueManagedMaxLoss');
   assert.ok(maxLossCheck.includes("String(order?.type||'').toUpperCase()!=='STOP'"));
   assert.ok(maxLossCheck.includes("String(order?.timeInForce||'').toUpperCase()!=='IOC'"));
   assert.ok(maxLossCheck.includes("String(order?.priceMatch||'').toUpperCase()!=='OPPONENT'"));
