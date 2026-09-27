@@ -84,7 +84,7 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
         throw new Error(rq?.code||rq?.error||('HTTP '+rr.status));
       }
 
-      const locked = rq.realTradingEnabled !== true && rq.executionMode === 'SIMULATION_LOCKED';
+      const locked = rq.realTradingEnabled !== true && rq.executionMode === 'REAL_EXECUTION_DISABLED';
       const emergencyStop = rq.emergencyStopActive === true;
       const noMasterLease = rq.masterLeaseActive !== true;
       const noMasterRegistered = rq.masterRegistered !== true;
@@ -92,7 +92,7 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
       safety.textContent =
         'Sécurité : trading réel '+(locked?'VERROUILLÉ':'NON VERROUILLÉ')+
         ' · arrêt sécurité '+(emergencyStop?'ACTIF':'INACTIF')+
-        ' · iPad MASTER '+(noMasterRegistered?'non enregistré':'enregistré')+
+        ' · serveur MASTER 24/7 '+(noMasterRegistered?'non enregistré':'enregistré')+
         ' · bail MASTER '+(noMasterLease?'inactif':'ACTIF')+
         ' · commandes '+String(rq.pendingCommands||0)+' en attente / '+String(rq.processingCommands||0)+' en traitement.';
 
