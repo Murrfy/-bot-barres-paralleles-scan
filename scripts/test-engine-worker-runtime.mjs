@@ -135,6 +135,18 @@ test('protection high-water key is stable across quantity and entry-price change
   assert.doesNotMatch(block,/const entry=/);
 });
 
+test('legacy quantity-based high-water keys migrate into the stable lifecycle key',()=>{
+  const start=worker.indexOf('function migrateLegacyAutoHighWaterKey(position){');
+  const end=worker.indexOf('function observedLinearPnl',start);
+  assert.ok(start>=0&&end>start);
+  const block=worker.slice(start,end);
+  assert.match(block,/oldKey\.startsWith\(prefix\)/);
+  assert.match(block,/oldKey\.endsWith\(suffix\)/);
+  assert.match(block,/Math\.max\(high,amount\)/);
+  assert.match(block,/Math\.max\(red,amount\)/);
+  assert.match(block,/scheduleAutoHighWaterSave\(250\)/);
+});
+
 test('tracked stream positions remain in scope until a Binance zero-quantity ACCOUNT_UPDATE removes them',()=>{
   const scopeBlock=worker.slice(
     worker.indexOf('function liveZenithScopeSymbols(){'),
