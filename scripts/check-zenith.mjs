@@ -654,7 +654,7 @@ if (!protectiveUpdateExecute.includes('EXEC_CLEAN_ORPHAN_PROTECTION') ||
     !protectiveUpdateExecute.includes('cancelAlgoOrderIdempotent')) {
   fail('orphan cleanup must cancel only after direct Binance flat-position proof using idempotent cancel primitives');
 }
-if (!engineWorker.includes('orphanZenithCleanupOrders(report)') ||
+if (!engineWorker.includes('orphanZenithCleanupOrders(data.report)') ||
     !engineWorker.includes('ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED') ||
     !index.includes('COMPTE BINANCE INACCESSIBLE') ||
     index.includes('BINANCE HORS LIGNE')) {
