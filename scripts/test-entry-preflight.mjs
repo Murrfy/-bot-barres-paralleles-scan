@@ -105,11 +105,18 @@ test('protective orders never consume a new position slot', () => {
   assert.equal(r.reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'),false);
 });
 
-test('configured maxActive above three fails closed', () => {
-  const r = evaluateEntryRisk(base({ maxActivePositions:4 }));
-  assert.equal(r.ready,false);
-  assert.equal(r.normalized.maxActivePositions,DEFAULT_MAX_ACTIVE_POSITIONS);
-  assert.ok(r.reasons.includes('MAX_ACTIVE_CONFIG_INVALID'));
+test('configured maxActive has no Zenith hard ceiling', () => {
+  const r = evaluateEntryRisk(base({ maxActivePositions:50 }));
+  assert.equal(r.ready,true);
+  assert.equal(r.normalized.maxActivePositions,50);
+  assert.equal(r.reasons.includes('MAX_ACTIVE_CONFIG_INVALID'),false);
+});
+
+test('maxActive UI value is a configurable default, not a hard cap', () => {
+  const html=fs.readFileSync('index.html','utf8');
+  assert.match(html,/id="bMaxActive" type="number" min="1" step="1"/);
+  assert.doesNotMatch(html,/id="bMaxActive"[^>]*max="3"/);
+  assert.match(html,/requested>=1\?requested:3/);
 });
 
 test('invalid configured maxActive still fails closed', () => {
