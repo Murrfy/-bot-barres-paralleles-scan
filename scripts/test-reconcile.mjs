@@ -24,8 +24,8 @@ const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
     /^import \{ evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches \} from '\.\.\/lib\/entry-transition\.mjs';\n/m,
     "const entryTransitionOrderIdentity = order => { const s=String(order?.symbol||'').toUpperCase(); if(order?.clientAlgoId)return s+':algo-client:'+String(order.clientAlgoId); if(order?.algoId)return s+':algo:'+String(order.algoId); if(order?.clientOrderId)return s+':client:'+String(order.clientOrderId); if(order?.orderId)return s+':id:'+String(order.orderId); return ''; }; const evaluateEntryTransitionReconciliation = () => ({active:[],invalid:[],expired:[],allowedOrderIdentities:new Set(),missingProtections:[],missingEntries:[]}); const transitionEntryMatches = () => false; const transitionProtectionMatches = () => false;\n"
   );
-const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair } = await import(
-  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair };').toString('base64')
+const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies } = await import(
+  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies };').toString('base64')
 );
 const runtime = (positions = [], orders = [], mode = 'REAL') => ({
   updatedAt: Date.now(), data: { executionMode: mode, binancePositions: positions, binanceOrders: orders },
@@ -429,6 +429,51 @@ test('HTTP reconciliation is MASTER-only and rejects malformed or failed Binance
   } finally { globalThis.fetch = original; }
 });
 
+
+test('one exact known Zenith orphan is localized to its whole symbol',()=>{
+  const stale=normalizeActualOrder({
+    symbol:'BTCUSDT',positionSide:'BOTH',side:'SELL',type:'LIMIT',
+    orderId:199,clientOrderId:'zth-EXI-0123456789abcdef01234567',
+    origQty:'1',executedQty:'0',reduceOnly:true,closePosition:false,
+    price:'51000',timeInForce:'GTC'
+  });
+  const result=reconcile(runtime([], [stale]), [], [stale]);
+  assert.deepEqual(result.reasons,['ORPHAN_ZENITH_PROTECTIVE_ORDER']);
+  localizeOrphanProtectionAnomalies(result,1700000007000);
+  assert.equal(result.status,'CLEAN_REAL_WITH_QUARANTINES');
+  assert.equal(result.failClosed,false);
+  assert.deepEqual(result.reasons,[]);
+  assert.deepEqual(result.symbolQuarantines,[
+    {symbol:'BTCUSDT',direction:'LONG',reason:'ORPHAN_PROTECTION_CLEANUP_PENDING',remainingQuantity:null,since:1700000007000},
+    {symbol:'BTCUSDT',direction:'SHORT',reason:'ORPHAN_PROTECTION_CLEANUP_PENDING',remainingQuantity:null,since:1700000007000},
+  ]);
+});
+
+test('orphan localization refuses mixed evidence or multiple symbols',()=>{
+  const base={
+    differences:{orphanZenithProtectiveOrders:[{
+      orderClass:'STANDARD',symbol:'BTCUSDT',clientOrderId:'zth-EXI-0123456789abcdef01234567',
+      side:'SELL',positionSide:'BOTH',type:'LIMIT',reduceOnly:true,closePosition:false,
+      price:'51000',timeInForce:'GTC'
+    }]},
+    reasons:['ORPHAN_ZENITH_PROTECTIVE_ORDER','UNTRACKED_BINANCE_ORDER'],
+    status:'MISMATCH',failClosed:true
+  };
+  localizeOrphanProtectionAnomalies(base,1700000007000);
+  assert.equal(base.failClosed,true);
+  assert.equal(base.status,'MISMATCH');
+
+  const multi={
+    differences:{orphanZenithProtectiveOrders:[
+      {...base.differences.orphanZenithProtectiveOrders[0]},
+      {...base.differences.orphanZenithProtectiveOrders[0],symbol:'ETHUSDT',clientOrderId:'zth-EXI-fedcba9876543210fedcba98'}
+    ]},
+    reasons:['ORPHAN_ZENITH_PROTECTIVE_ORDER'],status:'MISMATCH',failClosed:true
+  };
+  localizeOrphanProtectionAnomalies(multi,1700000007000);
+  assert.equal(multi.failClosed,true);
+  assert.equal(multi.status,'MISMATCH');
+});
 
 test('Zenith-managed reduce-only order without a live position is an orphan mismatch', () => {
   const stale = normalizeActualOrder({
