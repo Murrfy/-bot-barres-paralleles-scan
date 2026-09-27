@@ -855,6 +855,10 @@ export default async function handler(req,res){
         }else{
           const oldPrice=n(old?.price);
           const oldTrigger=n(old?.triggerPrice??old?.stopPrice);
+          const previousQuantity=n(old?.origQty??old?.quantity,NaN);
+          if(!(previousQuantity>0)){
+            return send(res,409,{ok:false,code:'PREVIOUS_PROGRESSIVE_QUANTITY_INVALID',writeAttempted:false});
+          }
           if(!(oldPrice>0)||!(oldTrigger>0)||
              Math.abs(oldPrice-oldTrigger)>Math.max(1e-9,Math.abs(oldTrigger)*1e-10)||
              String(old?.timeInForce||'').toUpperCase()!=='GTC'||
@@ -862,7 +866,7 @@ export default async function handler(req,res){
             return send(res,409,{ok:false,code:'PREVIOUS_PROGRESSIVE_NOT_EXACT_LIMIT',writeAttempted:false});
           }
           expected.reduceOnly='true';
-          expected.quantity=String(update.quantity);
+          expected.quantity=String(previousQuantity);
           expected.price=String(oldPrice);
           expected.triggerPrice=String(oldTrigger);
         }
