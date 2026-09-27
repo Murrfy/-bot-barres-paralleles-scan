@@ -80,6 +80,23 @@ test('partial entry fill refresh cancels old managed target, rereads live positi
   assert.match(block,/position:latestPosition,currentOrders:latestOrders/);
 });
 
+test('partial-target remainder recovery runs before MAX-LOSS repair in reconciliation',()=>{
+  const start=worker.indexOf('async function reconcile(secondPass=false)');
+  const end=worker.indexOf('async function awaitReconciliation',start);
+  assert.ok(start>=0&&end>start);
+  const block=worker.slice(start,end);
+  const remainder=block.indexOf('recoverImmediatePartialTargetRemainder()');
+  const repair=block.indexOf('missingMaxLossRepairTarget(data.report)');
+  assert.ok(remainder>=0&&repair>remainder,'partial sale remainder must close before MAX-LOSS repair');
+});
+
+test('partial-target recovery can use the certified reconciliation even while stream inventory is being reconciled',()=>{
+  const protective=fs.readFileSync('api/binance-protective-execute.js','utf8');
+  assert.match(protective,/partialTargetRemainderRecovery!==true/);
+  assert.match(protective,/partialTargetRemainderRecovery===true/);
+  assert.match(protective,/Boolean\(partialTargetRemainder\)/);
+});
+
 test('replacement target gets a distinct deterministic identity from live quantity and target price',()=>{
   assert.match(worker,/targetIdentity=sha256Hex\(`\$\{live\.quantity\}\|\$\{activePlan\.targetPrice\}`\)\.slice\(0,12\)/);
   assert.match(worker,/auto-target-\$\{live\.symbol\}-\$\{live\.direction\}-\$\{live\.lifecycleAt\|\|0\}-\$\{targetIdentity\}/);
