@@ -3974,7 +3974,7 @@ export default async function handler(req, res) {
       return send(res, 200, {
         ok: true,
         masterMode: mode,
-        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
+        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'REAL_EXECUTION_DISABLED',
       });
     }
 
@@ -4011,7 +4011,7 @@ export default async function handler(req, res) {
 
       return send(res, 200, {
         ok: true,
-        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
+        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'REAL_EXECUTION_DISABLED',
         realTradingEnabled: REAL_TRADING_ENABLED,
         binanceWriteEnabled: BINANCE_WRITE_ENABLED,
         realEntryWriteEnabled: REAL_ENTRY_WRITE_ENABLED,
@@ -4076,7 +4076,7 @@ export default async function handler(req, res) {
         controllerStateHash: String(controllerState?.stateHash || ''),
         emergencyStopActive: Boolean(emergencyStop),
         realTradingEnabled: REAL_TRADING_ENABLED,
-        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
+        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'REAL_EXECUTION_DISABLED',
         currentMaster,
         masterMode: currentMasterMode,
         pendingCommands: Number(pending || 0),
