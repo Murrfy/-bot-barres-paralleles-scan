@@ -66,7 +66,7 @@ test('token gain, max-loss and progressive protections persist as token override
   assert.match(save,/manualTargetProfit:manual/);
   assert.match(save,/maxLoss:requestedMaxLoss/);
   assert.match(save,/protectionStages:protections/);
-  const pos=block('function positionCfg(s)','function createPosition');
+  const pos=block('function positionCfg(s)','async function currentMarketPrice');
   assert.match(pos,/const c=cfg\(s\)/);
   assert.match(pos,/targetProfit:n\(c\.targetProfit\)/);
   assert.match(pos,/maxLoss:n\(c\.maxLoss\)/);
