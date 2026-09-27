@@ -291,6 +291,8 @@ function evaluateTriggeredProgressiveRemainder({position,algo,actualOrder}={}){
   const side=dir==='LONG'?'SELL':'BUY';
   const positionSide=String(position?.positionSide||'BOTH').toUpperCase();
   const currentQty=positionQty(position);
+  const entryPrice=number(position?.entryPrice,NaN);
+  const positionUpdateTime=number(position?.updateTime,0);
   const clientAlgoId=String(algo?.clientAlgoId||'');
   const algoStatus=String(algo?.status||algo?.algoStatus||'').toUpperCase();
   const actualOrderId=String(algo?.actualOrderId||'');
@@ -298,7 +300,7 @@ function evaluateTriggeredProgressiveRemainder({position,algo,actualOrder}={}){
   const triggerPrice=number(algo?.triggerPrice??algo?.stopPrice,NaN);
   const limitPrice=number(algo?.price,NaN);
   const triggerTime=number(algo?.triggerTime,0);
-  if(!symbol||!['LONG','SHORT'].includes(dir)||!(currentQty>0))return null;
+  if(!symbol||!['LONG','SHORT'].includes(dir)||!(currentQty>0)||!(entryPrice>0))return null;
   if(String(algo?.symbol||'').toUpperCase()!==symbol||
      String(algo?.side||'').toUpperCase()!==side||
      String(algo?.positionSide||'BOTH').toUpperCase()!==positionSide||
@@ -311,6 +313,9 @@ function evaluateTriggeredProgressiveRemainder({position,algo,actualOrder}={}){
      !/^zth-PRO-[A-Za-z0-9._:-]+$/.test(clientAlgoId)||clientAlgoId.length>36||
      !actualOrderId||!(originalQty>0)||!(triggerPrice>0)||!(limitPrice>0)||
      Math.abs(limitPrice-triggerPrice)>Math.max(1e-9,Math.abs(triggerPrice)*1e-10))return null;
+  const profitSide=dir==='LONG'?triggerPrice>entryPrice:triggerPrice<entryPrice;
+  if(!profitSide)return null;
+  if(positionUpdateTime>0&&triggerTime>0&&triggerTime<positionUpdateTime-120000)return null;
 
   const actualStatus=String(actualOrder?.status||'').toUpperCase();
   const executed=number(actualOrder?.executedQty,NaN);
@@ -361,7 +366,7 @@ async function detectTriggeredProgressiveRemainders({
     const symbol=String(position?.symbol||'').toUpperCase();
     const side=direction(position)==='LONG'?'SELL':'BUY';
     const currentQty=positionQty(position);
-    const candidates=(Array.isArray(standardOrders)?standardOrders:[]).filter(order=>{
+    const matchesCurrentRemainder=order=>{
       if(String(order?.symbol||'').toUpperCase()!==symbol)return false;
       if(String(order?.side||'').toUpperCase()!==side)return false;
       if(String(order?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
@@ -374,8 +379,8 @@ async function detectTriggeredProgressiveRemainders({
       const remaining=original-executed;
       return original>0&&executed>0&&remaining>0&&
         Math.abs(remaining-currentQty)<=Math.max(1e-12,original*1e-10);
-    });
-    if(!candidates.length)continue;
+    };
+    let candidates=(Array.isArray(standardOrders)?standardOrders:[]).filter(matchesCurrentRemainder);
 
     const historyParams={
       symbol,
@@ -385,6 +390,14 @@ async function detectTriggeredProgressiveRemainders({
     };
     const historyRaw=await signedGet('/fapi/v1/allAlgoOrders',apiKey,secret,serverTime,historyParams);
     if(!Array.isArray(historyRaw))throw new Error('BINANCE_ALGO_HISTORY_INVALID');
+    if(!candidates.length){
+      const standardHistoryRaw=await signedGet('/fapi/v1/allOrders',apiKey,secret,serverTime,historyParams);
+      if(!Array.isArray(standardHistoryRaw))throw new Error('BINANCE_ORDER_HISTORY_INVALID');
+      candidates=standardHistoryRaw
+        .map(row=>({orderClass:'STANDARD',...normalizeActualOrder(row)}))
+        .filter(matchesCurrentRemainder);
+    }
+    if(!candidates.length)continue;
     const history=historyRaw
       .map(normalizeActualAlgoOrder)
       .filter(algo=>
@@ -680,6 +693,8 @@ function triggeredMaxLossSymbolQuarantines(recovery, observedAt=Date.now()){
   for(const row of Array.isArray(recovery?.ambiguous)?recovery.ambiguous:[])add(row,'AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER');
   for(const row of Array.isArray(recovery?.pending)?recovery.pending:[])add(row,'TRIGGERED_MAX_LOSS_RECOVERY_PENDING');
   for(const row of Array.isArray(recovery?.remainders)?recovery.remainders:[])add(row,'TRIGGERED_MAX_LOSS_REMAINDER');
+  for(const row of Array.isArray(recovery?.progressiveAmbiguous)?recovery.progressiveAmbiguous:[])add(row,'AMBIGUOUS_TRIGGERED_PROGRESSIVE_REMAINDER');
+  for(const row of Array.isArray(recovery?.progressiveRemainders)?recovery.progressiveRemainders:[])add(row,'TRIGGERED_PROGRESSIVE_REMAINDER');
   return out;
 }
 
@@ -695,6 +710,9 @@ function localizeTriggeredMaxLossAnomalies(result,recovery,observedAt=Date.now()
     'AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER',
     'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT',
     'TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED',
+    'TRIGGERED_PROGRESSIVE_REMAINDER',
+    'AMBIGUOUS_TRIGGERED_PROGRESSIVE_REMAINDER',
+    'INCONSISTENT_TRIGGERED_PROGRESSIVE_RESULT',
   ]);
   let reasons=Array.isArray(result.reasons)
     ?result.reasons.map(value=>String(value||'')).filter(reason=>!localReasons.has(reason))
@@ -1906,7 +1924,11 @@ export default async function handler(req, res) {
     result.differences.inconsistentTriggeredMaxLossRemainders=triggeredRecovery.inconsistent;
     result.differences.pendingTriggeredMaxLossRemainders=triggeredRecovery.pending;
     result.differences.exhaustedTriggeredMaxLossRemainders=triggeredRecovery.exhausted;
-    localizeTriggeredMaxLossAnomalies(result,triggeredRecovery,started);
+    localizeTriggeredMaxLossAnomalies(result,{
+      ...triggeredRecovery,
+      progressiveRemainders:progressiveRecovery.remainders,
+      progressiveAmbiguous:progressiveRecovery.ambiguous,
+    },started);
     localizeMissingMaxLossRepair(result,started);
     localizeOrphanProtectionAnomalies(result,started);
     localizeEntryTransitionRecoveryAnomalies(result,started);
