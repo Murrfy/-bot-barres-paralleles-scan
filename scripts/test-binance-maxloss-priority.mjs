@@ -24,7 +24,11 @@ test('Binance is re-read immediately before every managed duplicate cancellation
   assert.match(api,/path:'\/fapi\/v1\/openAlgoOrders'/);
   assert.match(api,/params:\{algoType:'CONDITIONAL'\}/);
   assert.match(api,/if\(!proof\.ok\)return send\(res,409,\{ok:false,code:proof\.reason,writeAttempted:false\}\)/);
-  assert.ok(api.indexOf('const proof=await directBinancePriorityMaxLossProof') < api.indexOf('cancelAlgoOrderIdempotent({'));
+  const cleanupStart=api.indexOf('if(maxLossPriorityCleanup){');
+  const cleanupEnd=api.indexOf('if(orphanCleanup){',cleanupStart);
+  const cleanup=api.slice(cleanupStart,cleanupEnd);
+  assert.ok(cleanup.indexOf('const proof=await directBinancePriorityMaxLossProof') < cleanup.indexOf('await requireFinalProtectiveMaster(res,master)'));
+  assert.ok(cleanup.indexOf('await requireFinalProtectiveMaster(res,master)') < cleanup.indexOf('cancelAlgoOrderIdempotent({'));
 });
 
 test('worker removes one Zenith duplicate, confirms terminal Binance state, then reconciles again',()=>{
