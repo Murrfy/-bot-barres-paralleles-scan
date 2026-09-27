@@ -5,6 +5,7 @@ import fs from 'node:fs';
 const sync=fs.readFileSync('api/zenith-sync.js','utf8');
 const admin=fs.readFileSync('master-admin.html','utf8');
 const recovery=fs.readFileSync('replace-controller.html','utf8');
+const index=fs.readFileSync('index.html','utf8');
 
 function between(source,startMarker,endMarker){
   const start=source.indexOf(startMarker);
@@ -41,4 +42,20 @@ test('lost-phone recovery stays independent from MASTER browser pairing',()=>{
   assert.match(recovery,/action=controller-recovery-admin/);
   assert.match(recovery,/Code administrateur Zenith/);
   assert.match(recovery,/sans toucher au MASTER serveur ni aux positions Binance/);
+});
+
+test('obsolete iPad/browser MASTER architecture cannot return',()=>{
+  assert.equal(fs.existsSync('pair-master.html'),false);
+  assert.equal(fs.existsSync('master-standby.html'),false);
+  for(const forbidden of [
+    'IPAD MASTER',
+    'masterWakeBadge',
+    'startMasterRuntimeLoop',
+    'masterRuntimeState',
+    'masterUserStream',
+    'masterExecution',
+    'masterStreamProjection',
+    'localSimulationEntryAllowed',
+    "controllerIdentity.role==='master'",
+  ]) assert.equal(index.includes(forbidden),false,forbidden);
 });
