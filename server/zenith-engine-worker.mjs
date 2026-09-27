@@ -1599,20 +1599,22 @@ async function recoverMissedAggTrades(symbol){
     let start=Math.max(Date.now()-ENTRY_WATCH_RECOVERY_MS,trackingStartTime(wanted)-250);
     let fromId=null;
     let pages=0;
+    let reachedRecoveryEnd=false;
     while(trackedMarkSymbols().has(wanted)&&pages<25){
       const path=fromId==null
         ?`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&startTime=${Math.floor(start)}&limit=1000`
         :`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&fromId=${fromId}&limit=1000`;
       const rows=await publicBinanceJson(path);
-      if(!Array.isArray(rows)||!rows.length)break;
+      if(!Array.isArray(rows))throw new Error('MARK_RECOVERY_RESPONSE_INVALID');
+      if(!rows.length){reachedRecoveryEnd=true;break;}
       for(const row of rows){
         if(!trackedMarkSymbols().has(wanted))break;
         await processAggTradeRow(wanted,row);
       }
       pages++;
-      if(rows.length<1000)break;
+      if(rows.length<1000){reachedRecoveryEnd=true;break}
       fromId=n(rows[rows.length-1]?.a,-1)+1;
-      if(!(fromId>0))break;
+      if(!(fromId>0))throw new Error('MARK_RECOVERY_CURSOR_INVALID');
       await sleep(40);
     }
     if(markStream.recoveryAttemptFailures.has(wanted)){
@@ -1623,7 +1625,7 @@ async function recoverMissedAggTrades(symbol){
       }
       return false;
     }
-    if(pages>=25){
+    if(pages>=25&&!reachedRecoveryEnd){
       if(activeProtectionSymbols().has(wanted)){
         blockMarkRecovery(wanted,'MARK_RECOVERY_PARTIAL_'+wanted);
       }else{
