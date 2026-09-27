@@ -113,3 +113,72 @@ test('builds repair plan from exact local missing MAX-LOSS quarantine',()=>{
   assert.equal(plan.triggerPrice,48000);
   assert.ok(plan.actualMaxLossUsd<=400);
 });
+
+
+test('partial manual Binance close refreshes one stale Zenith MAX-LOSS to remaining quantity',()=>{
+  const r=report(['MISSING_BINANCE_MAX_LOSS_PROTECTION']);
+  r.differences.missingProtections=[];
+  const stale={
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',timeInForce:'IOC',reduceOnly:true,closePosition:false,
+    priceMatch:'OPPONENT',origQty:'1',triggerPrice:'49600',
+    clientAlgoId:'zth-MAX-old-quantity'
+  };
+  const plan=buildMaxLossRepairPlan({
+    report:r,
+    positions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.4',entryPrice:'50000',updateTime:321}],
+    orders:[stale],
+    tokenSettings:{BTCUSDT:{maxLoss:400}},
+    settings:{maxLoss:400},
+    priceFilters:filter,
+  });
+  assert.equal(plan.action,'REPAIR');
+  assert.equal(plan.quantity,0.4);
+  assert.equal(plan.previousClientAlgoId,'zth-MAX-old-quantity');
+  assert.equal(plan.previousQuantity,1);
+  assert.equal(plan.previousTriggerPrice,49600);
+});
+
+test('stale external Binance MAX-LOSS is never auto-cancelled after partial close',()=>{
+  const r=report(['MISSING_BINANCE_MAX_LOSS_PROTECTION']);
+  r.differences.missingProtections=[];
+  const external={
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',timeInForce:'IOC',reduceOnly:true,closePosition:false,
+    priceMatch:'OPPONENT',origQty:'1',triggerPrice:'49600',
+    clientAlgoId:'manual-binance-stop'
+  };
+  const plan=buildMaxLossRepairPlan({
+    report:r,
+    positions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.4',entryPrice:'50000'}],
+    orders:[external],
+    tokenSettings:{BTCUSDT:{maxLoss:400}},
+    settings:{maxLoss:400},
+    priceFilters:filter,
+  });
+  assert.equal(plan.action,'BLOCK');
+  assert.equal(plan.reason,'STALE_EXTERNAL_MAX_LOSS_REQUIRES_MANUAL_REVIEW');
+});
+
+test('multiple stale Zenith MAX-LOSS orders remain fail-closed',()=>{
+  const r=report(['MISSING_BINANCE_MAX_LOSS_PROTECTION']);
+  r.differences.missingProtections=[];
+  const base={
+    orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
+    type:'STOP',timeInForce:'IOC',reduceOnly:true,closePosition:false,
+    priceMatch:'OPPONENT',origQty:'1',triggerPrice:'49600'
+  };
+  const plan=buildMaxLossRepairPlan({
+    report:r,
+    positions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.4',entryPrice:'50000'}],
+    orders:[
+      {...base,clientAlgoId:'zth-MAX-old-a'},
+      {...base,clientAlgoId:'zth-MAX-old-b'},
+    ],
+    tokenSettings:{BTCUSDT:{maxLoss:400}},
+    settings:{maxLoss:400},
+    priceFilters:filter,
+  });
+  assert.equal(plan.action,'BLOCK');
+  assert.equal(plan.reason,'MULTIPLE_STALE_MANAGED_MAX_LOSS');
+});
