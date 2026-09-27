@@ -21,12 +21,28 @@ const algo={
   price:'50500',triggerPrice:'50500',timeInForce:'GTC'
 };
 
+const maxLoss={
+  orderClass:'ALGO',symbol:'BTCUSDT',clientAlgoId:'zth-MAX-fedcba9876543210fedcba98',
+  side:'SELL',positionSide:'BOTH',type:'STOP',reduceOnly:true,closePosition:false,
+  triggerPrice:'49600',priceMatch:'OPPONENT',origQty:'1',timeInForce:'IOC'
+};
+
+
 test('cleanup targets are accepted only for the exact orphan-only reconciliation state',()=>{
   assert.equal(orphanZenithCleanupOrders(report([standard])).length,1);
   assert.equal(orphanZenithCleanupOrders(report([algo])).length,1);
   assert.deepEqual(orphanZenithCleanupOrders(report([standard],[
     'ORPHAN_ZENITH_PROTECTIVE_ORDER','RUNTIME_STATE_STALE'
   ])),[]);
+});
+
+test('full close keeps every Zenith exit/protection in the exact orphan cleanup set',()=>{
+  const rows=orphanZenithCleanupOrders(report([standard,maxLoss,algo]));
+  assert.equal(rows.length,3);
+  assert.deepEqual(
+    rows.map(row=>row.orderClass==='ALGO'?row.clientAlgoId:row.clientOrderId),
+    [standard.clientOrderId,maxLoss.clientAlgoId,algo.clientAlgoId]
+  );
 });
 
 test('external or malformed order ids are never eligible for automatic cleanup',()=>{
@@ -47,6 +63,7 @@ test('orphan cleanup endpoint requires direct Binance flat-position proof before
 test('24/7 server only auto-cleans report-confirmed orphan targets and waits for stream terminal proof',async()=>{
   const worker=await readFile(new URL('../server/zenith-engine-worker.mjs',import.meta.url),'utf8');
   assert.match(worker,/orphanZenithCleanupOrders\(data\.report\)/);
+  assert.match(worker,/for\(const target of orphanTargets\)/);
   assert.match(worker,/EXEC_CLEAN_ORPHAN_PROTECTION/);
   assert.match(worker,/waitForStreamOrder\(\{/);
   assert.match(worker,/ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED/);
