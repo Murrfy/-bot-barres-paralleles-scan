@@ -600,6 +600,69 @@ function localizeTriggeredMaxLossAnomalies(result,recovery,observedAt=Date.now()
   return result;
 }
 
+function localizeMissingMaxLossRepair(result,observedAt=Date.now()){
+  if(!result||result.version!==2&&result.version!==undefined)return result;
+  if(Array.isArray(result.symbolQuarantines)&&result.symbolQuarantines.length)return result;
+
+  const reasons=Array.isArray(result.reasons)?result.reasons.map(value=>String(value||'')):[];
+  const allowedReasons=new Set([
+    'MISSING_BINANCE_PROTECTION',
+    'MISSING_BINANCE_MAX_LOSS_PROTECTION',
+    'MISSING_BINANCE_ORDER',
+  ]);
+  if(!reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION')||
+     reasons.some(reason=>!allowedReasons.has(reason)))return result;
+
+  const diff=result.differences&&typeof result.differences==='object'?result.differences:{};
+  const missingMax=[...new Set(
+    (Array.isArray(diff.missingMaxLossProtections)?diff.missingMaxLossProtections:[])
+      .map(value=>String(value||'').toUpperCase()).filter(Boolean)
+  )];
+  if(missingMax.length!==1)return result;
+
+  const target=missingMax[0];
+  const split=target.lastIndexOf(':');
+  const symbol=split>0?target.slice(0,split):'';
+  const direction=split>0?target.slice(split+1):'';
+  if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(direction))return result;
+
+  const ambiguous=Array.isArray(diff.ambiguousMaxLossProtections)?diff.ambiguousMaxLossProtections.filter(Boolean):[];
+  const unsafe=Array.isArray(diff.unsafeMaxLossProtections)?diff.unsafeMaxLossProtections.filter(Boolean):[];
+  const unavailable=Array.isArray(diff.configuredMaxLossUnavailable)?diff.configuredMaxLossUnavailable.filter(Boolean):[];
+  if(ambiguous.length||unsafe.length||unavailable.length)return result;
+
+  const missingProtection=[...new Set(
+    (Array.isArray(diff.missingProtections)?diff.missingProtections:[])
+      .map(value=>String(value?.key||value||'').toUpperCase()).filter(Boolean)
+  )];
+  if(missingProtection.length&&
+     (missingProtection.length!==1||missingProtection[0]!==target))return result;
+
+  const missingOrders=Array.isArray(diff.missingOrders)?diff.missingOrders:[];
+  const missingOrdersAreOnlyThisMaxLoss=missingOrders.every(order=>{
+    const orderSymbol=String(order?.symbol||'').toUpperCase();
+    const side=String(order?.side||'').toUpperCase();
+    const orderDirection=side==='SELL'?'LONG':side==='BUY'?'SHORT':'';
+    const id=String(order?.clientAlgoId||order?.clientOrderId||'');
+    return orderSymbol===symbol&&orderDirection===direction&&
+      /^zth-MAX-[A-Za-z0-9._:-]+$/.test(id)&&
+      String(order?.type||'').toUpperCase()==='STOP'&&
+      order?.reduceOnly===true;
+  });
+  if(!missingOrdersAreOnlyThisMaxLoss)return result;
+
+  result.symbolQuarantines=[{
+    symbol,direction,
+    reason:'MISSING_MAX_LOSS_REPAIR_PENDING',
+    remainingQuantity:null,
+    since:Number(observedAt)||Date.now(),
+  }];
+  result.reasons=[];
+  result.failClosed=false;
+  result.status='CLEAN_REAL_WITH_QUARANTINES';
+  return result;
+}
+
 function expectedPositions(runtimeState) {
   const data = runtimeState?.data || {};
   const list = Array.isArray(data.binancePositions) ? data.binancePositions : [];
@@ -1524,6 +1587,7 @@ export default async function handler(req, res) {
     result.differences.pendingTriggeredMaxLossRemainders=triggeredRecovery.pending;
     result.differences.exhaustedTriggeredMaxLossRemainders=triggeredRecovery.exhausted;
     localizeTriggeredMaxLossAnomalies(result,triggeredRecovery,started);
+    localizeMissingMaxLossRepair(result,started);
 
     const unsafePositionConfigs = actualPositions
       .filter(position =>
