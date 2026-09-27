@@ -1,0 +1,10 @@
+{
+  "name": "Zenith",
+  "short_name": "Zenith",
+  "id": "/",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07111d",
+  "theme_color": "#07111d",
+  "description": "Zenith — Bot Binance Futures"
+}
