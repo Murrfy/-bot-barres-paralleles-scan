@@ -44,12 +44,12 @@ test('orphan cleanup endpoint requires direct Binance flat-position proof before
   assert.match(api,/cancelAlgoOrderIdempotent/);
 });
 
-test('MASTER only auto-cleans report-confirmed orphan targets and waits for stream terminal proof',async()=>{
-  const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
-  assert.match(html,/orphanZenithCleanupOrders\(q\.report\)/);
-  assert.match(html,/EXEC_CLEAN_ORPHAN_PROTECTION/);
-  assert.match(html,/waitForStreamOrder\(\{/);
-  assert.match(html,/ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED/);
+test('24/7 server only auto-cleans report-confirmed orphan targets and waits for stream terminal proof',async()=>{
+  const worker=await readFile(new URL('../server/zenith-engine-worker.mjs',import.meta.url),'utf8');
+  assert.match(worker,/orphanZenithCleanupOrders\(data\.report\)/);
+  assert.match(worker,/EXEC_CLEAN_ORPHAN_PROTECTION/);
+  assert.match(worker,/waitForStreamOrder\(\{/);
+  assert.match(worker,/ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED/);
 });
 
 test('UI distinguishes private account access from public Binance market data',async()=>{

@@ -23,7 +23,6 @@ const REDIS_TOKEN =
   process.env.KV_REST_API_TOKEN;
 
 const PAIRING_CODE = process.env.ZENITH_PAIRING_CODE || '';
-const MASTER_PAIRING_CODE = process.env.ZENITH_MASTER_PAIRING_CODE || '';
 const MASTER_ADMIN_CODE = process.env.ZENITH_MASTER_ADMIN_CODE || '';
 const ENGINE_BOOTSTRAP_SECRET = process.env.ZENITH_ENGINE_BOOTSTRAP_SECRET || '';
 const ENGINE_MASTER_DEVICE_ID = 'zenith-server-engine-v1';
@@ -133,12 +132,11 @@ function sha256(v) {
 function adminSecretPolicyBlockers({
   adminCode = MASTER_ADMIN_CODE,
   pairingCode = PAIRING_CODE,
-  masterPairingCode = MASTER_PAIRING_CODE,
 } = {}) {
   const blockers = [];
   const admin = String(adminCode || '');
   if (admin.length < 16) blockers.push('MASTER_ADMIN_CODE_TOO_WEAK');
-  if (admin && (timingSafeEqualText(admin, pairingCode) || timingSafeEqualText(admin, masterPairingCode))) {
+  if (admin && timingSafeEqualText(admin, pairingCode)) {
     blockers.push('MASTER_ADMIN_CODE_REUSED');
   }
   return blockers;
@@ -148,12 +146,11 @@ function engineBootstrapSecretPolicyBlockers({
   engineSecret = ENGINE_BOOTSTRAP_SECRET,
   adminCode = MASTER_ADMIN_CODE,
   pairingCode = PAIRING_CODE,
-  masterPairingCode = MASTER_PAIRING_CODE,
 } = {}) {
   const secret = String(engineSecret || '');
   const blockers = [];
   if (secret.length < 32) blockers.push('ENGINE_BOOTSTRAP_SECRET_TOO_WEAK');
-  if (secret && [adminCode, pairingCode, masterPairingCode].some(value => value && timingSafeEqualText(secret, value))) {
+  if (secret && [adminCode, pairingCode].some(value => value && timingSafeEqualText(secret, value))) {
     blockers.push('ENGINE_BOOTSTRAP_SECRET_REUSED');
   }
   return blockers;
@@ -162,25 +159,18 @@ function engineBootstrapSecretPolicyBlockers({
 function pairingSecretPolicyBlockers({
   role,
   pairingCode = PAIRING_CODE,
-  masterPairingCode = MASTER_PAIRING_CODE,
   adminCode = MASTER_ADMIN_CODE,
 } = {}) {
   const normalizedRole = String(role || '');
-  const secret = String(normalizedRole === 'master' ? masterPairingCode : pairingCode || '');
-  const other = String(normalizedRole === 'master' ? pairingCode : masterPairingCode || '');
+  const secret = String(pairingCode || '');
   const admin = String(adminCode || '');
   const blockers = [];
 
-  if (!['controller', 'master'].includes(normalizedRole)) {
+  if (normalizedRole !== 'controller') {
     blockers.push('PAIRING_ROLE_INVALID');
     return blockers;
   }
-  if (secret.length < 16) {
-    blockers.push(normalizedRole === 'master' ? 'MASTER_PAIRING_CODE_TOO_WEAK' : 'PAIRING_CODE_TOO_WEAK');
-  }
-  if (other && secret && timingSafeEqualText(secret, other)) {
-    blockers.push('PAIRING_CODES_REUSED');
-  }
+  if (secret.length < 16) blockers.push('PAIRING_CODE_TOO_WEAK');
   if (admin && secret && timingSafeEqualText(secret, admin)) {
     blockers.push('PAIRING_CODE_REUSES_ADMIN');
   }
@@ -3984,7 +3974,7 @@ export default async function handler(req, res) {
       return send(res, 200, {
         ok: true,
         masterMode: mode,
-        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
+        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'REAL_EXECUTION_DISABLED',
       });
     }
 
@@ -4021,7 +4011,7 @@ export default async function handler(req, res) {
 
       return send(res, 200, {
         ok: true,
-        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
+        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'REAL_EXECUTION_DISABLED',
         realTradingEnabled: REAL_TRADING_ENABLED,
         binanceWriteEnabled: BINANCE_WRITE_ENABLED,
         realEntryWriteEnabled: REAL_ENTRY_WRITE_ENABLED,
@@ -4086,7 +4076,7 @@ export default async function handler(req, res) {
         controllerStateHash: String(controllerState?.stateHash || ''),
         emergencyStopActive: Boolean(emergencyStop),
         realTradingEnabled: REAL_TRADING_ENABLED,
-        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'SIMULATION_LOCKED',
+        executionMode: REAL_TRADING_ENABLED ? 'REAL_ARMED_BY_ENV' : 'REAL_EXECUTION_DISABLED',
         currentMaster,
         masterMode: currentMasterMode,
         pendingCommands: Number(pending || 0),

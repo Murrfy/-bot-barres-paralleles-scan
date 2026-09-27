@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const sync=await readFile(new URL('../api/zenith-sync.js',import.meta.url),'utf8');
-const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
+const worker=await readFile(new URL('../server/zenith-engine-worker.mjs',import.meta.url),'utf8');
 const protectiveUpdate=await readFile(new URL('../api/binance-protective-update-execute.js',import.meta.url),'utf8');
 
 test('controller submission and MASTER claim preserve exact repair while adding symbol-aware readiness',()=>{
@@ -26,7 +26,7 @@ test('quarantined symbol permits close or cancel but not a fresh protection edit
 });
 
 test('MASTER reconciliation keeps stream usable only for protection-only mismatch',()=>{
-  assert.match(html,/protectionOnlyMismatchTarget\(q\.report\)/);
-  assert.match(html,/q\.report\.failClosed===false\|\|Boolean\(repairTarget\)/);
-  assert.match(html,/PROTECTION_REPAIR_REQUIRED/);
+  assert.match(worker,/protectionOnlyMismatchTarget/);
+  assert.match(worker,/data\.report\.failClosed===false\|\|Boolean\(repairTarget\)/);
+  assert.match(worker,/PROTECTION_REPAIR_REQUIRED/);
 });

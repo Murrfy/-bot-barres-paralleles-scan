@@ -2040,7 +2040,7 @@ async function ensureMarkPriceStream(){
 }
 
 function streamProjection(){
-  return runtimeInventoryFromUserStream(stream.state,'REAL');
+  return runtimeInventoryFromUserStream(stream.state);
 }
 
 function symbolQuarantineReport(){

@@ -4,9 +4,7 @@ import crypto from 'node:crypto';
 const pages = [
   'index.html',
   'master-admin.html',
-  'master-standby.html',
   'pair-controller.html',
-  'pair-master.html',
   'controller-status.html',
   'replace-controller.html',
 ];

@@ -125,7 +125,7 @@ test('iPhone instant-buy path queues real MARKET and never creates a local posit
   assert.match(block,/buildControllerMarketEntryCommand/);
   assert.match(block,/\/api\/zenith-sync\?action=command/);
   assert.match(block,/ACHAT IMMÉDIAT MARKET/);
-  assert.match(block,/Aucune simulation ne sera créée/);
+  assert.match(block,/Seule l’exécution réelle Binance sera utilisée/);
   assert.match(block,/validated\[s\]/);
   assert.doesNotMatch(block,/createPosition\(/);
 });
