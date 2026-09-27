@@ -1354,6 +1354,52 @@ async function ensureAutomaticTargetForPosition(position){
     autoTarget.lastError='';
     return {ok:true,changed:false,reason:plan.reason};
   }
+
+  if(plan.action==='CLOSE_REMAINDER_MARKET'){
+    const live=plan.live;
+    const previousClientOrderId=String(plan.previousClientOrderId||'');
+    if(!/^zth-EXI-[A-Za-z0-9._:-]+$/.test(previousClientOrderId)){
+      return localAutoTargetFailure(symbol,'PARTIAL_REMAINDER_PREVIOUS_ID_INVALID');
+    }
+    autoTarget.busySymbols.add(symbol);
+    try{
+      const commandId='auto-remainder-'+live.symbol+'-'+sha256Hex(previousClientOrderId).slice(0,16);
+      const closed=await callProtectiveExecute({
+        type:'EXEC_CLOSE_POSITION',
+        commandId,
+        symbol:live.symbol,
+        direction:live.direction,
+        quantity:live.quantity,
+        closeAll:true,
+        exitMode:'REMAINDER_MARKET',
+        recoveryReason:'PARTIAL_TARGET_REMAINDER',
+        previousClientOrderId,
+      });
+      if(!closed.response.ok||closed.data?.ok!==true||closed.data?.remainderMarketClosed!==true){
+        const reason='PARTIAL_REMAINDER_'+String(
+          closed.data?.code||closed.data?.reason||closed.data?.error||('HTTP_'+closed.response.status)
+        );
+        if(closed.data?.writeAttempted===true||closed.data?.ambiguous===true){
+          return failClosedAutoTarget(reason);
+        }
+        scheduleReconcile(250);
+        return localAutoTargetFailure(symbol,reason);
+      }
+      autoTarget.lastError='';
+      autoTarget.lastActionAt=Date.now();
+      log('AUTO_TARGET_PARTIAL_REMAINDER_MARKET_CLOSED',{
+        symbol:live.symbol,direction:live.direction,
+        requestedQuantity:live.quantity,
+        executedBefore:n(plan.executedQuantity,0),
+        previousClientOrderId,
+        attempts:Array.isArray(closed.data?.attempts)?closed.data.attempts.length:1,
+      });
+      return {ok:true,changed:true,reason:'PARTIAL_TARGET_REMAINDER_MARKET_CLOSED'};
+    }finally{
+      autoTarget.busySymbols.delete(symbol);
+    }
+  }
+
   if(!['PLACE','REPLACE'].includes(plan.action))return localAutoTargetFailure(symbol,plan.reason||'PLAN_BLOCKED');
 
   autoTarget.busySymbols.add(symbol);
