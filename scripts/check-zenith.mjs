@@ -1609,8 +1609,19 @@ for (const file of [
   }
 }
 const realEntryPermissionRevalidation = fs.readFileSync('api/binance-entry-execute.js','utf8');
-if (realEntryPermissionRevalidation.indexOf('revalidateBinanceTradingApiPermissions(apiKey,secret)') >
-    realEntryPermissionRevalidation.indexOf('runLiveEntryPreflight({')) {
+const realEntryHandlerStart = realEntryPermissionRevalidation.indexOf('export default async function handler');
+const realEntryPermissionCheck = realEntryPermissionRevalidation.indexOf(
+  'revalidateBinanceTradingApiPermissions(apiKey,secret)',
+  realEntryHandlerStart
+);
+const realEntryPreflightAfterHandler = realEntryPermissionRevalidation.indexOf(
+  'runLiveEntryPreflight({',
+  realEntryHandlerStart
+);
+if (realEntryHandlerStart < 0 ||
+    realEntryPermissionCheck < 0 ||
+    realEntryPreflightAfterHandler < 0 ||
+    realEntryPermissionCheck > realEntryPreflightAfterHandler) {
   fail('Binance trading-key permission revalidation must happen before real-entry Futures preflight');
 }
 
