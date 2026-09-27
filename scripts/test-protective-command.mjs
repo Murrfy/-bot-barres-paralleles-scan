@@ -56,10 +56,14 @@ test('progressive command requires the explicit LIMIT to equal the protected tri
 });
 
 
-test('triggered MAX-LOSS remainder recovery is bound to exact deterministic next IOC attempt',()=>{
+test('triggered MAX-LOSS remainder recovery is bound to exact certified MARKET close',()=>{
   const report={
     version:2,status:'MISMATCH',failClosed:true,
     reasons:['MISSING_BINANCE_PROTECTION','MISSING_BINANCE_MAX_LOSS_PROTECTION','TRIGGERED_MAX_LOSS_REMAINDER'],
+    certifiedPositions:[{
+      symbol:'BTCUSDT',direction:'LONG',positionSide:'BOTH',
+      quantity:0.3,positionAmt:'0.3',entryPrice:50000
+    }],
     differences:{triggeredMaxLossRemainders:[{
       symbol:'BTCUSDT',direction:'LONG',
       remainingQuantity:0.3,originalQuantity:1,executedQuantity:0.7,
@@ -67,21 +71,20 @@ test('triggered MAX-LOSS remainder recovery is bound to exact deterministic next
       algoId:'7788',actualOrderId:'9911',actualOrderStatus:'EXPIRED',
       recoveryCommandId:'maxloss-remainder:zth-MAX-0123456789abcdef01234567:9911',
       triggerPrice:49600,triggerTime:1700000000000,
-      nextAttempt:2,priceMatch:'OPPONENT_10',
     }]}
   };
   const rows=triggeredMaxLossRemainderTargets(report);
   assert.equal(rows.length,1);
-  assert.equal(rows[0].nextAttempt,2);
-  assert.equal(rows[0].priceMatch,'OPPONENT_10');
+  assert.equal(rows[0].remainingQuantity,0.3);
   const payload={
     type:'EXEC_CLOSE_POSITION',symbol:'BTCUSDT',direction:'LONG',quantity:0.3,closeAll:true,
     commandId:rows[0].recoveryCommandId,recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER',
-    attempt:2,priceMatch:'OPPONENT_10',
+    exitMode:'REMAINDER_MARKET',
   };
   assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,payload),true);
-  assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,{...payload,attempt:1,priceMatch:'OPPONENT_5'}),false);
+  assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,{...payload,exitMode:'PROTECTIVE_IOC'}),false);
   assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,{...payload,quantity:0.31}),false);
+  assert.deepEqual(triggeredMaxLossRemainderTargets({...report,certifiedPositions:[{...report.certifiedPositions[0],quantity:0.31}]}),[]);
   const unsafe={...report,reasons:[...report.reasons,'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT']};
   assert.deepEqual(triggeredMaxLossRemainderTargets(unsafe),[]);
 });
