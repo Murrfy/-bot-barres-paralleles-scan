@@ -633,10 +633,13 @@ function localizeTriggeredMaxLossAnomalies(result,recovery,observedAt=Date.now()
     const side=String(order?.side||'').toUpperCase();
     const direction=side==='SELL'?'LONG':side==='BUY'?'SHORT':'';
     const id=String(order?.clientAlgoId||order?.clientOrderId||'');
-    return quarantineKeys.has(symbol+':'+direction)&&
-      /^zth-MAX-[A-Za-z0-9._:-]+$/.test(id)&&
-      String(order?.type||'').toUpperCase()==='STOP'&&
-      order?.reduceOnly===true;
+    const quarantine=quarantines.find(row=>row.symbol===symbol&&row.direction===direction);
+    if(!quarantine||!quarantineKeys.has(symbol+':'+direction))return false;
+    const progressive=String(quarantine.reason||'').includes('PROGRESSIVE');
+    const owned=progressive
+      ?/^zth-PRO-[A-Za-z0-9._:-]+$/.test(id)
+      :/^zth-MAX-[A-Za-z0-9._:-]+$/.test(id);
+    return owned&&String(order?.type||'').toUpperCase()==='STOP'&&order?.reduceOnly===true;
   })){
     reasons=reasons.filter(reason=>reason!=='MISSING_BINANCE_ORDER');
   }
