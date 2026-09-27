@@ -66,6 +66,14 @@ test('central queue accepts explicit MARKET only in RUNNING and expires it quick
   assert.match(source,/age > 30000/);
 });
 
+test('real entry API is BUY-only for both LIMIT and MARKET and never maps SELL to SHORT',()=>{
+  const source=fs.readFileSync('api/binance-entry-execute.js','utf8');
+  assert.match(source,/side==='BUY' &&/);
+  assert.doesNotMatch(source,/\['BUY','SELL'\]\.includes\(side\)/);
+  assert.doesNotMatch(source,/normalizedSide==='SELL'\?'SHORT'/);
+  assert.match(source,/direction:'LONG'/);
+});
+
 test('entry API MARKET path bypasses LIMIT transition but keeps final dispatch gate',()=>{
   const source=fs.readFileSync('api/binance-entry-execute.js','utf8');
   const market=source.indexOf('if(marketEntry){');

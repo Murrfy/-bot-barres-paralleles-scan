@@ -24,16 +24,12 @@ test('LONG entry protection is a LIMIT-only STOP IOC below the LIMIT entry',()=>
   assert.match(plan.algoPlan.params.clientAlgoId,/^zth-MAX-[a-f0-9]{24}$/);
 });
 
-test('SHORT entry protection is above the LIMIT entry',()=>{
-  const plan=buildEntryProtectionPlan({
+test('prepared entry protection refuses SELL/SHORT entries',()=>{
+  assert.throws(()=>buildEntryProtectionPlan({
     commandId:'entry-short-12345',symbol:'ETHUSDT',side:'SELL',
     quantity:2,limitPrice:3000,maxLoss:200,
     priceFilter:{filterType:'PRICE_FILTER',tickSize:'0.01',minPrice:'0.01',maxPrice:'1000000'},
-  });
-  assert.equal(plan.direction,'SHORT');
-  assert.equal(plan.triggerPrice,3100);
-  assert.equal(plan.actualMaxLossUsd,200);
-  assert.equal(plan.algoPlan.params.side,'BUY');
+  }),/ENTRY_BUY_ONLY/);
 });
 
 test('entry protection never exceeds the server hard MAX-LOSS',()=>{

@@ -291,7 +291,7 @@ function entryReadinessReason(state,masterDeviceId,symbol='',side='',pendingEntr
   if(armReason)return armReason;
   const wanted=String(symbol||'').toUpperCase();
   const normalizedSide=String(side||'').toUpperCase();
-  const direction=normalizedSide==='BUY'?'LONG':normalizedSide==='SELL'?'SHORT':'';
+  const direction=normalizedSide==='BUY'?'LONG':'';
   const executionTarget=wanted&&direction?wanted+':'+direction:wanted;
   return executionReadiness(
     state.runtimeState,state.report,masterDeviceId,'',pendingEntryRecovery===true,false,
@@ -353,7 +353,7 @@ export default async function handler(req,res){
     (marketEntry||limitEntry) &&
     /^[A-Za-z0-9._:-]{8,128}$/.test(commandId) &&
     /^[A-Z0-9]{3,30}$/.test(symbol) &&
-    (marketEntry?side==='BUY':['BUY','SELL'].includes(side)) &&
+    side==='BUY' &&
     (marketEntry?orderType==='MARKET':orderType==='LIMIT') &&
     margin>0&&leverage>0&&maxLoss>0 &&
     (marketEntry||limitPrice>0) &&
@@ -629,7 +629,7 @@ export default async function handler(req,res){
         version:1,
         state:String(existing?.state||'PROTECTION_PREPARED').toUpperCase()==='ENTRY_SUBMITTED'
           ?'ENTRY_SUBMITTED':'PROTECTION_PREPARED',
-        commandId,symbol,side,direction:side==='BUY'?'LONG':'SHORT',
+        commandId,symbol,side,direction:'LONG',
         quantity:Number(plan.params.quantity),limitPrice,maxLossUsd:maxLoss,
         protectionTriggerPrice:protectionPlan.triggerPrice,
         protectionClientAlgoId:protectionPlan.algoPlan.params.clientAlgoId,
