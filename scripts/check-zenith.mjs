@@ -1372,11 +1372,12 @@ for (const file of [
 const pairingPolicySource = fs.readFileSync('api/zenith-sync.js','utf8');
 if (!pairingPolicySource.includes('function pairingSecretPolicyBlockers') ||
     !pairingPolicySource.includes("'PAIRING_CODE_TOO_WEAK'") ||
-    !pairingPolicySource.includes("'MASTER_PAIRING_CODE_TOO_WEAK'") ||
-    !pairingPolicySource.includes("'PAIRING_CODES_REUSED'") ||
+    !pairingPolicySource.includes("'PAIRING_ROLE_INVALID'") ||
     !pairingPolicySource.includes("'PAIRING_CODE_REUSES_ADMIN'") ||
-    !pairingPolicySource.includes("'PAIRING_SECURITY_POLICY_BLOCKED'")) {
-  fail('controller and MASTER pairing secrets must stay strong and distinct from each other and the admin secret');
+    !pairingPolicySource.includes("'PAIRING_SECURITY_POLICY_BLOCKED'") ||
+    pairingPolicySource.includes('ZENITH_MASTER_PAIRING_CODE') ||
+    pairingPolicySource.includes('MASTER_PAIRING_CODE_TOO_WEAK')) {
+  fail('browser pairing must remain controller-only with no MASTER pairing secret');
 }
 
 const roleEpochApiFiles = [
