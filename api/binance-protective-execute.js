@@ -6,6 +6,7 @@ import {
   protectionOnlyMismatchTarget,
   protectiveRepairTarget,
   pendingEntryProtectionLossCancelAllowed,
+  persistedSaleRemainderRecoveryAllowed,
   triggeredProgressiveRemainderRecoveryAllowed,
   triggeredMaxLossRemainderRecoveryAllowed,
   maxLossLocalQuarantineReport,
@@ -367,7 +368,8 @@ function executionReadiness(
   runtimeState,report,masterDeviceId,repairTarget='',
   pendingEntryCancelRecovery=false,maxLossRemainderRecovery=false,
   executionTarget='',quarantineOperationAllowed=false,
-  partialTargetRemainderRecovery=false,progressiveRemainderRecovery=false
+  partialTargetRemainderRecovery=false,progressiveRemainderRecovery=false,
+  persistedSaleRemainderRecovery=false
 ){
   const age=Date.now()-Number(runtimeState?.updatedAt||0);
   if(!runtimeState?.data||String(runtimeState?.masterDeviceId||'')!==String(masterDeviceId))return 'MASTER_RUNTIME_WRONG_DEVICE';
@@ -378,6 +380,7 @@ function executionReadiness(
   if(!stream||stream.connected!==true)return 'USER_STREAM_NOT_READY';
   if(pendingEntryCancelRecovery!==true&&maxLossRemainderRecovery!==true&&
      partialTargetRemainderRecovery!==true&&progressiveRemainderRecovery!==true&&
+     persistedSaleRemainderRecovery!==true&&
      (stream.ready!==true||stream.failClosed!==false||stream.needsReconciliation!==false)){
     return 'USER_STREAM_NOT_READY';
   }
@@ -392,7 +395,8 @@ function executionReadiness(
   if(clean)return '';
 
   if(pendingEntryCancelRecovery===true||maxLossRemainderRecovery===true||
-     partialTargetRemainderRecovery===true||progressiveRemainderRecovery===true)return '';
+     partialTargetRemainderRecovery===true||progressiveRemainderRecovery===true||
+     persistedSaleRemainderRecovery===true)return '';
 
   const repair=String(repairTarget||'').toUpperCase();
   if(repair&&protectionOnlyMismatchTarget(report)===repair)return '';
@@ -496,6 +500,11 @@ export default async function handler(req,res){
   if(progressiveRemainderRecovery&&String(master?.principal||'')!=='engine'){
     return send(res,423,{ok:false,code:'PROGRESSIVE_REMAINDER_RECOVERY_ENGINE_REQUIRED',writeAttempted:false});
   }
+  const persistedRemainderRecovery=type==='EXEC_CLOSE_POSITION'&&
+    persistedSaleRemainderRecoveryAllowed(report,req.body);
+  if(persistedRemainderRecovery&&String(master?.principal||'')!=='engine'){
+    return send(res,423,{ok:false,code:'PERSISTED_SALE_REMAINDER_ENGINE_REQUIRED',writeAttempted:false});
+  }
   const partialTargetRemainder=type==='EXEC_CLOSE_POSITION'
     ?partialTargetRemainderProof(runtimeState,req.body)
     :null;
@@ -509,10 +518,12 @@ export default async function handler(req,res){
     :executionSymbol;
   const quarantineOperationAllowed=
     type==='EXEC_CANCEL_ENTRY'||type==='EXEC_CLOSE_POSITION'||
-    pendingEntryCancelRecovery||maxLossRemainderRecovery||progressiveRemainderRecovery||Boolean(partialTargetRemainder);
+    pendingEntryCancelRecovery||maxLossRemainderRecovery||progressiveRemainderRecovery||
+    persistedRemainderRecovery||Boolean(partialTargetRemainder);
   const readinessReason=executionReadiness(
     runtimeState,report,master.deviceId,repairTarget,pendingEntryCancelRecovery,maxLossRemainderRecovery,
-    executionTarget,quarantineOperationAllowed,Boolean(partialTargetRemainder),progressiveRemainderRecovery
+    executionTarget,quarantineOperationAllowed,Boolean(partialTargetRemainder),progressiveRemainderRecovery,
+    persistedRemainderRecovery
   );
   if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
 
@@ -593,7 +604,7 @@ export default async function handler(req,res){
     return send(res,400,{ok:false,code:'PROTECTIVE_REQUEST_INVALID',writeAttempted:false});
   }
 
-  const livePosition=(maxLossRemainderRecovery||progressiveRemainderRecovery)
+  const livePosition=(maxLossRemainderRecovery||progressiveRemainderRecovery||persistedRemainderRecovery)
     ?certifiedReportPosition(report,symbol,dir)
     :runtimePosition(runtimeState,symbol,dir);
   const liveQty=quantity(livePosition);
@@ -606,7 +617,7 @@ export default async function handler(req,res){
 
   const exitMode=String(req.body?.exitMode||'PROTECTIVE_IOC').toUpperCase();
   if(exitMode==='REMAINDER_MARKET'){
-    if(!partialTargetRemainder&&!progressiveRemainderRecovery){
+    if(!partialTargetRemainder&&!progressiveRemainderRecovery&&!persistedRemainderRecovery){
       return send(res,423,{ok:false,code:'SALE_REMAINDER_PROOF_REQUIRED',writeAttempted:false});
     }
   }else if(exitMode!=='PROTECTIVE_IOC'){
@@ -642,37 +653,110 @@ export default async function handler(req,res){
   }
 
   if(exitMode==='REMAINDER_MARKET'){
-    let remaining=requestedQty;
     let wrote=false;
     const attempts=[];
+    let recoveryState=null;
     try{
-      for(let attempt=0;attempt<4&&remaining>1e-12;attempt++){
+      if(persistedRemainderRecovery){
+        recoveryState=await loadSaleRemainderRecovery(symbol,dir);
+        if(!recoveryState||String(recoveryState.commandId)!==commandId){
+          return send(res,409,{ok:false,code:'SALE_REMAINDER_PERSISTED_STATE_MISSING',writeAttempted:false});
+        }
+      }else{
+        const source=saleRemainderSource({
+          reqBody:req.body,partialTargetRemainder,progressiveRemainderRecovery,
+        });
+        if(!source){
+          return send(res,423,{ok:false,code:'SALE_REMAINDER_SOURCE_INVALID',writeAttempted:false});
+        }
+        recoveryState=await beginSaleRemainderRecovery(source);
+      }
+
+      let liveRemaining=await liveBinancePositionQuantity({apiKey,secret,symbol,direction:dir});
+      if(!(liveRemaining>1e-12)){
+        await clearSaleRemainderRecovery(recoveryState);
+        return send(res,200,{
+          ok:true,remainderMarketClosed:true,attempts,remainingQuantity:0,
+          alreadyClosed:true,
+        });
+      }
+      if(Math.abs(liveRemaining-liveQty)>Math.max(1e-12,liveQty*1e-10)){
+        return send(res,409,{
+          ok:false,code:'SALE_REMAINDER_LIVE_POSITION_CHANGED',
+          liveQuantity:liveRemaining,writeAttempted:false,
+        });
+      }
+
+      while(Number(recoveryState.nextAttempt)<4&&liveRemaining>1e-12){
+        const attempt=Math.floor(Number(recoveryState.nextAttempt));
+        const attemptQuantity=Number(recoveryState.attemptQuantity);
+        if(!(attemptQuantity>0)||
+           liveRemaining>attemptQuantity+Math.max(1e-12,attemptQuantity*1e-10)){
+          return send(res,409,{
+            ok:false,code:'SALE_REMAINDER_STATE_QUANTITY_INCONSISTENT',
+            liveQuantity:liveRemaining,attemptQuantity,writeAttempted:wrote,
+          });
+        }
+
         const marketPlan=buildExitOrderPlan({
-          commandId,symbol,direction:dir,quantity:remaining,
+          commandId,symbol,direction:dir,quantity:attemptQuantity,
           exitMode:'REMAINDER_MARKET',attempt,
         });
-        if(!(await requireFinalProtectiveMaster(res,master)))return;
-        const marketResult=await placeStandardOrderIdempotent({
-          apiKey,secret,orderParams:marketPlan.params,writesEnabled:true,timestamp:Date.now(),
+
+        let marketResult;
+        const priorAttemptAlreadyReduced=
+          liveRemaining<attemptQuantity-Math.max(1e-12,attemptQuantity*1e-10);
+        if(priorAttemptAlreadyReduced){
+          marketResult=await placeStandardOrderIdempotent({
+            apiKey,secret,orderParams:marketPlan.params,writesEnabled:false,timestamp:Date.now(),
+          });
+          if(marketResult.disposition!=='EXISTING'){
+            return send(res,409,{
+              ok:false,code:'SALE_REMAINDER_PREVIOUS_ATTEMPT_NOT_FOUND',
+              writeAttempted:wrote,attempt,attemptQuantity,liveQuantity:liveRemaining,
+            });
+          }
+        }else{
+          if(!(await requireFinalProtectiveMaster(res,master)))return;
+          marketResult=await placeStandardOrderIdempotent({
+            apiKey,secret,orderParams:marketPlan.params,writesEnabled:true,timestamp:Date.now(),
+          });
+          wrote=wrote||marketResult.writeAttempted===true;
+        }
+
+        const finalOrder=await waitMarketAttemptTerminal({
+          apiKey,secret,symbol,
+          clientOrderId:String(marketPlan.params.newClientOrderId||''),
+          initialOrder:marketResult?.order,
         });
-        wrote=wrote||marketResult.writeAttempted===true;
+        const finalStatus=String(finalOrder?.status||'').toUpperCase();
         attempts.push({
           attempt,
           clientOrderId:String(marketPlan.params.newClientOrderId||''),
-          requestedQuantity:remaining,
-          status:String(marketResult?.order?.status||''),
-          executedQuantity:Number(marketResult?.order?.executedQty||0),
+          requestedQuantity:attemptQuantity,
+          status:finalStatus,
+          executedQuantity:Number(finalOrder?.executedQty??marketResult?.order?.executedQty??0),
           disposition:String(marketResult?.disposition||''),
+          resumed:priorAttemptAlreadyReduced,
         });
-        remaining=await liveBinancePositionQuantity({apiKey,secret,symbol,direction:dir});
-        if(!(remaining>1e-12)){
+        if(!['FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(finalStatus)){
+          return send(res,409,{
+            ok:false,code:'SALE_REMAINDER_MARKET_ATTEMPT_PENDING',
+            writeAttempted:wrote,attempts,
+          });
+        }
+
+        liveRemaining=await liveBinancePositionQuantity({apiKey,secret,symbol,direction:dir});
+        if(!(liveRemaining>1e-12)){
+          await clearSaleRemainderRecovery(recoveryState);
           await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
             at:Date.now(),kind:'BINANCE_PARTIAL_SALE_REMAINDER_MARKET_CLOSED',
             deviceId:master.deviceId,commandId,symbol,direction:dir,
             recoveryReason:String(req.body?.recoveryReason||''),
-            previousClientOrderId:String(req.body?.previousClientOrderId||''),
-            clientAlgoId:String(req.body?.clientAlgoId||''),
-            actualOrderId:String(req.body?.actualOrderId||''),
+            sourceReason:String(recoveryState.sourceReason||''),
+            previousClientOrderId:String(recoveryState.previousClientOrderId||''),
+            clientAlgoId:String(recoveryState.clientAlgoId||''),
+            actualOrderId:String(recoveryState.actualOrderId||''),
             attempts,
           })]);
           await redis(['LTRIM',KEY_AUDIT,'0','199']);
@@ -681,10 +765,13 @@ export default async function handler(req,res){
             remainderMarketClosed:true,attempts,remainingQuantity:0,
           });
         }
+
+        recoveryState=await advanceSaleRemainderRecovery(recoveryState,liveRemaining);
       }
+
       return send(res,409,{
-        ok:false,code:'SALE_REMAINDER_MARKET_NOT_CLOSED',
-        writeAttempted:wrote,remainingQuantity:remaining,attempts,
+        ok:false,code:'SALE_REMAINDER_MARKET_RECOVERY_EXHAUSTED',
+        writeAttempted:wrote,remainingQuantity:liveRemaining,attempts,
       });
     }catch(e){
       const retryAfter=binanceBackoffSecondsFromError(e);
@@ -702,7 +789,7 @@ export default async function handler(req,res){
         ok:false,
         code:e?.message==='ORDER_RESULT_AMBIGUOUS'
           ?'SALE_REMAINDER_MARKET_AMBIGUOUS'
-          :'SALE_REMAINDER_MARKET_FAILED',
+          :String(e?.message||'SALE_REMAINDER_MARKET_FAILED'),
         error:'Binance partial-sale remainder MARKET close failed.',
         binanceCode:e?.code??null,
         ambiguous:e?.ambiguous===true,
