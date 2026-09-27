@@ -1073,7 +1073,7 @@ async function pruneAutoHighWater(){
   return changed;
 }
 
-function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.maxLossUsd){
+function safeMaxLossOrders(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.maxLossUsd){
   const amount=n(position?.positionAmt??position?.quantity,0);
   const direction=amount>=0?'LONG':'SHORT';
   const quantity=Math.abs(amount);
@@ -1081,8 +1081,8 @@ function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.ma
   const side=direction==='LONG'?'SELL':'BUY';
   const entry=n(position?.entryPrice,0);
   const cap=n(hardMaxLossUsd,0);
-  if(!(quantity>0)||!(entry>0)||!(cap>0))return false;
-  const rows=(Array.isArray(orders)?orders:[]).filter(order=>{
+  if(!(quantity>0)||!(entry>0)||!(cap>0))return [];
+  return (Array.isArray(orders)?orders:[]).filter(order=>{
     if(String(order?.orderClass||'').toUpperCase()!=='ALGO')return false;
     if(String(order?.symbol||'').toUpperCase()!==symbol)return false;
     if(String(order?.side||'').toUpperCase()!==side)return false;
@@ -1093,8 +1093,8 @@ function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.ma
     if(order?.closePosition===true||order?.closePosition==='true')return false;
     if(!realNumberMatches(order?.origQty??order?.quantity,quantity))return false;
     if(String(order?.priceMatch||'').toUpperCase()!=='OPPONENT')return false;
-    // The safety decision comes from the live Binance order parameters, not from who
-    // generated the client id. This lets a manually repaired MAX-LOSS restore protection.
+    const id=String(order?.clientAlgoId||'');
+    if(!id||id.length>36)return false;
     const trigger=n(order?.triggerPrice??order?.stopPrice,0);
     if(!(trigger>0))return false;
     const lossSide=direction==='LONG'?trigger<entry:trigger>entry;
@@ -1102,9 +1102,50 @@ function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.ma
     const impliedLossUsd=direction==='LONG'
       ?(entry-trigger)*quantity
       :(trigger-entry)*quantity;
-    return impliedLossUsd<=cap+1e-8;
+    return impliedLossUsd>=0&&impliedLossUsd<=cap+1e-8;
   });
+}
+
+function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.maxLossUsd){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const direction=amount>=0?'LONG':'SHORT';
+  const quantity=Math.abs(amount);
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const side=direction==='LONG'?'SELL':'BUY';
+  const entry=n(position?.entryPrice,0);
+  const cap=n(hardMaxLossUsd,0);
+  if(!(quantity>0)||!(entry>0)||!(cap>0))return false;
+  const rows=safeMaxLossOrders(position,orders,hardMaxLossUsd);
   return rows.length===1;
+}
+
+function binancePriorityMaxLossCleanupTarget(report){
+  if(!report||report.version!==2||report.status!=='MISMATCH'||report.failClosed!==true)return null;
+  const reasons=Array.isArray(report.reasons)?report.reasons.map(x=>String(x||'')):[];
+  if(reasons.length!==1||reasons[0]!=='AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION')return null;
+  const ambiguous=Array.isArray(report?.differences?.ambiguousMaxLossProtections)
+    ?report.differences.ambiguousMaxLossProtections.map(x=>String(x||'').toUpperCase()).filter(Boolean):[];
+  if(ambiguous.length!==1)return null;
+  const [symbol,direction]=ambiguous[0].split(':');
+  if(!/^[A-Z0-9]{3,30}$/.test(symbol||'')||!['LONG','SHORT'].includes(direction||''))return null;
+  const projection=streamProjection();
+  const position=(projection.binancePositions||[]).find(p=>{
+    if(String(p?.symbol||'').toUpperCase()!==symbol)return false;
+    const amount=n(p?.positionAmt??p?.quantity,0);
+    return Math.abs(amount)>0&&(amount<0?'SHORT':'LONG')===direction;
+  });
+  const cap=configuredMaxLossForSymbol(symbol);
+  if(!position||!(cap>0))return null;
+  const safe=safeMaxLossOrders(position,projection.binanceOrders||[],cap);
+  const external=safe.filter(o=>!/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(o?.clientAlgoId||'')));
+  const managed=safe.filter(o=>/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(o?.clientAlgoId||'')));
+  if(external.length!==1||managed.length<1)return null;
+  return {
+    symbol,direction,
+    clientAlgoId:String(managed[0]?.clientAlgoId||''),
+    externalClientAlgoId:String(external[0]?.clientAlgoId||''),
+    managedCount:managed.length,
+  };
 }
 
 function rememberPriceFilters(snapshot){
@@ -2467,6 +2508,51 @@ async function reconcile(secondPass=false){
       stream.reconcileBusy=false;
       await sleep(150);
       return reconcile(true);
+    }
+
+    const priorityCleanup=binancePriorityMaxLossCleanupTarget(data.report);
+    if(priorityCleanup){
+      const cleaned=await callProtectiveUpdateExecute({
+        type:'EXEC_CLEAN_DUPLICATE_MAX_LOSS',
+        phase:'CANCEL_DUPLICATE',
+        symbol:priorityCleanup.symbol,
+        direction:priorityCleanup.direction,
+        clientAlgoId:priorityCleanup.clientAlgoId,
+      });
+      if(!cleaned.response.ok||cleaned.data?.ok!==true){
+        const reason='MAX_LOSS_PRIORITY_CLEANUP_'+String(
+          cleaned.data?.code||cleaned.data?.reason||cleaned.data?.error||('HTTP_'+cleaned.response.status)
+        );
+        runtime.error=reason;
+        stream.lastError=reason;
+        scheduleReconcile(cleaned.data?.ambiguous===true?100:500);
+        return false;
+      }
+      const terminal=await waitForStreamOrder({
+        kind:'ALGO',clientId:priorityCleanup.clientAlgoId,terminal:true
+      },3000);
+      const status=String(
+        terminal?.status||
+        cleaned.data?.result?.algoOrder?.algoStatus||
+        ''
+      ).toUpperCase();
+      if(!['CANCELED','EXPIRED','REJECTED'].includes(status)){
+        runtime.error='MAX_LOSS_PRIORITY_CANCEL_NOT_CONFIRMED';
+        stream.lastError=runtime.error;
+        scheduleReconcile(100);
+        return false;
+      }
+      await publishRuntime().catch(()=>{});
+      log('BINANCE_MAX_LOSS_PRIORITY_APPLIED',{
+        symbol:priorityCleanup.symbol,
+        direction:priorityCleanup.direction,
+        externalClientAlgoId:priorityCleanup.externalClientAlgoId,
+        removedClientAlgoId:priorityCleanup.clientAlgoId,
+        managedCountBefore:priorityCleanup.managedCount,
+      });
+      stream.reconcileBusy=false;
+      await sleep(100);
+      return reconcile(false);
     }
 
     const maxLossOverlap=authorizedMaxLossOverlapReport(data.report);
