@@ -4,8 +4,6 @@ const htmlFiles = [
   'index.html',
   'pair-controller.html',
   'controller-status.html',
-  'pair-master.html',
-  'master-standby.html',
   'master-admin.html',
   'replace-controller.html',
 ].filter(fs.existsSync);
@@ -88,6 +86,7 @@ if (!previewMutationSync.includes('ZENITH_CONTROL_MUTATION_ALLOWED') ||
 }
 
 const index = fs.readFileSync('index.html', 'utf8');
+const engineWorker = fs.readFileSync('server/zenith-engine-worker.mjs', 'utf8');
 const deviceSession = fs.readFileSync('lib/device-session.mjs', 'utf8');
 for (const required of ["__Host-zenith_device","HttpOnly","Secure","SameSite=Strict","Priority=High","sameOriginMutation","deviceTokenCandidates"]) {
   if (!deviceSession.includes(required)) fail(`device session hardening missing: ${required}`);
@@ -98,19 +97,29 @@ if (deviceSession.includes('if (bearerToken(req)) return true;')) {
 if (deviceSession.includes("header(req, 'x-forwarded-host')")) {
   fail('same-origin security must not trust x-forwarded-host');
 }
-for (const file of ['pair-controller.html','pair-master.html','replace-controller.html']) {
+for (const file of ['pair-controller.html','replace-controller.html']) {
   const html=fs.readFileSync(file,'utf8');
   if (html.includes('localStorage.setItem(DEVICE_TOKEN_KEY')) fail(`${file} must not store device credentials in localStorage`);
   if (!html.includes('localStorage.removeItem(DEVICE_TOKEN_KEY)')) fail(`${file} must purge legacy localStorage device credentials`);
   if (!html.includes('sessionReady')) fail(`${file} must complete pairing/recovery through the secure server session`);
 }
-for (const file of ['index.html','master-admin.html','master-standby.html','controller-status.html']) {
+for (const file of ['index.html','master-admin.html','controller-status.html']) {
   const html=fs.readFileSync(file,'utf8');
   if (!html.includes('localStorage.removeItem(')) fail(`${file} must purge migrated legacy credentials after authenticated session bootstrap`);
 }
 
 if (!index.includes('réel uniquement') || index.includes('simulation uniquement')) {
   fail('index.html must expose the real-only trading mode and must not present simulation as an operating mode');
+}
+for (const legacyPath of ['pair-master.html','master-standby.html']) {
+  if (fs.existsSync(legacyPath)) fail(`obsolete browser MASTER artifact must stay deleted: ${legacyPath}`);
+}
+for (const forbidden of [
+  'IPAD MASTER','masterWakeBadge','startMasterRuntimeLoop','masterRuntimeState',
+  'masterUserStream','masterExecution','masterStreamProjection',
+  'localSimulationEntryAllowed',"controllerIdentity.role==='master'"
+]) {
+  if (index.includes(forbidden)) fail(`browser MASTER runtime must stay absent from index.html: ${forbidden}`);
 }
 if (!index.includes('startBinanceAccountReadOnly()')) {
   fail('index.html must keep Binance read-only account refresh');
@@ -131,13 +140,12 @@ if (!index.includes("normalExit:'LIMIT_EXACT_GTC'") ||
     index.includes("MARKET_LAST_RESORT")) {
   fail('Zenith exits must remain LIMIT-only with no MARKET fallback');
 }
-for (const file of ['index.html','master-admin.html','master-standby.html','controller-status.html']) {
+for (const file of ['index.html','master-admin.html','controller-status.html']) {
   const html=fs.readFileSync(file,'utf8');
   const bearerUses=[...html.matchAll(/Authorization\s*:\s*['"`]Bearer\s*['"`]\s*\+\s*(?:token|legacyToken)/g)].length;
   const legacyRead=[...html.matchAll(/localStorage\.getItem\([^\n]*TOKEN_KEY[^\n]*\)/g)].length;
   if (file === 'index.html' && bearerUses > 1) fail('index.html may use Bearer only for one-time legacy session migration');
   if (file === 'master-admin.html' && bearerUses > 1) fail('master-admin.html may use Bearer only for one-time legacy session migration');
-  if (file === 'master-standby.html' && bearerUses > 1) fail('master-standby.html may use Bearer only for one-time legacy session migration');
   if (file === 'controller-status.html' && bearerUses > 1) fail('controller-status.html may use Bearer only for one-time legacy session migration');
   if (legacyRead > 1) fail(`${file} must not repeatedly read device credentials from localStorage`);
 }
@@ -302,8 +310,10 @@ const masterRuntimeInventory = fs.readFileSync('lib/master-runtime-inventory.mjs
 for (const required of ['binancePositions','binanceOrders','openPositions','openOrders','userStream','TERMINAL_ALGO']) {
   if (!masterRuntimeInventory.includes(required)) fail(`MASTER runtime inventory projection missing: ${required}`);
 }
-if (!masterRuntimeInventory.includes("executionMode: mode") || !masterRuntimeInventory.includes("failClosed: state?.failClosed !== false")) {
-  fail('MASTER runtime inventory must preserve execution mode and fail closed on unsafe stream state');
+if (!masterRuntimeInventory.includes("const mode = 'REAL'") ||
+    masterRuntimeInventory.includes('SIMULATION') ||
+    !masterRuntimeInventory.includes("failClosed: state?.failClosed !== false")) {
+  fail('server runtime inventory must remain REAL-only and fail closed on unsafe stream state');
 }
 
 const userStreamState = fs.readFileSync('lib/user-stream-state.mjs', 'utf8');
@@ -653,26 +663,13 @@ if (!index.includes('orphanZenithCleanupOrders(q.report)') ||
 
 if (!protectiveCommand.includes('AMBIGUOUS_BINANCE_MAX_LOSS_PROTECTION') ||
     !protectiveCommand.includes("'ambiguousMaxLossProtections'") ||
-    !index.includes('await publishMasterStreamState();') ||
-    !index.includes('newClientId=await placeNew();') ||
-    !index.includes('await cancelOld(newClientId)') ||
     !protectiveUpdateExecute.includes("phase==='CANCEL_OLD'&&update.protectionKind==='MAX_LOSS'")) {
-  fail('place-first protection replacement must explicitly reconcile the old+new transition before retiring the old protection');
+  fail('place-first protection replacement must keep ambiguity and overlap safety checks');
 }
-
-if (!index.includes('async function awaitMasterReconciliation(timeoutMs=5000)') ||
-    !index.includes("'RECONCILIATION_BUSY_TIMEOUT'") ||
-    !index.includes("const reconciled=await awaitMasterReconciliation();") ||
-    !index.includes("throw new Error('RECONCILIATION_NOT_READY')")) {
-  fail('critical MASTER mutations must serialize reconciliation and must not ACK a full close without reconciled stream readiness');
-}
-
-if (!index.includes("navigator.wakeLock.request('screen')") ||
-    !index.includes('function masterWakeLockWanted()') ||
-    !index.includes("mode==='RUNNING'||mode==='PAUSE_PENDING'") ||
-    !index.includes("releaseMasterWakeLock();invalidateMasterStream('PAGE_HIDDEN')") ||
-    !index.includes('ÉCRAN MASTER · ÉVEILLÉ')) {
-  fail('iPad MASTER must request a screen wake lock only while active while preserving PAGE_HIDDEN fail-closed behavior');
+if (!engineWorker.includes('async function runProtectiveUpdate') ||
+    !engineWorker.includes('async function commandCycle()') ||
+    !engineWorker.includes('publishRuntime()')) {
+  fail('24/7 server engine must own protective command execution and reconciled runtime publication');
 }
 
 const masterAutoProtection = fs.readFileSync('lib/master-auto-protection.mjs','utf8');
@@ -686,9 +683,9 @@ if (!masterAutoProtection.includes('STANDARD_REDUCE_ONLY_LIMIT_ALREADY_OPEN') ||
 if (!userStreamSeed.includes('positionLifecycleAt:Number(p.updateTime||snapshot.observedAt||0)') ||
     !userStreamState.includes('positionLifecycleAt=sameCore') ||
     !masterRuntimeInventory.includes('lifecycleAt: Number(p.positionLifecycleAt || p.eventTime || 0)') ||
-    !index.includes('pruneMasterAutoProtectionHighWater') ||
-    !index.includes('position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime')) {
-  fail('MASTER progressive high-water must be isolated to one stable Binance position lifecycle and pruned after flat positions');
+    !engineWorker.includes('async function pruneAutoHighWater()') ||
+    !engineWorker.includes('position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime')) {
+  fail('server progressive high-water must be isolated to one stable Binance position lifecycle and pruned after flat positions');
 }
 
 if (!index.includes("String(o?.timeInForce||'').toUpperCase()==='GTC'") ||
@@ -950,7 +947,7 @@ if (!index.includes('masterPauseBtn') ||
 const masterAdmin = fs.readFileSync('master-admin.html', 'utf8');
 if (!masterAdmin.includes('cancelPauseBtn') ||
     !masterAdmin.includes("setMasterMode('master-pause-cancel')")) {
-  fail('iPad MASTER admin UI must allow cancelling a queued pause');
+  fail('MASTER server administration UI must allow cancelling a queued pause');
 }
 
 if (!sync.includes('KEY_MASTER_CONFIG_ACK') ||
@@ -962,13 +959,6 @@ if (!sync.includes('KEY_MASTER_CONFIG_ACK') ||
   fail('MASTER must heartbeat, apply central revisions, acknowledge them, and fail closed on desynchronization');
 }
 
-const masterStandby = fs.readFileSync('master-standby.html', 'utf8');
-if (!masterStandby.includes("api('master-heartbeat','POST'") ||
-    !masterStandby.includes("api('master-config-status'") ||
-    !masterStandby.includes("api('master-config-ack','POST'") ||
-    !masterStandby.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
-  fail('MASTER standby page must verify, apply, and acknowledge controller revisions');
-}
 if (!index.includes('masterAppliedRevision') ||
     !index.includes('MASTER DÉSYNCHRONISÉ') ||
     !index.includes("stableStringify(remoteState?.data||{})===stableStringify(payload)")) {
@@ -980,14 +970,13 @@ if (!sync.includes('stableStringify') ||
     !sync.includes('RUNTIME_STATE_INVALID')) {
   fail('MASTER synchronization must use canonical hashes and validated runtime snapshots');
 }
-if (!index.includes("role==='master'") ||
-    !index.includes("masterRuntimeApi('master-heartbeat','POST'") ||
-    !index.includes("masterRuntimeApi('state','POST'") ||
-    !index.includes("masterRuntimeApi('master-config-status'") ||
-    !index.includes("masterRuntimeApi('master-config-ack','POST'") ||
-    !index.includes('masterLocalEntryAllowed()') ||
-    !index.includes('CONTROLLER_STATE_HASH_MISMATCH')) {
-  fail('iPad MASTER engine must heartbeat, publish runtime, apply revisions and block unsafe local entries');
+if (!engineWorker.includes("syncApi('master-heartbeat'") ||
+    !engineWorker.includes("syncApi('master-config-status'") ||
+    !engineWorker.includes("syncApi('master-config-ack',{method:'POST'") ||
+    !engineWorker.includes("syncApi('state'") ||
+    !engineWorker.includes('async function commandCycle()') ||
+    !engineWorker.includes('async function ensureUserStream()')) {
+  fail('24/7 server engine must own heartbeat, configuration ACK, runtime publication, commands and Binance user stream');
 }
 
 if (!index.includes('function renderPositions(){return false}') ||
@@ -1000,56 +989,38 @@ if (!index.includes('function renderPositions(){return false}') ||
     index.includes('Positions actives — simulation')) {
   fail('real-only Zenith must not expose, create, close, or render simulated positions');
 }
-if (!index.includes('masterExecutionCycle') ||
-    !index.includes("masterRuntimeApi('command-next','POST'") ||
-    !index.includes("masterCommandDisposition('command-ack'") ||
-    !index.includes("masterCommandDisposition('command-requeue'") ||
-    !index.includes("masterCommandDisposition('command-fail'") ||
-    !index.includes("fetch('/api/binance-protective-execute'") ||
-    !index.includes('evaluateFullProtectiveClose') ||
-    !index.includes('PROTECTIVE_CLOSE_ATTEMPTS') ||
-    !index.includes('PROTECTIVE_CLOSE_ATTEMPTS_EXHAUSTED') ||
-    !index.includes("setInterval(masterExecutionCycle,750)") ||
-    index.includes('MARKET_CLOSE_NOT_CONFIRMED')) {
-  fail('legacy MASTER close flow must confirm live inventory and remain LIMIT-only without ACK on dispatch alone');
+if (!engineWorker.includes('async function commandCycle()') ||
+    !engineWorker.includes("syncApi('command-next',{method:'POST'") ||
+    !engineWorker.includes('ackCommand(raw)') ||
+    !engineWorker.includes('requeueCommand(raw') ||
+    !engineWorker.includes('failCommand(raw') ||
+    !engineWorker.includes('runFullClose(command,raw)') ||
+    !engineWorker.includes('runCancelEntry(command,raw,dispatch)') ||
+    !engineWorker.includes('runProtectiveUpdate(command,raw,dispatch)')) {
+  fail('24/7 server engine must own the real command queue and protective execution');
 }
 if (!sync.includes('deferReason') || !sync.includes('requestedDelayMs') || !sync.includes('Math.min(30000')) {
   fail('MASTER command requeue must support bounded retry backoff without extending command expiry');
 }
 
-if (!index.includes("wss://fstream.binance.com/private/ws?listenKey=") ||
-    index.includes("new WebSocket('wss://fstream.binance.com/ws/'+encodeURIComponent(listenKey))") ||
-    !index.includes("import('/lib/user-stream-state.mjs')") ||
-    !index.includes("import('/lib/master-runtime-inventory.mjs')") ||
-    !index.includes("import('/lib/user-stream-seed.mjs')") ||
-    !index.includes("fetch('/api/binance-runtime-snapshot'") ||
-    !index.includes('STREAM_SEED_BUFFER_OVERFLOW') ||
-    !index.includes("masterUserStreamApi('start','POST')") ||
-    !index.includes("masterUserStreamApi('keepalive','POST')") ||
-    !index.includes("reconcileMasterUserStream") ||
-    !index.includes("45*60*1000") ||
-    !index.includes("23*60*60*1000") ||
-    !index.includes('reconcileDebounceTimer') ||
-    !index.includes('reconcileInterval') ||
-    !index.includes("masterUserStream.reconcileInterval=setInterval(()=>reconcileMasterUserStream(),15000)")) {
-  fail('iPad MASTER must maintain the official Binance private user stream with independent keepalive, reconnect and REST reconciliation timers');
+if (!engineWorker.includes("wss://fstream.binance.com/private/ws?listenKey=") ||
+    !engineWorker.includes("userStreamApi('start','POST')") ||
+    !engineWorker.includes("userStreamApi('keepalive','POST')") ||
+    !engineWorker.includes('STREAM_SEED_BUFFER_OVERFLOW') ||
+    !engineWorker.includes('reconcileInterval=setInterval') ||
+    !engineWorker.includes('STREAM_RESTART_MS') ||
+    !engineWorker.includes('KEEPALIVE_MS')) {
+  fail('24/7 server engine must maintain the Binance private user stream with keepalive, reconnect and reconciliation');
 }
-if (!index.includes("invalidateMasterStream('PAGE_HIDDEN')") ||
-    !index.includes("STREAM_EVENT_OUT_OF_ORDER") ||
-    !index.includes("LISTEN_KEY_EXPIRED") ||
-    !index.includes("STREAM_INVENTORY_CHANGED")) {
-  fail('MASTER user stream must fail closed on backgrounding, expiry, ordering gaps and inventory changes');
+if (!engineWorker.includes('STREAM_EVENT_OUT_OF_ORDER') ||
+    !engineWorker.includes('LISTEN_KEY_EXPIRED') ||
+    !engineWorker.includes('STREAM_INVENTORY_CHANGED')) {
+  fail('server user stream must fail closed on expiry, ordering gaps and inventory changes');
 }
-
-if (!index.includes('applyMasterReadOnlyPolicy') ||
-    !index.includes('IPAD MASTER LECTURE SEULE') ||
-    !index.includes('MASTER_APPLIED_CONFIG_HASH_MISMATCH') ||
-    !index.includes('MASTER_LOCAL_CONFIG_DRIFT_ACTIVE') ||
-    !index.includes("stableStringify(controllerCloudStatePayload())")) {
-  fail('iPad MASTER must be read-only and detect local configuration drift before allowing new entries');
-}
-if (!masterStandby.includes('stableStringify(state.data)')) {
-  fail('MASTER standby must verify controller state with the canonical hash');
+if (!engineWorker.includes('activeSafeTokenConfigRefreshAllowed') ||
+    !engineWorker.includes('ENGINE_LOCAL_CONFIG_DRIFT_ACTIVE') ||
+    !engineWorker.includes('stableStringify(runtime.config)')) {
+  fail('24/7 server engine must detect unsafe configuration drift before continuing active trading');
 }
 
 const requireDeviceStartForRole = sync.indexOf('async function requireDevice');
@@ -1232,9 +1203,10 @@ if (!sync.includes("BINANCE_API_RESTRICTIONS_PATH = '/sapi/v1/account/apiRestric
     !sync.includes("'BINANCE_API_FUTURES_REQUIRED'")) {
   fail('real execution arm must verify IP-restricted safe Binance API permissions before arming');
 }
-if (!index.includes("masterRuntimeState.realExecutionArmed===true?'REAL':'SIMULATION'") ||
-    !index.includes("hb.q.realExecutionArmed===true")) {
-  fail('iPad MASTER must publish REAL runtime only after server-side real-execution arm');
+if (!engineWorker.includes("const executionMode='REAL'") ||
+    engineWorker.includes("'SIMULATION'") ||
+    !engineWorker.includes('runtime.realExecutionArmed')) {
+  fail('24/7 server engine runtime must remain REAL-only and gated by real-execution arm');
 }
 if (!masterAdmin.includes('armRealBtn') || !masterAdmin.includes('armRealExecution')) {
   fail('MASTER admin must expose guarded real-execution arming only when the real env is present');
