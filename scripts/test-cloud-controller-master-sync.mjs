@@ -4,11 +4,13 @@ import { readFile } from 'node:fs/promises';
 
 const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 const syncSource=await readFile(new URL('../api/zenith-sync.js',import.meta.url),'utf8');
+const worker=await readFile(new URL('../server/zenith-engine-worker.mjs',import.meta.url),'utf8');
 
-test('iPhone controller state is synchronized through Zenith cloud API, not LAN',()=>{
+test('iPhone controller state is synchronized through Zenith cloud API to the 24/7 server engine, not a browser MASTER',()=>{
   assert.match(html,/fetch\('\/api\/zenith-sync\?action=controller-state'/);
-  assert.match(html,/masterRuntimeApi\('master-config-status'\)/);
-  assert.match(html,/masterRuntimeApi\('master-config-ack','POST'/);
+  assert.match(worker,/syncApi\('master-config-status'\)/);
+  assert.match(worker,/syncApi\('master-config-ack',\{method:'POST'/);
+  assert.doesNotMatch(html,/masterRuntimeApi|startMasterRuntimeLoop|controllerIdentity\.role==='master'/);
 });
 
 test('legacy array-shaped controller records are normalized before cloud sync',()=>{
@@ -29,11 +31,14 @@ test('controller self-heals an internally invalid remote state hash using the au
   assert.match(html,/localStorage\.setItem\(ZENITH_CONTROLLER_REV_KEY,String\(Math\.max\(0,n\(repaired\.state\.revision,remoteRevision\)\)\)\)/);
 });
 
-test('controller-to-MASTER critical sync has no same-WiFi dependency',()=>{
-  const critical=['controller-state','master-config-status','master-config-ack','command','command-next','command-ack'];
-  for(const action of critical) assert.ok(html.includes(action),action);
-  assert.doesNotMatch(html,/RTCPeerConnection|BroadcastChannel\(/);
-  assert.doesNotMatch(html,/https?:\/\/(?:localhost|127\.0\.0\.1|192\.168\.|10\.\d+\.|172\.(?:1[6-9]|2\d|3[01])\.)/);
+test('controller-to-server critical sync has no same-WiFi dependency',()=>{
+  const browserCritical=['controller-state','command'];
+  for(const action of browserCritical) assert.ok(html.includes(action),action);
+  const serverCritical=['master-config-status','master-config-ack','command-next','command-ack'];
+  for(const action of serverCritical) assert.ok(worker.includes(action),action);
+  const combined=html+'\n'+worker;
+  assert.doesNotMatch(combined,/RTCPeerConnection|BroadcastChannel\(/);
+  assert.doesNotMatch(combined,/https?:\/\/(?:localhost|127\.0\.0\.1|192\.168\.|10\.\d+\.|172\.(?:1[6-9]|2\d|3[01])\.)/);
 });
 
 
