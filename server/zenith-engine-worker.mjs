@@ -2769,15 +2769,15 @@ async function recoverTriggeredMaxLossRemainder(report){
         direction:target.direction,
         quantity:target.remainingQuantity,
         closeAll:true,
-        exitMode:'PROTECTIVE_IOC',
-        attempt:target.nextAttempt,
-        priceMatch:target.priceMatch,
+        exitMode:'REMAINDER_MARKET',
         recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER',
+        clientAlgoId:target.clientAlgoId,
+        actualOrderId:target.actualOrderId,
       });
     }finally{
       maxLossRemainderRecovery.writeBusy=false;
     }
-    if(!result.response.ok||result.data?.ok!==true){
+    if(!result.response.ok||result.data?.ok!==true||result.data?.remainderMarketClosed!==true){
       const reason=String(result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status));
       const ambiguous=result.data?.ambiguous===true||result.data?.result?.ambiguous===true;
       const wrote=result.data?.writeAttempted===true;
@@ -2791,27 +2791,16 @@ async function recoverTriggeredMaxLossRemainder(report){
         ambiguous,wrote,
       };
     }
-    const clientOrderId=String(result.data?.plan?.params?.newClientOrderId||'');
-    if(!clientOrderId){
-      maxLossRemainderRecovery.lastError='MAX_LOSS_REMAINDER_CLIENT_ORDER_ID_MISSING';
-      runtime.error=maxLossRemainderRecovery.lastError;
-      stream.lastError=maxLossRemainderRecovery.lastError;
-      await publishRuntime().catch(()=>{});
-      scheduleReconcile(100);
-      return {handled:true,dispatched:false,reason:maxLossRemainderRecovery.lastError};
-    }
-    log('MAX_LOSS_REMAINDER_IOC_DISPATCHED',{
+    log('MAX_LOSS_REMAINDER_MARKET_CLOSED',{
       symbol:target.symbol,
       direction:target.direction,
       remainingQuantity:target.remainingQuantity,
-      attempt:target.nextAttempt,
-      priceMatch:target.priceMatch,
       clientAlgoId:target.clientAlgoId,
       actualOrderId:target.actualOrderId,
-      clientOrderId,
+      attempts:Array.isArray(result.data?.attempts)?result.data.attempts.length:1,
     });
     maxLossRemainderRecovery.lastError='';
-    return {handled:true,dispatched:true,reason:'MAX_LOSS_REMAINDER_IOC_DISPATCHED',clientOrderId};
+    return {handled:true,dispatched:true,reason:'MAX_LOSS_REMAINDER_MARKET_CLOSED'};
   }finally{
     maxLossRemainderRecovery.writeBusy=false;
     maxLossRemainderRecovery.busy=false;
@@ -2970,6 +2959,8 @@ async function reconcile(secondPass=false){
       'AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER',
       'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT',
       'TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED',
+      'AMBIGUOUS_TRIGGERED_PROGRESSIVE_REMAINDER',
+      'INCONSISTENT_TRIGGERED_PROGRESSIVE_RESULT',
     ].includes(String(row?.reason||'')));
     if(unresolvedLocal){
       runtime.error='SYMBOL_QUARANTINE_'+String(unresolvedLocal.symbol||'')+'_'+String(unresolvedLocal.reason||'MAX_LOSS');
