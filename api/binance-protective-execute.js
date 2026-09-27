@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
-import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent } from '../lib/binance-order-writer.mjs';
+import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent, signedBinanceRequest } from '../lib/binance-order-writer.mjs';
 import {
   protectionOnlyMismatchTarget,
   protectiveRepairTarget,
@@ -153,6 +153,51 @@ function runtimeEntryOrder(runtimeState,symbol,clientOrderId){
     String(o?.clientOrderId||'')===clientOrderId
   )||null;
 }
+function sameQuantity(a,b){
+  const x=Number(a),y=Number(b);
+  return Number.isFinite(x)&&Number.isFinite(y)&&
+    Math.abs(x-y)<=Math.max(1e-12,Math.abs(y)*1e-10);
+}
+function partialTargetRemainderProof(runtimeState,payload={}){
+  const symbol=String(payload?.symbol||'').toUpperCase();
+  const dir=String(payload?.direction||'').toUpperCase();
+  const requestedQty=Number(payload?.quantity);
+  const clientOrderId=String(payload?.previousClientOrderId||'');
+  if(String(payload?.recoveryReason||'').toUpperCase()!=='PARTIAL_TARGET_REMAINDER')return null;
+  if(String(payload?.exitMode||'').toUpperCase()!=='REMAINDER_MARKET')return null;
+  if(!/^zth-EXI-[A-Za-z0-9._:-]+$/.test(clientOrderId)||clientOrderId.length>36)return null;
+  if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(dir)||!(requestedQty>0))return null;
+  const order=runtimeEntryOrder(runtimeState,symbol,clientOrderId);
+  if(!order)return null;
+  const expectedSide=dir==='LONG'?'SELL':'BUY';
+  const original=Number(order?.origQty);
+  const executed=Number(order?.executedQty);
+  const remaining=original-executed;
+  if(String(order?.side||'').toUpperCase()!==expectedSide||
+     String(order?.positionSide||'BOTH').toUpperCase()!=='BOTH'||
+     String(order?.type||'').toUpperCase()!=='LIMIT'||
+     String(order?.timeInForce||'').toUpperCase()!=='GTC'||
+     !(order?.reduceOnly===true||order?.reduceOnly==='true')||
+     order?.closePosition===true||order?.closePosition==='true'||
+     !(original>0)||!(executed>0)||!(remaining>0)||
+     !sameQuantity(remaining,requestedQty)){
+    return null;
+  }
+  return {order,remaining,executed,original};
+}
+async function liveBinancePositionQuantity({apiKey,secret,symbol,direction:dir}){
+  const rows=await signedBinanceRequest({
+    path:'/fapi/v3/positionRisk',method:'GET',apiKey,secret,timestamp:Date.now(),
+    params:{symbol},
+  });
+  const list=Array.isArray(rows)?rows:[rows];
+  const row=list.find(item=>
+    String(item?.symbol||'').toUpperCase()===symbol&&
+    String(item?.positionSide||'BOTH').toUpperCase()==='BOTH'&&
+    quantity(item)>0&&direction(item)===dir
+  );
+  return row?quantity(row):0;
+}
 function certifiedReportPosition(report,symbol,dir){
   const list=Array.isArray(report?.certifiedPositions)?report.certifiedPositions:[];
   return list.find(p=>
@@ -296,6 +341,12 @@ export default async function handler(req,res){
   if(maxLossRemainderRecovery&&String(master?.principal||'')!=='engine'){
     return send(res,423,{ok:false,code:'MAX_LOSS_REMAINDER_RECOVERY_ENGINE_REQUIRED',writeAttempted:false});
   }
+  const partialTargetRemainder=type==='EXEC_CLOSE_POSITION'
+    ?partialTargetRemainderProof(runtimeState,req.body)
+    :null;
+  if(partialTargetRemainder&&String(master?.principal||'')!=='engine'){
+    return send(res,423,{ok:false,code:'PARTIAL_TARGET_REMAINDER_ENGINE_REQUIRED',writeAttempted:false});
+  }
   const executionSymbol=String(req.body?.symbol||'').toUpperCase();
   const executionDirection=String(req.body?.direction||'').toUpperCase();
   const executionTarget=['LONG','SHORT'].includes(executionDirection)
@@ -399,7 +450,11 @@ export default async function handler(req,res){
   }
 
   const exitMode=String(req.body?.exitMode||'PROTECTIVE_IOC').toUpperCase();
-  if(exitMode!=='PROTECTIVE_IOC'){
+  if(exitMode==='REMAINDER_MARKET'){
+    if(!partialTargetRemainder){
+      return send(res,423,{ok:false,code:'PARTIAL_TARGET_REMAINDER_PROOF_REQUIRED',writeAttempted:false});
+    }
+  }else if(exitMode!=='PROTECTIVE_IOC'){
     return send(res,400,{ok:false,code:'EXIT_MODE_LIMIT_REQUIRED',writeAttempted:false});
   }
 
@@ -429,6 +484,74 @@ export default async function handler(req,res){
       writeAttempted:false,
       plan,
     });
+  }
+
+  if(exitMode==='REMAINDER_MARKET'){
+    let remaining=requestedQty;
+    let wrote=false;
+    const attempts=[];
+    try{
+      for(let attempt=0;attempt<4&&remaining>1e-12;attempt++){
+        if(!(await requireFinalProtectiveMaster(res,master)))return;
+        const marketPlan=buildExitOrderPlan({
+          commandId,symbol,direction:dir,quantity:remaining,
+          exitMode:'REMAINDER_MARKET',attempt,
+        });
+        const marketResult=await placeStandardOrderIdempotent({
+          apiKey,secret,orderParams:marketPlan.params,writesEnabled:true,timestamp:Date.now(),
+        });
+        wrote=wrote||marketResult.writeAttempted===true;
+        attempts.push({
+          attempt,
+          clientOrderId:String(marketPlan.params.newClientOrderId||''),
+          requestedQuantity:remaining,
+          status:String(marketResult?.order?.status||''),
+          executedQuantity:Number(marketResult?.order?.executedQty||0),
+          disposition:String(marketResult?.disposition||''),
+        });
+        remaining=await liveBinancePositionQuantity({apiKey,secret,symbol,direction:dir});
+        if(!(remaining>1e-12)){
+          await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+            at:Date.now(),kind:'BINANCE_PARTIAL_TARGET_REMAINDER_MARKET_CLOSED',
+            deviceId:master.deviceId,commandId,symbol,direction:dir,
+            previousClientOrderId:String(req.body?.previousClientOrderId||''),
+            attempts,
+          })]);
+          await redis(['LTRIM',KEY_AUDIT,'0','199']);
+          return send(res,200,{
+            ok:true,plan:marketPlan,result:marketResult,
+            remainderMarketClosed:true,attempts,remainingQuantity:0,
+          });
+        }
+      }
+      return send(res,409,{
+        ok:false,code:'PARTIAL_TARGET_REMAINDER_MARKET_NOT_CLOSED',
+        writeAttempted:wrote,remainingQuantity:remaining,attempts,
+      });
+    }catch(e){
+      const retryAfter=binanceBackoffSecondsFromError(e);
+      if(retryAfter>0){
+        try{await registerBinanceWriteBackoff(redis,e)}catch{}
+        res.setHeader('Retry-After',String(retryAfter));
+        return send(res,429,{
+          ok:false,code:Number(e?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
+          retryAfterSeconds:retryAfter,binanceStatus:Number(e?.status)||0,
+          binanceCode:e?.code??null,ambiguous:e?.ambiguous===true,
+          writeAttempted:wrote||e?.ambiguous===true,attempts,
+        });
+      }
+      return send(res,502,{
+        ok:false,
+        code:e?.message==='ORDER_RESULT_AMBIGUOUS'
+          ?'PARTIAL_TARGET_REMAINDER_MARKET_AMBIGUOUS'
+          :'PARTIAL_TARGET_REMAINDER_MARKET_FAILED',
+        error:'Binance partial-target remainder MARKET close failed.',
+        binanceCode:e?.code??null,
+        ambiguous:e?.ambiguous===true,
+        writeAttempted:wrote||e?.ambiguous===true,
+        attempts,
+      });
+    }
   }
 
   if(!(await requireFinalProtectiveMaster(res,master)))return;
