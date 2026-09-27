@@ -93,11 +93,11 @@ async function verifyMaster(){
     });
     const q=await r.json().catch(()=>({}));
     const role=String(q?.device?.role||'');
-    if(!r.ok||q?.ok!==true||!['controller','master'].includes(role))throw new Error(q?.code||'Appareil non autorisé');
+    if(!r.ok||q?.ok!==true||role!=='controller')throw new Error(q?.code||'Appareil contrôleur requis');
     localStorage.removeItem(TOKEN_KEY);
-    adminRole=role;
-    $('backLink').href=role==='master'?'/master-standby.html':'/';
-    setBox('identity',role==='master'?'Appareil MASTER vérifié.':'Appareil contrôleur vérifié.','ok');
+    adminRole='controller';
+    $('backLink').href='/';
+    setBox('identity','Appareil contrôleur vérifié.','ok');
     return await refreshMasterMode();
   }catch(e){
     adminRole='';verifiedState=null;
