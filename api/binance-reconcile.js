@@ -837,6 +837,38 @@ function zenithManagedOrderId(order) {
   return /^zth-[A-Za-z0-9._:-]+$/.test(id) ? id : '';
 }
 
+function zenithScopeSymbols(runtimeState,controllerState,entryTransitions=[],processingCommands=[],rawOrders=[]) {
+  const out=new Set();
+  const add=value=>{
+    const symbol=String(value||'').toUpperCase();
+    if(/^[A-Z0-9]{3,30}$/.test(symbol))out.add(symbol);
+  };
+  const runtimeData=runtimeState?.data&&typeof runtimeState.data==='object'?runtimeState.data:{};
+  for(const key of ['binancePositions','openPositions']){
+    for(const row of Array.isArray(runtimeData[key])?runtimeData[key]:[])add(row?.symbol);
+  }
+  for(const key of ['binanceOrders','openOrders']){
+    for(const row of Array.isArray(runtimeData[key])?runtimeData[key]:[])add(row?.symbol);
+  }
+
+  const controllerData=controllerState?.data&&typeof controllerState.data==='object'?controllerState.data:{};
+  for(const key of ['tokenSettings','manualTokens','validated']){
+    const rows=controllerData[key]&&typeof controllerData[key]==='object'&&!Array.isArray(controllerData[key])
+      ?controllerData[key]:{};
+    for(const symbol of Object.keys(rows))add(symbol);
+  }
+
+  for(const row of Array.isArray(entryTransitions)?entryTransitions:[])add(row?.symbol);
+  for(const command of Array.isArray(processingCommands)?processingCommands:[])add(command?.payload?.symbol);
+
+  // Zenith must never abandon one of its own live orders just because the symbol
+  // was removed from the controller UI before Binance cleanup completed.
+  for(const order of Array.isArray(rawOrders)?rawOrders:[]){
+    if(zenithManagedOrderId(order))add(order?.symbol);
+  }
+  return out;
+}
+
 function orderProtectsPosition(order, position) {
   if (String(order?.symbol || '').toUpperCase() !== String(position?.symbol || '').toUpperCase()) return false;
   if (String(order?.positionSide || '').toUpperCase() !== String(position?.positionSide || '').toUpperCase()) return false;
@@ -1654,9 +1686,20 @@ export default async function handler(req, res) {
     }
     let runtimeState = null;
     try { runtimeState = runtimeRaw ? JSON.parse(runtimeRaw) : null; } catch {}
+    const entryTransitions = parseEntryTransitionStore(entryTransitionRaw);
+    let controllerState = null;
+    try { controllerState = controllerRaw ? JSON.parse(controllerRaw) : null; } catch {}
+    const processingCommands = parseProcessingCommands(processingRaw);
 
-    const activePositionRows = (Array.isArray(positions) ? positions : [])
-      .filter(p => Math.abs(number(p.positionAmt)) > 0);
+    const scopeSymbols=zenithScopeSymbols(
+      runtimeState,controllerState,entryTransitions,processingCommands,[...openOrders,...openAlgoOrders]
+    );
+    const allActivePositionRows=(Array.isArray(positions)?positions:[])
+      .filter(p=>Math.abs(number(p.positionAmt))>0);
+    const ignoredExternalPositions=allActivePositionRows
+      .filter(p=>!scopeSymbols.has(String(p?.symbol||'').toUpperCase()));
+    const activePositionRows=allActivePositionRows
+      .filter(p=>scopeSymbols.has(String(p?.symbol||'').toUpperCase()));
     const activeSymbols = [...new Set(activePositionRows.map(p => String(p?.symbol || '').toUpperCase()).filter(Boolean))];
     const symbolConfigRows = await Promise.all(activeSymbols.map(async symbol => {
       const raw = await signedGet('/fapi/v1/symbolConfig', apiKey, secret, serverTime, { symbol });
@@ -1679,18 +1722,22 @@ export default async function handler(req, res) {
       });
     });
 
-    const standardOrders = (Array.isArray(openOrders) ? openOrders : [])
+    const scopedStandardRaw=(Array.isArray(openOrders)?openOrders:[])
+      .filter(o=>scopeSymbols.has(String(o?.symbol||'').toUpperCase())||Boolean(zenithManagedOrderId(o)));
+    const scopedAlgoRaw=(Array.isArray(openAlgoOrders)?openAlgoOrders:[])
+      .filter(o=>scopeSymbols.has(String(o?.symbol||'').toUpperCase())||Boolean(zenithManagedOrderId(o)));
+    const ignoredExternalOrders=[
+      ...(Array.isArray(openOrders)?openOrders:[]).filter(o=>!scopedStandardRaw.includes(o)),
+      ...(Array.isArray(openAlgoOrders)?openAlgoOrders:[]).filter(o=>!scopedAlgoRaw.includes(o)),
+    ];
+
+    const standardOrders = scopedStandardRaw
       .map(o => ({ orderClass: 'STANDARD', ...normalizeActualOrder(o) }));
 
-    const algoOrders = (Array.isArray(openAlgoOrders) ? openAlgoOrders : [])
+    const algoOrders = scopedAlgoRaw
       .map(normalizeActualAlgoOrder);
 
     const actualOrders = [...standardOrders, ...algoOrders];
-
-    const entryTransitions = parseEntryTransitionStore(entryTransitionRaw);
-    let controllerState = null;
-    try { controllerState = controllerRaw ? JSON.parse(controllerRaw) : null; } catch {}
-    const processingCommands = parseProcessingCommands(processingRaw);
     const result = enforceConfiguredMaxLossSafety(
       reconcile(runtimeState, actualPositions, actualOrders, entryTransitions),
       controllerState,
@@ -1735,6 +1782,8 @@ export default async function handler(req, res) {
     }
     result.actual.standardOrders = standardOrders.length;
     result.actual.algoOrders = algoOrders.length;
+    result.actual.ignoredExternalPositions = ignoredExternalPositions.length;
+    result.actual.ignoredExternalOrders = ignoredExternalOrders.length;
     const observedAt = started;
 
     const report = {
