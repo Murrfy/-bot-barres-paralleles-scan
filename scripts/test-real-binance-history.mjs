@@ -64,6 +64,28 @@ test('partial entry and exit fills produce weighted actual prices and summed fee
   assert.equal(r.netUsdt,11.92);
 });
 
+test('Zenith entry closed manually on Binance is still archived once with the real Binance result',()=>{
+  const rows=buildZenithClosedTradeHistory({
+    orders:[
+      order(40,'zth-ENT-manualcloseaaaaaaaaaaaa'),
+      order(41,'manual-market-close')
+    ],
+    trades:[
+      trade({id:1,orderId:40,side:'BUY',qty:1,price:100,commission:.04,time:1000}),
+      trade({id:2,orderId:41,side:'SELL',qty:1,price:112,realizedPnl:12,commission:.045,time:2000}),
+    ],
+    funding:[{symbol:'BTCUSDT',incomeType:'FUNDING_FEE',income:'-0.10',asset:'USDT',time:1500}],
+  });
+  assert.equal(rows.length,1);
+  const r=rows[0];
+  assert.equal(r.openingClientOrderId,'zth-ENT-manualcloseaaaaaaaaaaaa');
+  assert.equal(r.closingClientOrderId,'manual-market-close');
+  assert.equal(r.exitPrice,112);
+  assert.equal(r.grossRealizedPnl,12);
+  assert.ok(Math.abs(r.netUsdt-11.815)<1e-12);
+  assert.equal(mergeTradeHistory(rows,rows,500).length,1);
+});
+
 test('manual Binance positions are excluded from Zenith history',()=>{
   const rows=buildZenithClosedTradeHistory({
     orders:[order(20,'manual-entry'),order(21,'manual-exit')],
