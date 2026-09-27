@@ -102,6 +102,8 @@ jobs:
         run: node --test scripts/test-master-sync.mjs
       - name: Test iPad MASTER screen wake lock
         run: node --test scripts/test-master-wakelock.mjs
+      - name: Test manual PANIC remains controller-only
+        run: node --test scripts/test-manual-panic-current.mjs
       - name: Test controller-to-MASTER cloud synchronization
         run: node --test scripts/test-cloud-controller-master-sync.mjs
       - name: Test atomic state mutation role fences
