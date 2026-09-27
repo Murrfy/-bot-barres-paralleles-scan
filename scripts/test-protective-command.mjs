@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition, triggeredMaxLossRemainderTargets, triggeredMaxLossRemainderRecoveryAllowed } from '../lib/protective-command.mjs';
+import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition, triggeredProgressiveRemainderTargets, triggeredProgressiveRemainderRecoveryAllowed, triggeredMaxLossRemainderTargets, triggeredMaxLossRemainderRecoveryAllowed } from '../lib/protective-command.mjs';
 
 const position={symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.02',entryPrice:50000};
 
@@ -84,4 +84,36 @@ test('triggered MAX-LOSS remainder recovery is bound to exact deterministic next
   assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,{...payload,quantity:0.31}),false);
   const unsafe={...report,reasons:[...report.reasons,'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT']};
   assert.deepEqual(triggeredMaxLossRemainderTargets(unsafe),[]);
+});
+
+
+test('triggered progressive remainder recovery is bound to exact certified Binance remainder',()=>{
+  const report={
+    version:2,status:'MISMATCH',failClosed:true,
+    reasons:['MISSING_BINANCE_MAX_LOSS_PROTECTION'],
+    certifiedPositions:[{
+      symbol:'BTCUSDT',direction:'LONG',positionSide:'BOTH',
+      quantity:0.3,positionAmt:'0.3',entryPrice:50000
+    }],
+    differences:{triggeredProgressiveRemainders:[{
+      symbol:'BTCUSDT',direction:'LONG',
+      remainingQuantity:0.3,originalQuantity:1,executedQuantity:0.7,
+      clientAlgoId:'zth-PRO-0123456789abcdef01234567',
+      algoId:'7788',actualOrderId:'9911',actualOrderStatus:'PARTIALLY_FILLED',
+      recoveryCommandId:'progressive-remainder:zth-PRO-0123456789abcdef01234567:9911',
+      triggerPrice:50500,limitPrice:50500,triggerTime:1700000000000,
+    }]}
+  };
+  const rows=triggeredProgressiveRemainderTargets(report);
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].remainingQuantity,0.3);
+  const payload={
+    type:'EXEC_CLOSE_POSITION',symbol:'BTCUSDT',direction:'LONG',quantity:0.3,closeAll:true,
+    commandId:rows[0].recoveryCommandId,recoveryReason:'TRIGGERED_PROGRESSIVE_REMAINDER',
+    exitMode:'REMAINDER_MARKET'
+  };
+  assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,payload),true);
+  assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,{...payload,quantity:0.31}),false);
+  assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,{...payload,recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER'}),false);
+  assert.deepEqual(triggeredProgressiveRemainderTargets({...report,certifiedPositions:[{...report.certifiedPositions[0],quantity:0.31}]}),[]);
 });
