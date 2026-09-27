@@ -16,7 +16,7 @@ function baseState(overrides={}) {
   };
 }
 
-test('ready stream exports complete real inventory shape while mode can remain simulation-locked',()=>{
+test('ready stream exports complete REAL-only inventory shape',()=>{
   const out=runtimeInventoryFromUserStream(baseState({
     positions:{
       'BTCUSDT:BOTH':{symbol:'BTCUSDT',positionSide:'BOTH',positionAmount:'0.02',entryPrice:'50000',marginType:'isolated',positionLifecycleAt:7,eventTime:10}
@@ -25,7 +25,7 @@ test('ready stream exports complete real inventory shape while mode can remain s
       a:{symbol:'BTCUSDT',orderId:'1',clientOrderId:'zth-1',side:'SELL',positionSide:'BOTH',type:'LIMIT',status:'NEW',originalQuantity:'0.02',cumulativeFilledQuantity:'0',reduceOnly:true,closePosition:false,terminal:false,eventTime:11}
     }
   }));
-  assert.equal(out.executionMode,'SIMULATION');
+  assert.equal(out.executionMode,'REAL');
   assert.equal(out.activePositions,1);
   assert.equal(out.openOrderCount,1);
   assert.equal(out.binancePositions[0].positionAmt,'0.02');
@@ -54,8 +54,12 @@ test('disconnected or unreconciled stream is always fail-closed',()=>{
     baseState({connected:false,failClosed:true,needsReconciliation:true,failReasons:['STREAM_DISCONNECTED']}),
     baseState({needsReconciliation:true,failClosed:true,failReasons:['RECONCILIATION_REQUIRED']}),
   ]){
-    const out=runtimeInventoryFromUserStream(state,'REAL');
+    const out=runtimeInventoryFromUserStream(state);
     assert.equal(out.userStream.ready,false);
     assert.equal(out.userStream.failClosed,true);
   }
+});
+
+test('runtime inventory has no simulation mode',()=>{
+  assert.equal(runtimeInventoryFromUserStream(baseState()).executionMode,'REAL');
 });
