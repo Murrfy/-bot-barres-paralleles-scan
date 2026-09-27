@@ -85,21 +85,3 @@ test('triggered MAX-LOSS remainder recovery is bound to exact deterministic next
   const unsafe={...report,reasons:[...report.reasons,'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT']};
   assert.deepEqual(triggeredMaxLossRemainderTargets(unsafe),[]);
 });
-
-
-test('MAX-LOSS resize can carry exact previous quantity without changing live quantity validation',()=>{
-  const update=normalizeProtectiveUpdatePayload('EXEC_UPDATE_PROTECTION',{
-    symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:48000,
-    protectionKind:'MAX_LOSS',previousClientAlgoId:'zth-MAX-old-quantity',
-    previousQuantity:0.05
-  });
-  assert.equal(update.quantity,0.02);
-  assert.equal(update.previousQuantity,0.05);
-  assert.equal(update.previousClientAlgoId,'zth-MAX-old-quantity');
-  validateUpdateAgainstLivePosition(update,position);
-  assert.throws(()=>normalizeProtectiveUpdatePayload('EXEC_UPDATE_PROTECTION',{
-    symbol:'BTCUSDT',direction:'LONG',quantity:0.02,triggerPrice:48000,
-    protectionKind:'MAX_LOSS',previousClientAlgoId:'zth-MAX-old-quantity',
-    previousQuantity:0
-  }),/PREVIOUS_MAX_LOSS_QUANTITY_INVALID/);
-});

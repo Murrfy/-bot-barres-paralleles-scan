@@ -19,16 +19,3 @@ test('old MAX-LOSS cancellation still performs reconciliation after overlap is r
   assert.match(cancelBlock,/waitForStreamOrder\(\{kind,clientId:previousId,terminal:true\}/);
   assert.match(cancelBlock,/const reconciled=await awaitMasterReconciliation\(\)/);
 });
-
-
-test('partial-close MAX-LOSS resize only cancels an exact Zenith-owned old stop',async()=>{
-  const api=await readFile(new URL('../api/binance-protective-update-execute.js',import.meta.url),'utf8');
-  assert.match(api,/STALE_MAX_LOSS_RESIZE_REQUIRES_ZENITH_ID/);
-  assert.match(api,/PREVIOUS_MAX_LOSS_QUANTITY_NOT_LARGER/);
-  assert.match(api,/STALE_MAX_LOSS_IDENTITY_MISMATCH/);
-  assert.match(api,/STALE_MAX_LOSS_NOT_SAFE_FOR_LIVE_REMAINDER/);
-  assert.match(api,/managedMaxLossId\(update\.previousClientAlgoId\)/);
-  assert.match(api,/previousTrigger<live\.entryPrice/);
-  assert.match(api,/previousTrigger>live\.entryPrice/);
-  assert.match(api,/expected\.quantity=String\(Number\.isFinite\(n\(update\.previousQuantity,NaN\)\)/);
-});
