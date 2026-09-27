@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { buildExitOrderPlan } from '../lib/order-intent.mjs';
-import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent, signedBinanceRequest } from '../lib/binance-order-writer.mjs';
+import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent, signedBinanceRequest, queryOrderByClientId } from '../lib/binance-order-writer.mjs';
 import {
   protectionOnlyMismatchTarget,
   protectiveRepairTarget,
@@ -23,6 +23,7 @@ const KEY_RECONCILE_LAST=`${PREFIX}:reconcile:last`;
 const KEY_AUDIT=`${PREFIX}:audit`;
 const KEY_REAL_EXECUTION_ARMED=`${PREFIX}:safety:real-execution-armed`;
 const KEY_MASTER_MODE=`${PREFIX}:master-mode`;
+const KEY_SALE_REMAINDER_RECOVERIES=`${PREFIX}:sale-remainder-recoveries`;
 const DEPLOYMENT_SHA=String(process.env.VERCEL_GIT_COMMIT_SHA||'');
 
 const REDIS_URL =
@@ -198,6 +199,151 @@ async function liveBinancePositionQuantity({apiKey,secret,symbol,direction:dir})
     quantity(item)>0&&direction(item)===dir
   );
   return row?quantity(row):0;
+}
+function saleRemainderField(symbol,dir){
+  const s=String(symbol||'').toUpperCase();
+  const d=String(dir||'').toUpperCase();
+  return /^[A-Z0-9]{3,30}$/.test(s)&&['LONG','SHORT'].includes(d)?s+':'+d:'';
+}
+function validSaleRemainderRecord(row){
+  if(!row||typeof row!=='object'||Array.isArray(row)||row.version!==1)return false;
+  const symbol=String(row.symbol||'').toUpperCase();
+  const dir=String(row.direction||'').toUpperCase();
+  const commandId=String(row.commandId||'');
+  const sourceReason=String(row.sourceReason||'').toUpperCase();
+  const initialQuantity=Number(row.initialQuantity);
+  const attemptQuantity=Number(row.attemptQuantity);
+  const nextAttempt=Math.floor(Number(row.nextAttempt));
+  if(!saleRemainderField(symbol,dir)||
+     !/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)||
+     !['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER'].includes(sourceReason)||
+     !(initialQuantity>0)||!(attemptQuantity>0)||attemptQuantity>initialQuantity+1e-12||
+     nextAttempt<0||nextAttempt>4)return false;
+  if(sourceReason==='PARTIAL_TARGET_REMAINDER'){
+    const id=String(row.previousClientOrderId||'');
+    if(!/^zth-EXI-[A-Za-z0-9._:-]+$/.test(id)||id.length>36)return false;
+  }else{
+    const algo=String(row.clientAlgoId||'');
+    const actual=String(row.actualOrderId||'');
+    if(!/^zth-PRO-[A-Za-z0-9._:-]+$/.test(algo)||algo.length>36||!actual)return false;
+  }
+  return true;
+}
+function saleRemainderSource({
+  reqBody={},partialTargetRemainder=null,progressiveRemainderRecovery=false
+}={}){
+  const sourceReason=String(reqBody?.recoveryReason||'').toUpperCase();
+  const row={
+    version:1,
+    commandId:String(reqBody?.commandId||''),
+    symbol:String(reqBody?.symbol||'').toUpperCase(),
+    direction:String(reqBody?.direction||'').toUpperCase(),
+    sourceReason,
+    initialQuantity:Number(reqBody?.quantity),
+    attemptQuantity:Number(reqBody?.quantity),
+    nextAttempt:0,
+    previousClientOrderId:String(reqBody?.previousClientOrderId||''),
+    clientAlgoId:String(reqBody?.clientAlgoId||''),
+    actualOrderId:String(reqBody?.actualOrderId||''),
+    createdAt:Date.now(),
+    updatedAt:Date.now(),
+    expiresAt:Date.now()+60*60*1000,
+  };
+  if(sourceReason==='PARTIAL_TARGET_REMAINDER'&&!partialTargetRemainder)return null;
+  if(sourceReason==='TRIGGERED_PROGRESSIVE_REMAINDER'&&progressiveRemainderRecovery!==true)return null;
+  return validSaleRemainderRecord(row)?row:null;
+}
+async function beginSaleRemainderRecovery(row){
+  if(!validSaleRemainderRecord(row))throw new Error('SALE_REMAINDER_STATE_INVALID');
+  const field=saleRemainderField(row.symbol,row.direction);
+  const script=[
+    "local raw = redis.call('HGET', KEYS[1], ARGV[1])",
+    "if raw then",
+    "  local ok, value = pcall(cjson.decode, raw)",
+    "  if not ok then return {'ERR','INVALID'} end",
+    "  if tostring(value.commandId or '') ~= ARGV[2] then return {'ERR','CONFLICT'} end",
+    "  if string.upper(tostring(value.sourceReason or '')) ~= ARGV[3] then return {'ERR','CONFLICT'} end",
+    "  return {'OK',raw}",
+    "end",
+    "redis.call('HSET', KEYS[1], ARGV[1], ARGV[4])",
+    "redis.call('EXPIRE', KEYS[1], 7200)",
+    "return {'OK',ARGV[4]}"
+  ].join('\n');
+  const result=await redis([
+    'EVAL',script,'1',KEY_SALE_REMAINDER_RECOVERIES,
+    field,String(row.commandId),String(row.sourceReason),JSON.stringify(row),
+  ]);
+  if(!Array.isArray(result)||String(result[0])!=='OK'){
+    throw new Error(String(result?.[1]||'SALE_REMAINDER_STATE_CONFLICT'));
+  }
+  let stored=null;try{stored=JSON.parse(String(result[1]||''))}catch{}
+  if(!validSaleRemainderRecord(stored))throw new Error('SALE_REMAINDER_STATE_INVALID');
+  return stored;
+}
+async function loadSaleRemainderRecovery(symbol,dir){
+  const field=saleRemainderField(symbol,dir);
+  if(!field)return null;
+  const raw=await redis(['HGET',KEY_SALE_REMAINDER_RECOVERIES,field]);
+  if(!raw)return null;
+  let row=null;try{row=JSON.parse(String(raw))}catch{}
+  return validSaleRemainderRecord(row)?row:null;
+}
+async function advanceSaleRemainderRecovery(row,remainingQuantity){
+  const remaining=Number(remainingQuantity);
+  if(!validSaleRemainderRecord(row)||!(remaining>0))throw new Error('SALE_REMAINDER_ADVANCE_INVALID');
+  const field=saleRemainderField(row.symbol,row.direction);
+  const next={...row,
+    nextAttempt:Number(row.nextAttempt)+1,
+    attemptQuantity:remaining,
+    updatedAt:Date.now(),
+    expiresAt:Date.now()+60*60*1000,
+  };
+  if(!validSaleRemainderRecord(next))throw new Error('SALE_REMAINDER_ATTEMPTS_EXHAUSTED');
+  const script=[
+    "local raw = redis.call('HGET', KEYS[1], ARGV[1])",
+    "if not raw then return 0 end",
+    "local ok, value = pcall(cjson.decode, raw)",
+    "if not ok then return -1 end",
+    "if tostring(value.commandId or '') ~= ARGV[2] then return -2 end",
+    "if tonumber(value.nextAttempt or -1) ~= tonumber(ARGV[3]) then return -3 end",
+    "if tostring(value.attemptQuantity or '') ~= ARGV[4] then return -4 end",
+    "redis.call('HSET', KEYS[1], ARGV[1], ARGV[5])",
+    "redis.call('EXPIRE', KEYS[1], 7200)",
+    "return 1"
+  ].join('\n');
+  const result=Number(await redis([
+    'EVAL',script,'1',KEY_SALE_REMAINDER_RECOVERIES,field,
+    String(row.commandId),String(row.nextAttempt),String(row.attemptQuantity),JSON.stringify(next),
+  ]));
+  if(result!==1)throw new Error('SALE_REMAINDER_STATE_CHANGED');
+  return next;
+}
+async function clearSaleRemainderRecovery(row){
+  if(!validSaleRemainderRecord(row))return false;
+  const field=saleRemainderField(row.symbol,row.direction);
+  const script=[
+    "local raw = redis.call('HGET', KEYS[1], ARGV[1])",
+    "if not raw then return 0 end",
+    "local ok, value = pcall(cjson.decode, raw)",
+    "if not ok or tostring(value.commandId or '') ~= ARGV[2] then return -1 end",
+    "redis.call('HDEL', KEYS[1], ARGV[1])",
+    "return 1"
+  ].join('\n');
+  return Number(await redis(['EVAL',script,'1',KEY_SALE_REMAINDER_RECOVERIES,field,String(row.commandId)]))===1;
+}
+async function waitMarketAttemptTerminal({apiKey,secret,symbol,clientOrderId,initialOrder}){
+  let order=initialOrder||null;
+  for(let i=0;i<5;i++){
+    const status=String(order?.status||'').toUpperCase();
+    if(['FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status))return order;
+    if(i<4){
+      await new Promise(resolve=>setTimeout(resolve,100));
+      order=await queryOrderByClientId({
+        apiKey,secret,symbol,clientOrderId,timestamp:Date.now(),
+      });
+    }
+  }
+  return order;
 }
 function certifiedReportPosition(report,symbol,dir){
   const list=Array.isArray(report?.certifiedPositions)?report.certifiedPositions:[];
