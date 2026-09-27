@@ -74,6 +74,12 @@ const KEY_ENGINE_AUTHORIZED = `${PREFIX}:engine-authorized`;
 const KEY_ENGINE_DISABLED = `${PREFIX}:engine-disabled`;
 const KEY_ENGINE_PROTECTION_HIGH_WATER = `${PREFIX}:engine-protection-high-water`;
 const KEY_ENGINE_ENTRY_WATCH_STATE = `${PREFIX}:engine-entry-watch-state`;
+const KEY_PUSH_VAPID = `${PREFIX}:push:vapid`;
+const KEY_PUSH_SUBSCRIPTIONS = `${PREFIX}:push:subscriptions`;
+const KEY_PUSH_MAXLOSS_RED = `${PREFIX}:push:maxloss-red`;
+const PUSH_MAXLOSS_PERSIST_MS = 60 * 1000;
+const PUSH_MESSAGE_TTL_SECONDS = 24 * 60 * 60;
+const PUSH_VAPID_SUBJECT = 'https://zenithfinal3-ahle.vercel.app';
 const MASTER_TTL_SECONDS = 20;
 const ENGINE_INSTANCE_TTL_SECONDS = 45;
 const MASTER_HEARTBEAT_TTL_SECONDS = 60;
@@ -128,6 +134,230 @@ function timingSafeEqualText(a, b) {
 
 function sha256(v) {
   return crypto.createHash('sha256').update(String(v)).digest('hex');
+}
+
+function pushMessageKey(deviceId) {
+  return `${PREFIX}:push:messages:${sha256(String(deviceId || ''))}`;
+}
+
+function redisHashObject(raw) {
+  if (Array.isArray(raw)) {
+    const out = {};
+    for (let i = 0; i + 1 < raw.length; i += 2) out[String(raw[i])] = raw[i + 1];
+    return out;
+  }
+  return raw && typeof raw === 'object' ? { ...raw } : {};
+}
+
+function normalizeMaxLossAlertSymbols(values) {
+  const out = new Set();
+  for (const raw of Array.isArray(values) ? values : []) {
+    const symbol = String(raw || '').trim().toUpperCase();
+    if (!/^[A-Z0-9]{3,30}$/.test(symbol)) continue;
+    out.add(symbol);
+  }
+  return [...out].sort();
+}
+
+function maxLossAlertSymbolsFromReport(report) {
+  const diff = report?.differences && typeof report.differences === 'object' ? report.differences : {};
+  const values = [];
+  for (const key of ['missingMaxLossProtections', 'ambiguousMaxLossProtections', 'configuredMaxLossUnavailable']) {
+    for (const row of Array.isArray(diff[key]) ? diff[key] : []) {
+      values.push(String(row || '').split(':')[0]);
+    }
+  }
+  for (const row of Array.isArray(diff.unsafeMaxLossProtections) ? diff.unsafeMaxLossProtections : []) {
+    values.push(String(row?.symbol || String(row?.key || '').split(':')[0] || ''));
+  }
+  return normalizeMaxLossAlertSymbols(values);
+}
+
+function evaluateMaxLossAlertTransitions({
+  currentSymbols = [],
+  storedStates = {},
+  now = Date.now(),
+  thresholdMs = PUSH_MAXLOSS_PERSIST_MS,
+} = {}) {
+  const current = new Set(normalizeMaxLossAlertSymbols(currentSymbols));
+  const previous = storedStates && typeof storedStates === 'object' ? storedStates : {};
+  const nextStates = {};
+  const duePersistent = [];
+  const recovered = [];
+
+  for (const symbol of current) {
+    const row = previous[symbol] && typeof previous[symbol] === 'object' ? previous[symbol] : {};
+    const storedSince = Number(row.since);
+    const since = Number.isFinite(storedSince) && storedSince > 0 && storedSince <= now ? storedSince : now;
+    const notifiedAt = Number(row.notifiedAt) > 0 ? Number(row.notifiedAt) : 0;
+    nextStates[symbol] = { since, notifiedAt };
+    if (!notifiedAt && now - since >= thresholdMs) duePersistent.push(symbol);
+  }
+
+  for (const [symbol, row] of Object.entries(previous)) {
+    if (current.has(symbol)) continue;
+    if (Number(row?.notifiedAt) > 0) recovered.push(symbol);
+  }
+
+  return {
+    currentSymbols: [...current].sort(),
+    nextStates,
+    duePersistent: duePersistent.sort(),
+    recovered: recovered.sort(),
+  };
+}
+
+function createVapidRecord(now = Date.now()) {
+  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve:'P-256' });
+  const privateJwk = privateKey.export({ format:'jwk' });
+  const x = Buffer.from(String(privateJwk.x || ''), 'base64url');
+  const y = Buffer.from(String(privateJwk.y || ''), 'base64url');
+  if (x.length !== 32 || y.length !== 32 || !privateJwk.d) throw new Error('PUSH_VAPID_GENERATION_FAILED');
+  const publicKey = Buffer.concat([Buffer.from([4]), x, y]).toString('base64url');
+  return { version:1, createdAt:Number(now), publicKey, privateJwk };
+}
+
+function validVapidRecord(record) {
+  return Boolean(
+    record && record.version === 1 &&
+    /^[A-Za-z0-9_-]{80,100}$/.test(String(record.publicKey || '')) &&
+    record.privateJwk?.kty === 'EC' &&
+    record.privateJwk?.crv === 'P-256' &&
+    typeof record.privateJwk?.d === 'string' &&
+    typeof record.privateJwk?.x === 'string' &&
+    typeof record.privateJwk?.y === 'string'
+  );
+}
+
+function pushEndpointAllowed(value) {
+  try {
+    const url = new URL(String(value || ''));
+    const host = String(url.hostname || '').toLowerCase();
+    return url.protocol === 'https:' &&
+      !url.username && !url.password &&
+      (!url.port || url.port === '443') &&
+      (host === 'push.apple.com' || host.endsWith('.push.apple.com')) &&
+      String(value || '').length <= 2048;
+  } catch {
+    return false;
+  }
+}
+
+function vapidAuthorizationForEndpoint(endpoint, record, now = Date.now()) {
+  if (!pushEndpointAllowed(endpoint) || !validVapidRecord(record)) throw new Error('PUSH_VAPID_INPUT_INVALID');
+  const audience = new URL(endpoint).origin;
+  const header = Buffer.from(JSON.stringify({ typ:'JWT', alg:'ES256' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({
+    aud: audience,
+    exp: Math.floor(Number(now) / 1000) + 12 * 60 * 60,
+    sub: PUSH_VAPID_SUBJECT,
+  })).toString('base64url');
+  const unsigned = header + '.' + payload;
+  const key = crypto.createPrivateKey({ key:record.privateJwk, format:'jwk' });
+  const signature = crypto.sign('sha256', Buffer.from(unsigned), {
+    key,
+    dsaEncoding:'ieee-p1363',
+  }).toString('base64url');
+  return {
+    publicKey: record.publicKey,
+    token: unsigned + '.' + signature,
+    authorization: `vapid t=${unsigned}.${signature}, k=${record.publicKey}`,
+  };
+}
+
+async function ensureVapidRecord() {
+  const existingRaw = await redis(['GET', KEY_PUSH_VAPID]);
+  if (existingRaw) {
+    let existing = null;
+    try { existing = JSON.parse(existingRaw); } catch {}
+    if (!validVapidRecord(existing)) {
+      const error = new Error('PUSH_VAPID_STATE_INVALID');
+      error.code = 'PUSH_VAPID_STATE_INVALID';
+      throw error;
+    }
+    return existing;
+  }
+
+  const generated = createVapidRecord();
+  await redis(['SET', KEY_PUSH_VAPID, JSON.stringify(generated), 'NX']);
+  const storedRaw = await redis(['GET', KEY_PUSH_VAPID]);
+  let stored = null;
+  try { stored = storedRaw ? JSON.parse(storedRaw) : null; } catch {}
+  if (!validVapidRecord(stored)) {
+    const error = new Error('PUSH_VAPID_STATE_INVALID');
+    error.code = 'PUSH_VAPID_STATE_INVALID';
+    throw error;
+  }
+  return stored;
+}
+
+async function queuePushMessage(deviceId, message) {
+  const key = pushMessageKey(deviceId);
+  const row = {
+    id: crypto.randomUUID(),
+    createdAt: Date.now(),
+    title: String(message?.title || 'ZENITH').slice(0, 120),
+    body: String(message?.body || '').slice(0, 500),
+    tag: String(message?.tag || 'zenith-maxloss').slice(0, 64),
+    level: String(message?.level || 'warning').slice(0, 20),
+  };
+  const encoded = JSON.stringify(row);
+  await redis(['RPUSH', key, encoded]);
+  await redis(['LTRIM', key, '-20', '-1']);
+  await redis(['EXPIRE', key, String(PUSH_MESSAGE_TTL_SECONDS)]);
+  return { key, encoded, row };
+}
+
+async function sendControllerPush(deviceId, message) {
+  const raw = await redis(['HGET', KEY_PUSH_SUBSCRIPTIONS, String(deviceId || '')]);
+  let subscription = null;
+  try { subscription = raw ? JSON.parse(raw) : null; } catch {}
+  const endpoint = String(subscription?.endpoint || '');
+  if (!pushEndpointAllowed(endpoint)) return { sent:false, reason:'PUSH_SUBSCRIPTION_MISSING' };
+
+  const queued = await queuePushMessage(deviceId, message);
+  try {
+    const vapid = await ensureVapidRecord();
+    const auth = vapidAuthorizationForEndpoint(endpoint, vapid);
+    const response = await fetch(endpoint, {
+      method:'POST',
+      headers:{
+        TTL:'300',
+        Urgency:'high',
+        Authorization:auth.authorization,
+      },
+      signal:AbortSignal.timeout(8000),
+      cache:'no-store',
+    });
+    if (response.ok) return { sent:true, status:response.status };
+    await redis(['LREM', queued.key, '1', queued.encoded]).catch(() => {});
+    if (response.status === 404 || response.status === 410) {
+      await redis(['HDEL', KEY_PUSH_SUBSCRIPTIONS, String(deviceId || '')]).catch(() => {});
+      await redis(['DEL', queued.key]).catch(() => {});
+    }
+    return { sent:false, reason:'PUSH_SERVICE_HTTP_' + response.status, status:response.status };
+  } catch (error) {
+    await redis(['LREM', queued.key, '1', queued.encoded]).catch(() => {});
+    return { sent:false, reason:String(error?.message || 'PUSH_SEND_FAILED') };
+  }
+}
+
+async function drainPushMessages(deviceId) {
+  const key = pushMessageKey(deviceId);
+  const script = [
+    "local rows = redis.call('LRANGE', KEYS[1], 0, 9)",
+    "if #rows > 0 then redis.call('LTRIM', KEYS[1], #rows, -1) end",
+    "return rows"
+  ].join('\n');
+  const rows = await redis(['EVAL', script, '1', key]);
+  const messages = [];
+  for (const raw of Array.isArray(rows) ? rows : []) {
+    try {
+      const row = JSON.parse(raw);
+      if (row && typeof row === 'object') messages.push(row);
+    } catch {}
+  }
+  return messages;
 }
 
 function adminSecretPolicyBlockers({
@@ -2460,6 +2690,150 @@ export default async function handler(req, res) {
   }
 
   try {
+
+    if (action === 'push-status' && req.method === 'GET') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+      const raw = await redis(['HGET', KEY_PUSH_SUBSCRIPTIONS, String(device.deviceId || '')]);
+      let subscription = null;
+      try { subscription = raw ? JSON.parse(raw) : null; } catch {}
+      return send(res, 200, {
+        ok:true,
+        enabled:pushEndpointAllowed(subscription?.endpoint),
+      });
+    }
+
+    if (action === 'push-prepare' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+      const vapid = await ensureVapidRecord();
+      return send(res, 200, { ok:true, publicKey:vapid.publicKey });
+    }
+
+    if (action === 'push-subscribe' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+      const subscription = req.body?.subscription;
+      const endpoint = String(subscription?.endpoint || '');
+      if (!pushEndpointAllowed(endpoint)) {
+        return send(res, 400, { ok:false, code:'PUSH_SUBSCRIPTION_ENDPOINT_INVALID' });
+      }
+      const row = {
+        version:1,
+        deviceId:String(device.deviceId || ''),
+        endpoint,
+        createdAt:Date.now(),
+      };
+      await redis(['HSET', KEY_PUSH_SUBSCRIPTIONS, row.deviceId, JSON.stringify(row)]);
+      return send(res, 200, { ok:true, enabled:true });
+    }
+
+    if (action === 'push-unsubscribe' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+      await redis(['HDEL', KEY_PUSH_SUBSCRIPTIONS, String(device.deviceId || '')]);
+      await redis(['DEL', pushMessageKey(device.deviceId)]);
+      return send(res, 200, { ok:true, enabled:false });
+    }
+
+    if (action === 'push-test' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+      const result = await sendControllerPush(device.deviceId, {
+        title:'🟢 ZENITH — NOTIFICATIONS ACTIVÉES',
+        body:'Les alertes MAX-LOSS persistantes sont maintenant actives sur cet iPhone.',
+        tag:'zenith-push-test',
+        level:'ok',
+      });
+      return send(res, result.sent ? 200 : 409, {
+        ok:result.sent,
+        code:result.sent ? '' : String(result.reason || 'PUSH_TEST_FAILED'),
+      });
+    }
+
+    if (action === 'push-message' && req.method === 'GET') {
+      const device = await requireDevice(req, res, ['controller']);
+      if (!device) return;
+      const messages = await drainPushMessages(device.deviceId);
+      return send(res, 200, { ok:true, messages });
+    }
+
+    if (action === 'engine-maxloss-alert-sync' && req.method === 'POST') {
+      const device = await requireDevice(req, res, ['master']);
+      if (!device) return;
+      if (device.principal !== 'engine') {
+        return send(res, 403, { ok:false, code:'ENGINE_PRINCIPAL_REQUIRED' });
+      }
+      if (!(await hasMasterLease(device.deviceId))) {
+        return send(res, 409, { ok:false, code:'MASTER_LEASE_REQUIRED' });
+      }
+
+      const currentSymbols = normalizeMaxLossAlertSymbols(req.body?.symbols);
+      const rawStates = redisHashObject(await redis(['HGETALL', KEY_PUSH_MAXLOSS_RED]));
+      const storedStates = {};
+      for (const [symbol, raw] of Object.entries(rawStates)) {
+        try {
+          const row = JSON.parse(raw);
+          if (/^[A-Z0-9]{3,30}$/.test(symbol) && row && typeof row === 'object') storedStates[symbol] = row;
+        } catch {}
+      }
+
+      const now = Date.now();
+      const transition = evaluateMaxLossAlertTransitions({
+        currentSymbols,
+        storedStates,
+        now,
+      });
+      const controllerDeviceId = String(await roleDeviceId('controller') || '');
+
+      let persistentSent = false;
+      if (transition.duePersistent.length && controllerDeviceId) {
+        const symbols = transition.duePersistent;
+        const result = await sendControllerPush(controllerDeviceId, {
+          title:'⚠️ ZENITH — MAX-LOSS PERSISTANT',
+          body:symbols.length === 1
+            ? `${symbols[0]} est rouge depuis au moins 60 secondes. Vérifie Binance.`
+            : `${symbols.join(', ')} : MAX-LOSS rouge depuis au moins 60 secondes. Vérifie Binance.`,
+          tag:'zenith-maxloss-red',
+          level:'warning',
+        });
+        persistentSent = result.sent === true;
+        if (persistentSent) {
+          for (const symbol of symbols) transition.nextStates[symbol].notifiedAt = now;
+        }
+      }
+
+      let recoverySent = false;
+      if (transition.recovered.length && controllerDeviceId) {
+        const symbols = transition.recovered;
+        const result = await sendControllerPush(controllerDeviceId, {
+          title:'🟢 ZENITH — MAX-LOSS RÉTABLIE',
+          body:symbols.length === 1
+            ? `${symbols[0]} est de nouveau protégé et confirmé.`
+            : `${symbols.join(', ')} : protections MAX-LOSS rétablies et confirmées.`,
+          tag:'zenith-maxloss-restored',
+          level:'ok',
+        });
+        recoverySent = result.sent === true;
+      }
+
+      const nextSymbols = new Set(Object.keys(transition.nextStates));
+      for (const [symbol, row] of Object.entries(transition.nextStates)) {
+        await redis(['HSET', KEY_PUSH_MAXLOSS_RED, symbol, JSON.stringify(row)]);
+      }
+      for (const symbol of Object.keys(storedStates)) {
+        if (!nextSymbols.has(symbol)) await redis(['HDEL', KEY_PUSH_MAXLOSS_RED, symbol]);
+      }
+
+      return send(res, 200, {
+        ok:true,
+        currentSymbols:transition.currentSymbols,
+        duePersistent:transition.duePersistent,
+        recovered:transition.recovered,
+        persistentSent,
+        recoverySent,
+      });
+    }
 
     if (action === 'engine-reenable' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller']);
@@ -6062,6 +6436,18 @@ export default async function handler(req, res) {
   }
 }
 
-export { binanceApiPermissionBlockers, binanceCredentialSeparationBlockers, adminSecretPolicyBlockers, pairingSecretPolicyBlockers };
+export {
+  binanceApiPermissionBlockers,
+  binanceCredentialSeparationBlockers,
+  adminSecretPolicyBlockers,
+  pairingSecretPolicyBlockers,
+  normalizeMaxLossAlertSymbols,
+  maxLossAlertSymbolsFromReport,
+  evaluateMaxLossAlertTransitions,
+  createVapidRecord,
+  validVapidRecord,
+  pushEndpointAllowed,
+  vapidAuthorizationForEndpoint,
+};
 
 export { clientIp };
