@@ -217,7 +217,7 @@ function validSaleRemainderRecord(row){
   const nextAttempt=Math.floor(Number(row.nextAttempt));
   if(!saleRemainderField(symbol,dir)||
      !/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)||
-     !['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER'].includes(sourceReason)||
+     !['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER','TRIGGERED_MAX_LOSS_REMAINDER'].includes(sourceReason)||
      !(initialQuantity>0)||!(attemptQuantity>0)||attemptQuantity>initialQuantity+1e-12||
      nextAttempt<0||nextAttempt>3)return false;
   if(sourceReason==='PARTIAL_TARGET_REMAINDER'){
@@ -226,12 +226,15 @@ function validSaleRemainderRecord(row){
   }else{
     const algo=String(row.clientAlgoId||'');
     const actual=String(row.actualOrderId||'');
-    if(!/^zth-PRO-[A-Za-z0-9._:-]+$/.test(algo)||algo.length>36||!actual)return false;
+    const owned=sourceReason==='TRIGGERED_MAX_LOSS_REMAINDER'
+      ?/^zth-MAX-[A-Za-z0-9._:-]+$/.test(algo)
+      :/^zth-PRO-[A-Za-z0-9._:-]+$/.test(algo);
+    if(!owned||algo.length>36||!actual)return false;
   }
   return true;
 }
 function saleRemainderSource({
-  reqBody={},partialTargetRemainder=null,progressiveRemainderRecovery=false
+  reqBody={},partialTargetRemainder=null,progressiveRemainderRecovery=false,maxLossRemainderRecovery=false
 }={}){
   const sourceReason=String(reqBody?.recoveryReason||'').toUpperCase();
   const row={
@@ -252,6 +255,7 @@ function saleRemainderSource({
   };
   if(sourceReason==='PARTIAL_TARGET_REMAINDER'&&!partialTargetRemainder)return null;
   if(sourceReason==='TRIGGERED_PROGRESSIVE_REMAINDER'&&progressiveRemainderRecovery!==true)return null;
+  if(sourceReason==='TRIGGERED_MAX_LOSS_REMAINDER'&&maxLossRemainderRecovery!==true)return null;
   return validSaleRemainderRecord(row)?row:null;
 }
 async function beginSaleRemainderRecovery(row){
@@ -640,7 +644,7 @@ export default async function handler(req,res){
 
   const exitMode=String(req.body?.exitMode||'PROTECTIVE_IOC').toUpperCase();
   if(exitMode==='REMAINDER_MARKET'){
-    if(!partialTargetRemainder&&!progressiveRemainderRecovery&&!persistedRemainderRecovery){
+    if(!partialTargetRemainder&&!progressiveRemainderRecovery&&!maxLossRemainderRecovery&&!persistedRemainderRecovery){
       return send(res,423,{ok:false,code:'SALE_REMAINDER_PROOF_REQUIRED',writeAttempted:false});
     }
   }else if(exitMode!=='PROTECTIVE_IOC'){
@@ -687,7 +691,7 @@ export default async function handler(req,res){
         }
       }else{
         const source=saleRemainderSource({
-          reqBody:req.body,partialTargetRemainder,progressiveRemainderRecovery,
+          reqBody:req.body,partialTargetRemainder,progressiveRemainderRecovery,maxLossRemainderRecovery,
         });
         if(!source){
           return send(res,423,{ok:false,code:'SALE_REMAINDER_SOURCE_INVALID',writeAttempted:false});
