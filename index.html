@@ -1088,7 +1088,7 @@ async function controllerClearPanic(){
 }
 async function controllerRevokeMaster(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('iPhone contrôleur non vérifié.',true);
-  if(!confirm('Révoquer le MASTER ? Cette action active PANIC, désarme le trading réel et invalide l’iPad MASTER. Si une position ou un ordre est encore actif, Zenith refusera la révocation jusqu’au drainage sécurisé.'))return;
+  if(!confirm('Révoquer le MASTER serveur ? Cette action active PANIC, désarme le trading réel et révoque l’autorité du serveur 24/7. Si une position ou un ordre est encore actif, Zenith refusera la révocation jusqu’au drainage sécurisé.'))return;
   const adminCode=await requestAdminCode('Code ADMIN MASTER pour révoquer le MASTER :');
   if(adminCode===null)return;
   const revokeBtn=$('masterRevokeBtn');if(revokeBtn)revokeBtn.disabled=true;
@@ -1106,7 +1106,7 @@ async function controllerRevokeMaster(){
       }
       throw new Error((q?.code||q?.error||('HTTP '+r.status))+blockers);
     }
-    setStatus(q?.alreadyRevoked?'MASTER déjà révoqué.':'MASTER révoqué : ancien iPad invalidé, trading réel désarmé et PANIC maintenu.');
+    setStatus(q?.alreadyRevoked?'MASTER déjà révoqué.':'MASTER serveur révoqué : autorité du moteur 24/7 invalidée, trading réel désarmé et PANIC maintenu.');
     await refreshMasterControls();
   }catch(e){
     setStatus('Révocation MASTER non terminée : '+String(e?.message||'erreur')+'.',true);
