@@ -30,6 +30,7 @@ import {
   pendingEntryProtectionLossTargets,
   pendingEntryWriteAheadRecoveryTargets,
   expiredEntryOrphanProtections,
+  triggeredProgressiveRemainderTargets,
   triggeredMaxLossRemainderTargets,
   maxLossSymbolQuarantines,
   maxLossSymbolIsQuarantined,
@@ -2714,6 +2715,42 @@ function authorizedMaxLossOverlapReport(report){
 }
 
 
+async function recoverTriggeredProgressiveRemainder(report){
+  const targets=triggeredProgressiveRemainderTargets(report);
+  if(!targets.length)return {handled:false,closed:false,reason:'NO_TRIGGERED_PROGRESSIVE_REMAINDER'};
+  const target=targets[0];
+  const result=await callProtectiveExecute({
+    type:'EXEC_CLOSE_POSITION',
+    commandId:target.recoveryCommandId,
+    symbol:target.symbol,
+    direction:target.direction,
+    quantity:target.remainingQuantity,
+    closeAll:true,
+    exitMode:'REMAINDER_MARKET',
+    recoveryReason:'TRIGGERED_PROGRESSIVE_REMAINDER',
+    clientAlgoId:target.clientAlgoId,
+    actualOrderId:target.actualOrderId,
+  });
+  if(!result.response.ok||result.data?.ok!==true||result.data?.remainderMarketClosed!==true){
+    const reason='PROGRESSIVE_REMAINDER_'+String(
+      result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status)
+    );
+    runtime.error=reason;
+    stream.lastError=reason;
+    scheduleReconcile(result.data?.ambiguous===true||result.data?.writeAttempted===true?100:500);
+    return {handled:true,closed:false,reason};
+  }
+  log('PROGRESSIVE_REMAINDER_MARKET_CLOSED',{
+    symbol:target.symbol,
+    direction:target.direction,
+    remainingQuantity:target.remainingQuantity,
+    clientAlgoId:target.clientAlgoId,
+    actualOrderId:target.actualOrderId,
+    attempts:Array.isArray(result.data?.attempts)?result.data.attempts.length:1,
+  });
+  return {handled:true,closed:true,reason:'PROGRESSIVE_REMAINDER_MARKET_CLOSED'};
+}
+
 async function recoverTriggeredMaxLossRemainder(report){
   const targets=triggeredMaxLossRemainderTargets(report);
   if(!targets.length)return {handled:false,dispatched:false,reason:'NO_TRIGGERED_MAX_LOSS_REMAINDER'};
@@ -2803,6 +2840,17 @@ async function reconcile(secondPass=false){
       stream.reconcileBusy=false;
       await sleep(100);
       return reconcile(false);
+    }
+
+    const progressiveRemainders=triggeredProgressiveRemainderTargets(data.report);
+    if(progressiveRemainders.length){
+      const recovered=await recoverTriggeredProgressiveRemainder(data.report);
+      if(recovered.handled&&recovered.closed){
+        stream.reconcileBusy=false;
+        await sleep(100);
+        return reconcile(false);
+      }
+      if(recovered.handled)return false;
     }
 
     const pendingProtectionLoss=pendingEntryProtectionLossTargets(data.report);

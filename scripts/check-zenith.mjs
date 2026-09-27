@@ -442,10 +442,16 @@ if (!orderIntent.includes("mode === 'REMAINDER_MARKET'") ||
 if (!protectiveExecute.includes('function partialTargetRemainderProof') ||
     !protectiveExecute.includes("'PARTIAL_TARGET_REMAINDER'") ||
     !protectiveExecute.includes("'PARTIAL_TARGET_REMAINDER_ENGINE_REQUIRED'") ||
-    !protectiveExecute.includes("'PARTIAL_TARGET_REMAINDER_PROOF_REQUIRED'") ||
+    !protectiveExecute.includes("'SALE_REMAINDER_PROOF_REQUIRED'") ||
     !protectiveExecute.includes("exitMode==='REMAINDER_MARKET'") ||
     !protectiveExecute.includes('sameQuantity(remaining,requestedQty)')) {
   fail('partial-remainder MARKET close must stay engine-only and exact-proof-bound');
+}
+if (!protectiveExecute.includes('triggeredProgressiveRemainderRecoveryAllowed') ||
+    !protectiveExecute.includes("'PROGRESSIVE_REMAINDER_RECOVERY_ENGINE_REQUIRED'") ||
+    !protectiveExecute.includes('progressiveRemainderRecovery') ||
+    !protectiveExecute.includes("recoveryReason:String(req.body?.recoveryReason||'')")) {
+  fail('triggered progressive remainder MARKET recovery must stay report-proof-bound and engine-only');
 }
 
 if (!orderIntent.includes("ENTRY_PREFLIGHT_MAX_AGE_MS = 5000") ||

@@ -188,6 +188,8 @@ jobs:
         run: node --test scripts/test-engine-maxloss-auto-repair-wiring.mjs
       - name: Test server progressive auto-protection
         run: node --test scripts/test-engine-worker-auto-protection.mjs
+      - name: Test triggered progressive remainder recovery
+        run: node --test scripts/test-triggered-progressive-remainder.mjs
       - name: Test current Binance routed WebSocket endpoints
         run: node --test scripts/test-binance-websocket-routes.mjs
       - name: Test atomic pairing role/session claim

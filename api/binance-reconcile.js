@@ -277,6 +277,138 @@ function normalizeActualAlgoOrder(o) {
   };
 }
 
+function progressiveRemainderCommandId(algo) {
+  const clientAlgoId=String(algo?.clientAlgoId||'');
+  const actualOrderId=String(algo?.actualOrderId||'');
+  const value=`progressive-remainder:${clientAlgoId}:${actualOrderId}`;
+  return /^[A-Za-z0-9._:-]{8,128}$/.test(value)?value:'';
+}
+
+function evaluateTriggeredProgressiveRemainder({position,algo,actualOrder}={}){
+  if(!position||!algo||!actualOrder)return null;
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const dir=direction(position);
+  const side=dir==='LONG'?'SELL':'BUY';
+  const positionSide=String(position?.positionSide||'BOTH').toUpperCase();
+  const currentQty=positionQty(position);
+  const clientAlgoId=String(algo?.clientAlgoId||'');
+  const algoStatus=String(algo?.status||algo?.algoStatus||'').toUpperCase();
+  const actualOrderId=String(algo?.actualOrderId||'');
+  const originalQty=number(algo?.origQty??algo?.quantity,NaN);
+  const triggerPrice=number(algo?.triggerPrice??algo?.stopPrice,NaN);
+  const limitPrice=number(algo?.price,NaN);
+  const triggerTime=number(algo?.triggerTime,0);
+  if(!symbol||!['LONG','SHORT'].includes(dir)||!(currentQty>0))return null;
+  if(String(algo?.symbol||'').toUpperCase()!==symbol||
+     String(algo?.side||'').toUpperCase()!==side||
+     String(algo?.positionSide||'BOTH').toUpperCase()!==positionSide||
+     String(algo?.type||algo?.orderType||'').toUpperCase()!=='STOP'||
+     String(algo?.timeInForce||'').toUpperCase()!=='GTC'||
+     !(algo?.reduceOnly===true||algo?.reduceOnly==='true')||
+     algo?.closePosition===true||algo?.closePosition==='true'||
+     (algo?.priceMatch&&String(algo.priceMatch).toUpperCase()!=='NONE')||
+     !['TRIGGERED','FINISHED'].includes(algoStatus)||
+     !/^zth-PRO-[A-Za-z0-9._:-]+$/.test(clientAlgoId)||clientAlgoId.length>36||
+     !actualOrderId||!(originalQty>0)||!(triggerPrice>0)||!(limitPrice>0)||
+     Math.abs(limitPrice-triggerPrice)>Math.max(1e-9,Math.abs(triggerPrice)*1e-10))return null;
+
+  const actualStatus=String(actualOrder?.status||'').toUpperCase();
+  const executed=number(actualOrder?.executedQty,NaN);
+  const actualOrigQty=number(actualOrder?.origQty,NaN);
+  const actualPrice=number(actualOrder?.price,NaN);
+  const actualUpdateTime=number(actualOrder?.updateTime,0);
+  if(String(actualOrder?.symbol||'').toUpperCase()!==symbol||
+     String(actualOrder?.orderId||'')!==actualOrderId||
+     String(actualOrder?.side||'').toUpperCase()!==side||
+     String(actualOrder?.positionSide||'BOTH').toUpperCase()!==positionSide||
+     String(actualOrder?.type||'').toUpperCase()!=='LIMIT'||
+     String(actualOrder?.timeInForce||'').toUpperCase()!=='GTC'||
+     !(actualOrder?.reduceOnly===true||actualOrder?.reduceOnly==='true')||
+     actualOrder?.closePosition===true||actualOrder?.closePosition==='true'||
+     !(actualOrigQty>0)||Math.abs(actualOrigQty-originalQty)>Math.max(1e-12,originalQty*1e-10)||
+     !(executed>0)||executed>=originalQty||
+     !['PARTIALLY_FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH'].includes(actualStatus)||
+     !(actualPrice>0)||Math.abs(actualPrice-limitPrice)>Math.max(1e-9,Math.abs(limitPrice)*1e-10)||
+     (triggerTime>0&&actualUpdateTime>0&&actualUpdateTime<triggerTime))return null;
+
+  const expectedRemaining=Math.max(0,originalQty-executed);
+  if(!(expectedRemaining>1e-12)||
+     Math.abs(expectedRemaining-currentQty)>Math.max(1e-12,originalQty*1e-10))return null;
+  const recoveryCommandId=progressiveRemainderCommandId(algo);
+  if(!recoveryCommandId)return null;
+  return {
+    kind:'REMAINDER',symbol,direction:dir,
+    remainingQuantity:currentQty,
+    originalQuantity:originalQty,
+    executedQuantity:executed,
+    clientAlgoId,
+    algoId:String(algo?.algoId||''),
+    actualOrderId,
+    actualOrderStatus:actualStatus,
+    recoveryCommandId,
+    triggerPrice,
+    limitPrice,
+    triggerTime,
+  };
+}
+
+async function detectTriggeredProgressiveRemainders({
+  serverTime,apiKey,secret,positions,standardOrders,
+}={}){
+  const remainders=[],ambiguous=[];
+  const historyWindow=Math.max(0,7*24*60*60*1000-60000);
+  for(const position of Array.isArray(positions)?positions:[]){
+    const symbol=String(position?.symbol||'').toUpperCase();
+    const side=direction(position)==='LONG'?'SELL':'BUY';
+    const currentQty=positionQty(position);
+    const candidates=(Array.isArray(standardOrders)?standardOrders:[]).filter(order=>{
+      if(String(order?.symbol||'').toUpperCase()!==symbol)return false;
+      if(String(order?.side||'').toUpperCase()!==side)return false;
+      if(String(order?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
+      if(String(order?.type||'').toUpperCase()!=='LIMIT')return false;
+      if(String(order?.timeInForce||'').toUpperCase()!=='GTC')return false;
+      if(!(order?.reduceOnly===true||order?.reduceOnly==='true'))return false;
+      if(order?.closePosition===true||order?.closePosition==='true')return false;
+      const original=number(order?.origQty,NaN);
+      const executed=number(order?.executedQty,NaN);
+      const remaining=original-executed;
+      return original>0&&executed>0&&remaining>0&&
+        Math.abs(remaining-currentQty)<=Math.max(1e-12,original*1e-10);
+    });
+    if(!candidates.length)continue;
+
+    const historyParams={
+      symbol,
+      startTime:Math.max(0,Number(serverTime)-historyWindow),
+      endTime:Number(serverTime),
+      limit:1000,
+    };
+    const historyRaw=await signedGet('/fapi/v1/allAlgoOrders',apiKey,secret,serverTime,historyParams);
+    if(!Array.isArray(historyRaw))throw new Error('BINANCE_ALGO_HISTORY_INVALID');
+    const history=historyRaw
+      .map(normalizeActualAlgoOrder)
+      .filter(algo=>
+        String(algo?.symbol||'').toUpperCase()===symbol&&
+        /^zth-PRO-[A-Za-z0-9._:-]+$/.test(String(algo?.clientAlgoId||''))&&
+        ['TRIGGERED','FINISHED'].includes(String(algo?.status||'').toUpperCase())&&
+        Boolean(String(algo?.actualOrderId||''))
+      )
+      .sort((a,b)=>number(b.triggerTime,b.updateTime)-number(a.triggerTime,a.updateTime))
+      .slice(0,8);
+
+    const matches=[];
+    for(const algo of history){
+      const actualOrder=candidates.find(order=>String(order?.orderId||'')===String(algo.actualOrderId))||null;
+      const evidence=evaluateTriggeredProgressiveRemainder({position,algo,actualOrder});
+      if(evidence)matches.push(evidence);
+    }
+    const key=positionKey(position);
+    if(matches.length===1)remainders.push(matches[0]);
+    else if(matches.length>1)ambiguous.push(key);
+  }
+  return {remainders,ambiguous};
+}
+
 function maxLossRemainderCommandId(algo) {
   const clientAlgoId=String(algo?.clientAlgoId||'');
   const actualOrderId=String(algo?.actualOrderId||'');
@@ -1758,6 +1890,12 @@ export default async function handler(req, res) {
       processingCommands,
       device.deviceId
     );
+    const progressiveRecovery=await detectTriggeredProgressiveRemainders({
+      serverTime,apiKey,secret,positions:actualPositions,standardOrders,
+    });
+    result.differences.triggeredProgressiveRemainders=progressiveRecovery.remainders;
+    result.differences.ambiguousTriggeredProgressiveRemainders=progressiveRecovery.ambiguous;
+
     const triggeredRecovery=await detectTriggeredMaxLossRemainders({
       serverTime,apiKey,secret,positions:actualPositions,
       missingTargets:result?.differences?.missingMaxLossProtections,
