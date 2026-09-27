@@ -293,17 +293,19 @@ async function ensureVapidRecord() {
 
 async function queuePushMessage(deviceId, message) {
   const key = pushMessageKey(deviceId);
+  const rawTag = String(message?.tag || 'zenith-maxloss').slice(0, 32);
+  const tag = /^[A-Za-z0-9_-]{1,32}$/.test(rawTag) ? rawTag : 'zenith-maxloss';
   const row = {
     id: crypto.randomUUID(),
     createdAt: Date.now(),
     title: String(message?.title || 'ZENITH').slice(0, 120),
     body: String(message?.body || '').slice(0, 500),
-    tag: String(message?.tag || 'zenith-maxloss').slice(0, 64),
+    tag,
     level: String(message?.level || 'warning').slice(0, 20),
   };
   const encoded = JSON.stringify(row);
-  await redis(['RPUSH', key, encoded]);
-  await redis(['LTRIM', key, '-20', '-1']);
+  // One current message per topic. A recovery replaces an undelivered red alert.
+  await redis(['HSET', key, tag, encoded]);
   await redis(['EXPIRE', key, String(PUSH_MESSAGE_TTL_SECONDS)]);
   return { key, encoded, row };
 }
@@ -322,22 +324,29 @@ async function sendControllerPush(deviceId, message) {
     const response = await fetch(endpoint, {
       method:'POST',
       headers:{
-        TTL:'300',
+        TTL:'2592000',
         Urgency:'high',
+        Topic:queued.row.tag,
         Authorization:auth.authorization,
       },
       signal:AbortSignal.timeout(8000),
       cache:'no-store',
     });
     if (response.ok) return { sent:true, status:response.status };
-    await redis(['LREM', queued.key, '1', queued.encoded]).catch(() => {});
+    const current = await redis(['HGET', queued.key, queued.row.tag]).catch(() => null);
+    if (String(current || '') === queued.encoded) {
+      await redis(['HDEL', queued.key, queued.row.tag]).catch(() => {});
+    }
     if (response.status === 404 || response.status === 410) {
       await redis(['HDEL', KEY_PUSH_SUBSCRIPTIONS, String(deviceId || '')]).catch(() => {});
       await redis(['DEL', queued.key]).catch(() => {});
     }
     return { sent:false, reason:'PUSH_SERVICE_HTTP_' + response.status, status:response.status };
   } catch (error) {
-    await redis(['LREM', queued.key, '1', queued.encoded]).catch(() => {});
+    const current = await redis(['HGET', queued.key, queued.row.tag]).catch(() => null);
+    if (String(current || '') === queued.encoded) {
+      await redis(['HDEL', queued.key, queued.row.tag]).catch(() => {});
+    }
     return { sent:false, reason:String(error?.message || 'PUSH_SEND_FAILED') };
   }
 }
@@ -345,19 +354,19 @@ async function sendControllerPush(deviceId, message) {
 async function drainPushMessages(deviceId) {
   const key = pushMessageKey(deviceId);
   const script = [
-    "local rows = redis.call('LRANGE', KEYS[1], 0, 9)",
-    "if #rows > 0 then redis.call('LTRIM', KEYS[1], #rows, -1) end",
+    "local rows = redis.call('HGETALL', KEYS[1])",
+    "if #rows > 0 then redis.call('DEL', KEYS[1]) end",
     "return rows"
   ].join('\n');
   const rows = await redis(['EVAL', script, '1', key]);
   const messages = [];
-  for (const raw of Array.isArray(rows) ? rows : []) {
+  for (let i = 1; Array.isArray(rows) && i < rows.length; i += 2) {
     try {
-      const row = JSON.parse(raw);
+      const row = JSON.parse(rows[i]);
       if (row && typeof row === 'object') messages.push(row);
     } catch {}
   }
-  return messages;
+  return messages.sort((a, b) => Number(a?.createdAt || 0) - Number(b?.createdAt || 0));
 }
 
 function adminSecretPolicyBlockers({
@@ -2794,7 +2803,7 @@ export default async function handler(req, res) {
           body:symbols.length === 1
             ? `${symbols[0]} est rouge depuis au moins 60 secondes. Vérifie Binance.`
             : `${symbols.join(', ')} : MAX-LOSS rouge depuis au moins 60 secondes. Vérifie Binance.`,
-          tag:'zenith-maxloss-red',
+          tag:'zenith-maxloss-state',
           level:'warning',
         });
         persistentSent = result.sent === true;
@@ -2811,7 +2820,7 @@ export default async function handler(req, res) {
           body:symbols.length === 1
             ? `${symbols[0]} est de nouveau protégé et confirmé.`
             : `${symbols.join(', ')} : protections MAX-LOSS rétablies et confirmées.`,
-          tag:'zenith-maxloss-restored',
+          tag:'zenith-maxloss-state',
           level:'ok',
         });
         recoverySent = result.sent === true;
