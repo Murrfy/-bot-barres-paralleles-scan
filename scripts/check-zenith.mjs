@@ -698,11 +698,13 @@ if (!masterAutoProtection.includes('STANDARD_REDUCE_ONLY_LIMIT_ALREADY_OPEN') ||
 }
 
 if (!userStreamSeed.includes('positionLifecycleAt:Number(p.updateTime||snapshot.observedAt||0)') ||
-    !userStreamState.includes('positionLifecycleAt=sameCore') ||
+    !userStreamState.includes('positionLifecycleAt=sameLifecycle') ||
+    !userStreamState.includes('Math.sign(previousAmount)===Math.sign(amount)') ||
     !masterRuntimeInventory.includes('lifecycleAt: Number(p.positionLifecycleAt || p.eventTime || 0)') ||
     !engineWorker.includes('async function pruneAutoHighWater()') ||
-    !engineWorker.includes('position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime')) {
-  fail('server progressive high-water must be isolated to one stable Binance position lifecycle and pruned after flat positions');
+    !engineWorker.includes('return `${symbol}:${direction}:${lifecycle}`') ||
+    !engineWorker.includes('function migrateLegacyAutoHighWaterKey(position)')) {
+  fail('server progressive high-water must stay on one lifecycle across partial fills, migrate legacy keys, and prune after flat positions');
 }
 
 if (!index.includes("String(o?.timeInForce||'').toUpperCase()==='GTC'") ||

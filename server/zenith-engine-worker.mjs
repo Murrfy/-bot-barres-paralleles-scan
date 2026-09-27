@@ -289,12 +289,39 @@ function autoPositionKey(position){
   const amount=n(position?.positionAmt??position?.quantity,0);
   const symbol=String(position?.symbol||'').toUpperCase();
   const direction=amount>=0?'LONG':'SHORT';
-  const qty=Math.abs(amount);
-  const entry=n(position?.entryPrice,0);
   const lifecycle=Math.max(0,Math.floor(n(
     position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,0
   )));
-  return `${symbol}:${direction}:${qty}:${entry}:${lifecycle}`;
+  return `${symbol}:${direction}:${lifecycle}`;
+}
+function migrateLegacyAutoHighWaterKey(position){
+  const key=autoPositionKey(position);
+  if(autoProtection.highWater.has(key)||autoProtection.redHighWater.has(key))return false;
+  const parts=key.split(':');
+  if(parts.length!==3)return false;
+  const [symbol,direction,lifecycle]=parts;
+  const prefix=`${symbol}:${direction}:`;
+  const suffix=`:${lifecycle}`;
+  let migrated=false;
+  let high=NaN,red=NaN;
+  for(const [oldKey,value] of [...autoProtection.highWater.entries()]){
+    if(oldKey===key||!oldKey.startsWith(prefix)||!oldKey.endsWith(suffix))continue;
+    const amount=n(value,NaN);
+    if(Number.isFinite(amount))high=Number.isFinite(high)?Math.max(high,amount):amount;
+    autoProtection.highWater.delete(oldKey);
+    migrated=true;
+  }
+  for(const [oldKey,value] of [...autoProtection.redHighWater.entries()]){
+    if(oldKey===key||!oldKey.startsWith(prefix)||!oldKey.endsWith(suffix))continue;
+    const amount=n(value,NaN);
+    if(Number.isFinite(amount))red=Number.isFinite(red)?Math.max(red,amount):amount;
+    autoProtection.redHighWater.delete(oldKey);
+    migrated=true;
+  }
+  if(Number.isFinite(high))autoProtection.highWater.set(key,high);
+  if(Number.isFinite(red))autoProtection.redHighWater.set(key,red);
+  if(migrated)scheduleAutoHighWaterSave(250);
+  return migrated;
 }
 function observedLinearPnl(position,mark){
   const amount=n(position?.positionAmt??position?.quantity,0);
@@ -305,6 +332,7 @@ function observedLinearPnl(position,mark){
 function observeAutoHighWater(position,mark){
   const observed=observedLinearPnl(position,mark);
   if(!Number.isFinite(observed))return NaN;
+  migrateLegacyAutoHighWaterKey(position);
   const key=autoPositionKey(position);
   const previous=n(autoProtection.highWater.get(key),NaN);
   const next=Number.isFinite(previous)?Math.max(previous,observed):observed;
@@ -1678,6 +1706,7 @@ async function runAutoProtection(symbol,mark){
     if(!loaded)return false;
   }
 
+  migrateLegacyAutoHighWaterKey(position);
   const highWaterKey=autoPositionKey(position);
   const previousHighWater=n(autoProtection.highWater.get(highWaterKey),NaN);
   const highWater=observeAutoHighWater(position,mark);
