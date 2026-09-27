@@ -65,6 +65,10 @@ function managedExitId(value){
   const id=String(value||'');
   return /^zth-EXI-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
 }
+function managedMaxLossId(value){
+  const id=String(value||'');
+  return /^zth-MAX-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
+}
 
 async function redis(command){
   if(!REDIS_URL||!REDIS_TOKEN)throw new Error('UPSTASH_NOT_CONFIGURED');
@@ -323,6 +327,68 @@ async function directSymbolFlat(symbol,apiKey,secret){
   return true;
 }
 
+async function directBinancePriorityMaxLossProof({
+  symbol,direction,targetClientAlgoId,configuredMaxLoss,apiKey,secret
+}){
+  const sym=String(symbol||'').toUpperCase();
+  const dir=String(direction||'').toUpperCase();
+  const targetId=String(targetClientAlgoId||'');
+  if(!/^[A-Z0-9]{3,30}$/.test(sym)||!['LONG','SHORT'].includes(dir)||!managedMaxLossId(targetId)){
+    return {ok:false,reason:'BINANCE_PRIORITY_REQUEST_INVALID'};
+  }
+  const [positions,algoOrders]=await Promise.all([
+    signedBinanceRequest({
+      baseUrl:BASE,path:'/fapi/v3/positionRisk',method:'GET',
+      apiKey,secret,params:{symbol:sym},timestamp:Date.now()
+    }),
+    signedBinanceRequest({
+      baseUrl:BASE,path:'/fapi/v1/openAlgoOrders',method:'GET',
+      apiKey,secret,params:{algoType:'CONDITIONAL'},timestamp:Date.now()
+    }),
+  ]);
+  if(!Array.isArray(positions)||!Array.isArray(algoOrders))return {ok:false,reason:'BINANCE_PRIORITY_PROOF_INVALID'};
+  const position=positions.find(p=>{
+    if(String(p?.symbol||'').toUpperCase()!==sym)return false;
+    if(String(p?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
+    const amount=n(p?.positionAmt,0);
+    if(Math.abs(amount)<=0)return false;
+    return (amount<0?'SHORT':'LONG')===dir;
+  });
+  if(!position)return {ok:false,reason:'BINANCE_PRIORITY_POSITION_MISSING'};
+  const quantity=Math.abs(n(position?.positionAmt,0));
+  const entryPrice=n(position?.entryPrice,0);
+  const expectedSide=dir==='LONG'?'SELL':'BUY';
+  const cap=Math.min(n(configuredMaxLoss,NaN),REAL_RISK_LIMITS.maxLossUsd);
+  if(!(quantity>0)||!(entryPrice>0)||!(cap>0))return {ok:false,reason:'BINANCE_PRIORITY_CONFIG_INVALID'};
+
+  const safe=(Array.isArray(algoOrders)?algoOrders:[]).filter(o=>{
+    if(String(o?.symbol||'').toUpperCase()!==sym)return false;
+    if(String(o?.side||'').toUpperCase()!==expectedSide)return false;
+    if(String(o?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
+    if(String(o?.orderType||o?.type||'').toUpperCase()!=='STOP')return false;
+    if(String(o?.timeInForce||'').toUpperCase()!=='IOC')return false;
+    if(!bool(o?.reduceOnly)||bool(o?.closePosition))return false;
+    if(Math.abs(n(o?.quantity??o?.origQty,NaN)-quantity)>1e-12)return false;
+    if(String(o?.priceMatch||'').toUpperCase()!=='OPPONENT')return false;
+    const id=String(o?.clientAlgoId||'');
+    if(!id||id.length>36)return false;
+    const trigger=n(o?.triggerPrice??o?.stopPrice,NaN);
+    if(!(trigger>0))return false;
+    const lossSide=dir==='LONG'?trigger<entryPrice:trigger>entryPrice;
+    if(!lossSide)return false;
+    const impliedLossUsd=dir==='LONG'
+      ?(entryPrice-trigger)*quantity
+      :(trigger-entryPrice)*quantity;
+    return impliedLossUsd>=0&&impliedLossUsd<=cap+1e-8;
+  });
+  const external=safe.filter(o=>!managedMaxLossId(o?.clientAlgoId));
+  const managed=safe.filter(o=>managedMaxLossId(o?.clientAlgoId));
+  if(external.length!==1)return {ok:false,reason:external.length?'MULTIPLE_EXTERNAL_MAX_LOSS':'EXTERNAL_MAX_LOSS_NOT_CONFIRMED'};
+  const target=managed.find(o=>String(o?.clientAlgoId||'')===targetId);
+  if(!target)return {ok:false,reason:'MANAGED_DUPLICATE_NOT_CONFIRMED'};
+  return {ok:true,position,external:external[0],target,managedCount:managed.length};
+}
+
 async function symbolInfo(symbol){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);
   try{
@@ -347,7 +413,8 @@ export default async function handler(req,res){
 
   const type=String(req.body?.type||'').toUpperCase(),phase=String(req.body?.phase||'').toUpperCase();
   const orphanCleanup=type==='EXEC_CLEAN_ORPHAN_PROTECTION'&&phase==='CANCEL_ORPHAN';
-  if(!orphanCleanup&&
+  const maxLossPriorityCleanup=type==='EXEC_CLEAN_DUPLICATE_MAX_LOSS'&&phase==='CANCEL_DUPLICATE';
+  if(!orphanCleanup&&!maxLossPriorityCleanup&&
      (!['EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION'].includes(type)||!['CANCEL_OLD','PLACE_NEW'].includes(phase))){
     return send(res,400,{ok:false,code:'PROTECTIVE_UPDATE_OPERATION_INVALID',writeAttempted:false});
   }
@@ -382,6 +449,84 @@ export default async function handler(req,res){
         writeAttempted:false,
       }
     );
+  }
+
+  if(maxLossPriorityCleanup){
+    try{
+      const state=await readState();
+      const armReason=validateExecutionArmRecord(state.armRecord,master.deviceId);
+      if(armReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_ARMED',reason:armReason,writeAttempted:false});
+      const modeReason=protectiveModeReason(state.masterMode);
+      if(modeReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:modeReason,writeAttempted:false});
+
+      const symbol=String(req.body?.symbol||'').toUpperCase();
+      const direction=String(req.body?.direction||'').toUpperCase();
+      const clientAlgoId=String(req.body?.clientAlgoId||'');
+      if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(direction)||!managedMaxLossId(clientAlgoId)){
+        return send(res,400,{ok:false,code:'MAX_LOSS_PRIORITY_CLEANUP_TARGET_INVALID',writeAttempted:false});
+      }
+      const configuredMaxLoss=configuredMaxLossUsd(state.controllerState,symbol);
+      if(!(configuredMaxLoss>0)){
+        return send(res,423,{ok:false,code:'CONFIGURED_MAX_LOSS_UNAVAILABLE',writeAttempted:false});
+      }
+
+      const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED);
+      if(!writesEnabled)return send(res,423,{
+        ok:false,code:'BINANCE_WRITE_LOCKED',realTradingEnabled:REAL_TRADING_ENABLED,
+        binanceWriteEnabled:BINANCE_WRITE_ENABLED,pairingDisabled:PAIRING_DISABLED,writeAttempted:false
+      });
+
+      const proof=await directBinancePriorityMaxLossProof({
+        symbol,direction,targetClientAlgoId:clientAlgoId,configuredMaxLoss,apiKey,secret
+      });
+      if(!proof.ok)return send(res,409,{ok:false,code:proof.reason,writeAttempted:false});
+      if(!(await requireFinalProtectiveMaster(res,master)))return;
+
+      const target=proof.target;
+      const result=await cancelAlgoOrderIdempotent({
+        apiKey,secret,symbol,clientAlgoId,
+        expected:{
+          symbol,clientAlgoId,side:String(target?.side||'').toUpperCase(),
+          positionSide:'BOTH',type:'STOP',timeInForce:'IOC',
+          reduceOnly:'true',quantity:String(target?.quantity??target?.origQty??''),
+          priceMatch:'OPPONENT',triggerPrice:String(target?.triggerPrice??target?.stopPrice??''),
+          workingType:String(target?.workingType||'CONTRACT_PRICE'),
+          priceProtect:String(bool(target?.priceProtect)),
+        },
+        writesEnabled:true,timestamp:Date.now()
+      });
+      await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+        at:Date.now(),kind:'BINANCE_MAX_LOSS_PRIORITY_CLEANUP',deviceId:master.deviceId,
+        symbol,direction,clientAlgoId,
+        externalClientAlgoId:String(proof.external?.clientAlgoId||''),
+        remainingManagedBeforeCancel:Number(proof.managedCount||0),
+        disposition:String(result?.disposition||''),
+        writeAttempted:result?.writeAttempted===true,
+      })]);
+      await redis(['LTRIM',KEY_AUDIT,'0','199']);
+      return send(res,200,{
+        ok:true,type,phase,result,
+        priority:'BINANCE_EXTERNAL_MAX_LOSS',
+        externalClientAlgoId:String(proof.external?.clientAlgoId||''),
+      });
+    }catch(e){
+      const retryAfter=binanceBackoffSecondsFromError(e);
+      if(retryAfter>0){
+        try{await registerBinanceWriteBackoff(redis,e)}catch{}
+        res.setHeader('Retry-After',String(retryAfter));
+        return send(res,429,{
+          ok:false,code:Number(e?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
+          retryAfterSeconds:retryAfter,binanceStatus:Number(e?.status)||0,
+          binanceCode:e?.code??null,ambiguous:false,writeAttempted:false,
+        });
+      }
+      const ambiguous=e?.ambiguous===true;
+      return send(res,502,{
+        ok:false,code:ambiguous?'MAX_LOSS_PRIORITY_CLEANUP_AMBIGUOUS':'MAX_LOSS_PRIORITY_CLEANUP_FAILED',
+        error:'MAX-LOSS priority cleanup failed.',binanceCode:e?.code??null,
+        ambiguous,writeAttempted:ambiguous,
+      });
+    }
   }
 
   if(orphanCleanup){
