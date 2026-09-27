@@ -24,8 +24,8 @@ const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
     /^import \{ evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches \} from '\.\.\/lib\/entry-transition\.mjs';\n/m,
     "const entryTransitionOrderIdentity = order => { const s=String(order?.symbol||'').toUpperCase(); if(order?.clientAlgoId)return s+':algo-client:'+String(order.clientAlgoId); if(order?.algoId)return s+':algo:'+String(order.algoId); if(order?.clientOrderId)return s+':client:'+String(order.clientOrderId); if(order?.orderId)return s+':id:'+String(order.orderId); return ''; }; const evaluateEntryTransitionReconciliation = () => ({active:[],invalid:[],expired:[],allowedOrderIdentities:new Set(),missingProtections:[],missingEntries:[]}); const transitionEntryMatches = () => false; const transitionProtectionMatches = () => false;\n"
   );
-const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies } = await import(
-  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies };').toString('base64')
+const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies, zenithScopeSymbols, runtimeStateWithinScope } = await import(
+  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies, zenithScopeSymbols, runtimeStateWithinScope };').toString('base64')
 );
 const runtime = (positions = [], orders = [], mode = 'REAL') => ({
   updatedAt: Date.now(), data: { executionMode: mode, binancePositions: positions, binanceOrders: orders },
@@ -46,6 +46,48 @@ const normalizedStop = normalizeActualOrder(stop);
 const normalizedEmergency = normalizeActualAlgoOrder(emergency);
 const normalizedProgressive = normalizeActualAlgoOrder(progressive);
 
+
+
+
+test('Binance symbols outside controller Zenith scope are excluded even if a stale runtime snapshot contains them',()=>{
+  const controllerState={data:{
+    tokenSettings:{BTCUSDT:{maxLoss:40}},
+    manualTokens:{},
+    validated:{},
+  }};
+  const staleRuntime=runtime(
+    [
+      position,
+      {symbol:'DOGEUSDT',positionSide:'BOTH',positionAmt:'100',entryPrice:'0.1'}
+    ],
+    []
+  );
+  const scope=zenithScopeSymbols(staleRuntime,controllerState,[],[],[]);
+  assert.equal(scope.has('BTCUSDT'),true);
+  assert.equal(scope.has('DOGEUSDT'),false);
+  const scoped=runtimeStateWithinScope(staleRuntime,scope);
+  assert.deepEqual(scoped.data.binancePositions.map(row=>row.symbol),['BTCUSDT']);
+});
+
+test('live Zenith-owned zth order keeps its symbol in scope until Binance cleanup completes',()=>{
+  const controllerState={data:{tokenSettings:{},manualTokens:{},validated:{}}};
+  const ownOrder={
+    symbol:'SOLUSDT',clientOrderId:'zth-EXI-0123456789abcdef01234567',
+    orderId:'44',side:'SELL',type:'LIMIT',positionSide:'BOTH'
+  };
+  const scope=zenithScopeSymbols(runtime([],[]),controllerState,[],[],[ownOrder]);
+  assert.equal(scope.has('SOLUSDT'),true);
+});
+
+test('pure manual Binance symbol with no Zenith registration or zth order remains outside scope',()=>{
+  const controllerState={data:{tokenSettings:{BTCUSDT:{}},manualTokens:{},validated:{}}};
+  const externalOrder={
+    symbol:'XRPUSDT',clientOrderId:'manual-binance-order',
+    orderId:'55',side:'SELL',type:'LIMIT',positionSide:'BOTH'
+  };
+  const scope=zenithScopeSymbols(runtime([],[]),controllerState,[],[],[externalOrder]);
+  assert.equal(scope.has('XRPUSDT'),false);
+});
 
 
 test('triggered MAX-LOSS partial IOC resumes at the exact next LIMIT IOC attempt',()=>{
