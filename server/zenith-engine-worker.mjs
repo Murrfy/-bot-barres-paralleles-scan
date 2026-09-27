@@ -192,6 +192,97 @@ function zenithManagedRealId(value){
   const id=String(value||'');
   return /^zth-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
 }
+
+function configuredZenithSymbols(){
+  const out=new Set();
+  const config=runtime.config&&typeof runtime.config==='object'?runtime.config:{};
+  for(const key of ['tokenSettings','manualTokens','validated']){
+    const rows=config[key]&&typeof config[key]==='object'&&!Array.isArray(config[key])?config[key]:{};
+    for(const raw of Object.keys(rows)){
+      const symbol=String(raw||'').toUpperCase();
+      if(/^[A-Z0-9]{3,30}$/.test(symbol))out.add(symbol);
+    }
+  }
+  return out;
+}
+
+function liveZenithScopeSymbols(){
+  const out=configuredZenithSymbols();
+  const state=stream.state&&typeof stream.state==='object'?stream.state:{};
+  for(const position of Object.values(state.positions||{})){
+    const symbol=String(position?.symbol||'').toUpperCase();
+    if(/^[A-Z0-9]{3,30}$/.test(symbol))out.add(symbol);
+  }
+  for(const order of [...Object.values(state.standardOrders||{}),...Object.values(state.algoOrders||{})]){
+    const id=String(order?.clientOrderId||order?.clientAlgoId||'');
+    if(!zenithManagedRealId(id))continue;
+    const symbol=String(order?.symbol||'').toUpperCase();
+    if(/^[A-Z0-9]{3,30}$/.test(symbol))out.add(symbol);
+  }
+  return out;
+}
+
+function filterRuntimeSnapshotToZenith(snapshot){
+  if(!snapshot||typeof snapshot!=='object')return snapshot;
+  const scope=configuredZenithSymbols();
+  for(const order of [
+    ...(Array.isArray(snapshot.standardOrders)?snapshot.standardOrders:[]),
+    ...(Array.isArray(snapshot.algoOrders)?snapshot.algoOrders:[]),
+  ]){
+    const id=String(order?.clientOrderId||order?.clientAlgoId||'');
+    if(zenithManagedRealId(id)){
+      const symbol=String(order?.symbol||'').toUpperCase();
+      if(/^[A-Z0-9]{3,30}$/.test(symbol))scope.add(symbol);
+    }
+  }
+  const allowed=row=>scope.has(String(row?.symbol||'').toUpperCase());
+  const standardOrders=(Array.isArray(snapshot.standardOrders)?snapshot.standardOrders:[])
+    .filter(row=>allowed(row)||zenithManagedRealId(row?.clientOrderId));
+  const algoOrders=(Array.isArray(snapshot.algoOrders)?snapshot.algoOrders:[])
+    .filter(row=>allowed(row)||zenithManagedRealId(row?.clientAlgoId));
+  const positions=(Array.isArray(snapshot.positions)?snapshot.positions:[]).filter(allowed);
+  const priceFilters={};
+  for(const [symbol,filter] of Object.entries(snapshot.priceFilters||{})){
+    if(scope.has(String(symbol||'').toUpperCase()))priceFilters[symbol]=filter;
+  }
+  return {
+    ...snapshot,
+    positions,
+    standardOrders,
+    algoOrders,
+    orders:[...standardOrders,...algoOrders],
+    priceFilters,
+  };
+}
+
+function filterUserStreamPayloadToZenith(payload){
+  if(!payload||typeof payload!=='object')return null;
+  const type=String(payload.e||'');
+  if(type==='listenKeyExpired')return payload;
+  const scope=liveZenithScopeSymbols();
+
+  if(type==='ORDER_TRADE_UPDATE'){
+    const order=payload.o||{};
+    const symbol=String(order.s||'').toUpperCase();
+    const id=String(order.c||'');
+    return scope.has(symbol)||zenithManagedRealId(id)?payload:null;
+  }
+  if(type==='ALGO_UPDATE'){
+    const order=payload.o||{};
+    const symbol=String(order.s??order.symbol??'').toUpperCase();
+    const id=String(order.caid??order.clientAlgoId??order.ca??order.c??'');
+    return scope.has(symbol)||zenithManagedRealId(id)?payload:null;
+  }
+  if(type==='ACCOUNT_UPDATE'){
+    const account=payload.a&&typeof payload.a==='object'?payload.a:{};
+    const positions=(Array.isArray(account.P)?account.P:[]).filter(row=>
+      scope.has(String(row?.s||'').toUpperCase())
+    );
+    if(!positions.length)return null;
+    return {...payload,a:{...account,P:positions}};
+  }
+  return payload;
+}
 function autoPositionKey(position){
   const amount=n(position?.positionAmt??position?.quantity,0);
   const symbol=String(position?.symbol||'').toUpperCase();
@@ -2748,7 +2839,9 @@ function scheduleReconcile(delay=250){
 }
 
 async function processStreamPayload(payload){
-  const result=applyUserDataEvent(stream.state,payload);
+  const scopedPayload=filterUserStreamPayloadToZenith(payload);
+  if(!scopedPayload)return {state:stream.state,applied:false,ignored:true,reason:'OUTSIDE_ZENITH_SCOPE'};
+  const result=applyUserDataEvent(stream.state,scopedPayload);
   stream.state=result.state;
   if([
     'LISTEN_KEY_EXPIRED',
@@ -2771,7 +2864,7 @@ async function seedStream(connectionId,connectedAt){
   if(!response.ok||data?.ok!==true||!data?.snapshot){
     throw new Error(data?.code||('HTTP_'+response.status));
   }
-  const snapshot=data.snapshot;
+  const snapshot=filterRuntimeSnapshotToZenith(data.snapshot);
   rememberPriceFilters(snapshot);
   stream.state=seedUserStreamStateFromRuntimeSnapshot(snapshot,{connectionId,connectedAt});
   const cutoff=n(snapshot.serverTime,0);
