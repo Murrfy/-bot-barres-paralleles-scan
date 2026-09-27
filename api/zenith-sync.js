@@ -1891,19 +1891,66 @@ async function tryFinalizePendingPause(deviceId, knownMode = '') {
   };
 }
 
+async function recoverSatisfiedProcessingClose(raw,command,device){
+  if(String(command?.type||'').toUpperCase()!=='EXEC_CLOSE_POSITION')return {handled:false,completed:false};
+  const payloadStatus=execClosePayloadStatus(command?.payload);
+  if(!payloadStatus.ok)return {handled:false,completed:false};
+  const commandId=String(command?.id||'');
+  if(!commandId)return {handled:false,completed:false};
+
+  let readiness=null;
+  try{
+    readiness=await freshConsistentReconciliation(
+      String(device?.deviceId||''),
+      10000,
+      payloadStatus.symbol+':'+payloadStatus.direction,
+      true
+    );
+  }catch{
+    return {handled:false,completed:false};
+  }
+  if(!readiness?.ok)return {handled:false,completed:false};
+
+  const currentQuantity=runtimeClosePositionQuantity(
+    readiness.runtimeState,
+    payloadStatus.symbol,
+    payloadStatus.direction
+  );
+  if(currentQuantity>1e-12)return {handled:false,completed:false};
+
+  const completed=await completeProcessingCommandAtomic(raw,commandId,device);
+  if(completed<0)return {handled:true,completed:false,authorityLost:true,authorityCode:completed};
+  if(completed!==1)return {handled:true,completed:false};
+
+  await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+    at:Date.now(),
+    kind:'EXEC_CLOSE_RECOVERED_CONFIRMED',
+    commandId,
+    deviceId:String(device?.deviceId||''),
+    symbol:payloadStatus.symbol,
+    direction:payloadStatus.direction,
+    currentQuantity,
+    recovered:true,
+    reconciliationObservedAt:Number(readiness.report?.observedAt||0),
+  })]);
+  await redis(['LTRIM',KEY_AUDIT,'0','199']);
+  return {handled:true,completed:true};
+}
+
 async function recoverStaleProcessing(device) {
   const deviceId = String(device?.deviceId || '');
   const rows = await redis(['LRANGE', KEY_PROCESSING, '0', '-1']);
   const now = Date.now();
   let requeued = 0;
   let removedDone = 0;
+  let recoveredClose = 0;
   let dead = 0;
 
   for (const raw of Array.isArray(rows) ? rows : []) {
     let command = null;
     try { command = JSON.parse(raw); } catch {
       const removed = await removeProcessingAtomic(raw, device);
-      if (removed < 0) return { requeued, removedDone, dead, authorityLost:true, authorityCode:removed };
+      if (removed < 0) return { requeued, removedDone, recoveredClose, dead, authorityLost:true, authorityCode:removed };
       if (removed === 1) {
         await pushDeadLetter({ raw, rejectedAt: now, rejectedReason: 'COMMAND_CORRUPT' });
         dead += 1;
@@ -1911,15 +1958,11 @@ async function recoverStaleProcessing(device) {
       continue;
     }
 
-    if (!commandTypeAllowed(command?.type) || commandExpired(command, now)) {
+    if (!commandTypeAllowed(command?.type)) {
       const removed = await removeProcessingAtomic(raw, device);
-      if (removed < 0) return { requeued, removedDone, dead, authorityLost:true, authorityCode:removed };
+      if (removed < 0) return { requeued, removedDone, recoveredClose, dead, authorityLost:true, authorityCode:removed };
       if (removed === 1) {
-        await pushDeadLetter({
-          raw,
-          rejectedAt: now,
-          rejectedReason: !commandTypeAllowed(command?.type) ? 'COMMAND_TYPE_NOT_ALLOWED' : 'COMMAND_EXPIRED',
-        });
+        await pushDeadLetter({raw,rejectedAt:now,rejectedReason:'COMMAND_TYPE_NOT_ALLOWED'});
         dead += 1;
       }
       continue;
@@ -1930,10 +1973,29 @@ async function recoverStaleProcessing(device) {
       const done = await redis(['GET', `${PREFIX}:command:done:${commandId}`]);
       if (done) {
         const removed = await removeProcessingAtomic(raw, device);
-        if (removed < 0) return { requeued, removedDone, dead, authorityLost:true, authorityCode:removed };
+        if (removed < 0) return { requeued, removedDone, recoveredClose, dead, authorityLost:true, authorityCode:removed };
         if (removed === 1) removedDone += 1;
         continue;
       }
+    }
+
+    const recovered=await recoverSatisfiedProcessingClose(raw,command,device);
+    if(recovered.authorityLost){
+      return {requeued,removedDone,recoveredClose,dead,authorityLost:true,authorityCode:recovered.authorityCode};
+    }
+    if(recovered.completed){
+      recoveredClose += 1;
+      continue;
+    }
+
+    if(commandExpired(command,now)){
+      const removed=await removeProcessingAtomic(raw,device);
+      if(removed<0)return {requeued,removedDone,recoveredClose,dead,authorityLost:true,authorityCode:removed};
+      if(removed===1){
+        await pushDeadLetter({raw,rejectedAt:now,rejectedReason:'COMMAND_EXPIRED'});
+        dead += 1;
+      }
+      continue;
     }
 
     const claimedAt = Number(command?.claimedAt || 0);
@@ -1944,7 +2006,7 @@ async function recoverStaleProcessing(device) {
       const gate = executionGate(command.type, halted);
       if (!gate.allowed) {
         const removed = await removeProcessingAtomic(raw, device);
-        if (removed < 0) return { requeued, removedDone, dead, authorityLost:true, authorityCode:removed };
+        if (removed < 0) return { requeued, removedDone, recoveredClose, dead, authorityLost:true, authorityCode:removed };
         if (removed === 1) {
           await pushDeadLetter({ raw, rejectedAt: now, rejectedReason: 'EXECUTION_LOCKED_' + gate.reason });
           dead += 1;
@@ -1964,11 +2026,11 @@ async function recoverStaleProcessing(device) {
       device,
       'RPUSH'
     );
-    if (moved < 0) return { requeued, removedDone, dead, authorityLost:true, authorityCode:moved };
+    if (moved < 0) return { requeued, removedDone, recoveredClose, dead, authorityLost:true, authorityCode:moved };
     if (moved === 1) requeued += 1;
   }
 
-  return { requeued, removedDone, dead, authorityLost:false, authorityCode:0 };
+  return { requeued, removedDone, recoveredClose, dead, authorityLost:false, authorityCode:0 };
 }
 
 async function claimNextCommand(device) {
