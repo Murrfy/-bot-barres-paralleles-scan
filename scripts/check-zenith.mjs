@@ -538,8 +538,8 @@ if (!protectiveUpdateExecute.includes('validateMaxLossTrigger({') ||
 }
 
 if (!protectiveUpdateExecute.includes('impliedLossUsd<=REAL_RISK_LIMITS.maxLossUsd+1e-8') ||
-    !index.includes('function masterHasSingleMaxLoss(position,orders,hardMaxLossUsd=400)') ||
-    !index.includes('return impliedLossUsd<=cap+1e-8')) {
+    !engineWorker.includes('function safeMaxLossOrders(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.maxLossUsd)') ||
+    !engineWorker.includes('impliedLossUsd<=cap+1e-8')) {
   fail('progressive protection must accept only an emergency MAX-LOSS that is itself within the hard $400 cap');
 }
 
@@ -558,14 +558,14 @@ if (!index.includes('targetProfit:40,maxLoss:40,protectionStages:DEFAULT_PROTECT
 
 if (!protectiveUpdateExecute.includes('NEW_PROGRESSIVE_PROTECTION_NOT_CONFIRMED') ||
     !protectiveUpdateExecute.includes('allowedIds.push(update.previousClientAlgoId)') ||
-    !index.includes('if(maxLoss||progressive)') ||
-    !index.includes("phase:'CANCEL_OLD',newClientAlgoId:clientId")) {
+    !engineWorker.includes('if(maxLoss||progressive)') ||
+    !engineWorker.includes("phase:'CANCEL_OLD',newClientAlgoId")) {
   fail('progressive protection replacement must confirm the new STOP+LIMIT before canceling the old protection');
 }
-if (!index.includes('async function placeNew({deferReconcile=false}={})') ||
-    !index.includes('newClientId=await placeNew({deferReconcile:maxLoss})') ||
-    !index.includes('if(deferReconcile){') ||
-    !index.includes('await publishMasterStreamState();')) {
+if (!engineWorker.includes('async function placeNew({deferReconcile=false}={})') ||
+    !engineWorker.includes('newClientId=await placeNew({deferReconcile:maxLoss})') ||
+    !engineWorker.includes('if(deferReconcile)return clientId') ||
+    !engineWorker.includes('await publishRuntime();')) {
   fail('MAX-LOSS replacement must publish the stream-confirmed new stop and defer full reconciliation until the old stop is canceled');
 }
 if (!index.includes("import('/lib/real-protection-levels.mjs')") ||
@@ -591,7 +591,7 @@ if (!binanceReconcile.includes("req.method !== 'POST'") ||
     !binanceReconcile.includes('requestBodyStatus(req, 4096)') ||
     !binanceReconcile.includes("'ORIGIN_FORBIDDEN'") ||
     !binanceReconcile.includes("'REQUEST_BODY_TOO_LARGE'") ||
-    !index.includes("fetch('/api/binance-reconcile',{method:'POST'")) {
+    !engineWorker.includes("binanceApi('/api/binance-reconcile',{method:'POST'")) {
   fail('Binance reconciliation must use same-origin bounded POST because it persists reconciliation state');
 }
 if (!binanceReconcile.includes("'MISMATCH'") || !binanceReconcile.includes('failClosed')) {
@@ -654,8 +654,8 @@ if (!protectiveUpdateExecute.includes('EXEC_CLEAN_ORPHAN_PROTECTION') ||
     !protectiveUpdateExecute.includes('cancelAlgoOrderIdempotent')) {
   fail('orphan cleanup must cancel only after direct Binance flat-position proof using idempotent cancel primitives');
 }
-if (!index.includes('orphanZenithCleanupOrders(q.report)') ||
-    !index.includes('ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED') ||
+if (!engineWorker.includes('orphanZenithCleanupOrders(report)') ||
+    !engineWorker.includes('ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED') ||
     !index.includes('COMPTE BINANCE INACCESSIBLE') ||
     index.includes('BINANCE HORS LIGNE')) {
   fail('MASTER must auto-clean confirmed Zenith orphans and UI must distinguish private account access from public Binance market data');
@@ -991,7 +991,7 @@ if (!index.includes('function renderPositions(){return false}') ||
 }
 if (!engineWorker.includes('async function commandCycle()') ||
     !engineWorker.includes("syncApi('command-next',{method:'POST'") ||
-    !engineWorker.includes('ackCommand(raw)') ||
+    !engineWorker.includes('ackCommand(raw,') ||
     !engineWorker.includes('requeueCommand(raw') ||
     !engineWorker.includes('failCommand(raw') ||
     !engineWorker.includes('runFullClose(command,raw)') ||
