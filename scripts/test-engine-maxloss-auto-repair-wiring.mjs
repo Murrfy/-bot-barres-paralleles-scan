@@ -19,6 +19,24 @@ test('24/7 engine repairs one exact missing MAX-LOSS before accepting reconcilia
   assert.match(worker,/return reconcile\(true\)/);
 });
 
+
+test('partial exit MAX-LOSS repair replaces stale quantity only after new protection is confirmed',()=>{
+  const start=worker.indexOf('async function repairMissingMaxLoss');
+  const end=worker.indexOf('function authorizedMaxLossOverlapReport',start);
+  const block=worker.slice(start,end);
+  assert.match(block,/const staleManagedMaxLoss=/);
+  assert.match(block,/previousClientAlgoId:staleClientAlgoId/);
+  assert.match(block,/phase:'PLACE_NEW'/);
+  assert.match(block,/NEW_PROTECTION_ID|AUTO_MAX_LOSS_REPAIR_CLIENT_ID_MISSING/);
+  assert.match(block,/waitForStreamOrder\(\{kind:'ALGO',clientId,terminal:false\}/);
+  assert.match(block,/phase:'CANCEL_OLD',newClientAlgoId:clientId/);
+  assert.match(block,/AUTO_MAX_LOSS_REPAIR_STALE_CANCEL_NOT_CONFIRMED/);
+  const placeAt=block.indexOf("const placed=await callProtectiveUpdateExecute(body)");
+  const confirmAt=block.indexOf("waitForStreamOrder({kind:'ALGO',clientId,terminal:false}",placeAt);
+  const cancelAt=block.indexOf("phase:'CANCEL_OLD',newClientAlgoId:clientId",confirmAt);
+  assert.ok(placeAt>=0&&confirmAt>placeAt&&cancelAt>confirmAt,'new MAX-LOSS must be placed and stream-confirmed before stale one is canceled');
+});
+
 test('ambiguous or failed repair remains fail-closed without closing the position',()=>{
   assert.match(worker,/if\(plan\.action!=='REPAIR'\)/);
   assert.match(worker,/markMaxLossRepairFailure/);
