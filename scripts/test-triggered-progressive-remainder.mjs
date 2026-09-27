@@ -13,7 +13,7 @@ test('reconciliation proves a triggered progressive partial fill from parent alg
   assert.match(reconcile,/String\(algo\?\.timeInForce\|\|''\)\.toUpperCase\(\)!=='GTC'/);
   assert.match(reconcile,/String\(actualOrder\?\.type\|\|''\)\.toUpperCase\(\)!=='LIMIT'/);
   assert.match(reconcile,/String\(actualOrder\?\.timeInForce\|\|''\)\.toUpperCase\(\)!=='GTC'/);
-  assert.match(reconcile,/executed>0/);
+  assert.match(reconcile,/executed>=0/);
   assert.match(reconcile,/Math\.abs\(expectedRemaining-currentQty\)/);
   assert.match(reconcile,/const profitSide=/);
   assert.match(reconcile,/\/fapi\/v1\/allOrders/);
@@ -58,4 +58,12 @@ test('triggered MAX-LOSS remainder uses the same proof-bound MARKET close, never
   assert.match(execute,/maxLossRemainderRecovery/);
   assert.match(execute,/MAX_LOSS_REMAINDER_RECOVERY_ENGINE_REQUIRED/);
   assert.match(execute,/!partialTargetRemainder&&!progressiveRemainderRecovery&&!maxLossRemainderRecovery/);
+});
+
+
+test('triggered protective remainders include zero-fill cases because the close intent is already active',()=>{
+  const command=fs.readFileSync('lib/protective-command.mjs','utf8');
+  assert.match(reconcile,/executed>=0&&executed<original/);
+  assert.match(command,/executedQuantity>=0/);
+  assert.match(command,/'NEW','PARTIALLY_FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'/);
 });
