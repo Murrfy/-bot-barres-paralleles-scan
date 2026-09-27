@@ -30,6 +30,21 @@ test('40, 41 or 45 all arm the 40 stage',()=>{
   }
 });
 
+
+test('a disabled protection stage is skipped while later enabled stages remain active',()=>{
+  const custom=[
+    {enabled:true,arm:30,floor:20},
+    {enabled:false,arm:105,floor:100},
+    {enabled:true,arm:205,floor:200},
+  ];
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:long,markPrice:350,protectionStages:custom,currentOrders:[],priceFilter:filter
+  });
+  assert.equal(r.action,'REPLACE');
+  assert.equal(r.stage.armProfitUsd,205);
+  assert.equal(r.stage.protectedProfitUsd,200);
+});
+
 test('30 to 3000 jump immediately selects protected 2900',()=>{
   const r=evaluateMasterAutoProgressiveProtection({
     position:long,markPrice:3100,protectionStages:stages,currentOrders:[],priceFilter:filter,

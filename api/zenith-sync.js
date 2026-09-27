@@ -1196,7 +1196,7 @@ function runtimeClosePositionQuantity(runtimeState, symbol, direction) {
 }
 
 function activeProtectionStagesStatus(value) {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 200) {
+  if (!Array.isArray(value) || value.length < 1) {
     return { ok:false, reason:'ACTIVE_PROTECTION_STAGES_INVALID' };
   }
   const rows = [];

@@ -74,7 +74,7 @@ test('active config payload cannot smuggle margin leverage buy or MAX-LOSS chang
   assert.doesNotMatch(validator,/'exactBuy/);
 
   const stages=block(sync,'function activeProtectionStagesStatus','function activeConfigStatus');
-  assert.match(stages,/value\.length > 200/);
+  assert.doesNotMatch(stages,/value\.length > 200/);
   assert.match(stages,/ACTIVE_PROTECTION_STAGE_FLOOR_DECREASE/);
   assert.match(stages,/ACTIVE_PROTECTION_STAGE_ORDER_INVALID/);
 });
@@ -192,14 +192,26 @@ test('manual + protection stages are preserved beyond automatic target count and
   const editor=block(html,'function protectionsForTarget','function applyProtectionVisibility');
   assert.match(editor,/src\.length/);
   assert.match(editor,/function addManualProtectionStage/);
-  assert.match(editor,/current\.length>=200/);
+  assert.doesNotMatch(editor,/current\.length>=200/);
   assert.match(editor,/id="addProtectionStageBtn"/);
   assert.match(editor,/add\.onclick=addManualProtectionStage/);
   assert.match(editor,/Enregistrer le jeton/);
 
   const serverStages=block(sync,'function activeProtectionStagesStatus','function activeConfigStatus');
-  assert.match(serverStages,/value\.length > 200/);
+  assert.doesNotMatch(serverStages,/value\.length > 200/);
   assert.match(serverStages,/rows\.push\(\{ enabled, arm, floor \}\)/);
+
+  const engineStages=block(worker,'function validActiveProtectionStages','function activeSafeTokenConfigRefreshAllowed');
+  assert.doesNotMatch(engineStages,/stages\.length>200/);
+
+  const many=Array.from({length:250},(_,i)=>({enabled:true,arm:30+i*10,floor:20+i*10}));
+  const manyResult=evaluateMasterAutoProgressiveProtection({
+    position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'1',entryPrice:'100',updateTime:1000},
+    markPrice:2700,protectionStages:many,currentOrders:[],
+    priceFilter:{filterType:'PRICE_FILTER',minPrice:'0.1',maxPrice:'1000000',tickSize:'0.1'},
+    previousHighWaterProfitUsd:2520
+  });
+  assert.notEqual(manyResult.action,'BLOCK');
 
   const filter={filterType:'PRICE_FILTER',minPrice:'0.1',maxPrice:'1000000',tickSize:'0.1'};
   const position={symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'1',entryPrice:'100',updateTime:1000};

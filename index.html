@@ -2822,7 +2822,6 @@ function reachedProtectionCount(stages,maxProfit){let count=0;for(let i=0;i<(Arr
 function addManualProtectionStage(){
   if(!selectedSymbol)return;
   const current=protectionDraft();
-  if(current.length>=200)return setStatus('Maximum atteint : 200 protections par jeton.',true);
   const last=current[current.length-1]||null;
   const next=last
     ?{enabled:true,arm:Math.max(0,n(last.arm,0))+100,floor:Math.max(0,n(last.floor,0))+100}
