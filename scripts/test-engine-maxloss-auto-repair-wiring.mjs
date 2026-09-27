@@ -109,3 +109,19 @@ test('failed repair stays local when its symbol is already quarantined',()=>{
   assert.match(block,/if\(localQuarantine\)[\s\S]*await publishRuntime\(\)\.catch/);
   assert.match(block,/else\{[\s\S]*await invalidateStream\(code\)\.catch/);
 });
+
+
+test('partial-close MAX-LOSS repair confirms new stop before canceling stale Zenith stop',()=>{
+  const start=worker.indexOf('async function repairMissingMaxLoss');
+  const end=worker.indexOf('function authorizedMaxLossOverlapReport',start);
+  const block=worker.slice(start,end);
+  assert.match(block,/orders:Array\.isArray\(projection\.binanceOrders\)/);
+  assert.match(block,/previousClientAlgoId:plan\.previousClientAlgoId/);
+  assert.match(block,/previousQuantity:plan\.previousQuantity/);
+  const place=block.indexOf('const placed=await callProtectiveUpdateExecute(body)');
+  const confirm=block.indexOf("waitForStreamOrder({kind:'ALGO',clientId,terminal:false}");
+  const cancel=block.indexOf("phase:'CANCEL_OLD'");
+  assert.ok(place>=0&&confirm>place&&cancel>confirm);
+  assert.match(block,/newClientAlgoId:clientId/);
+  assert.match(block,/AUTO_MAX_LOSS_REPAIR_STALE_CANCEL_NOT_CONFIRMED/);
+});
