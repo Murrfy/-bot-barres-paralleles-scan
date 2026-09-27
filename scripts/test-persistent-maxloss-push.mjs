@@ -18,6 +18,7 @@ function block(source,start,end){
 
 test('persistent MAX-LOSS push threshold is exactly 60 seconds and state is server-persistent',()=>{
   assert.match(api,/const MAXLOSS_PERSIST_MS=60\*1000/);
+  assert.equal(api.includes('positions.length>'),false,'push alerts must not impose a position-count cap');
   assert.match(api,/KEY_MAXLOSS_ALERTS/);
   assert.match(api,/redSince/);
   assert.match(api,/notifiedAt/);
