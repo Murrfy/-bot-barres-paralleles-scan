@@ -29,11 +29,33 @@ test('automatic target waits for exact LIMIT GTC reduce-only stream identity',()
   assert.match(worker,/realNumberMatches\(remaining,live\.quantity\)/);
 });
 
-test('protective writer creates EXIT as NORMAL_LIMIT and order planner has no MARKET sell fallback',()=>{
+test('normal target stays LIMIT while partial-target remainder alone may use MARKET',()=>{
   assert.match(api,/exitMode:'NORMAL_LIMIT'/);
   assert.match(intent,/mode === 'NORMAL_LIMIT'/);
-  assert.match(intent,/params\.type = 'LIMIT'/);
-  assert.doesNotMatch(intent,/EXIT_MARKET|MARKET_LAST_RESORT/);
+  assert.match(intent,/mode === 'REMAINDER_MARKET'/);
+  assert.match(intent,/leg:'EXIT_REMAINDER_MARKET'/);
+  assert.match(intent,/params\.type = 'MARKET'/);
+  assert.doesNotMatch(intent,/MARKET_LAST_RESORT/);
+});
+
+test('partial-target MARKET recovery is engine-only, proof-bound, reduce-only and verifies zero live quantity',()=>{
+  const protective=fs.readFileSync('api/binance-protective-execute.js','utf8');
+  assert.match(protective,/function partialTargetRemainderProof/);
+  assert.match(protective,/PARTIAL_TARGET_REMAINDER/);
+  assert.match(protective,/REMAINDER_MARKET/);
+  assert.match(protective,/PARTIAL_TARGET_REMAINDER_ENGINE_REQUIRED/);
+  assert.match(protective,/PARTIAL_TARGET_REMAINDER_PROOF_REQUIRED/);
+  assert.match(protective,/executed>0/);
+  assert.match(protective,/sameQuantity\(remaining,requestedQty\)/);
+  assert.match(protective,/for\(let attempt=0;attempt<4&&remaining>1e-12;attempt\+\+\)/);
+  assert.match(protective,/liveBinancePositionQuantity/);
+  assert.match(protective,/remainderMarketClosed:true/);
+
+  assert.match(worker,/plan\.action==='CLOSE_REMAINDER_MARKET'/);
+  assert.match(worker,/exitMode:'REMAINDER_MARKET'/);
+  assert.match(worker,/recoveryReason:'PARTIAL_TARGET_REMAINDER'/);
+  assert.match(worker,/previousClientOrderId/);
+  assert.match(worker,/PARTIAL_TARGET_REMAINDER_MARKET_CLOSED/);
 });
 
 test('external or duplicate exit orders are not overwritten by automatic target',()=>{
