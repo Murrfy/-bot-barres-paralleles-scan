@@ -1577,11 +1577,9 @@ if (!permissionBlock.includes('BINANCE_TRADING_API_KEY') ||
   fail('real execution permission gate must validate the dedicated Binance trading key');
 }
 
-const realEntryPermissionRevalidation = fs.readFileSync('api/binance-entry-execute.js','utf8');
+const permissionRevalidationSource = fs.readFileSync('lib/binance-api-permissions.mjs','utf8');
 for (const required of [
   '/sapi/v1/account/apiRestrictions',
-  'BINANCE_TRADING_API_KEY',
-  'BINANCE_TRADING_API_SECRET',
   'fetchBinanceTradingApiPermissions',
   'binanceApiPermissionBlockers',
   "'BINANCE_API_PERMISSION_REVALIDATION_FAILED'",
@@ -1589,12 +1587,41 @@ for (const required of [
   'BINANCE_API_IP_RESTRICTION_REQUIRED',
   'BINANCE_API_WITHDRAWALS_MUST_BE_DISABLED'
 ]) {
-  if (!realEntryPermissionRevalidation.includes(required)) {
-    fail(`real entry must revalidate safe Binance trading-key permissions before opening: ${required}`);
+  if (!permissionRevalidationSource.includes(required)) {
+    fail(`shared Binance trading-key permission revalidation missing: ${required}`);
   }
 }
-if (realEntryPermissionRevalidation.indexOf('fetchBinanceTradingApiPermissions(apiKey,secret)') >
-    realEntryPermissionRevalidation.indexOf('runLiveEntryPreflight({')) {
+for (const file of [
+  'api/binance-entry-execute.js',
+  'api/binance-protective-execute.js',
+  'api/binance-protective-update-execute.js'
+]) {
+  const source = fs.readFileSync(file,'utf8');
+  for (const required of [
+    'BINANCE_TRADING_API_KEY',
+    'BINANCE_TRADING_API_SECRET',
+    'revalidateBinanceTradingApiPermissions',
+    "'BINANCE_API_PERMISSION_REVALIDATION_BLOCKED'"
+  ]) {
+    if (!source.includes(required)) {
+      fail(`${file} must revalidate safe Binance trading-key permissions before writes: ${required}`);
+    }
+  }
+}
+const realEntryPermissionRevalidation = fs.readFileSync('api/binance-entry-execute.js','utf8');
+const realEntryHandlerStart = realEntryPermissionRevalidation.indexOf('export default async function handler');
+const realEntryPermissionCheck = realEntryPermissionRevalidation.indexOf(
+  'revalidateBinanceTradingApiPermissions(apiKey,secret)',
+  realEntryHandlerStart
+);
+const realEntryPreflightAfterHandler = realEntryPermissionRevalidation.indexOf(
+  'runLiveEntryPreflight({',
+  realEntryHandlerStart
+);
+if (realEntryHandlerStart < 0 ||
+    realEntryPermissionCheck < 0 ||
+    realEntryPreflightAfterHandler < 0 ||
+    realEntryPermissionCheck > realEntryPreflightAfterHandler) {
   fail('Binance trading-key permission revalidation must happen before real-entry Futures preflight');
 }
 
