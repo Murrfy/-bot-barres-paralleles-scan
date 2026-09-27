@@ -49,6 +49,7 @@ test('obsolete iPad/browser MASTER architecture cannot return',()=>{
   assert.equal(fs.existsSync('master-standby.html'),false);
   for(const forbidden of [
     'IPAD MASTER',
+    'iPad MASTER',
     'masterWakeBadge',
     'startMasterRuntimeLoop',
     'masterRuntimeState',
@@ -56,6 +57,10 @@ test('obsolete iPad/browser MASTER architecture cannot return',()=>{
     'masterExecution',
     'masterStreamProjection',
     'localSimulationEntryAllowed',
+    'masterRealPositionBySymbol',
+    'scheduleMasterAutoProtection',
+    'Simulation supprimée',
+    'SIMULATION_LOCKED',
     "controllerIdentity.role==='master'",
   ]) assert.equal(index.includes(forbidden),false,forbidden);
 });
