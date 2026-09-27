@@ -663,6 +663,50 @@ function localizeMissingMaxLossRepair(result,observedAt=Date.now()){
   return result;
 }
 
+function localizeOrphanProtectionAnomalies(result,observedAt=Date.now()){
+  if(!result||result.version!==2&&result.version!==undefined)return result;
+  if(Array.isArray(result.symbolQuarantines)&&result.symbolQuarantines.length)return result;
+
+  const reasons=Array.isArray(result.reasons)?result.reasons.map(value=>String(value||'')):[];
+  if(reasons.length!==1||reasons[0]!=='ORPHAN_ZENITH_PROTECTIVE_ORDER')return result;
+
+  const rows=Array.isArray(result?.differences?.orphanZenithProtectiveOrders)
+    ?result.differences.orphanZenithProtectiveOrders:[];
+  if(!rows.length)return result;
+
+  const symbols=new Set();
+  for(const row of rows){
+    if(!row||typeof row!=='object'||Array.isArray(row))return result;
+    const symbol=String(row.symbol||'').toUpperCase();
+    const orderClass=String(row.orderClass||'STANDARD').toUpperCase();
+    const clientOrderId=String(row.clientOrderId||'');
+    const clientAlgoId=String(row.clientAlgoId||'');
+    const id=orderClass==='ALGO'?clientAlgoId:clientOrderId;
+    const side=String(row.side||'').toUpperCase();
+    const positionSide=String(row.positionSide||'BOTH').toUpperCase();
+    const type=String(row.type||'').toUpperCase();
+    const reduceOnly=row.reduceOnly===true||row.reduceOnly==='true';
+    const closePosition=row.closePosition===true||row.closePosition==='true';
+    if(!/^[A-Z0-9]{3,30}$/.test(symbol)||
+       !['STANDARD','ALGO'].includes(orderClass)||
+       !/^zth-[A-Za-z0-9._:-]+$/.test(id)||id.length>36||
+       !['BUY','SELL'].includes(side)||positionSide!=='BOTH'||!type||
+       !(reduceOnly||closePosition))return result;
+    symbols.add(symbol);
+  }
+  if(symbols.size!==1)return result;
+  const symbol=[...symbols][0];
+
+  result.symbolQuarantines=[
+    {symbol,direction:'LONG',reason:'ORPHAN_PROTECTION_CLEANUP_PENDING',remainingQuantity:null,since:Number(observedAt)||Date.now()},
+    {symbol,direction:'SHORT',reason:'ORPHAN_PROTECTION_CLEANUP_PENDING',remainingQuantity:null,since:Number(observedAt)||Date.now()},
+  ];
+  result.reasons=[];
+  result.failClosed=false;
+  result.status='CLEAN_REAL_WITH_QUARANTINES';
+  return result;
+}
+
 function expectedPositions(runtimeState) {
   const data = runtimeState?.data || {};
   const list = Array.isArray(data.binancePositions) ? data.binancePositions : [];
@@ -1588,6 +1632,7 @@ export default async function handler(req, res) {
     result.differences.exhaustedTriggeredMaxLossRemainders=triggeredRecovery.exhausted;
     localizeTriggeredMaxLossAnomalies(result,triggeredRecovery,started);
     localizeMissingMaxLossRepair(result,started);
+    localizeOrphanProtectionAnomalies(result,started);
 
     const unsafePositionConfigs = actualPositions
       .filter(position =>
