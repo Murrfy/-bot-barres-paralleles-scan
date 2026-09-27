@@ -188,6 +188,54 @@ function partialTargetRemainderProof(runtimeState,payload={}){
   }
   return {order,remaining,executed,original};
 }
+async function incompleteProtectiveCloseRemainderProof({apiKey,secret,payload={}}={}){
+  if(String(payload?.recoveryReason||'').toUpperCase()!=='INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER')return null;
+  if(String(payload?.exitMode||'').toUpperCase()!=='REMAINDER_MARKET')return null;
+
+  const symbol=String(payload?.symbol||'').toUpperCase();
+  const dir=String(payload?.direction||'').toUpperCase();
+  const commandId=String(payload?.commandId||'');
+  const requestedQty=Number(payload?.quantity);
+  const clientOrderId=String(payload?.previousClientOrderId||'');
+  if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(dir)||
+     !/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)||
+     !/^zth-EXI-[A-Za-z0-9._:-]+$/.test(clientOrderId)||clientOrderId.length>36||
+     !(requestedQty>0))return null;
+
+  const order=await queryOrderByClientId({
+    apiKey,secret,symbol,clientOrderId,timestamp:Date.now(),
+  });
+  const original=Number(order?.origQty);
+  const executed=Number(order?.executedQty);
+  const remaining=original-executed;
+  const expectedSide=dir==='LONG'?'SELL':'BUY';
+  const status=String(order?.status||'').toUpperCase();
+  if(String(order?.symbol||'').toUpperCase()!==symbol||
+     String(order?.clientOrderId||'')!==clientOrderId||
+     String(order?.side||'').toUpperCase()!==expectedSide||
+     String(order?.positionSide||'BOTH').toUpperCase()!=='BOTH'||
+     String(order?.type||'').toUpperCase()!=='LIMIT'||
+     String(order?.timeInForce||'').toUpperCase()!=='IOC'||
+     !(order?.reduceOnly===true||order?.reduceOnly==='true')||
+     order?.closePosition===true||order?.closePosition==='true'||
+     String(order?.priceMatch||'').toUpperCase()!=='OPPONENT'||
+     !['EXPIRED','EXPIRED_IN_MATCH','CANCELED'].includes(status)||
+     !(original>0)||!(executed>=0)||executed>=original||!(remaining>0)||
+     !sameQuantity(remaining,requestedQty)){
+    return null;
+  }
+
+  const expected=buildExitOrderPlan({
+    commandId,symbol,direction:dir,quantity:original,
+    exitMode:'PROTECTIVE_IOC',attempt:0,priceMatch:'OPPONENT',
+  });
+  if(String(expected?.params?.newClientOrderId||'')!==clientOrderId)return null;
+
+  const live=await liveBinancePositionQuantity({apiKey,secret,symbol,direction:dir});
+  if(!sameQuantity(live,requestedQty))return null;
+  return {order,original,executed,remaining,status};
+}
+
 async function liveBinancePositionQuantity({apiKey,secret,symbol,direction:dir}){
   const rows=await signedBinanceRequest({
     path:'/fapi/v3/positionRisk',method:'GET',apiKey,secret,timestamp:Date.now(),
@@ -217,21 +265,25 @@ function validSaleRemainderRecord(row){
   const nextAttempt=Math.floor(Number(row.nextAttempt));
   if(!saleRemainderField(symbol,dir)||
      !/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)||
-     !['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER'].includes(sourceReason)||
+     !['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER','TRIGGERED_MAX_LOSS_REMAINDER','INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'].includes(sourceReason)||
      !(initialQuantity>0)||!(attemptQuantity>0)||attemptQuantity>initialQuantity+1e-12||
      nextAttempt<0||nextAttempt>3)return false;
-  if(sourceReason==='PARTIAL_TARGET_REMAINDER'){
+  if(sourceReason==='PARTIAL_TARGET_REMAINDER'||sourceReason==='INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'){
     const id=String(row.previousClientOrderId||'');
     if(!/^zth-EXI-[A-Za-z0-9._:-]+$/.test(id)||id.length>36)return false;
   }else{
     const algo=String(row.clientAlgoId||'');
     const actual=String(row.actualOrderId||'');
-    if(!/^zth-PRO-[A-Za-z0-9._:-]+$/.test(algo)||algo.length>36||!actual)return false;
+    const pattern=sourceReason==='TRIGGERED_MAX_LOSS_REMAINDER'
+      ?/^zth-MAX-[A-Za-z0-9._:-]+$/
+      :/^zth-PRO-[A-Za-z0-9._:-]+$/;
+    if(!pattern.test(algo)||algo.length>36||!actual)return false;
   }
   return true;
 }
 function saleRemainderSource({
-  reqBody={},partialTargetRemainder=null,progressiveRemainderRecovery=false
+  reqBody={},partialTargetRemainder=null,progressiveRemainderRecovery=false,
+  maxLossRemainderRecovery=false,incompleteProtectiveRemainder=null
 }={}){
   const sourceReason=String(reqBody?.recoveryReason||'').toUpperCase();
   const row={
@@ -252,6 +304,8 @@ function saleRemainderSource({
   };
   if(sourceReason==='PARTIAL_TARGET_REMAINDER'&&!partialTargetRemainder)return null;
   if(sourceReason==='TRIGGERED_PROGRESSIVE_REMAINDER'&&progressiveRemainderRecovery!==true)return null;
+  if(sourceReason==='TRIGGERED_MAX_LOSS_REMAINDER'&&maxLossRemainderRecovery!==true)return null;
+  if(sourceReason==='INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'&&!incompleteProtectiveRemainder)return null;
   return validSaleRemainderRecord(row)?row:null;
 }
 async function beginSaleRemainderRecovery(row){
@@ -534,6 +588,27 @@ export default async function handler(req,res){
   if(partialTargetRemainder&&String(master?.principal||'')!=='engine'){
     return send(res,423,{ok:false,code:'PARTIAL_TARGET_REMAINDER_ENGINE_REQUIRED',writeAttempted:false});
   }
+
+  let incompleteProtectiveRemainder=null;
+  if(type==='EXEC_CLOSE_POSITION'&&
+     String(req.body?.recoveryReason||'').toUpperCase()==='INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'){
+    try{
+      incompleteProtectiveRemainder=await incompleteProtectiveCloseRemainderProof({
+        apiKey,secret,payload:req.body,
+      });
+    }catch(e){
+      return send(res,503,{
+        ok:false,code:'INCOMPLETE_PROTECTIVE_REMAINDER_PROOF_UNAVAILABLE',
+        binanceCode:e?.code??null,writeAttempted:false,
+      });
+    }
+    if(!incompleteProtectiveRemainder){
+      return send(res,423,{ok:false,code:'INCOMPLETE_PROTECTIVE_REMAINDER_PROOF_REQUIRED',writeAttempted:false});
+    }
+    if(String(master?.principal||'')!=='engine'){
+      return send(res,423,{ok:false,code:'INCOMPLETE_PROTECTIVE_REMAINDER_ENGINE_REQUIRED',writeAttempted:false});
+    }
+  }
   const executionSymbol=String(req.body?.symbol||'').toUpperCase();
   const executionDirection=String(req.body?.direction||'').toUpperCase();
   const executionTarget=['LONG','SHORT'].includes(executionDirection)
@@ -640,7 +715,7 @@ export default async function handler(req,res){
 
   const exitMode=String(req.body?.exitMode||'PROTECTIVE_IOC').toUpperCase();
   if(exitMode==='REMAINDER_MARKET'){
-    if(!partialTargetRemainder&&!progressiveRemainderRecovery&&!persistedRemainderRecovery){
+    if(!partialTargetRemainder&&!progressiveRemainderRecovery&&!maxLossRemainderRecovery&&!incompleteProtectiveRemainder&&!persistedRemainderRecovery){
       return send(res,423,{ok:false,code:'SALE_REMAINDER_PROOF_REQUIRED',writeAttempted:false});
     }
   }else if(exitMode!=='PROTECTIVE_IOC'){
@@ -688,6 +763,7 @@ export default async function handler(req,res){
       }else{
         const source=saleRemainderSource({
           reqBody:req.body,partialTargetRemainder,progressiveRemainderRecovery,
+          maxLossRemainderRecovery,incompleteProtectiveRemainder,
         });
         if(!source){
           return send(res,423,{ok:false,code:'SALE_REMAINDER_SOURCE_INVALID',writeAttempted:false});

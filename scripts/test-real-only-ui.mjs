@@ -42,12 +42,15 @@ test('legacy local position helpers are absent',()=>{
   assert.match(html,/function openBySymbol\(\)\{return null\}/);
 });
 
-test('full-position close escalation has no MARKET fallback',()=>{
+test('MARKET sell remains restricted to certified incomplete-sale remainder recovery',()=>{
   const orderIntent=fs.readFileSync('lib/order-intent.mjs','utf8');
   const closeState=fs.readFileSync('lib/protective-close-state.mjs','utf8');
   const protectiveApi=fs.readFileSync('api/binance-protective-execute.js','utf8');
-  assert.doesNotMatch(orderIntent,/EXIT_MARKET|MARKET_LAST_RESORT/);
+  assert.doesNotMatch(orderIntent,/MARKET_LAST_RESORT/);
   assert.doesNotMatch(closeState,/MARKET_LAST_RESORT/);
+  assert.match(orderIntent,/mode === 'REMAINDER_MARKET'/);
+  assert.match(protectiveApi,/INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER/);
+  assert.match(protectiveApi,/SALE_REMAINDER_PROOF_REQUIRED/);
   assert.match(protectiveApi,/EXIT_MODE_LIMIT_REQUIRED/);
 });
 

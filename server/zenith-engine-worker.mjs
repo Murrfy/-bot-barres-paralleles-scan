@@ -2804,15 +2804,15 @@ async function recoverTriggeredMaxLossRemainder(report){
         direction:target.direction,
         quantity:target.remainingQuantity,
         closeAll:true,
-        exitMode:'PROTECTIVE_IOC',
-        attempt:target.nextAttempt,
-        priceMatch:target.priceMatch,
+        exitMode:'REMAINDER_MARKET',
         recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER',
+        clientAlgoId:target.clientAlgoId,
+        actualOrderId:target.actualOrderId,
       });
     }finally{
       maxLossRemainderRecovery.writeBusy=false;
     }
-    if(!result.response.ok||result.data?.ok!==true){
+    if(!result.response.ok||result.data?.ok!==true||result.data?.remainderMarketClosed!==true){
       const reason=String(result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status));
       const ambiguous=result.data?.ambiguous===true||result.data?.result?.ambiguous===true;
       const wrote=result.data?.writeAttempted===true;
@@ -2822,31 +2822,22 @@ async function recoverTriggeredMaxLossRemainder(report){
       await publishRuntime().catch(()=>{});
       scheduleReconcile(ambiguous||wrote?100:500);
       return {
-        handled:true,dispatched:false,reason:maxLossRemainderRecovery.lastError,
+        handled:true,closed:false,reason:maxLossRemainderRecovery.lastError,
         ambiguous,wrote,
       };
     }
     const clientOrderId=String(result.data?.plan?.params?.newClientOrderId||'');
-    if(!clientOrderId){
-      maxLossRemainderRecovery.lastError='MAX_LOSS_REMAINDER_CLIENT_ORDER_ID_MISSING';
-      runtime.error=maxLossRemainderRecovery.lastError;
-      stream.lastError=maxLossRemainderRecovery.lastError;
-      await publishRuntime().catch(()=>{});
-      scheduleReconcile(100);
-      return {handled:true,dispatched:false,reason:maxLossRemainderRecovery.lastError};
-    }
-    log('MAX_LOSS_REMAINDER_IOC_DISPATCHED',{
+    log('MAX_LOSS_REMAINDER_MARKET_CLOSED',{
       symbol:target.symbol,
       direction:target.direction,
       remainingQuantity:target.remainingQuantity,
-      attempt:target.nextAttempt,
-      priceMatch:target.priceMatch,
       clientAlgoId:target.clientAlgoId,
       actualOrderId:target.actualOrderId,
       clientOrderId,
+      attempts:Array.isArray(result.data?.attempts)?result.data.attempts.length:1,
     });
     maxLossRemainderRecovery.lastError='';
-    return {handled:true,dispatched:true,reason:'MAX_LOSS_REMAINDER_IOC_DISPATCHED',clientOrderId};
+    return {handled:true,closed:true,reason:'MAX_LOSS_REMAINDER_MARKET_CLOSED',clientOrderId};
   }finally{
     maxLossRemainderRecovery.writeBusy=false;
     maxLossRemainderRecovery.busy=false;
@@ -2997,9 +2988,9 @@ async function reconcile(secondPass=false){
     const triggeredRemainders=triggeredMaxLossRemainderTargets(data.report);
     if(triggeredRemainders.length){
       const recovered=await recoverTriggeredMaxLossRemainder(data.report);
-      if(recovered.handled&&recovered.dispatched){
+      if(recovered.handled&&recovered.closed){
         stream.reconcileBusy=false;
-        await sleep(300);
+        await sleep(100);
         return reconcile(false);
       }
       const reason=String(recovered.reason||'MAX_LOSS_REMAINDER_RECOVERY_FAILED');
@@ -3905,79 +3896,108 @@ async function runFullClose(command,raw){
     execution.lastError='EXIT_MODE_LIMIT_REQUIRED';
     return false;
   }
-  const policies=PROTECTIVE_CLOSE_ATTEMPTS;
 
-  let lastClientOrderId='';
-  for(const policy of policies){
-    currentQuantity=streamPositionQuantity(stream.state,symbol,direction);
-    if(currentQuantity<=1e-12){
-      return safeAckFullClose(raw,initialQuantity,lastClientOrderId,lastClientOrderId==='');
-    }
+  const policy=PROTECTIVE_CLOSE_ATTEMPTS[0];
+  const commandId=String(command.id||'');
+  const first=await callProtectiveExecute({
+    type:'EXEC_CLOSE_POSITION',
+    commandId,
+    symbol,
+    direction,
+    quantity:currentQuantity,
+    closeAll:true,
+    exitMode:policy.exitMode,
+    attempt:policy.attempt,
+    priceMatch:policy.priceMatch,
+  });
 
-    const result=await callProtectiveExecute({
-      type:'EXEC_CLOSE_POSITION',
-      commandId:String(command.id||''),
-      symbol,
-      direction,
-      quantity:currentQuantity,
-      closeAll:true,
-      exitMode:policy.exitMode,
-      attempt:policy.attempt,
-      priceMatch:policy.priceMatch,
-    });
-
-    if(!result.response.ok||result.data?.ok!==true){
-      const reason=String(result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status));
-      const wrote=result.data?.writeAttempted===true;
-      const ambiguous=result.data?.ambiguous===true||result.data?.result?.ambiguous===true;
-      if(wrote||ambiguous){
-        await failCommand(raw,'AMBIGUOUS_'+reason);
-        execution.lastError='AMBIGUOUS_'+reason;
-        return false;
-      }
-      if([
-        'EXECUTION_NOT_READY',
-        'EXECUTION_NOT_ARMED',
-        'POSITION_NOT_FOUND',
-        'CLOSE_QUANTITY_EXCEEDS_POSITION',
-        'FULL_CLOSE_QUANTITY_REQUIRED',
-      ].includes(reason)){
-        try{await awaitReconciliation()}catch{}
-        await requeueCommand(raw,'PROTECTIVE_EXEC_'+reason,1500);
-        return false;
-      }
-      await failCommand(raw,'PROTECTIVE_EXEC_'+reason);
-      execution.lastError=reason;
+  if(!first.response.ok||first.data?.ok!==true){
+    const reason=String(first.data?.code||first.data?.reason||first.data?.error||('HTTP_'+first.response.status));
+    const wrote=first.data?.writeAttempted===true;
+    const ambiguous=first.data?.ambiguous===true||first.data?.result?.ambiguous===true;
+    if(wrote||ambiguous){
+      await failCommand(raw,'AMBIGUOUS_'+reason);
+      execution.lastError='AMBIGUOUS_'+reason;
       return false;
     }
-
-    lastClientOrderId=String(result.data?.plan?.params?.newClientOrderId||'');
-    if(!lastClientOrderId){
-      await failCommand(raw,'PROTECTIVE_CLIENT_ORDER_ID_MISSING');
+    if([
+      'EXECUTION_NOT_READY',
+      'EXECUTION_NOT_ARMED',
+      'POSITION_NOT_FOUND',
+      'CLOSE_QUANTITY_EXCEEDS_POSITION',
+      'FULL_CLOSE_QUANTITY_REQUIRED',
+    ].includes(reason)){
+      try{await awaitReconciliation()}catch{}
+      await requeueCommand(raw,'PROTECTIVE_EXEC_'+reason,1500);
       return false;
     }
-
-    const outcome=await waitForFullCloseState({
-      symbol,direction,beforeQuantity:currentQuantity,clientOrderId:lastClientOrderId,
-    },2500);
-
-    if(outcome.confirmed&&outcome.streamReady){
-      return safeAckFullClose(raw,initialQuantity,lastClientOrderId,false);
-    }
-    if(!outcome.safeToRetry){
-      const reason=outcome.inconsistentFilled
-        ?'FILLED_POSITION_MISMATCH'
-        :outcome.terminalSeen
-          ?'PROTECTIVE_RETRY_NOT_SAFE'
-          :'PROTECTIVE_ORDER_UNCONFIRMED';
-      await failCommand(raw,reason);
-      execution.lastError=reason;
-      return false;
-    }
+    await failCommand(raw,'PROTECTIVE_EXEC_'+reason);
+    execution.lastError=reason;
+    return false;
   }
 
-  await failCommand(raw,'PROTECTIVE_CLOSE_ATTEMPTS_EXHAUSTED');
-  return false;
+  const firstClientOrderId=String(first.data?.plan?.params?.newClientOrderId||'');
+  if(!firstClientOrderId){
+    await failCommand(raw,'PROTECTIVE_CLIENT_ORDER_ID_MISSING');
+    return false;
+  }
+
+  const outcome=await waitForFullCloseState({
+    symbol,direction,beforeQuantity:currentQuantity,clientOrderId:firstClientOrderId,
+  },2500);
+
+  if(outcome.confirmed&&outcome.streamReady){
+    return safeAckFullClose(raw,initialQuantity,firstClientOrderId,false);
+  }
+  if(!outcome.safeToRetry){
+    const reason=outcome.inconsistentFilled
+      ?'FILLED_POSITION_MISMATCH'
+      :outcome.terminalSeen
+        ?'PROTECTIVE_REMAINDER_NOT_SAFE'
+        :'PROTECTIVE_ORDER_UNCONFIRMED';
+    await failCommand(raw,reason);
+    execution.lastError=reason;
+    return false;
+  }
+
+  const remainingQuantity=n(outcome.afterQuantity,0);
+  if(!(remainingQuantity>0)||remainingQuantity>currentQuantity+1e-12){
+    await failCommand(raw,'PROTECTIVE_REMAINDER_QUANTITY_INVALID');
+    execution.lastError='PROTECTIVE_REMAINDER_QUANTITY_INVALID';
+    return false;
+  }
+
+  const remainder=await callProtectiveExecute({
+    type:'EXEC_CLOSE_POSITION',
+    commandId,
+    symbol,
+    direction,
+    quantity:remainingQuantity,
+    closeAll:true,
+    exitMode:'REMAINDER_MARKET',
+    recoveryReason:'INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER',
+    previousClientOrderId:firstClientOrderId,
+  });
+
+  if(!remainder.response.ok||remainder.data?.ok!==true||remainder.data?.remainderMarketClosed!==true){
+    const reason=String(remainder.data?.code||remainder.data?.reason||remainder.data?.error||('HTTP_'+remainder.response.status));
+    const wrote=remainder.data?.writeAttempted===true;
+    const ambiguous=remainder.data?.ambiguous===true||remainder.data?.result?.ambiguous===true;
+    await failCommand(raw,(wrote||ambiguous?'AMBIGUOUS_':'PROTECTIVE_REMAINDER_')+reason);
+    execution.lastError='PROTECTIVE_REMAINDER_'+reason;
+    return false;
+  }
+
+  const marketClientOrderId=String(remainder.data?.plan?.params?.newClientOrderId||'');
+  log('PROTECTIVE_REMAINDER_MARKET_CLOSED',{
+    symbol,direction,
+    initialQuantity,
+    remainingQuantity,
+    previousClientOrderId:firstClientOrderId,
+    clientOrderId:marketClientOrderId,
+    attempts:Array.isArray(remainder.data?.attempts)?remainder.data.attempts.length:1,
+  });
+  return safeAckFullClose(raw,initialQuantity,marketClientOrderId||firstClientOrderId,false);
 }
 
 async function commandCycle(){

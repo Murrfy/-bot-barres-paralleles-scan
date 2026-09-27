@@ -59,6 +59,46 @@ test('24/7 engine resumes persisted recovery before discovering a new partial-sa
   assert.ok(persisted>=0&&freshTarget>persisted&&freshProgressive>persisted);
 });
 
+test('MAX-LOSS and manual-close remainders use the same persisted MARKET recovery channel',()=>{
+  for(const source of [
+    'TRIGGERED_MAX_LOSS_REMAINDER',
+    'INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER',
+  ]){
+    assert.match(execute,new RegExp(source));
+    assert.match(reconcile,new RegExp(source));
+    assert.match(command,new RegExp(source));
+  }
+
+  const maxStart=worker.indexOf('async function recoverTriggeredMaxLossRemainder');
+  const maxEnd=worker.indexOf('async function reconcile(secondPass=false)',maxStart);
+  assert.ok(maxStart>=0&&maxEnd>maxStart);
+  const maxBlock=worker.slice(maxStart,maxEnd);
+  assert.match(maxBlock,/exitMode:'REMAINDER_MARKET'/);
+  assert.match(maxBlock,/recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER'/);
+  assert.match(maxBlock,/MAX_LOSS_REMAINDER_MARKET_CLOSED/);
+  assert.doesNotMatch(maxBlock,/exitMode:'PROTECTIVE_IOC'/);
+
+  const closeStart=worker.indexOf('async function runFullClose');
+  const closeEnd=worker.indexOf('async function commandCycle',closeStart);
+  assert.ok(closeStart>=0&&closeEnd>closeStart);
+  const closeBlock=worker.slice(closeStart,closeEnd);
+  const initial=closeBlock.indexOf('exitMode:policy.exitMode');
+  const market=closeBlock.indexOf("exitMode:'REMAINDER_MARKET'");
+  assert.ok(initial>=0&&market>initial,'manual close must try LIMIT IOC before MARKET remainder');
+  assert.match(closeBlock,/recoveryReason:'INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'/);
+  assert.match(closeBlock,/previousClientOrderId:firstClientOrderId/);
+  assert.doesNotMatch(closeBlock,/for\(const policy of policies\)/);
+});
+
+test('manual-close MARKET proof is direct, deterministic and engine-only',()=>{
+  assert.match(execute,/async function incompleteProtectiveCloseRemainderProof/);
+  assert.match(execute,/queryOrderByClientId/);
+  assert.match(execute,/exitMode:'PROTECTIVE_IOC',attempt:0,priceMatch:'OPPONENT'/);
+  assert.match(execute,/INCOMPLETE_PROTECTIVE_REMAINDER_PROOF_REQUIRED/);
+  assert.match(execute,/INCOMPLETE_PROTECTIVE_REMAINDER_ENGINE_REQUIRED/);
+  assert.match(execute,/sameQuantity\(live,requestedQty\)/);
+});
+
 test('four MARKET attempts stay bounded and never advance to an untracked fifth identity',()=>{
   assert.match(execute,/Number\(recoveryState\.nextAttempt\)<4/);
   assert.match(execute,/if\(attempt>=3\)/);

@@ -41,7 +41,9 @@ test('triggered MAX-LOSS remainder recovery remains an allowed automatic safety 
   const recovery=block(worker,'async function recoverTriggeredMaxLossRemainder','async function reconcile');
   assert.match(recovery,/type:'EXEC_CLOSE_POSITION'/);
   assert.match(recovery,/recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER'/);
-  assert.match(recovery,/exitMode:'PROTECTIVE_IOC'/);
+  assert.match(recovery,/exitMode:'REMAINDER_MARKET'/);
+  assert.match(recovery,/MAX_LOSS_REMAINDER_MARKET_CLOSED/);
+  assert.doesNotMatch(recovery,/exitMode:'PROTECTIVE_IOC'/);
   assert.doesNotMatch(recovery,/emergency-stop|PANIC|runFullClose\(/);
 });
 

@@ -48,17 +48,18 @@ test('ambiguous or failed repair remains fail-closed without closing the positio
 });
 
 
-test('triggered MAX-LOSS remainder is routed through deterministic LIMIT IOC escalation before generic repair',()=>{
+test('triggered MAX-LOSS remainder is routed through persisted MARKET recovery before generic repair',()=>{
   assert.match(worker,/triggeredMaxLossRemainderTargets/);
   assert.match(worker,/recoverTriggeredMaxLossRemainder/);
   const start=worker.indexOf('async function recoverTriggeredMaxLossRemainder');
   const end=worker.indexOf('async function reconcile',start);
   const block=worker.slice(start,end);
   assert.match(block,/recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER'/);
-  assert.match(block,/exitMode:'PROTECTIVE_IOC'/);
-  assert.match(block,/attempt:target\.nextAttempt/);
-  assert.match(block,/priceMatch:target\.priceMatch/);
-  assert.doesNotMatch(block,/MARKET/);
+  assert.match(block,/exitMode:'REMAINDER_MARKET'/);
+  assert.match(block,/clientAlgoId:target\.clientAlgoId/);
+  assert.match(block,/actualOrderId:target\.actualOrderId/);
+  assert.match(block,/MAX_LOSS_REMAINDER_MARKET_CLOSED/);
+  assert.doesNotMatch(block,/exitMode:'PROTECTIVE_IOC'/);
   const reconcileStart=worker.indexOf('async function reconcile');
   const remainderAt=worker.indexOf('const triggeredRemainders=',reconcileStart);
   const genericRepairAt=worker.indexOf('const repairTarget=missingMaxLossRepairTarget',reconcileStart);
@@ -73,7 +74,6 @@ test('ambiguous MAX-LOSS remainder write triggers immediate read-only reconcilia
   assert.match(block,/const ambiguous=result\.data\?\.ambiguous===true\|\|result\.data\?\.result\?\.ambiguous===true/);
   assert.match(block,/const wrote=result\.data\?\.writeAttempted===true/);
   assert.match(block,/scheduleReconcile\(ambiguous\|\|wrote\?100:500\)/);
-  assert.match(block,/scheduleReconcile\(100\)/);
 });
 
 
