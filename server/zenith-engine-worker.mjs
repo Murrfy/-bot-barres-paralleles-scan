@@ -150,6 +150,9 @@ const markStream={
   lastAggTimes:new Map(),
   recovering:new Set(),
   pendingAggTrades:new Map(),
+  recoveryBlockedSymbols:new Map(),
+  recoveryAttemptFailures:new Set(),
+  recoveryRetryTimers:new Map(),
   lastError:'',
 };
 
@@ -1132,6 +1135,14 @@ async function failClosedAutoProtection(reason){
   await invalidateStream(code).catch(()=>{});
 }
 
+function localAutoProtectionFailure(symbol,reason){
+  const wanted=String(symbol||'').toUpperCase();
+  const code=String(reason||'AUTO_PROTECTION_LOCAL_FAILURE');
+  autoProtection.lastError=code;
+  log('AUTO_PROTECTION_LOCAL_FAILURE',{symbol:wanted,reason:code});
+  return false;
+}
+
 function localAutoTargetFailure(symbol,reason,{changed=false}={}){
   const wanted=String(symbol||'').toUpperCase();
   const code='AUTO_TARGET_'+String(reason||'LOCAL_FAILURE');
@@ -1374,9 +1385,12 @@ async function executeAutoProgressive(plan){
       ...body,phase:'CANCEL_OLD',newClientAlgoId:clientId
     });
     if(!canceled.response.ok||canceled.data?.ok!==true){
-      await failClosedAutoProtection(
-        'AUTO_CANCEL_'+String(canceled.data?.code||canceled.data?.reason||('HTTP_'+canceled.response.status))
-      );
+      const reason='AUTO_CANCEL_'+String(canceled.data?.code||canceled.data?.reason||('HTTP_'+canceled.response.status));
+      if(canceled.data?.ambiguous===true||canceled.data?.result?.ambiguous===true){
+        await failClosedAutoProtection(reason+'_AMBIGUOUS');
+      }else{
+        localAutoProtectionFailure(live.symbol,reason);
+      }
       return false;
     }
     const terminal=await waitForStreamOrder({
@@ -1402,6 +1416,7 @@ async function executeAutoProgressive(plan){
 
 async function runAutoProtection(symbol,mark){
   const wanted=String(symbol||'').toUpperCase();
+  if(markStream.recoveryBlockedSymbols.has(wanted))return false;
   if(symbolMaxLossQuarantined(wanted))return false;
   const projection=streamProjection();
   const position=(projection.binancePositions||[])
@@ -1517,11 +1532,47 @@ function rememberAggCursor(symbol,id,time){
   if(Number.isFinite(Number(time)))markStream.lastAggTimes.set(wanted,Number(time));
 }
 
+function clearMarkRecoveryRetry(symbol){
+  const wanted=String(symbol||'').toUpperCase();
+  const timer=markStream.recoveryRetryTimers.get(wanted);
+  if(timer)clearTimeout(timer);
+  markStream.recoveryRetryTimers.delete(wanted);
+}
+
+function scheduleMarkRecoveryRetry(symbol,delay=3000){
+  const wanted=String(symbol||'').toUpperCase();
+  if(!wanted||stopping||!runtime.leaseActive||!trackedMarkSymbols().has(wanted)){
+    clearMarkRecoveryRetry(wanted);
+    return false;
+  }
+  clearMarkRecoveryRetry(wanted);
+  const timer=setTimeout(()=>{
+    markStream.recoveryRetryTimers.delete(wanted);
+    if(stopping||!runtime.leaseActive||!trackedMarkSymbols().has(wanted))return;
+    void recoverMissedAggTrades(wanted).catch(error=>logError('MARK_RECOVERY_RETRY_FAILED',error,{symbol:wanted}));
+  },Math.max(500,delay));
+  markStream.recoveryRetryTimers.set(wanted,timer);
+  return true;
+}
+
+function blockMarkRecovery(symbol,reason){
+  const wanted=String(symbol||'').toUpperCase();
+  const code=String(reason||'MARK_RECOVERY_INCOMPLETE');
+  if(!wanted)return false;
+  markStream.recoveryBlockedSymbols.set(wanted,code);
+  markStream.lastError=code;
+  autoProtection.lastError=code;
+  log('AUTO_PROTECTION_MARK_RECOVERY_LOCAL_BLOCK',{symbol:wanted,reason:code});
+  scheduleMarkRecoveryRetry(wanted,3000);
+  return true;
+}
+
 async function processAggTradeRow(symbol,row){
   if(!row)return false;
   const wanted=String(symbol||row?.s||'').toUpperCase();
   const tracked=trackedMarkSymbols();
   if(!tracked.has(wanted))return false;
+  if(markStream.recoveryBlockedSymbols.has(wanted)&&!markStream.recovering.has(wanted))return false;
   const id=n(row?.a,-1);
   const eventTime=n(row?.T,n(row?.E,Date.now()));
   const previousId=markStream.lastAggIds.get(wanted);
@@ -1541,30 +1592,42 @@ async function recoverMissedAggTrades(symbol){
   const wanted=String(symbol||'').toUpperCase();
   if(!trackedMarkSymbols().has(wanted)||markStream.recovering.has(wanted))return false;
   markStream.recovering.add(wanted);
+  markStream.recoveryAttemptFailures.delete(wanted);
   markStream.pendingAggTrades.set(wanted,[]);
+  let recoveryComplete=false;
   try{
     let start=Math.max(Date.now()-ENTRY_WATCH_RECOVERY_MS,trackingStartTime(wanted)-250);
     let fromId=null;
     let pages=0;
+    let reachedRecoveryEnd=false;
     while(trackedMarkSymbols().has(wanted)&&pages<25){
       const path=fromId==null
         ?`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&startTime=${Math.floor(start)}&limit=1000`
         :`/fapi/v1/aggTrades?symbol=${encodeURIComponent(wanted)}&fromId=${fromId}&limit=1000`;
       const rows=await publicBinanceJson(path);
-      if(!Array.isArray(rows)||!rows.length)break;
+      if(!Array.isArray(rows))throw new Error('MARK_RECOVERY_RESPONSE_INVALID');
+      if(!rows.length){reachedRecoveryEnd=true;break;}
       for(const row of rows){
         if(!trackedMarkSymbols().has(wanted))break;
         await processAggTradeRow(wanted,row);
       }
       pages++;
-      if(rows.length<1000)break;
+      if(rows.length<1000){reachedRecoveryEnd=true;break}
       fromId=n(rows[rows.length-1]?.a,-1)+1;
-      if(!(fromId>0))break;
+      if(!(fromId>0))throw new Error('MARK_RECOVERY_CURSOR_INVALID');
       await sleep(40);
     }
-    if(pages>=25){
+    if(markStream.recoveryAttemptFailures.has(wanted)){
       if(activeProtectionSymbols().has(wanted)){
-        await failClosedAutoProtection('MARK_RECOVERY_PARTIAL_'+wanted);
+        blockMarkRecovery(wanted,'MARK_RECOVERY_BUFFER_OVERFLOW_'+wanted);
+      }else{
+        entryWatch.lastError='ENTRY_WATCH_RECOVERY_BUFFER_OVERFLOW_'+wanted;
+      }
+      return false;
+    }
+    if(pages>=25&&!reachedRecoveryEnd){
+      if(activeProtectionSymbols().has(wanted)){
+        blockMarkRecovery(wanted,'MARK_RECOVERY_PARTIAL_'+wanted);
       }else{
         entryWatch.lastError='ENTRY_WATCH_RECOVERY_PARTIAL_'+wanted;
         const state=entryWatch.states.get(wanted);
@@ -1576,10 +1639,14 @@ async function recoverMissedAggTrades(symbol){
       }
       return false;
     }
+    recoveryComplete=true;
+    markStream.recoveryBlockedSymbols.delete(wanted);
+    clearMarkRecoveryRetry(wanted);
     return true;
   }catch(error){
     if(activeProtectionSymbols().has(wanted)){
-      await failClosedAutoProtection(
+      blockMarkRecovery(
+        wanted,
         'MARK_RECOVERY_FAILED_'+cleanReason(error?.message||'BINANCE_PUBLIC_RECOVERY','BINANCE_PUBLIC_RECOVERY')
       );
     }else{
@@ -1596,9 +1663,14 @@ async function recoverMissedAggTrades(symbol){
     const queued=markStream.pendingAggTrades.get(wanted)||[];
     markStream.recovering.delete(wanted);
     markStream.pendingAggTrades.delete(wanted);
-    queued.sort((a,b)=>n(a?.a)-n(b?.a)||n(a?.T)-n(b?.T));
-    for(const row of queued){
-      if(trackedMarkSymbols().has(wanted))await processAggTradeRow(wanted,row);
+    markStream.recoveryAttemptFailures.delete(wanted);
+    if(recoveryComplete){
+      queued.sort((a,b)=>n(a?.a)-n(b?.a)||n(a?.T)-n(b?.T));
+      for(const row of queued){
+        if(trackedMarkSymbols().has(wanted))await processAggTradeRow(wanted,row);
+      }
+    }else if(markStream.recoveryBlockedSymbols.has(wanted)){
+      scheduleMarkRecoveryRetry(wanted,3000);
     }
   }
 }
@@ -1616,6 +1688,12 @@ function sendMarkControl(method,params){
 function syncMarkSubscriptions(){
   if(!markStream.ws||markStream.ws.readyState!==WebSocket.OPEN)return false;
   const symbols=trackedMarkSymbols();
+  for(const symbol of [...markStream.recoveryBlockedSymbols.keys()]){
+    if(!symbols.has(symbol)){
+      markStream.recoveryBlockedSymbols.delete(symbol);
+      clearMarkRecoveryRetry(symbol);
+    }
+  }
   const desired=new Set([...symbols].map(markStreamName));
   const add=[...desired].filter(name=>!markStream.subscribed.has(name));
   const remove=[...markStream.subscribed].filter(name=>!desired.has(name));
@@ -1659,8 +1737,9 @@ async function processMarkPayload(payload){
   if(markStream.recovering.has(symbol)){
     const queued=markStream.pendingAggTrades.get(symbol)||[];
     if(queued.length>=1000){
+      markStream.recoveryAttemptFailures.add(symbol);
       if(activeProtectionSymbols().has(symbol)){
-        await failClosedAutoProtection('MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol);
+        blockMarkRecovery(symbol,'MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol);
       }else{
         entryWatch.lastError='ENTRY_WATCH_RECOVERY_BUFFER_OVERFLOW_'+symbol;
         const state=entryWatch.states.get(symbol);
@@ -3507,6 +3586,8 @@ async function shutdown(code=0){
   if(markStream.reconnectTimer)clearTimeout(markStream.reconnectTimer);
   if(markStream.restartTimer)clearTimeout(markStream.restartTimer);
   if(markStream.fallbackTimer)clearInterval(markStream.fallbackTimer);
+  for(const timer of markStream.recoveryRetryTimers.values())clearTimeout(timer);
+  markStream.recoveryRetryTimers.clear();
   if(autoProtection.highWaterSaveTimer)clearTimeout(autoProtection.highWaterSaveTimer);
   if(entryWatch.saveTimer)clearTimeout(entryWatch.saveTimer);
   clearStreamTimers();

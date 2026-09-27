@@ -39,15 +39,21 @@ test('worker uses routed aggregate-trade market subscriptions for active real po
   assert.equal(worker.includes('market/ws/!markPrice@arr@1s'),false);
 });
 
-test('market gaps are replayed from public aggTrades and ambiguity fails closed',()=>{
+test('market gaps are replayed and incomplete recovery blocks only that protection symbol',()=>{
   assert.ok(worker.includes("const BINANCE_PUBLIC_BASE='https://fapi.binance.com';"));
   assert.ok(worker.includes('/fapi/v1/aggTrades?symbol='));
   assert.ok(worker.includes('recoverMissedAggTrades'));
   assert.ok(worker.includes('markStream.pendingAggTrades'));
+  assert.ok(worker.includes('markStream.recoveryBlockedSymbols'));
+  assert.ok(worker.includes('scheduleMarkRecoveryRetry'));
+  assert.ok(worker.includes('blockMarkRecovery'));
   assert.ok(worker.includes('pages<25'));
-  assert.ok(worker.includes("failClosedAutoProtection('MARK_RECOVERY_PARTIAL_'"));
+  assert.ok(worker.includes('pages>=25&&!reachedRecoveryEnd'));
+  assert.ok(worker.includes("'MARK_RECOVERY_PARTIAL_'+wanted"));
   assert.ok(worker.includes("'MARK_RECOVERY_FAILED_'+cleanReason"));
   assert.ok(worker.includes("'MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol"));
+  assert.equal(worker.includes("failClosedAutoProtection('MARK_RECOVERY_PARTIAL_'"),false);
+  assert.equal(worker.includes("failClosedAutoProtection('MARK_RECOVERY_BUFFER_OVERFLOW_'"),false);
 });
 
 test('market websocket outage has a fenced read-only markPrice fallback',()=>{
@@ -92,6 +98,25 @@ test('replacement confirms new exact LIMIT protection before canceling old',()=>
   assert.ok(block.includes("String(order?.timeInForce||'').toUpperCase()!=='GTC'"));
   assert.ok(block.includes('realNumberMatches(order?.triggerPrice,level.triggerPrice)'));
   assert.ok(block.includes('realNumberMatches(order?.price,level.limitPrice)'));
+});
+
+test('deterministic old-protection cancel failure stays local while ambiguity stays global',()=>{
+  const block=between('async function executeAutoProgressive','async function runAutoProtection');
+  assert.ok(block.includes("const reason='AUTO_CANCEL_'"));
+  assert.ok(block.includes("canceled.data?.ambiguous===true||canceled.data?.result?.ambiguous===true"));
+  assert.ok(block.includes("failClosedAutoProtection(reason+'_AMBIGUOUS')"));
+  assert.ok(block.includes('localAutoProtectionFailure(live.symbol,reason)'));
+});
+
+test('blocked mark recovery cannot advance the live cursor until exact replay succeeds',()=>{
+  const process=between('async function processAggTradeRow','async function recoverMissedAggTrades');
+  assert.ok(process.includes('markStream.recoveryBlockedSymbols.has(wanted)&&!markStream.recovering.has(wanted)'));
+  const recover=between('async function recoverMissedAggTrades','function sendMarkControl');
+  assert.ok(recover.includes('let recoveryComplete=false'));
+  assert.ok(recover.includes('recoveryComplete=true'));
+  assert.ok(recover.includes('markStream.recoveryBlockedSymbols.delete(wanted)'));
+  assert.ok(recover.includes('if(recoveryComplete)'));
+  assert.ok(recover.includes('scheduleMarkRecoveryRetry(wanted,3000)'));
 });
 
 test('ambiguous autonomous writes fail closed without automatic PANIC',()=>{
