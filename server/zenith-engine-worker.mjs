@@ -2384,6 +2384,7 @@ async function repairMissingMaxLoss(report){
   const plan=buildMaxLossRepairPlan({
     report,
     positions:Array.isArray(projection.binancePositions)?projection.binancePositions:[],
+    orders:Array.isArray(projection.binanceOrders)?projection.binanceOrders:[],
     tokenSettings:runtime.config?.tokenSettings||{},
     settings:runtime.config?.settings||{},
     priceFilters:repairPriceFilters(),
@@ -2408,6 +2409,10 @@ async function repairMissingMaxLoss(report){
     triggerPrice:plan.triggerPrice,
     protectionKind:'MAX_LOSS',
     phase:'PLACE_NEW',
+    ...(plan.previousClientAlgoId?{
+      previousClientAlgoId:plan.previousClientAlgoId,
+      previousQuantity:plan.previousQuantity,
+    }:{}),
   };
 
   const placed=await callProtectiveUpdateExecute(body);
@@ -2453,11 +2458,40 @@ async function repairMissingMaxLoss(report){
   }
 
   await publishRuntime();
+
+  if(plan.previousClientAlgoId){
+    const canceled=await callProtectiveUpdateExecute({
+      ...body,
+      phase:'CANCEL_OLD',
+      newClientAlgoId:clientId,
+    });
+    if(!canceled.response.ok||canceled.data?.ok!==true){
+      const reason='AUTO_MAX_LOSS_REPAIR_CANCEL_STALE_'+String(
+        canceled.data?.code||canceled.data?.reason||canceled.data?.error||('HTTP_'+canceled.response.status)
+      );
+      await markMaxLossRepairFailure(reason,plan.symbol);
+      return {handled:true,repaired:false,reason};
+    }
+    const terminal=await waitForStreamOrder({
+      kind:'ALGO',clientId:plan.previousClientAlgoId,terminal:true
+    },3000);
+    const terminalStatus=String(
+      terminal?.status||canceled.data?.result?.algoOrder?.algoStatus||''
+    ).toUpperCase();
+    if(!['CANCELED','EXPIRED','REJECTED'].includes(terminalStatus)){
+      const reason='AUTO_MAX_LOSS_REPAIR_STALE_CANCEL_NOT_CONFIRMED';
+      await markMaxLossRepairFailure(reason,plan.symbol);
+      return {handled:true,repaired:false,reason};
+    }
+    await publishRuntime();
+  }
+
   log('AUTO_MAX_LOSS_REPAIRED',{
     symbol:plan.symbol,
     direction:plan.direction,
     maxLossUsd:plan.maxLossUsd,
     triggerPrice:plan.triggerPrice,
+    replacedStaleClientAlgoId:String(plan.previousClientAlgoId||''),
   });
   runtime.error='';
   stream.lastError='';

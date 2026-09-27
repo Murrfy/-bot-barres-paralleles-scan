@@ -695,6 +695,40 @@ export default async function handler(req,res){
         });
       }
     }
+    if(type==='EXEC_UPDATE_PROTECTION'&&update.protectionKind==='MAX_LOSS'&&Number.isFinite(n(update.previousQuantity,NaN))){
+      const previousQuantity=n(update.previousQuantity,NaN);
+      if(!update.previousClientAlgoId||!managedMaxLossId(update.previousClientAlgoId)){
+        return send(res,409,{ok:false,code:'STALE_MAX_LOSS_RESIZE_REQUIRES_ZENITH_ID',writeAttempted:false});
+      }
+      if(!(previousQuantity>live.liveQuantity+Math.max(1e-12,live.liveQuantity*1e-10))){
+        return send(res,409,{ok:false,code:'PREVIOUS_MAX_LOSS_QUANTITY_NOT_LARGER',writeAttempted:false});
+      }
+      const previous=findAlgo(state.runtimeState,update.symbol,update.previousClientAlgoId);
+      const previousTrigger=n(previous?.triggerPrice??previous?.stopPrice,NaN);
+      const previousLossSide=update.direction==='LONG'
+        ?previousTrigger<live.entryPrice
+        :previousTrigger>live.entryPrice;
+      const previousImpliedLoss=update.direction==='LONG'
+        ?(live.entryPrice-previousTrigger)*live.liveQuantity
+        :(previousTrigger-live.entryPrice)*live.liveQuantity;
+      if(!previous||
+         String(previous?.type||'').toUpperCase()!=='STOP'||
+         String(previous?.timeInForce||'').toUpperCase()!=='IOC'||
+         !bool(previous?.reduceOnly)||bool(previous?.closePosition)||
+         Math.abs(n(previous?.origQty??previous?.quantity,NaN)-previousQuantity)>Math.max(1e-12,previousQuantity*1e-10)||
+         String(previous?.priceMatch||'').toUpperCase()!=='OPPONENT'||
+         String(previous?.side||'').toUpperCase()!==sideForDirection(update.direction)||
+         String(previous?.positionSide||'BOTH').toUpperCase()!=='BOTH'||
+         !(previousTrigger>0)||!previousLossSide||!(previousImpliedLoss>=0)){
+        return send(res,409,{ok:false,code:'STALE_MAX_LOSS_IDENTITY_MISMATCH',writeAttempted:false});
+      }
+      const configuredMaxLoss=configuredMaxLossUsd(state.controllerState,update.symbol);
+      if(!(configuredMaxLoss>0)||previousImpliedLoss>configuredMaxLoss+1e-8||
+         previousImpliedLoss>REAL_RISK_LIMITS.maxLossUsd+1e-8){
+        return send(res,409,{ok:false,code:'STALE_MAX_LOSS_NOT_SAFE_FOR_LIVE_REMAINDER',writeAttempted:false});
+      }
+    }
+
     const emergency=emergencyProtection(state.runtimeState,update,live.entryPrice,
       type==='EXEC_UPDATE_PROTECTION'&&update.protectionKind==='MAX_LOSS'&&phase==='CANCEL_OLD'
         ?update.previousClientAlgoId:''
@@ -843,7 +877,9 @@ export default async function handler(req,res){
         if(update.protectionKind==='MAX_LOSS'){
           expected.timeInForce='IOC';
           expected.reduceOnly='true';
-          expected.quantity=String(update.quantity);
+          expected.quantity=String(Number.isFinite(n(update.previousQuantity,NaN))
+            ?n(update.previousQuantity)
+            :update.quantity);
           expected.priceMatch='OPPONENT';
           expected.triggerPrice=String(n(old?.triggerPrice??old?.stopPrice));
           expected.workingType='CONTRACT_PRICE';
