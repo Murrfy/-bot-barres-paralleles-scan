@@ -25,7 +25,7 @@ test('instant buy can never fall back to a local simulated position',()=>{
   assert.match(instant,/buildControllerMarketEntryCommand/);
   assert.match(instant,/\/api\/zenith-sync\?action=command/);
   assert.match(instant,/ACHAT IMMÉDIAT MARKET/);
-  assert.match(instant,/Aucune simulation ne sera créée/);
+  assert.match(instant,/Seule l’exécution réelle Binance sera utilisée/);
 });
 
 test('market data never creates or closes a browser-local position',()=>{
@@ -35,10 +35,10 @@ test('market data never creates or closes a browser-local position',()=>{
   assert.doesNotMatch(mark,/closePosition\(/);
 });
 
-test('legacy local position helpers fail closed',()=>{
-  const create=block('function createPosition(s,entry,source)','function closePosition');
-  assert.match(create,/Simulation supprimée/);
-  assert.match(create,/return null/);
+test('legacy local position helpers are absent',()=>{
+  assert.doesNotMatch(html,/function createPosition\(/);
+  assert.doesNotMatch(html,/function closePosition\(/);
+  assert.doesNotMatch(html,/Simulation supprimée/);
   assert.match(html,/function openBySymbol\(\)\{return null\}/);
 });
 
