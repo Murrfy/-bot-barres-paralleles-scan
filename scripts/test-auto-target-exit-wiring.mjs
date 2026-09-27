@@ -47,7 +47,7 @@ test('partial-target MARKET recovery is engine-only, proof-bound, reduce-only an
   assert.match(protective,/SALE_REMAINDER_PROOF_REQUIRED/);
   assert.match(protective,/executed>0/);
   assert.match(protective,/sameQuantity\(remaining,requestedQty\)/);
-  assert.match(protective,/for\(let attempt=0;attempt<4&&remaining>1e-12;attempt\+\+\)/);
+  assert.match(protective,/while\(Number\(recoveryState\.nextAttempt\)<4&&liveRemaining>1e-12\)/);
   assert.match(protective,/liveBinancePositionQuantity/);
   assert.match(protective,/remainderMarketClosed:true/);
 

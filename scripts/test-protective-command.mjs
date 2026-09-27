@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition, triggeredProgressiveRemainderTargets, triggeredProgressiveRemainderRecoveryAllowed, triggeredMaxLossRemainderTargets, triggeredMaxLossRemainderRecoveryAllowed } from '../lib/protective-command.mjs';
+import { normalizeProtectiveUpdatePayload, validateUpdateAgainstLivePosition, persistedSaleRemainderRecoveryTargets, persistedSaleRemainderRecoveryAllowed, triggeredProgressiveRemainderTargets, triggeredProgressiveRemainderRecoveryAllowed, triggeredMaxLossRemainderTargets, triggeredMaxLossRemainderRecoveryAllowed } from '../lib/protective-command.mjs';
 
 const position={symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.02',entryPrice:50000};
 
@@ -116,4 +116,39 @@ test('triggered progressive remainder recovery is bound to exact certified Binan
   assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,{...payload,quantity:0.31}),false);
   assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,{...payload,recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER'}),false);
   assert.deepEqual(triggeredProgressiveRemainderTargets({...report,certifiedPositions:[{...report.certifiedPositions[0],quantity:0.31}]}),[]);
+});
+
+
+test('persisted sale remainder recovery can resume with a smaller certified live quantity after crash',()=>{
+  const report={
+    version:2,status:'MISMATCH',failClosed:true,reasons:['MISSING_BINANCE_MAX_LOSS_PROTECTION'],
+    certifiedPositions:[{
+      symbol:'BTCUSDT',direction:'LONG',positionSide:'BOTH',
+      quantity:0.2,positionAmt:'0.2',entryPrice:50000
+    }],
+    differences:{activeSaleRemainderRecoveries:[{
+      version:1,symbol:'BTCUSDT',direction:'LONG',
+      commandId:'auto-remainder-BTCUSDT-0123456789abcdef',
+      sourceReason:'PARTIAL_TARGET_REMAINDER',
+      initialQuantity:0.3,attemptQuantity:0.3,currentQuantity:0.2,nextAttempt:0,
+      previousClientOrderId:'zth-EXI-0123456789abcdef01234567',
+      clientAlgoId:'',actualOrderId:'',
+      createdAt:1700000000000,updatedAt:1700000000100,expiresAt:1700003600000,
+    }]}
+  };
+  const rows=persistedSaleRemainderRecoveryTargets(report);
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].attemptQuantity,0.3);
+  assert.equal(rows[0].currentQuantity,0.2);
+  const payload={
+    type:'EXEC_CLOSE_POSITION',symbol:'BTCUSDT',direction:'LONG',
+    quantity:0.2,closeAll:true,exitMode:'REMAINDER_MARKET',
+    commandId:rows[0].commandId,recoveryReason:'PERSISTED_SALE_REMAINDER'
+  };
+  assert.equal(persistedSaleRemainderRecoveryAllowed(report,payload),true);
+  assert.equal(persistedSaleRemainderRecoveryAllowed(report,{...payload,quantity:0.3}),false);
+  assert.deepEqual(
+    persistedSaleRemainderRecoveryTargets({...report,certifiedPositions:[{...report.certifiedPositions[0],quantity:0.31}]}),
+    []
+  );
 });

@@ -23,6 +23,7 @@ const KEY_STATE = `${PREFIX}:state`;
 const KEY_RECONCILE_LAST = `${PREFIX}:reconcile:last`;
 const KEY_AUDIT = `${PREFIX}:audit`;
 const KEY_ENTRY_TRANSITIONS = `${PREFIX}:entry-transitions`;
+const KEY_SALE_REMAINDER_RECOVERIES = `${PREFIX}:sale-remainder-recoveries`;
 const KEY_CONTROLLER_STATE = `${PREFIX}:controller-state`;
 const KEY_PROCESSING = `${PREFIX}:commands:processing`;
 const BINANCE_RECONCILE_RATE_LIMIT_PER_MINUTE = 30;
@@ -1574,6 +1575,109 @@ function parseEntryTransitionStore(raw) {
   return [{ __invalidEntryTransition:true }];
 }
 
+function parseSaleRemainderRecoveryStore(raw) {
+  if (raw == null) return [];
+  const records=[];
+  const add=(field,value)=>{
+    let parsed=null;
+    try{parsed=typeof value==='string'?JSON.parse(value):value}catch{}
+    records.push(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)
+      ?{...parsed,__field:String(field||'')}
+      :{__invalidSaleRemainder:true,__field:String(field||'')});
+  };
+  if(Array.isArray(raw)){
+    for(let i=0;i<raw.length;i+=2)add(raw[i],raw[i+1]);
+    return records;
+  }
+  if(raw&&typeof raw==='object'){
+    for(const [field,value] of Object.entries(raw))add(field,value);
+    return records;
+  }
+  return [{__invalidSaleRemainder:true,__field:''}];
+}
+
+function certifiedSaleRemainderRecoveries(records,positions,now=Date.now()){
+  const active=[],prunable=[],invalid=[];
+  const seen=new Set();
+  for(const row of Array.isArray(records)?records:[]){
+    const symbol=String(row?.symbol||'').toUpperCase();
+    const dir=String(row?.direction||'').toUpperCase();
+    const field=String(row?.__field||'');
+    const commandId=String(row?.commandId||'');
+    const sourceReason=String(row?.sourceReason||'').toUpperCase();
+    const initialQuantity=number(row?.initialQuantity,NaN);
+    const attemptQuantity=number(row?.attemptQuantity,NaN);
+    const nextAttempt=Math.floor(number(row?.nextAttempt,-1));
+    const createdAt=number(row?.createdAt,NaN);
+    const updatedAt=number(row?.updatedAt,NaN);
+    const expiresAt=number(row?.expiresAt,NaN);
+    const expectedField=symbol&&dir?symbol+':'+dir:'';
+    const commonValid=
+      row?.version===1&&field===expectedField&&
+      /^[A-Z0-9]{3,30}$/.test(symbol)&&['LONG','SHORT'].includes(dir)&&
+      /^[A-Za-z0-9._:-]{8,128}$/.test(commandId)&&
+      ['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER'].includes(sourceReason)&&
+      initialQuantity>0&&attemptQuantity>0&&attemptQuantity<=initialQuantity+Math.max(1e-12,initialQuantity*1e-10)&&
+      nextAttempt>=0&&nextAttempt<=3&&
+      createdAt>0&&updatedAt>=createdAt&&expiresAt>=updatedAt;
+    let sourceValid=false;
+    if(sourceReason==='PARTIAL_TARGET_REMAINDER'){
+      const id=String(row?.previousClientOrderId||'');
+      sourceValid=/^zth-EXI-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
+    }else if(sourceReason==='TRIGGERED_PROGRESSIVE_REMAINDER'){
+      const algo=String(row?.clientAlgoId||'');
+      sourceValid=/^zth-PRO-[A-Za-z0-9._:-]+$/.test(algo)&&algo.length<=36&&Boolean(String(row?.actualOrderId||''));
+    }
+    if(!commonValid||!sourceValid||seen.has(expectedField)){
+      invalid.push({field,symbol,direction:dir,commandId});
+      continue;
+    }
+    seen.add(expectedField);
+    if(expiresAt<Number(now)){
+      prunable.push({field,symbol,direction:dir,commandId,reason:'EXPIRED'});
+      continue;
+    }
+    const live=(Array.isArray(positions)?positions:[]).find(position=>
+      String(position?.symbol||'').toUpperCase()===symbol&&direction(position)===dir&&positionQty(position)>0
+    )||null;
+    if(!live){
+      prunable.push({field,symbol,direction:dir,commandId,reason:'POSITION_CLOSED'});
+      continue;
+    }
+    const currentQuantity=positionQty(live);
+    if(currentQuantity>attemptQuantity+Math.max(1e-12,attemptQuantity*1e-10)){
+      invalid.push({field,symbol,direction:dir,commandId,reason:'POSITION_GREW_DURING_RECOVERY'});
+      continue;
+    }
+    active.push({
+      version:1,symbol,direction:dir,commandId,sourceReason,
+      initialQuantity,attemptQuantity,currentQuantity,nextAttempt,
+      previousClientOrderId:String(row?.previousClientOrderId||''),
+      clientAlgoId:String(row?.clientAlgoId||''),
+      actualOrderId:String(row?.actualOrderId||''),
+      createdAt,updatedAt,expiresAt,
+    });
+  }
+  return {active,prunable,invalid};
+}
+
+async function pruneSaleRemainderRecoveryAtomic(row) {
+  const field=String(row?.field||'');
+  const commandId=String(row?.commandId||'');
+  if(!field||!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId))return 0;
+  const script=[
+    "local raw = redis.call('HGET', KEYS[1], ARGV[1])",
+    "if not raw then return 0 end",
+    "local ok, value = pcall(cjson.decode, raw)",
+    "if not ok or tostring(value.commandId or '') ~= ARGV[2] then return -1 end",
+    "redis.call('HDEL', KEYS[1], ARGV[1])",
+    "return 1"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL',script,'1',KEY_SALE_REMAINDER_RECOVERIES,field,commandId
+  ]));
+}
+
 async function beginReconciliationAttempt(marker, device) {
   const script = [
     "local registered = tostring(redis.call('GET', KEYS[2]) or '')",
@@ -1800,10 +1904,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    const [time, runtimeRaw, entryTransitionRaw, controllerRaw, processingRaw] = await Promise.all([
+    const [time, runtimeRaw, entryTransitionRaw, saleRemainderRaw, controllerRaw, processingRaw] = await Promise.all([
       jsonFetch(`${BASE}/fapi/v1/time`),
       redis(['GET', KEY_STATE]),
       redis(['HGETALL', KEY_ENTRY_TRANSITIONS]),
+      redis(['HGETALL', KEY_SALE_REMAINDER_RECOVERIES]),
       redis(['GET', KEY_CONTROLLER_STATE]),
       redis(['LRANGE', KEY_PROCESSING, '0', '-1']),
     ]);
@@ -1830,6 +1935,7 @@ export default async function handler(req, res) {
     let runtimeState = null;
     try { runtimeState = runtimeRaw ? JSON.parse(runtimeRaw) : null; } catch {}
     const entryTransitions = parseEntryTransitionStore(entryTransitionRaw);
+    const saleRemainderRecords = parseSaleRemainderRecoveryStore(saleRemainderRaw);
     let controllerState = null;
     try { controllerState = controllerRaw ? JSON.parse(controllerRaw) : null; } catch {}
     const processingCommands = parseProcessingCommands(processingRaw);
@@ -1865,6 +1971,10 @@ export default async function handler(req, res) {
       });
     });
 
+    const saleRemainderState=certifiedSaleRemainderRecoveries(
+      saleRemainderRecords,actualPositions,started
+    );
+
     const scopedStandardRaw=(Array.isArray(openOrders)?openOrders:[])
       .filter(o=>scopeSymbols.has(String(o?.symbol||'').toUpperCase())||Boolean(zenithManagedOrderId(o)));
     const scopedAlgoRaw=(Array.isArray(openAlgoOrders)?openAlgoOrders:[])
@@ -1890,6 +2000,16 @@ export default async function handler(req, res) {
       processingCommands,
       device.deviceId
     );
+    result.differences.activeSaleRemainderRecoveries=saleRemainderState.active;
+    result.differences.invalidSaleRemainderRecoveries=saleRemainderState.invalid;
+    if(saleRemainderState.invalid.length){
+      if(!result.reasons.includes('SALE_REMAINDER_RECOVERY_STATE_INVALID')){
+        result.reasons.push('SALE_REMAINDER_RECOVERY_STATE_INVALID');
+      }
+      result.failClosed=true;
+      result.status='MISMATCH';
+    }
+
     const progressiveRecovery=await detectTriggeredProgressiveRemainders({
       serverTime,apiKey,secret,positions:actualPositions,standardOrders,
     });
@@ -1980,6 +2100,13 @@ export default async function handler(req, res) {
       error.code = error.message;
       throw error;
     }
+    let prunedSaleRemainderRecoveries=0;
+    for(const row of saleRemainderState.prunable){
+      try{
+        if(await pruneSaleRemainderRecoveryAtomic(row)===1)prunedSaleRemainderRecoveries++;
+      }catch{}
+    }
+
     let prunedEntryTransitions=0;
     let deferredEntryTransitionPrunes=0;
     if (report.failClosed === false) {
@@ -2008,6 +2135,7 @@ export default async function handler(req, res) {
       reportHash,
       prunedEntryTransitions,
       deferredEntryTransitionPrunes,
+      prunedSaleRemainderRecoveries,
     })]);
     await redis(['LTRIM', KEY_AUDIT, '0', '199']);
 
@@ -2016,6 +2144,7 @@ export default async function handler(req, res) {
       report: stored,
       prunedEntryTransitions,
       deferredEntryTransitionPrunes,
+      prunedSaleRemainderRecoveries,
     });
   } catch (e) {
     // The IN_PROGRESS marker already invalidated older CLEAN reports. Replace it
