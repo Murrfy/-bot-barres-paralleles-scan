@@ -70,6 +70,8 @@ jobs:
         run: node --test scripts/test-entry-transition-reconcile-wiring.mjs
       - name: Test write-ahead entry restart recovery
         run: node --test scripts/test-entry-writeahead-recovery.mjs
+      - name: Test symbol-local entry transition recovery
+        run: node --test scripts/test-entry-transition-local-quarantine.mjs
       - name: Test pending entry transition expiry safety
         run: node --test scripts/test-entry-transition-expiry-safety.mjs
       - name: Test expired entry transition garbage collection
