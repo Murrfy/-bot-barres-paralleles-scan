@@ -38,27 +38,34 @@ function page(role, mode = 'RUNNING') {
   vm.runInContext(script, context);
   return { elements, posts, state, run: code => vm.runInContext(code, context) };
 }
-for (const role of ['controller', 'master']) {
-  test(`${role}: ADMIN pause queues and can be cancelled`, async () => {
-    const p = page(role);
-    await p.run('verifyMaster()');
-    assert.equal(p.elements.pauseBtn.disabled, false);
-    await p.run("setMasterMode('master-pause')");
-    assert.equal(p.posts.length, 0, 'code required');
-    p.elements.adminCode.value = 'test-admin';
-    await p.run("setMasterMode('master-pause')");
-    assert.equal(p.posts[0].body.adminCode, 'test-admin');
-    assert.equal(p.elements.adminCode.value, '');
-    assert.equal(p.elements.cancelPauseBtn.hidden, false);
-    assert.equal(p.elements.cancelPauseBtn.disabled, false);
-    assert.equal(p.elements.resumeBtn.disabled, true);
-    assert.equal(p.elements.pauseBtn.disabled, true);
-    p.elements.adminCode.value = 'test-admin';
-    await p.run("setMasterMode('master-pause-cancel')");
-    assert.equal(p.elements.cancelPauseBtn.hidden, true);
-    assert.equal(p.state.mode, 'RUNNING');
-  });
-}
+test('controller: ADMIN pause queues and can be cancelled', async () => {
+  const p = page('controller');
+  await p.run('verifyMaster()');
+  assert.equal(p.elements.pauseBtn.disabled, false);
+  await p.run("setMasterMode('master-pause')");
+  assert.equal(p.posts.length, 0, 'code required');
+  p.elements.adminCode.value = 'test-admin';
+  await p.run("setMasterMode('master-pause')");
+  assert.equal(p.posts[0].body.adminCode, 'test-admin');
+  assert.equal(p.elements.adminCode.value, '');
+  assert.equal(p.elements.cancelPauseBtn.hidden, false);
+  assert.equal(p.elements.cancelPauseBtn.disabled, false);
+  assert.equal(p.elements.resumeBtn.disabled, true);
+  assert.equal(p.elements.pauseBtn.disabled, true);
+  p.elements.adminCode.value = 'test-admin';
+  await p.run("setMasterMode('master-pause-cancel')");
+  assert.equal(p.elements.cancelPauseBtn.hidden, true);
+  assert.equal(p.state.mode, 'RUNNING');
+});
+
+test('browser MASTER role is no longer accepted by MASTER administration', async () => {
+  const p = page('master');
+  await p.run('verifyMaster()');
+  p.elements.adminCode.value = 'test-admin';
+  await p.run("setMasterMode('master-pause')");
+  assert.equal(p.posts.length, 0);
+  assert.equal(p.elements.pauseBtn.disabled, true);
+});
 test('unverified role cannot send critical actions', async () => {
   const p = page('unknown');
   await p.run('verifyMaster()');
