@@ -48,6 +48,7 @@ test('market gaps are replayed and incomplete recovery blocks only that protecti
   assert.ok(worker.includes('scheduleMarkRecoveryRetry'));
   assert.ok(worker.includes('blockMarkRecovery'));
   assert.ok(worker.includes('pages<25'));
+  assert.ok(worker.includes('pages>=25&&!reachedRecoveryEnd'));
   assert.ok(worker.includes("'MARK_RECOVERY_PARTIAL_'+wanted"));
   assert.ok(worker.includes("'MARK_RECOVERY_FAILED_'+cleanReason"));
   assert.ok(worker.includes("'MARK_RECOVERY_BUFFER_OVERFLOW_'+symbol"));
