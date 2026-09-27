@@ -1152,6 +1152,27 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
         })),
         missingProtectionPendingEntries: transitionMissingProtectionPendingEntries,
         entryMissingPreparedProtections: transitionEntryMissingPreparedProtections,
+        expiredProtectionOnly: (Array.isArray(transitionState.expiredProtectionOnly)?transitionState.expiredProtectionOnly:[]).map(row => ({
+          state:row.state,
+          commandId:row.commandId,
+          symbol:row.symbol,
+          direction:row.direction,
+          quantity:row.quantity,
+          protectionTriggerPrice:row.protectionTriggerPrice,
+          protectionClientAlgoId:row.protectionClientAlgoId,
+          entryClientOrderId:row.entryClientOrderId,
+          expiresAt:row.expiresAt,
+        })),
+        prunableExpired: (Array.isArray(transitionState.prunableExpired)?transitionState.prunableExpired:[]).map(row => ({
+          state:row.state,
+          commandId:row.commandId,
+          symbol:row.symbol,
+          direction:row.direction,
+          protectionClientAlgoId:row.protectionClientAlgoId,
+          entryClientOrderId:row.entryClientOrderId,
+          createdAt:row.createdAt,
+          expiresAt:row.expiresAt,
+        })),
         invalidReasons: transitionState.invalid.map(row => String(row.reason || 'ENTRY_TRANSITION_INVALID')),
         expired: transitionState.expired.length,
         missingProtections: transitionState.missingProtections,
@@ -1266,6 +1287,44 @@ async function failReconciliationAttempt(report, attemptId) {
     KEY_RECONCILE_LAST,
     String(attemptId || ''),
     JSON.stringify(report),
+  ]));
+}
+
+async function pruneExpiredEntryTransitionAtomic(row) {
+  const commandId=String(row?.commandId||'');
+  const state=String(row?.state||'').toUpperCase();
+  const symbol=String(row?.symbol||'').toUpperCase();
+  const direction=String(row?.direction||'').toUpperCase();
+  const protectionClientAlgoId=String(row?.protectionClientAlgoId||'');
+  const entryClientOrderId=String(row?.entryClientOrderId||'');
+  const createdAt=Number(row?.createdAt);
+  const expiresAt=Number(row?.expiresAt);
+  if(!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId)||
+     !['PROTECTION_PREPARED','ENTRY_SUBMITTED'].includes(state)||
+     !/^[A-Z0-9]{3,30}$/.test(symbol)||
+     !['LONG','SHORT'].includes(direction)||
+     !Number.isFinite(createdAt)||createdAt<=0||
+     !Number.isFinite(expiresAt)||expiresAt<=0)return 0;
+  const script=[
+    "local raw = redis.call('HGET', KEYS[1], ARGV[1])",
+    "if not raw then return 0 end",
+    "local ok, value = pcall(cjson.decode, raw)",
+    "if not ok then return -1 end",
+    "if tostring(value['commandId'] or '') ~= ARGV[1] then return -2 end",
+    "if string.upper(tostring(value['state'] or '')) ~= ARGV[2] then return -3 end",
+    "if string.upper(tostring(value['symbol'] or '')) ~= ARGV[3] then return -4 end",
+    "if string.upper(tostring(value['direction'] or '')) ~= ARGV[4] then return -5 end",
+    "if tonumber(value['createdAt'] or 0) ~= tonumber(ARGV[5]) then return -6 end",
+    "if tonumber(value['expiresAt'] or 0) ~= tonumber(ARGV[6]) then return -7 end",
+    "if tostring(value['protectionClientAlgoId'] or '') ~= ARGV[7] then return -8 end",
+    "if tostring(value['entryClientOrderId'] or '') ~= ARGV[8] then return -9 end",
+    "redis.call('HDEL', KEYS[1], ARGV[1])",
+    "return 1"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL',script,'1',KEY_ENTRY_TRANSITIONS,
+    commandId,state,symbol,direction,String(createdAt),String(expiresAt),
+    protectionClientAlgoId,entryClientOrderId,
   ]));
 }
 
@@ -1533,6 +1592,23 @@ export default async function handler(req, res) {
       error.code = error.message;
       throw error;
     }
+    let prunedEntryTransitions=0;
+    let deferredEntryTransitionPrunes=0;
+    if (report.failClosed === false) {
+      const prunable = Array.isArray(report?.differences?.entryTransitions?.prunableExpired)
+        ? report.differences.entryTransitions.prunableExpired : [];
+      for (const row of prunable) {
+        try {
+          const pruned=await pruneExpiredEntryTransitionAtomic(row);
+          if(pruned===1)prunedEntryTransitions++;
+          else if(pruned!==0)deferredEntryTransitionPrunes++;
+        } catch {
+          // Garbage collection is non-authoritative. A later clean reconciliation retries it.
+          deferredEntryTransitionPrunes++;
+        }
+      }
+    }
+
     await redis(['LPUSH', KEY_AUDIT, JSON.stringify({
       at: observedAt,
       kind: 'BINANCE_RECONCILIATION',
@@ -1542,10 +1618,17 @@ export default async function handler(req, res) {
       failClosed: report.failClosed,
       reasons: report.reasons,
       reportHash,
+      prunedEntryTransitions,
+      deferredEntryTransitionPrunes,
     })]);
     await redis(['LTRIM', KEY_AUDIT, '0', '199']);
 
-    return send(res, 200, { ok: true, report: stored });
+    return send(res, 200, {
+      ok: true,
+      report: stored,
+      prunedEntryTransitions,
+      deferredEntryTransitionPrunes,
+    });
   } catch (e) {
     // The IN_PROGRESS marker already invalidated older CLEAN reports. Replace it
     // with UNAVAILABLE only if this request still owns the same reconciliation attempt.
