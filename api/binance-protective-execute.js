@@ -6,6 +6,7 @@ import {
   protectionOnlyMismatchTarget,
   protectiveRepairTarget,
   pendingEntryProtectionLossCancelAllowed,
+  triggeredProgressiveRemainderRecoveryAllowed,
   triggeredMaxLossRemainderRecoveryAllowed,
   maxLossLocalQuarantineReport,
   maxLossSymbolQuarantine,
@@ -220,7 +221,7 @@ function executionReadiness(
   runtimeState,report,masterDeviceId,repairTarget='',
   pendingEntryCancelRecovery=false,maxLossRemainderRecovery=false,
   executionTarget='',quarantineOperationAllowed=false,
-  partialTargetRemainderRecovery=false
+  partialTargetRemainderRecovery=false,progressiveRemainderRecovery=false
 ){
   const age=Date.now()-Number(runtimeState?.updatedAt||0);
   if(!runtimeState?.data||String(runtimeState?.masterDeviceId||'')!==String(masterDeviceId))return 'MASTER_RUNTIME_WRONG_DEVICE';
@@ -230,7 +231,7 @@ function executionReadiness(
   const stream=data.userStream;
   if(!stream||stream.connected!==true)return 'USER_STREAM_NOT_READY';
   if(pendingEntryCancelRecovery!==true&&maxLossRemainderRecovery!==true&&
-     partialTargetRemainderRecovery!==true&&
+     partialTargetRemainderRecovery!==true&&progressiveRemainderRecovery!==true&&
      (stream.ready!==true||stream.failClosed!==false||stream.needsReconciliation!==false)){
     return 'USER_STREAM_NOT_READY';
   }
@@ -245,7 +246,7 @@ function executionReadiness(
   if(clean)return '';
 
   if(pendingEntryCancelRecovery===true||maxLossRemainderRecovery===true||
-     partialTargetRemainderRecovery===true)return '';
+     partialTargetRemainderRecovery===true||progressiveRemainderRecovery===true)return '';
 
   const repair=String(repairTarget||'').toUpperCase();
   if(repair&&protectionOnlyMismatchTarget(report)===repair)return '';
@@ -344,6 +345,11 @@ export default async function handler(req,res){
   if(maxLossRemainderRecovery&&String(master?.principal||'')!=='engine'){
     return send(res,423,{ok:false,code:'MAX_LOSS_REMAINDER_RECOVERY_ENGINE_REQUIRED',writeAttempted:false});
   }
+  const progressiveRemainderRecovery=type==='EXEC_CLOSE_POSITION'&&
+    triggeredProgressiveRemainderRecoveryAllowed(report,req.body);
+  if(progressiveRemainderRecovery&&String(master?.principal||'')!=='engine'){
+    return send(res,423,{ok:false,code:'PROGRESSIVE_REMAINDER_RECOVERY_ENGINE_REQUIRED',writeAttempted:false});
+  }
   const partialTargetRemainder=type==='EXEC_CLOSE_POSITION'
     ?partialTargetRemainderProof(runtimeState,req.body)
     :null;
@@ -357,10 +363,10 @@ export default async function handler(req,res){
     :executionSymbol;
   const quarantineOperationAllowed=
     type==='EXEC_CANCEL_ENTRY'||type==='EXEC_CLOSE_POSITION'||
-    pendingEntryCancelRecovery||maxLossRemainderRecovery||Boolean(partialTargetRemainder);
+    pendingEntryCancelRecovery||maxLossRemainderRecovery||progressiveRemainderRecovery||Boolean(partialTargetRemainder);
   const readinessReason=executionReadiness(
     runtimeState,report,master.deviceId,repairTarget,pendingEntryCancelRecovery,maxLossRemainderRecovery,
-    executionTarget,quarantineOperationAllowed,Boolean(partialTargetRemainder)
+    executionTarget,quarantineOperationAllowed,Boolean(partialTargetRemainder),progressiveRemainderRecovery
   );
   if(readinessReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readinessReason,writeAttempted:false});
 
@@ -441,7 +447,7 @@ export default async function handler(req,res){
     return send(res,400,{ok:false,code:'PROTECTIVE_REQUEST_INVALID',writeAttempted:false});
   }
 
-  const livePosition=maxLossRemainderRecovery
+  const livePosition=(maxLossRemainderRecovery||progressiveRemainderRecovery)
     ?certifiedReportPosition(report,symbol,dir)
     :runtimePosition(runtimeState,symbol,dir);
   const liveQty=quantity(livePosition);
@@ -454,8 +460,8 @@ export default async function handler(req,res){
 
   const exitMode=String(req.body?.exitMode||'PROTECTIVE_IOC').toUpperCase();
   if(exitMode==='REMAINDER_MARKET'){
-    if(!partialTargetRemainder){
-      return send(res,423,{ok:false,code:'PARTIAL_TARGET_REMAINDER_PROOF_REQUIRED',writeAttempted:false});
+    if(!partialTargetRemainder&&!progressiveRemainderRecovery){
+      return send(res,423,{ok:false,code:'SALE_REMAINDER_PROOF_REQUIRED',writeAttempted:false});
     }
   }else if(exitMode!=='PROTECTIVE_IOC'){
     return send(res,400,{ok:false,code:'EXIT_MODE_LIMIT_REQUIRED',writeAttempted:false});
@@ -515,9 +521,12 @@ export default async function handler(req,res){
         remaining=await liveBinancePositionQuantity({apiKey,secret,symbol,direction:dir});
         if(!(remaining>1e-12)){
           await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
-            at:Date.now(),kind:'BINANCE_PARTIAL_TARGET_REMAINDER_MARKET_CLOSED',
+            at:Date.now(),kind:'BINANCE_PARTIAL_SALE_REMAINDER_MARKET_CLOSED',
             deviceId:master.deviceId,commandId,symbol,direction:dir,
+            recoveryReason:String(req.body?.recoveryReason||''),
             previousClientOrderId:String(req.body?.previousClientOrderId||''),
+            clientAlgoId:String(req.body?.clientAlgoId||''),
+            actualOrderId:String(req.body?.actualOrderId||''),
             attempts,
           })]);
           await redis(['LTRIM',KEY_AUDIT,'0','199']);
@@ -528,7 +537,7 @@ export default async function handler(req,res){
         }
       }
       return send(res,409,{
-        ok:false,code:'PARTIAL_TARGET_REMAINDER_MARKET_NOT_CLOSED',
+        ok:false,code:'SALE_REMAINDER_MARKET_NOT_CLOSED',
         writeAttempted:wrote,remainingQuantity:remaining,attempts,
       });
     }catch(e){
@@ -546,9 +555,9 @@ export default async function handler(req,res){
       return send(res,502,{
         ok:false,
         code:e?.message==='ORDER_RESULT_AMBIGUOUS'
-          ?'PARTIAL_TARGET_REMAINDER_MARKET_AMBIGUOUS'
-          :'PARTIAL_TARGET_REMAINDER_MARKET_FAILED',
-        error:'Binance partial-target remainder MARKET close failed.',
+          ?'SALE_REMAINDER_MARKET_AMBIGUOUS'
+          :'SALE_REMAINDER_MARKET_FAILED',
+        error:'Binance partial-sale remainder MARKET close failed.',
         binanceCode:e?.code??null,
         ambiguous:e?.ambiguous===true,
         writeAttempted:wrote||e?.ambiguous===true,
