@@ -1338,6 +1338,196 @@ function configuredMaxLossForSymbol(symbol){
   return value>0?Math.min(value,REAL_RISK_LIMITS.maxLossUsd):NaN;
 }
 
+function partialTargetRemainderMarker(live,previousClientOrderId){
+  const symbol=String(live?.symbol||'').toUpperCase();
+  const direction=String(live?.direction||'').toUpperCase();
+  const previous=String(previousClientOrderId||'');
+  if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(direction)||
+     !/^zth-EXI-[A-Za-z0-9._:-]+$/.test(previous)||previous.length>36)return '';
+  return symbol+':'+direction+':'+previous;
+}
+
+function partialTargetRemainderFor(symbol,direction){
+  const prefix=String(symbol||'').toUpperCase()+':'+String(direction||'').toUpperCase()+':';
+  for(const [key,generation] of autoTarget.remainderClosures.entries()){
+    const text=String(key||'');
+    if(!text.startsWith(prefix))continue;
+    const previousClientOrderId=text.slice(prefix.length);
+    if(!/^zth-EXI-[A-Za-z0-9._:-]+$/.test(previousClientOrderId)||previousClientOrderId.length>36)continue;
+    return {
+      key:text,
+      previousClientOrderId,
+      generation:Math.max(1,Math.floor(n(generation,1))),
+    };
+  }
+  return null;
+}
+
+async function persistPartialTargetRemainder(live,previousClientOrderId){
+  if(!autoProtection.highWaterLoaded){
+    const loaded=await loadAutoHighWater();
+    if(!loaded)return null;
+  }
+  const key=partialTargetRemainderMarker(live,previousClientOrderId);
+  if(!key)return null;
+  const previous=autoTarget.remainderClosures.get(key);
+  if(!Number.isFinite(Number(previous)))autoTarget.remainderClosures.set(key,1);
+  if(await persistAutoHighWaterNow())return partialTargetRemainderFor(live.symbol,live.direction);
+  if(previous===undefined)autoTarget.remainderClosures.delete(key);
+  else autoTarget.remainderClosures.set(key,previous);
+  return null;
+}
+
+async function clearPartialTargetRemainder(marker){
+  if(!marker?.key)return false;
+  const previous=autoTarget.remainderClosures.get(marker.key);
+  autoTarget.remainderClosures.delete(marker.key);
+  if(await persistAutoHighWaterNow())return true;
+  if(previous!==undefined)autoTarget.remainderClosures.set(marker.key,previous);
+  return false;
+}
+
+async function rollPartialTargetRemainderGeneration(marker){
+  if(!marker?.key)return false;
+  const previous=Math.max(1,Math.floor(n(autoTarget.remainderClosures.get(marker.key),marker.generation||1)));
+  autoTarget.remainderClosures.set(marker.key,previous+1);
+  if(await persistAutoHighWaterNow())return true;
+  autoTarget.remainderClosures.set(marker.key,previous);
+  return false;
+}
+
+async function closePartialAutomaticTargetRemainder(position,marker,targetPrice=0){
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const direction=amount>=0?'LONG':'SHORT';
+  const previousClientOrderId=String(marker?.previousClientOrderId||'');
+  if(!(Math.abs(amount)>0)||!marker||!previousClientOrderId){
+    return localAutoTargetFailure(symbol,'PARTIAL_REMAINDER_RECOVERY_INVALID');
+  }
+
+  const projection=streamProjection();
+  const oldTarget=(projection.binanceOrders||[]).find(order=>
+    String(order?.orderClass||'STANDARD').toUpperCase()==='STANDARD'&&
+    String(order?.symbol||'').toUpperCase()===symbol&&
+    String(order?.clientOrderId||'')===previousClientOrderId
+  )||null;
+
+  if(oldTarget){
+    const cancelCommandId='auto-partial-cancel-'+sha256Hex(marker.key).slice(0,24);
+    const canceled=await callProtectiveUpdateExecute({
+      type:'EXEC_UPDATE_EXIT',phase:'CANCEL_OLD',commandId:cancelCommandId,
+      symbol,direction,quantity:Math.abs(amount),
+      targetPrice:n(targetPrice,n(oldTarget?.price,0)),
+      previousClientOrderId,
+    });
+    if(!canceled.response.ok||canceled.data?.ok!==true){
+      const reason='PARTIAL_REMAINDER_CANCEL_'+String(
+        canceled.data?.code||canceled.data?.reason||canceled.data?.error||('HTTP_'+canceled.response.status)
+      );
+      if(canceled.data?.writeAttempted===true||canceled.data?.ambiguous===true||canceled.data?.result?.ambiguous===true){
+        return failClosedAutoTarget(reason+'_AMBIGUOUS');
+      }
+      scheduleReconcile(250);
+      return localAutoTargetFailure(symbol,reason);
+    }
+    const terminal=await waitForStreamOrder({
+      kind:'STANDARD',clientId:previousClientOrderId,terminal:true
+    },3000);
+    const terminalStatus=String(
+      terminal?.status||canceled.data?.result?.order?.status||''
+    ).toUpperCase();
+    if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED','FILLED'].includes(terminalStatus)){
+      scheduleReconcile(100);
+      return localAutoTargetFailure(symbol,'PARTIAL_REMAINDER_CANCEL_NOT_CONFIRMED');
+    }
+    await publishRuntime().catch(()=>{});
+    if(await awaitReconciliation()!==true){
+      scheduleReconcile(100);
+      return localAutoTargetFailure(symbol,'PARTIAL_REMAINDER_POST_CANCEL_RECONCILE');
+    }
+    const afterCancel=streamPositionQuantity(stream.state,symbol,direction);
+    if(afterCancel<=1e-12){
+      if(!(await clearPartialTargetRemainder(marker))){
+        scheduleReconcile(250);
+        return localAutoTargetFailure(symbol,'PARTIAL_REMAINDER_CLEAR_NOT_PERSISTED');
+      }
+      autoTarget.lastError='';
+      autoTarget.lastActionAt=Date.now();
+      return {ok:true,changed:true,reason:'PARTIAL_REMAINDER_ALREADY_CLOSED'};
+    }
+    if(terminalStatus==='FILLED'){
+      return failClosedAutoTarget('PARTIAL_TARGET_FILLED_POSITION_REMAINS');
+    }
+  }
+
+  const generation=Math.max(1,Math.floor(n(autoTarget.remainderClosures.get(marker.key),marker.generation||1)));
+  const baseCommandId='auto-partial-close-'+sha256Hex(marker.key+'|'+generation).slice(0,24);
+  let lastClientOrderId='';
+  for(const policy of PROTECTIVE_CLOSE_ATTEMPTS){
+    const currentQuantity=streamPositionQuantity(stream.state,symbol,direction);
+    if(currentQuantity<=1e-12){
+      if(!(await clearPartialTargetRemainder(marker))){
+        scheduleReconcile(250);
+        return localAutoTargetFailure(symbol,'PARTIAL_REMAINDER_CLEAR_NOT_PERSISTED');
+      }
+      autoTarget.lastError='';
+      autoTarget.lastActionAt=Date.now();
+      return {ok:true,changed:true,reason:'PARTIAL_REMAINDER_CLOSED'};
+    }
+
+    const result=await callProtectiveExecute({
+      type:'EXEC_CLOSE_POSITION',
+      commandId:baseCommandId,
+      symbol,direction,quantity:currentQuantity,closeAll:true,
+      exitMode:policy.exitMode,attempt:policy.attempt,priceMatch:policy.priceMatch,
+    });
+    if(!result.response.ok||result.data?.ok!==true){
+      const reason='PARTIAL_REMAINDER_CLOSE_'+String(
+        result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status)
+      );
+      if(result.data?.writeAttempted===true||result.data?.ambiguous===true||result.data?.result?.ambiguous===true){
+        return failClosedAutoTarget(reason+'_AMBIGUOUS');
+      }
+      scheduleReconcile([429,503].includes(Number(result.response.status))?1000:250);
+      return localAutoTargetFailure(symbol,reason);
+    }
+
+    lastClientOrderId=String(result.data?.plan?.params?.newClientOrderId||'');
+    if(!lastClientOrderId)return failClosedAutoTarget('PARTIAL_REMAINDER_CLIENT_ORDER_ID_MISSING');
+
+    const outcome=await waitForFullCloseState({
+      symbol,direction,beforeQuantity:currentQuantity,clientOrderId:lastClientOrderId,
+    },2500);
+    if(outcome.confirmed&&outcome.streamReady){
+      if(!(await clearPartialTargetRemainder(marker))){
+        scheduleReconcile(250);
+        return localAutoTargetFailure(symbol,'PARTIAL_REMAINDER_CLEAR_NOT_PERSISTED');
+      }
+      autoTarget.lastError='';
+      autoTarget.lastActionAt=Date.now();
+      log('AUTO_TARGET_PARTIAL_REMAINDER_CLOSED',{
+        symbol,direction,beforeQuantity:Math.abs(amount),
+        clientOrderId:lastClientOrderId,generation,attempt:policy.attempt,
+      });
+      return {ok:true,changed:true,reason:'PARTIAL_REMAINDER_CLOSED'};
+    }
+    if(outcome.inconsistentFilled){
+      return failClosedAutoTarget('PARTIAL_REMAINDER_FILLED_POSITION_MISMATCH');
+    }
+    if(!outcome.safeToRetry){
+      scheduleReconcile(100);
+      return localAutoTargetFailure(symbol,'PARTIAL_REMAINDER_CONFIRMATION_PENDING');
+    }
+  }
+
+  if(!(await rollPartialTargetRemainderGeneration(marker))){
+    return failClosedAutoTarget('PARTIAL_REMAINDER_RETRY_NOT_PERSISTED');
+  }
+  scheduleReconcile(500);
+  autoTarget.lastError='AUTO_TARGET_PARTIAL_REMAINDER_RETRY_PENDING';
+  return {ok:true,changed:false,reason:'PARTIAL_REMAINDER_RETRY_PENDING'};
+}
+
 async function ensureAutomaticTargetForPosition(position){
   const symbol=String(position?.symbol||'').toUpperCase();
   if(!symbol||autoTarget.busySymbols.has(symbol))return {ok:true,changed:false,reason:'BUSY_OR_INVALID'};
@@ -1362,10 +1552,30 @@ async function ensureAutomaticTargetForPosition(position){
     ?runtime.config.tokenSettings:{};
   const globalSettings=runtime.config?.settings&&typeof runtime.config.settings==='object'
     ?runtime.config.settings:{};
-  const plan=planAutomaticTargetExit({
-    position,currentOrders:orders,tokenSettings,settings:globalSettings,
-    priceFilter,maxLossConfirmed,
-  });
+  const direction=n(position?.positionAmt??position?.quantity,0)>=0?'LONG':'SHORT';
+  let marker=partialTargetRemainderFor(symbol,direction);
+  let plan=null;
+  if(!marker){
+    plan=planAutomaticTargetExit({
+      position,currentOrders:orders,tokenSettings,settings:globalSettings,
+      priceFilter,maxLossConfirmed,
+    });
+    if(plan.action==='CLOSE_REMAINDER'){
+      marker=await persistPartialTargetRemainder(plan.live,plan.previousClientOrderId);
+      if(!marker)return localAutoTargetFailure(symbol,'PARTIAL_REMAINDER_NOT_PERSISTED');
+    }
+  }
+
+  if(marker){
+    autoTarget.busySymbols.add(symbol);
+    try{
+      return await closePartialAutomaticTargetRemainder(
+        position,marker,n(plan?.targetPrice,0)
+      );
+    }finally{
+      autoTarget.busySymbols.delete(symbol);
+    }
+  }
 
   if(plan.action==='NONE'){
     autoTarget.lastError='';
