@@ -124,6 +124,8 @@ jobs:
         run: node --test scripts/test-entry-submit-writeahead.mjs
       - name: Test delayed entry slot outcome
         run: node --test scripts/test-entry-watch-slot-outcome.mjs
+      - name: Test exact buy-sale entry consistency
+        run: node --test scripts/test-exact-buy-sale-entry-consistency.mjs
       - name: Test atomic real-entry slot reservation
         run: node --test scripts/test-entry-slot-reservation-gate.mjs
       - name: Test hard cap of three active positions
