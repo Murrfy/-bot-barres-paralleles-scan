@@ -2719,19 +2719,19 @@ export default async function handler(req, res) {
       const role = String(req.body?.role || '').trim();
       const deviceName = String(req.body?.deviceName || '').trim().slice(0, 80);
 
-      if (!validDeviceId(deviceId) || !['controller', 'master'].includes(role)) {
+      if (role === 'master') {
+        return send(res, 403, { ok: false, code: 'BROWSER_MASTER_PAIRING_DISABLED' });
+      }
+      if (!validDeviceId(deviceId) || role !== 'controller') {
         return send(res, 400, { ok: false, code: 'PAIRING_REQUEST_INVALID' });
       }
 
-      const expectedPairingCode = role === 'master' ? MASTER_PAIRING_CODE : PAIRING_CODE;
+      const expectedPairingCode = PAIRING_CODE;
       if (!expectedPairingCode) {
-        return send(res, 503, {
-          ok: false,
-          code: role === 'master' ? 'MASTER_PAIRING_NOT_CONFIGURED' : 'PAIRING_NOT_CONFIGURED'
-        });
+        return send(res, 503, { ok: false, code: 'PAIRING_NOT_CONFIGURED' });
       }
 
-      const pairingPolicyBlockers = pairingSecretPolicyBlockers({ role });
+      const pairingPolicyBlockers = pairingSecretPolicyBlockers({ role: 'controller' });
       if (pairingPolicyBlockers.length) {
         return send(res, 503, {
           ok: false,
