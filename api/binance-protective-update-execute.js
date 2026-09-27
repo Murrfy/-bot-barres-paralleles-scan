@@ -705,6 +705,9 @@ export default async function handler(req,res){
       }
       const previous=findAlgo(state.runtimeState,update.symbol,update.previousClientAlgoId);
       const previousTrigger=n(previous?.triggerPrice??previous?.stopPrice,NaN);
+      const previousLossSide=update.direction==='LONG'
+        ?previousTrigger<live.entryPrice
+        :previousTrigger>live.entryPrice;
       const previousImpliedLoss=update.direction==='LONG'
         ?(live.entryPrice-previousTrigger)*live.liveQuantity
         :(previousTrigger-live.entryPrice)*live.liveQuantity;
@@ -716,7 +719,7 @@ export default async function handler(req,res){
          String(previous?.priceMatch||'').toUpperCase()!=='OPPONENT'||
          String(previous?.side||'').toUpperCase()!==sideForDirection(update.direction)||
          String(previous?.positionSide||'BOTH').toUpperCase()!=='BOTH'||
-         !(previousTrigger>0)||!(previousImpliedLoss>=0)){
+         !(previousTrigger>0)||!previousLossSide||!(previousImpliedLoss>=0)){
         return send(res,409,{ok:false,code:'STALE_MAX_LOSS_IDENTITY_MISMATCH',writeAttempted:false});
       }
       const configuredMaxLoss=configuredMaxLossUsd(state.controllerState,update.symbol);
