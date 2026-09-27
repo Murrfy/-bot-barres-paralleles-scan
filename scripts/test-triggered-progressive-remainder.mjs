@@ -15,6 +15,8 @@ test('reconciliation proves a triggered progressive partial fill from parent alg
   assert.match(reconcile,/String\(actualOrder\?\.timeInForce\|\|''\)\.toUpperCase\(\)!=='GTC'/);
   assert.match(reconcile,/executed>0/);
   assert.match(reconcile,/Math\.abs\(expectedRemaining-currentQty\)/);
+  assert.match(reconcile,/const profitSide=/);
+  assert.match(reconcile,/\/fapi\/v1\/allOrders/);
   assert.match(reconcile,/String\(order\?\.orderId\|\|''\)===String\(algo\.actualOrderId\)/);
   assert.match(reconcile,/triggeredProgressiveRemainders/);
 });
@@ -37,8 +39,23 @@ test('protective endpoint accepts MARKET only with exact progressive report proo
   assert.match(execute,/triggeredProgressiveRemainderRecoveryAllowed/);
   assert.match(execute,/PROGRESSIVE_REMAINDER_RECOVERY_ENGINE_REQUIRED/);
   assert.match(execute,/progressiveRemainderRecovery/);
-  assert.match(execute,/if\(!partialTargetRemainder&&!progressiveRemainderRecovery\)/);
+  assert.match(execute,/if\(!partialTargetRemainder&&!progressiveRemainderRecovery&&!maxLossRemainderRecovery\)/);
   assert.match(execute,/SALE_REMAINDER_PROOF_REQUIRED/);
   assert.match(execute,/maxLossRemainderRecovery\|\|progressiveRemainderRecovery/);
   assert.match(execute,/remainderMarketClosed:true/);
+});
+
+
+test('triggered MAX-LOSS remainder uses the same proof-bound MARKET close, never IOC retries',()=>{
+  assert.match(worker,/async function recoverTriggeredMaxLossRemainder/);
+  const start=worker.indexOf('async function recoverTriggeredMaxLossRemainder');
+  const end=worker.indexOf('async function reconcile(secondPass=false)',start);
+  const block=worker.slice(start,end);
+  assert.match(block,/exitMode:'REMAINDER_MARKET'/);
+  assert.match(block,/recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER'/);
+  assert.match(block,/MAX_LOSS_REMAINDER_MARKET_CLOSED/);
+  assert.doesNotMatch(block,/OPPONENT_5|OPPONENT_10|OPPONENT_20|exitMode:'PROTECTIVE_IOC'/);
+  assert.match(execute,/maxLossRemainderRecovery/);
+  assert.match(execute,/MAX_LOSS_REMAINDER_RECOVERY_ENGINE_REQUIRED/);
+  assert.match(execute,/!partialTargetRemainder&&!progressiveRemainderRecovery&&!maxLossRemainderRecovery/);
 });
