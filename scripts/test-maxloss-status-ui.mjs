@@ -6,7 +6,7 @@ const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 
 test('real active position shows only a compact MAX-LOSS state in its header',()=>{
   const start=html.indexOf('function renderRealPositions(){');
-  const end=html.indexOf('function applyMasterReadOnlyPolicy()',start);
+  const end=html.indexOf('function renderControllerIdentity()',start);
   assert.ok(start>=0&&end>start);
   const block=html.slice(start,end);
   assert.match(block,/🟢 MAX-LOSS : ACTIVE/);
