@@ -122,6 +122,7 @@ const autoProtection={
 const autoTarget={
   busySymbols:new Set(),
   suppressedSymbols:new Set(),
+  remainderClosures:new Map(),
   lastError:'',
   lastActionAt:0,
 };
@@ -662,12 +663,14 @@ async function loadAutoHighWater(force=false){
     autoProtection.authorizationAt=n(result.data.authorizationAt,0);
     autoProtection.highWater.clear();
     autoProtection.redHighWater.clear();
+    autoTarget.remainderClosures.clear();
     const entries=result.data.entries&&typeof result.data.entries==='object'?result.data.entries:{};
     for(const [rawKey,value] of Object.entries(entries)){
       const amount=Number(value);
       if(!Number.isFinite(amount))continue;
       const key=String(rawKey||'');
-      if(key.startsWith('red:'))autoProtection.redHighWater.set(key.slice(4),amount);
+      if(key.startsWith('close:'))autoTarget.remainderClosures.set(key.slice(6),amount);
+      else if(key.startsWith('red:'))autoProtection.redHighWater.set(key.slice(4),amount);
       else autoProtection.highWater.set(key,amount);
     }
     autoProtection.highWaterLoaded=autoProtection.authorizationAt>0;
@@ -689,6 +692,9 @@ async function persistAutoHighWaterNow(){
     }
     for(const [key,value] of autoProtection.redHighWater.entries()){
       if(Number.isFinite(Number(value)))entries['red:'+key]=Number(value);
+    }
+    for(const [key,value] of autoTarget.remainderClosures.entries()){
+      if(Number.isFinite(Number(value)))entries['close:'+key]=Number(value);
     }
     const result=await syncApi('engine-protection-high-water',{
       method:'POST',
@@ -896,6 +902,7 @@ function occupiedRealEntrySlots(){
 function entryWatchMayDispatch(symbol){
   const config=watchedEntryConfig(symbol);
   if(!config||!entryWatch.loaded)return false;
+  if([...autoTarget.remainderClosures.keys()].some(key=>String(key).startsWith(config.symbol+':')))return false;
   if(symbolMaxLossQuarantined(config.symbol))return false;
   if(!runtime.synchronized||!runtime.heartbeatFresh||runtime.mode!=='RUNNING')return false;
   if(!masterExecutionEligible({
@@ -1158,11 +1165,13 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
 
 async function pruneAutoHighWater(){
   if(!autoProtection.highWaterLoaded||userStreamReady(stream.state)!==true)return false;
-  const active=new Set(
-    (streamProjection().binancePositions||[])
-      .filter(position=>Math.abs(n(position?.positionAmt??position?.quantity,0))>0)
-      .map(autoPositionKey)
-  );
+  const livePositions=(streamProjection().binancePositions||[])
+    .filter(position=>Math.abs(n(position?.positionAmt??position?.quantity,0))>0);
+  const active=new Set(livePositions.map(autoPositionKey));
+  const activeDirections=new Set(livePositions.map(position=>{
+    const amount=n(position?.positionAmt??position?.quantity,0);
+    return String(position?.symbol||'').toUpperCase()+':'+(amount>=0?'LONG':'SHORT');
+  }));
   let changed=false;
   for(const key of [...autoProtection.highWater.keys()]){
     if(!active.has(key)){
@@ -1174,6 +1183,14 @@ async function pruneAutoHighWater(){
   for(const key of [...autoProtection.redHighWater.keys()]){
     if(!active.has(key)){
       autoProtection.redHighWater.delete(key);
+      changed=true;
+    }
+  }
+  for(const key of [...autoTarget.remainderClosures.keys()]){
+    const parts=String(key||'').split(':');
+    const scope=parts.length>=3?parts[0]+':'+parts[1]:'';
+    if(!scope||!activeDirections.has(scope)){
+      autoTarget.remainderClosures.delete(key);
       changed=true;
     }
   }
