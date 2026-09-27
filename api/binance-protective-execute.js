@@ -296,6 +296,12 @@ export default async function handler(req,res){
   if(maxLossRemainderRecovery&&String(master?.principal||'')!=='engine'){
     return send(res,423,{ok:false,code:'MAX_LOSS_REMAINDER_RECOVERY_ENGINE_REQUIRED',writeAttempted:false});
   }
+  const partialTargetRemainderRecovery=type==='EXEC_CLOSE_POSITION'&&
+    String(req.body?.recoveryReason||'').toUpperCase()==='PARTIAL_TARGET_REMAINDER'&&
+    String(req.body?.exitMode||'').toUpperCase()==='IMMEDIATE_MARKET';
+  if(partialTargetRemainderRecovery&&String(master?.principal||'')!=='engine'){
+    return send(res,423,{ok:false,code:'PARTIAL_TARGET_REMAINDER_ENGINE_REQUIRED',writeAttempted:false});
+  }
   const executionSymbol=String(req.body?.symbol||'').toUpperCase();
   const executionDirection=String(req.body?.direction||'').toUpperCase();
   const executionTarget=['LONG','SHORT'].includes(executionDirection)
@@ -399,7 +405,11 @@ export default async function handler(req,res){
   }
 
   const exitMode=String(req.body?.exitMode||'PROTECTIVE_IOC').toUpperCase();
-  if(exitMode!=='PROTECTIVE_IOC'){
+  if(exitMode==='IMMEDIATE_MARKET'){
+    if(!partialTargetRemainderRecovery){
+      return send(res,400,{ok:false,code:'IMMEDIATE_MARKET_REMAINDER_ONLY',writeAttempted:false});
+    }
+  }else if(exitMode!=='PROTECTIVE_IOC'){
     return send(res,400,{ok:false,code:'EXIT_MODE_LIMIT_REQUIRED',writeAttempted:false});
   }
 
