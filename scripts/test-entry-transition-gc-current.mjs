@@ -92,6 +92,7 @@ test('reconcile prunes only clean inert transitions through atomic compare-and-d
   assert.match(reconcileApi,/async function pruneExpiredEntryTransitionAtomic\(row\)/);
   assert.match(reconcileApi,/redis\.call\('HGET', KEYS\[1\], ARGV\[1\]\)/);
   assert.match(reconcileApi,/value\['state'\]/);
+  assert.match(reconcileApi,/value\['createdAt'\]/);
   assert.match(reconcileApi,/value\['expiresAt'\]/);
   assert.match(reconcileApi,/value\['protectionClientAlgoId'\]/);
   assert.match(reconcileApi,/value\['entryClientOrderId'\]/);
