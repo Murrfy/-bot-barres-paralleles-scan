@@ -56,7 +56,7 @@ test('progressive command requires the explicit LIMIT to equal the protected tri
 });
 
 
-test('triggered MAX-LOSS remainder recovery is bound to exact deterministic next IOC attempt',()=>{
+test('triggered MAX-LOSS remainder recovery is bound to exact MARKET close proof',()=>{
   const report={
     version:2,status:'MISMATCH',failClosed:true,
     reasons:['MISSING_BINANCE_PROTECTION','MISSING_BINANCE_MAX_LOSS_PROTECTION','TRIGGERED_MAX_LOSS_REMAINDER'],
@@ -72,15 +72,13 @@ test('triggered MAX-LOSS remainder recovery is bound to exact deterministic next
   };
   const rows=triggeredMaxLossRemainderTargets(report);
   assert.equal(rows.length,1);
-  assert.equal(rows[0].nextAttempt,2);
-  assert.equal(rows[0].priceMatch,'OPPONENT_10');
   const payload={
     type:'EXEC_CLOSE_POSITION',symbol:'BTCUSDT',direction:'LONG',quantity:0.3,closeAll:true,
     commandId:rows[0].recoveryCommandId,recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER',
-    attempt:2,priceMatch:'OPPONENT_10',
+    exitMode:'REMAINDER_MARKET',
   };
   assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,payload),true);
-  assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,{...payload,attempt:1,priceMatch:'OPPONENT_5'}),false);
+  assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,{...payload,exitMode:'PROTECTIVE_IOC'}),false);
   assert.equal(triggeredMaxLossRemainderRecoveryAllowed(report,{...payload,quantity:0.31}),false);
   const unsafe={...report,reasons:[...report.reasons,'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT']};
   assert.deepEqual(triggeredMaxLossRemainderTargets(unsafe),[]);
