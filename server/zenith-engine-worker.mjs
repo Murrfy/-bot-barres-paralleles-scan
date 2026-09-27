@@ -2460,6 +2460,31 @@ async function repairMissingMaxLoss(report){
     return {handled:true,repaired:false,reason};
   }
 
+  const expectedSide=plan.direction==='LONG'?'SELL':'BUY';
+  const staleManagedMaxLoss=(Array.isArray(projection.binanceOrders)?projection.binanceOrders:[]).filter(order=>{
+    const clientAlgoId=String(order?.clientAlgoId||'');
+    if(String(order?.orderClass||'').toUpperCase()!=='ALGO')return false;
+    if(String(order?.symbol||'').toUpperCase()!==plan.symbol)return false;
+    if(String(order?.side||'').toUpperCase()!==expectedSide)return false;
+    if(String(order?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
+    if(String(order?.type||'').toUpperCase()!=='STOP')return false;
+    if(String(order?.timeInForce||'').toUpperCase()!=='IOC')return false;
+    if(!(order?.reduceOnly===true||order?.reduceOnly==='true'))return false;
+    if(order?.closePosition===true||order?.closePosition==='true')return false;
+    if(String(order?.priceMatch||'').toUpperCase()!=='OPPONENT')return false;
+    if(!/^zth-MAX-[A-Za-z0-9._:-]+$/.test(clientAlgoId))return false;
+    const oldQuantity=n(order?.origQty??order?.quantity,NaN);
+    return oldQuantity>0&&!realNumberMatches(oldQuantity,plan.quantity);
+  });
+  if(staleManagedMaxLoss.length>1){
+    const reason=await markMaxLossRepairFailure(
+      'AUTO_MAX_LOSS_REPAIR_STALE_AMBIGUOUS',
+      plan.symbol
+    );
+    return {handled:true,repaired:false,reason};
+  }
+  const staleClientAlgoId=String(staleManagedMaxLoss[0]?.clientAlgoId||'');
+
   const body={
     type:'EXEC_UPDATE_PROTECTION',
     commandId:`auto-maxloss-repair-${plan.symbol}-${plan.direction}-${plan.lifecycleAt||0}`,
@@ -2469,6 +2494,7 @@ async function repairMissingMaxLoss(report){
     triggerPrice:plan.triggerPrice,
     protectionKind:'MAX_LOSS',
     phase:'PLACE_NEW',
+    ...(staleClientAlgoId?{previousClientAlgoId:staleClientAlgoId}:{}),
   };
 
   const placed=await callProtectiveUpdateExecute(body);
@@ -2492,7 +2518,6 @@ async function repairMissingMaxLoss(report){
   }
 
   const order=await waitForStreamOrder({kind:'ALGO',clientId,terminal:false},3500);
-  const expectedSide=plan.direction==='LONG'?'SELL':'BUY';
   const valid=Boolean(
     order&&
     String(order?.symbol||'').toUpperCase()===plan.symbol&&
@@ -2514,11 +2539,38 @@ async function repairMissingMaxLoss(report){
   }
 
   await publishRuntime();
+
+  if(staleClientAlgoId){
+    const canceled=await callProtectiveUpdateExecute({
+      ...body,phase:'CANCEL_OLD',newClientAlgoId:clientId,
+    });
+    if(!canceled.response.ok||canceled.data?.ok!==true){
+      const reason='AUTO_MAX_LOSS_REPAIR_CANCEL_STALE_'+String(
+        canceled.data?.code||canceled.data?.reason||canceled.data?.error||('HTTP_'+canceled.response.status)
+      );
+      await markMaxLossRepairFailure(reason,plan.symbol);
+      return {handled:true,repaired:false,reason};
+    }
+    const terminal=await waitForStreamOrder({
+      kind:'ALGO',clientId:staleClientAlgoId,terminal:true,
+    },3000);
+    const terminalStatus=String(
+      terminal?.status||canceled.data?.result?.algoOrder?.algoStatus||''
+    ).toUpperCase();
+    if(!['CANCELED','EXPIRED','REJECTED'].includes(terminalStatus)){
+      const reason='AUTO_MAX_LOSS_REPAIR_STALE_CANCEL_NOT_CONFIRMED';
+      await markMaxLossRepairFailure(reason,plan.symbol);
+      return {handled:true,repaired:false,reason};
+    }
+    await publishRuntime();
+  }
+
   log('AUTO_MAX_LOSS_REPAIRED',{
     symbol:plan.symbol,
     direction:plan.direction,
     maxLossUsd:plan.maxLossUsd,
     triggerPrice:plan.triggerPrice,
+    replacedClientAlgoId:staleClientAlgoId,
   });
   runtime.error='';
   stream.lastError='';
