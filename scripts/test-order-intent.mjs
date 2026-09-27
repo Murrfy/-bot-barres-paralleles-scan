@@ -49,6 +49,15 @@ test('LIMIT entry plan is derived only from a fresh matching risk snapshot',()=>
   assert.equal(p.params.reduceOnly,'false');
 });
 
+test('entry planner refuses every SELL/SHORT entry at the lowest order-planning layer',()=>{
+  for (const orderType of ['LIMIT','MARKET']) {
+    assert.throws(()=>buildEntryOrderPlan({
+      command:{id:'cmd-sell-12345',symbol:'BTCUSDT',side:'SELL',orderType,limitPrice:50000,margin:100,leverage:10,maxLoss:40},
+      riskSnapshot:risk(),now
+    }),/ENTRY_BUY_ONLY/);
+  }
+});
+
 test('stale risk snapshot blocks entry planning',()=>{
   assert.throws(()=>buildEntryOrderPlan({
     command:{id:'cmd-12345678',symbol:'BTCUSDT',side:'BUY',orderType:'LIMIT',limitPrice:50000,margin:100,leverage:10,maxLoss:40},
