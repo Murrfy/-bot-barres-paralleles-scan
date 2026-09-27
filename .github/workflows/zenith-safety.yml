@@ -58,6 +58,18 @@ jobs:
         run: node --check api/binance-order-test.js
       - name: Check Zenith sync API syntax
         run: node --check api/zenith-sync.js
+      - name: Check Zenith push API syntax
+        run: node --check api/zenith-push.js
+      - name: Check dependency-free Web Push syntax
+        run: node --check lib/web-push.mjs
+      - name: Check notification client syntax
+        run: node --check zenith-notifications.js
+      - name: Check notification service worker syntax
+        run: node --check zenith-sw.js
+      - name: Test dependency-free Apple Web Push crypto
+        run: node --test scripts/test-web-push.mjs
+      - name: Test persistent MAX-LOSS push isolation
+        run: node --test scripts/test-persistent-maxloss-push.mjs
       - name: Check 24/7 engine worker syntax
         run: node --check server/zenith-engine-worker.mjs
       - name: Check Node 24 WebSocket runtime
