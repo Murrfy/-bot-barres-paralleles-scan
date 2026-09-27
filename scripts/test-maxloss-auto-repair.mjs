@@ -84,3 +84,32 @@ test('unsafe existing MAX-LOSS is never auto-repaired blindly',()=>{
   assert.equal(plan.action,'NONE');
   assert.equal(plan.reason,'NO_EXACT_REPAIR_TARGET');
 });
+
+
+test('builds repair plan from exact local missing MAX-LOSS quarantine',()=>{
+  const local={
+    version:2,status:'CLEAN_REAL_WITH_QUARANTINES',failClosed:false,reasons:[],
+    differences:{
+      missingProtections:['BTCUSDT:LONG'],
+      missingMaxLossProtections:['BTCUSDT:LONG'],
+      ambiguousMaxLossProtections:[],
+      unsafeMaxLossProtections:[],
+      configuredMaxLossUnavailable:[],
+    },
+    symbolQuarantines:[{
+      symbol:'BTCUSDT',direction:'LONG',reason:'MISSING_MAX_LOSS_REPAIR_PENDING',
+      remainingQuantity:null,since:Date.now(),
+    }],
+  };
+  const plan=buildMaxLossRepairPlan({
+    report:local,
+    positions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000',updateTime:123}],
+    tokenSettings:{BTCUSDT:{maxLoss:400}},
+    settings:{maxLoss:400},
+    priceFilters:filter,
+  });
+  assert.equal(plan.action,'REPAIR');
+  assert.equal(plan.target,'BTCUSDT:LONG');
+  assert.equal(plan.triggerPrice,48000);
+  assert.ok(plan.actualMaxLossUsd<=400);
+});
