@@ -148,6 +148,24 @@ test('global risk defaults can be updated without overwriting per-token override
   assert.match(cloud,/tokenSettings:clone\(normalizeRecordBlock\(tokenSettingsSource\)\)/);
 });
 
+test('BOT save persists editable global margin and leverage without touching per-token overrides',()=>{
+  assert.match(html,/id="bDefaultMargin"[^>]*min="1"[^>]*max="1000"/);
+  assert.match(html,/id="bDefaultLeverage"[^>]*min="1"[^>]*max="10"/);
+  const fill=block('function fillBot()','function setTokenFieldsEnabled()');
+  assert.match(fill,/\$\('bDefaultMargin'\)\.value=n\(settings\.margin,1000\)/);
+  assert.match(fill,/\$\('bDefaultLeverage'\)\.value=Math\.round\(n\(settings\.leverage,10\)\)/);
+  const saveBot=block('function readBotSettings()','async function saveSelectedAsDefaults()');
+  assert.match(saveBot,/margin=n\(\$\('bDefaultMargin'\)\.value,NaN\)/);
+  assert.match(saveBot,/leverage=Math\.round\(n\(\$\('bDefaultLeverage'\)\.value,NaN\)\)/);
+  assert.match(saveBot,/return\{margin,leverage,marginType:'ISOLATED'/);
+  assert.doesNotMatch(saveBot,/tokenSettings\s*=/);
+});
+
+test('load preserves explicitly saved global margin values',()=>{
+  const load=block('function load()','async function jf(path)');
+  assert.doesNotMatch(load,/x\.settings\?\.margin\)===100[^\n]*settings\.margin=1000/);
+});
+
 test('global defaults stay visible and are copied only by explicit action',()=>{
   assert.match(html,/id="defaultRiskSummary"/);
   assert.match(html,/id="saveBotDefaultsBtn"/);
