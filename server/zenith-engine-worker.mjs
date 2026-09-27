@@ -30,6 +30,7 @@ import {
   pendingEntryProtectionLossTargets,
   pendingEntryWriteAheadRecoveryTargets,
   expiredEntryOrphanProtections,
+  persistedSaleRemainderRecoveryTargets,
   triggeredProgressiveRemainderTargets,
   triggeredMaxLossRemainderTargets,
   maxLossSymbolQuarantines,
@@ -2715,6 +2716,40 @@ function authorizedMaxLossOverlapReport(report){
 }
 
 
+async function recoverPersistedSaleRemainder(report){
+  const targets=persistedSaleRemainderRecoveryTargets(report);
+  if(!targets.length)return {handled:false,closed:false,reason:'NO_PERSISTED_SALE_REMAINDER'};
+  const target=targets[0];
+  const result=await callProtectiveExecute({
+    type:'EXEC_CLOSE_POSITION',
+    commandId:target.commandId,
+    symbol:target.symbol,
+    direction:target.direction,
+    quantity:target.currentQuantity,
+    closeAll:true,
+    exitMode:'REMAINDER_MARKET',
+    recoveryReason:'PERSISTED_SALE_REMAINDER',
+  });
+  if(!result.response.ok||result.data?.ok!==true||result.data?.remainderMarketClosed!==true){
+    const reason='PERSISTED_SALE_REMAINDER_'+String(
+      result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status)
+    );
+    runtime.error=reason;
+    stream.lastError=reason;
+    scheduleReconcile(result.data?.ambiguous===true||result.data?.writeAttempted===true?100:500);
+    return {handled:true,closed:false,reason};
+  }
+  log('PERSISTED_SALE_REMAINDER_CLOSED',{
+    symbol:target.symbol,
+    direction:target.direction,
+    sourceReason:target.sourceReason,
+    remainingQuantity:target.currentQuantity,
+    nextAttempt:target.nextAttempt,
+    attempts:Array.isArray(result.data?.attempts)?result.data.attempts.length:0,
+  });
+  return {handled:true,closed:true,reason:'PERSISTED_SALE_REMAINDER_CLOSED'};
+}
+
 async function recoverTriggeredProgressiveRemainder(report){
   const targets=triggeredProgressiveRemainderTargets(report);
   if(!targets.length)return {handled:false,closed:false,reason:'NO_TRIGGERED_PROGRESSIVE_REMAINDER'};
@@ -2833,6 +2868,14 @@ async function reconcile(secondPass=false){
     }
 
     stream.symbolQuarantines=maxLossSymbolQuarantines(data.report);
+
+    const persistedSaleRemainder=await recoverPersistedSaleRemainder(data.report);
+    if(persistedSaleRemainder.handled){
+      if(!persistedSaleRemainder.closed)return false;
+      stream.reconcileBusy=false;
+      await sleep(100);
+      return reconcile(false);
+    }
 
     const partialTargetRemainder=await recoverImmediatePartialTargetRemainder();
     if(partialTargetRemainder.handled){
