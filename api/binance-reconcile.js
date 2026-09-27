@@ -292,6 +292,8 @@ function evaluateTriggeredProgressiveRemainder({position,algo,actualOrder}={}){
   const side=dir==='LONG'?'SELL':'BUY';
   const positionSide=String(position?.positionSide||'BOTH').toUpperCase();
   const currentQty=positionQty(position);
+  const entryPrice=number(position?.entryPrice,NaN);
+  const positionUpdateTime=number(position?.updateTime,0);
   const clientAlgoId=String(algo?.clientAlgoId||'');
   const algoStatus=String(algo?.status||algo?.algoStatus||'').toUpperCase();
   const actualOrderId=String(algo?.actualOrderId||'');
@@ -299,7 +301,7 @@ function evaluateTriggeredProgressiveRemainder({position,algo,actualOrder}={}){
   const triggerPrice=number(algo?.triggerPrice??algo?.stopPrice,NaN);
   const limitPrice=number(algo?.price,NaN);
   const triggerTime=number(algo?.triggerTime,0);
-  if(!symbol||!['LONG','SHORT'].includes(dir)||!(currentQty>0))return null;
+  if(!symbol||!['LONG','SHORT'].includes(dir)||!(currentQty>0)||!(entryPrice>0))return null;
   if(String(algo?.symbol||'').toUpperCase()!==symbol||
      String(algo?.side||'').toUpperCase()!==side||
      String(algo?.positionSide||'BOTH').toUpperCase()!==positionSide||
@@ -312,6 +314,9 @@ function evaluateTriggeredProgressiveRemainder({position,algo,actualOrder}={}){
      !/^zth-PRO-[A-Za-z0-9._:-]+$/.test(clientAlgoId)||clientAlgoId.length>36||
      !actualOrderId||!(originalQty>0)||!(triggerPrice>0)||!(limitPrice>0)||
      Math.abs(limitPrice-triggerPrice)>Math.max(1e-9,Math.abs(triggerPrice)*1e-10))return null;
+  const profitSide=dir==='LONG'?triggerPrice>entryPrice:triggerPrice<entryPrice;
+  if(!profitSide)return null;
+  if(positionUpdateTime>0&&triggerTime>0&&triggerTime<positionUpdateTime-120000)return null;
 
   const actualStatus=String(actualOrder?.status||'').toUpperCase();
   const executed=number(actualOrder?.executedQty,NaN);
@@ -327,8 +332,8 @@ function evaluateTriggeredProgressiveRemainder({position,algo,actualOrder}={}){
      !(actualOrder?.reduceOnly===true||actualOrder?.reduceOnly==='true')||
      actualOrder?.closePosition===true||actualOrder?.closePosition==='true'||
      !(actualOrigQty>0)||Math.abs(actualOrigQty-originalQty)>Math.max(1e-12,originalQty*1e-10)||
-     !(executed>0)||executed>=originalQty||
-     !['PARTIALLY_FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH'].includes(actualStatus)||
+     !(executed>=0)||executed>=originalQty||
+     !['NEW','PARTIALLY_FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(actualStatus)||
      !(actualPrice>0)||Math.abs(actualPrice-limitPrice)>Math.max(1e-9,Math.abs(limitPrice)*1e-10)||
      (triggerTime>0&&actualUpdateTime>0&&actualUpdateTime<triggerTime))return null;
 
@@ -362,7 +367,7 @@ async function detectTriggeredProgressiveRemainders({
     const symbol=String(position?.symbol||'').toUpperCase();
     const side=direction(position)==='LONG'?'SELL':'BUY';
     const currentQty=positionQty(position);
-    const candidates=(Array.isArray(standardOrders)?standardOrders:[]).filter(order=>{
+    const matchesCurrentRemainder=order=>{
       if(String(order?.symbol||'').toUpperCase()!==symbol)return false;
       if(String(order?.side||'').toUpperCase()!==side)return false;
       if(String(order?.positionSide||'BOTH').toUpperCase()!=='BOTH')return false;
@@ -373,10 +378,10 @@ async function detectTriggeredProgressiveRemainders({
       const original=number(order?.origQty,NaN);
       const executed=number(order?.executedQty,NaN);
       const remaining=original-executed;
-      return original>0&&executed>0&&remaining>0&&
+      return original>0&&executed>=0&&executed<original&&remaining>0&&
         Math.abs(remaining-currentQty)<=Math.max(1e-12,original*1e-10);
-    });
-    if(!candidates.length)continue;
+    };
+    let candidates=(Array.isArray(standardOrders)?standardOrders:[]).filter(matchesCurrentRemainder);
 
     const historyParams={
       symbol,
@@ -386,6 +391,14 @@ async function detectTriggeredProgressiveRemainders({
     };
     const historyRaw=await signedGet('/fapi/v1/allAlgoOrders',apiKey,secret,serverTime,historyParams);
     if(!Array.isArray(historyRaw))throw new Error('BINANCE_ALGO_HISTORY_INVALID');
+    if(!candidates.length){
+      const standardHistoryRaw=await signedGet('/fapi/v1/allOrders',apiKey,secret,serverTime,historyParams);
+      if(!Array.isArray(standardHistoryRaw))throw new Error('BINANCE_ORDER_HISTORY_INVALID');
+      candidates=standardHistoryRaw
+        .map(row=>({orderClass:'STANDARD',...normalizeActualOrder(row)}))
+        .filter(matchesCurrentRemainder);
+    }
+    if(!candidates.length)continue;
     const history=historyRaw
       .map(normalizeActualAlgoOrder)
       .filter(algo=>
@@ -417,19 +430,8 @@ function maxLossRemainderCommandId(algo) {
   return /^[A-Za-z0-9._:-]{8,128}$/.test(value)?value:'';
 }
 
-function recoveryClientOrderId(commandId,symbol,attempt){
-  const id=String(commandId||'');
-  const sym=String(symbol||'').toUpperCase();
-  const n=Math.max(0,Math.floor(number(attempt,0)));
-  if(!/^[A-Za-z0-9._:-]{8,128}$/.test(id)||!/^[A-Z0-9]{3,30}$/.test(sym))return '';
-  const digest=crypto.createHash('sha256')
-    .update(`zenith:v1|${id}|${sym}|EXIT_PROTECT|${n}`)
-    .digest('hex').slice(0,24);
-  return `zth-EXI-${digest}`;
-}
-
 function evaluateTriggeredMaxLossRemainder({
-  position,algo,actualOrder,recoveryOrders=[],configuredMaxLossUsd
+  position,algo,actualOrder,configuredMaxLossUsd
 }) {
   if(!position||!algo||!actualOrder)return null;
   const symbol=String(position?.symbol||'').toUpperCase();
@@ -465,7 +467,7 @@ function evaluateTriggeredMaxLossRemainder({
   if(!(impliedLossUsd>=0)||impliedLossUsd>configured+1e-8||impliedLossUsd>REAL_RISK_LIMITS.maxLossUsd+1e-8)return null;
 
   const actualStatus=String(actualOrder?.status||'').toUpperCase();
-  const initialExecuted=number(actualOrder?.executedQty,NaN);
+  const executed=number(actualOrder?.executedQty,NaN);
   const actualOrigQty=number(actualOrder?.origQty,NaN);
   if(String(actualOrder?.symbol||'').toUpperCase()!==symbol||
      String(actualOrder?.orderId||'')!==actualOrderId||
@@ -476,110 +478,29 @@ function evaluateTriggeredMaxLossRemainder({
      !(actualOrder?.reduceOnly===true||actualOrder?.reduceOnly==='true')||
      actualOrder?.closePosition===true||actualOrder?.closePosition==='true'||
      !(actualOrigQty>0)||Math.abs(actualOrigQty-originalQty)>Math.max(1e-12,originalQty*1e-10)||
-     !(initialExecuted>=0)||initialExecuted>originalQty+1e-12)return null;
+     !(executed>=0)||executed>originalQty+1e-12)return null;
 
   const recoveryCommandId=maxLossRemainderCommandId(algo);
   if(!recoveryCommandId)return null;
-  const retryableTerminal=new Set(['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED']);
   if(actualStatus==='FILLED'&&currentQty>1e-12){
     return {
       kind:'INCONSISTENT',symbol,direction:dir,remainingQuantity:currentQty,
-      originalQuantity:originalQty,executedQuantity:initialExecuted,
+      originalQuantity:originalQty,executedQuantity:executed,
       clientAlgoId,algoId:String(algo?.algoId||''),actualOrderId,
       actualOrderStatus:actualStatus,recoveryCommandId,triggerPrice,triggerTime,
       reason:'ORIGINAL_IOC_FILLED_BUT_POSITION_REMAINS',
     };
   }
-  if(!retryableTerminal.has(actualStatus))return null;
+  if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(actualStatus))return null;
 
-  let cumulativeExecuted=initialExecuted;
-  let nextAttempt=1;
-  let pendingAttempt=0;
-  const seenAttempts=new Set();
-  for(const item of Array.isArray(recoveryOrders)?recoveryOrders:[]){
-    const attempt=Math.floor(number(item?.attempt,0));
-    if(attempt<1||attempt>3||seenAttempts.has(attempt))return {
-      kind:'INCONSISTENT',symbol,direction:dir,remainingQuantity:currentQty,
-      originalQuantity:originalQty,executedQuantity:cumulativeExecuted,
-      clientAlgoId,algoId:String(algo?.algoId||''),actualOrderId,
-      actualOrderStatus:actualStatus,recoveryCommandId,triggerPrice,triggerTime,
-      reason:'RECOVERY_ATTEMPT_IDENTITY_INVALID',
-    };
-    seenAttempts.add(attempt);
-  }
-  for(let attempt=1;attempt<=3;attempt++){
-    const item=(Array.isArray(recoveryOrders)?recoveryOrders:[]).find(row=>Math.floor(number(row?.attempt,0))===attempt);
-    if(!item)break;
-    if(attempt!==nextAttempt) {
-      return {
-        kind:'INCONSISTENT',symbol,direction:dir,remainingQuantity:currentQty,
-        originalQuantity:originalQty,executedQuantity:cumulativeExecuted,
-        clientAlgoId,algoId:String(algo?.algoId||''),actualOrderId,
-        actualOrderStatus:actualStatus,recoveryCommandId,triggerPrice,triggerTime,
-        reason:'RECOVERY_ATTEMPT_GAP',
-      };
-    }
-    const order=item.order||{};
-    const expectedClientId=recoveryClientOrderId(recoveryCommandId,symbol,attempt);
-    const beforeAttempt=Math.max(0,originalQty-cumulativeExecuted);
-    const orderQty=number(order?.origQty,NaN);
-    const orderExecuted=number(order?.executedQty,NaN);
-    const status=String(order?.status||'').toUpperCase();
-    if(String(order?.symbol||'').toUpperCase()!==symbol||
-       String(order?.clientOrderId||'')!==expectedClientId||
-       String(order?.side||'').toUpperCase()!==side||
-       String(order?.positionSide||'BOTH').toUpperCase()!==positionSide||
-       String(order?.type||'').toUpperCase()!=='LIMIT'||
-       String(order?.timeInForce||'').toUpperCase()!=='IOC'||
-       !(order?.reduceOnly===true||order?.reduceOnly==='true')||
-       order?.closePosition===true||order?.closePosition==='true'||
-       !(orderQty>0)||Math.abs(orderQty-beforeAttempt)>Math.max(1e-12,beforeAttempt*1e-10)||
-       !(orderExecuted>=0)||orderExecuted>orderQty+1e-12){
-      return {
-        kind:'INCONSISTENT',symbol,direction:dir,remainingQuantity:currentQty,
-        originalQuantity:originalQty,executedQuantity:cumulativeExecuted,
-        clientAlgoId,algoId:String(algo?.algoId||''),actualOrderId,
-        actualOrderStatus:actualStatus,recoveryCommandId,triggerPrice,triggerTime,
-        reason:'RECOVERY_ORDER_IDENTITY_MISMATCH',
-      };
-    }
-    if(!retryableTerminal.has(status)&&status!=='FILLED'){
-      pendingAttempt=attempt;
-      break;
-    }
-    cumulativeExecuted+=orderExecuted;
-    nextAttempt=attempt+1;
-  }
-
-  const expectedRemaining=Math.max(0,originalQty-cumulativeExecuted);
-  if(Math.abs(expectedRemaining-currentQty)>Math.max(1e-12,originalQty*1e-10)){
-    return null;
-  }
-  if(pendingAttempt){
-    return {
-      kind:'PENDING',symbol,direction:dir,remainingQuantity:currentQty,
-      originalQuantity:originalQty,executedQuantity:cumulativeExecuted,
-      clientAlgoId,algoId:String(algo?.algoId||''),actualOrderId,
-      actualOrderStatus:actualStatus,recoveryCommandId,triggerPrice,triggerTime,
-      pendingAttempt,
-    };
-  }
-  if(!(expectedRemaining>1e-12))return null;
-  if(nextAttempt>3){
-    return {
-      kind:'EXHAUSTED',symbol,direction:dir,remainingQuantity:currentQty,
-      originalQuantity:originalQty,executedQuantity:cumulativeExecuted,
-      clientAlgoId,algoId:String(algo?.algoId||''),actualOrderId,
-      actualOrderStatus:actualStatus,recoveryCommandId,triggerPrice,triggerTime,
-    };
-  }
-  const priceMatch=nextAttempt===1?'OPPONENT_5':nextAttempt===2?'OPPONENT_10':'OPPONENT_20';
+  const expectedRemaining=Math.max(0,originalQty-executed);
+  if(!(expectedRemaining>1e-12)||
+     Math.abs(expectedRemaining-currentQty)>Math.max(1e-12,originalQty*1e-10))return null;
   return {
     kind:'REMAINDER',symbol,direction:dir,remainingQuantity:currentQty,
-    originalQuantity:originalQty,executedQuantity:cumulativeExecuted,
+    originalQuantity:originalQty,executedQuantity:executed,
     clientAlgoId,algoId:String(algo?.algoId||''),actualOrderId,
     actualOrderStatus:actualStatus,recoveryCommandId,triggerPrice,triggerTime,
-    nextAttempt,priceMatch,
   };
 }
 
@@ -587,7 +508,7 @@ async function detectTriggeredMaxLossRemainders({
   serverTime,apiKey,secret,positions,missingTargets,controllerState,
 }={}){
   const missing=new Set(Array.isArray(missingTargets)?missingTargets.map(x=>String(x||'').toUpperCase()):[]);
-  const remainders=[],ambiguous=[],inconsistent=[],pending=[],exhausted=[];
+  const remainders=[],ambiguous=[],inconsistent=[];
   const historyWindow=Math.max(0,7*24*60*60*1000-60000);
   for(const position of Array.isArray(positions)?positions:[]){
     const key=positionKey(position);
@@ -627,27 +548,16 @@ async function detectTriggeredMaxLossRemainders({
         String(order?.orderId||'')===String(algo.actualOrderId)
       )||null;
       if(!actualOrder)continue;
-      const recoveryCommandId=maxLossRemainderCommandId(algo);
-      const recoveryOrders=[];
-      if(recoveryCommandId){
-        for(let attempt=1;attempt<=3;attempt++){
-          const clientOrderId=recoveryClientOrderId(recoveryCommandId,symbol,attempt);
-          const order=standardHistory.find(row=>String(row?.clientOrderId||'')===clientOrderId)||null;
-          if(order)recoveryOrders.push({attempt,clientOrderId,order});
-        }
-      }
       const evidence=evaluateTriggeredMaxLossRemainder({
-        position,algo,actualOrder,recoveryOrders,configuredMaxLossUsd:configured,
+        position,algo,actualOrder,configuredMaxLossUsd:configured,
       });
       if(evidence?.kind==='INCONSISTENT')inconsistent.push(evidence);
-      else if(evidence?.kind==='PENDING')pending.push(evidence);
-      else if(evidence?.kind==='EXHAUSTED')exhausted.push(evidence);
       else if(evidence?.kind==='REMAINDER')matches.push(evidence);
     }
     if(matches.length===1)remainders.push(matches[0]);
     else if(matches.length>1)ambiguous.push(key);
   }
-  return {remainders,ambiguous,inconsistent,pending,exhausted};
+  return {remainders,ambiguous,inconsistent,pending:[],exhausted:[]};
 }
 
 function triggeredMaxLossSymbolQuarantines(recovery, observedAt=Date.now()){
@@ -681,6 +591,8 @@ function triggeredMaxLossSymbolQuarantines(recovery, observedAt=Date.now()){
   for(const row of Array.isArray(recovery?.ambiguous)?recovery.ambiguous:[])add(row,'AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER');
   for(const row of Array.isArray(recovery?.pending)?recovery.pending:[])add(row,'TRIGGERED_MAX_LOSS_RECOVERY_PENDING');
   for(const row of Array.isArray(recovery?.remainders)?recovery.remainders:[])add(row,'TRIGGERED_MAX_LOSS_REMAINDER');
+  for(const row of Array.isArray(recovery?.progressiveAmbiguous)?recovery.progressiveAmbiguous:[])add(row,'AMBIGUOUS_TRIGGERED_PROGRESSIVE_REMAINDER');
+  for(const row of Array.isArray(recovery?.progressiveRemainders)?recovery.progressiveRemainders:[])add(row,'TRIGGERED_PROGRESSIVE_REMAINDER');
   return out;
 }
 
@@ -696,6 +608,9 @@ function localizeTriggeredMaxLossAnomalies(result,recovery,observedAt=Date.now()
     'AMBIGUOUS_TRIGGERED_MAX_LOSS_REMAINDER',
     'INCONSISTENT_TRIGGERED_MAX_LOSS_RESULT',
     'TRIGGERED_MAX_LOSS_RECOVERY_EXHAUSTED',
+    'TRIGGERED_PROGRESSIVE_REMAINDER',
+    'AMBIGUOUS_TRIGGERED_PROGRESSIVE_REMAINDER',
+    'INCONSISTENT_TRIGGERED_PROGRESSIVE_RESULT',
   ]);
   let reasons=Array.isArray(result.reasons)
     ?result.reasons.map(value=>String(value||'')).filter(reason=>!localReasons.has(reason))
@@ -719,10 +634,13 @@ function localizeTriggeredMaxLossAnomalies(result,recovery,observedAt=Date.now()
     const side=String(order?.side||'').toUpperCase();
     const direction=side==='SELL'?'LONG':side==='BUY'?'SHORT':'';
     const id=String(order?.clientAlgoId||order?.clientOrderId||'');
-    return quarantineKeys.has(symbol+':'+direction)&&
-      /^zth-MAX-[A-Za-z0-9._:-]+$/.test(id)&&
-      String(order?.type||'').toUpperCase()==='STOP'&&
-      order?.reduceOnly===true;
+    const quarantine=quarantines.find(row=>row.symbol===symbol&&row.direction===direction);
+    if(!quarantine||!quarantineKeys.has(symbol+':'+direction))return false;
+    const progressive=String(quarantine.reason||'').includes('PROGRESSIVE');
+    const owned=progressive
+      ?/^zth-PRO-[A-Za-z0-9._:-]+$/.test(id)
+      :/^zth-MAX-[A-Za-z0-9._:-]+$/.test(id);
+    return owned&&String(order?.type||'').toUpperCase()==='STOP'&&order?.reduceOnly===true;
   })){
     reasons=reasons.filter(reason=>reason!=='MISSING_BINANCE_ORDER');
   }
@@ -1616,7 +1534,7 @@ function certifiedSaleRemainderRecoveries(records,positions,now=Date.now()){
       row?.version===1&&field===expectedField&&
       /^[A-Z0-9]{3,30}$/.test(symbol)&&['LONG','SHORT'].includes(dir)&&
       /^[A-Za-z0-9._:-]{8,128}$/.test(commandId)&&
-      ['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER'].includes(sourceReason)&&
+      ['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER','TRIGGERED_MAX_LOSS_REMAINDER'].includes(sourceReason)&&
       initialQuantity>0&&attemptQuantity>0&&attemptQuantity<=initialQuantity+Math.max(1e-12,initialQuantity*1e-10)&&
       nextAttempt>=0&&nextAttempt<=3&&
       createdAt>0&&updatedAt>=createdAt&&expiresAt>=updatedAt;
@@ -1624,9 +1542,12 @@ function certifiedSaleRemainderRecoveries(records,positions,now=Date.now()){
     if(sourceReason==='PARTIAL_TARGET_REMAINDER'){
       const id=String(row?.previousClientOrderId||'');
       sourceValid=/^zth-EXI-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
-    }else if(sourceReason==='TRIGGERED_PROGRESSIVE_REMAINDER'){
+    }else if(sourceReason==='TRIGGERED_PROGRESSIVE_REMAINDER'||sourceReason==='TRIGGERED_MAX_LOSS_REMAINDER'){
       const algo=String(row?.clientAlgoId||'');
-      sourceValid=/^zth-PRO-[A-Za-z0-9._:-]+$/.test(algo)&&algo.length<=36&&Boolean(String(row?.actualOrderId||''));
+      const owned=sourceReason==='TRIGGERED_MAX_LOSS_REMAINDER'
+        ?/^zth-MAX-[A-Za-z0-9._:-]+$/.test(algo)
+        :/^zth-PRO-[A-Za-z0-9._:-]+$/.test(algo);
+      sourceValid=owned&&algo.length<=36&&Boolean(String(row?.actualOrderId||''));
     }
     if(!commonValid||!sourceValid||seen.has(expectedField)){
       invalid.push({field,symbol,direction:dir,commandId});
@@ -2026,7 +1947,11 @@ export default async function handler(req, res) {
     result.differences.inconsistentTriggeredMaxLossRemainders=triggeredRecovery.inconsistent;
     result.differences.pendingTriggeredMaxLossRemainders=triggeredRecovery.pending;
     result.differences.exhaustedTriggeredMaxLossRemainders=triggeredRecovery.exhausted;
-    localizeTriggeredMaxLossAnomalies(result,triggeredRecovery,started);
+    localizeTriggeredMaxLossAnomalies(result,{
+      ...triggeredRecovery,
+      progressiveRemainders:progressiveRecovery.remainders,
+      progressiveAmbiguous:progressiveRecovery.ambiguous,
+    },started);
     localizeMissingMaxLossRepair(result,started);
     localizeOrphanProtectionAnomalies(result,started);
     localizeEntryTransitionRecoveryAnomalies(result,started);
