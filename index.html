@@ -1662,7 +1662,7 @@ function setTokenFieldsEnabled(){
     $('tMaxLoss').disabled=!realActive||activeSettingPending;
     protectionEls.forEach(el=>el.disabled=activeSettingPending);
     if(addProtectionBtn)addProtectionBtn.disabled=activeSettingPending;
-    $('saveTokenBtn').disabled=activeSettingPending;$('instantBuyBtn').disabled=true;$('tokenDefaultsBtn').disabled=true;$('devalidateBtn').disabled=true;
+    $('saveTokenBtn').disabled=activeSettingPending;$('instantBuyBtn').disabled=true;$('tokenDefaultsBtn').disabled=true;$('devalidateBtn').disabled=!validated[selectedSymbol];
     $('fMargin').disabled=true;$('fLev').disabled=true;$('saveFuturesBtn').disabled=true;
     lock.hidden=false;lock.textContent=realActive
       ?activeSettingPending
