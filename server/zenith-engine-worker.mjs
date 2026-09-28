@@ -110,6 +110,7 @@ const autoProtection={
   highWater:new Map(),
   redHighWater:new Map(),
   authorizationAt:0,
+  highWaterUpdatedAt:0,
   highWaterLoaded:false,
   highWaterLoadPromise:null,
   highWaterSaveTimer:null,
@@ -301,11 +302,15 @@ function migrateLegacyAutoHighWaterKey(position){
   if(autoProtection.highWater.has(key)||autoProtection.redHighWater.has(key))return false;
   const parts=key.split(':');
   if(parts.length!==3)return false;
-  const [symbol,direction,lifecycle]=parts;
+  const [symbol,direction,lifecycleText]=parts;
+  const lifecycle=n(lifecycleText,0);
   const prefix=`${symbol}:${direction}:`;
-  const suffix=`:${lifecycle}`;
+  const suffix=`:${lifecycleText}`;
   let migrated=false;
   let high=NaN,red=NaN;
+
+  // First migrate the former quantity/entry/lifecycle key format when the
+  // lifecycle itself is already identical.
   for(const [oldKey,value] of [...autoProtection.highWater.entries()]){
     if(oldKey===key||!oldKey.startsWith(prefix)||!oldKey.endsWith(suffix))continue;
     const amount=n(value,NaN);
@@ -320,11 +325,44 @@ function migrateLegacyAutoHighWaterKey(position){
     autoProtection.redHighWater.delete(oldKey);
     migrated=true;
   }
+
+  // A REST seed after a worker restart uses Binance position updateTime as the
+  // lifecycle. Reuse a persisted older lifecycle only when Redis proves that
+  // the high-water snapshot was saved at/after that Binance position update.
+  // If Binance changed the position after our last save, continuity is
+  // ambiguous (the position may have closed and reopened) and we deliberately
+  // refuse to carry the old protection stage forward.
+  if(!migrated&&lifecycle>0&&n(autoProtection.highWaterUpdatedAt,0)>=lifecycle){
+    const highCandidates=[...autoProtection.highWater.keys()]
+      .filter(oldKey=>oldKey!==key&&oldKey.startsWith(prefix));
+    const redCandidates=[...autoProtection.redHighWater.keys()]
+      .filter(oldKey=>oldKey!==key&&oldKey.startsWith(prefix));
+    const candidateKeys=[...new Set([...highCandidates,...redCandidates])];
+    if(candidateKeys.length===1){
+      const oldKey=candidateKeys[0];
+      const highValue=n(autoProtection.highWater.get(oldKey),NaN);
+      const redValue=n(autoProtection.redHighWater.get(oldKey),NaN);
+      if(Number.isFinite(highValue))high=Number.isFinite(high)?Math.max(high,highValue):highValue;
+      if(Number.isFinite(redValue))red=Number.isFinite(red)?Math.max(red,redValue):redValue;
+      autoProtection.highWater.delete(oldKey);
+      autoProtection.redHighWater.delete(oldKey);
+      migrated=true;
+      log('AUTO_HIGH_WATER_RESTART_CONTINUITY',{
+        symbol,direction,
+        previousKey:oldKey,
+        currentKey:key,
+        persistedAt:autoProtection.highWaterUpdatedAt,
+        positionUpdateTime:lifecycle,
+      });
+    }
+  }
+
   if(Number.isFinite(high))autoProtection.highWater.set(key,high);
   if(Number.isFinite(red))autoProtection.redHighWater.set(key,red);
   if(migrated)scheduleAutoHighWaterSave(250);
   return migrated;
 }
+
 function observedLinearPnl(position,mark){
   const amount=n(position?.positionAmt??position?.quantity,0);
   const qty=Math.abs(amount),entry=n(position?.entryPrice,0),px=n(mark,0);
@@ -690,6 +728,7 @@ async function loadAutoHighWater(force=false){
       return false;
     }
     autoProtection.authorizationAt=n(result.data.authorizationAt,0);
+    autoProtection.highWaterUpdatedAt=n(result.data.updatedAt,0);
     autoProtection.highWater.clear();
     autoProtection.redHighWater.clear();
     const entries=result.data.entries&&typeof result.data.entries==='object'?result.data.entries:{};
@@ -730,11 +769,13 @@ async function persistAutoHighWaterNow(){
       if(code==='ENGINE_HIGH_WATER_AUTHORIZATION_CHANGED'||code==='ENGINE_RESTART_AUTHORIZATION_REQUIRED'){
         autoProtection.highWaterLoaded=false;
         autoProtection.authorizationAt=0;
+        autoProtection.highWaterUpdatedAt=0;
         autoProtection.highWater.clear();
         autoProtection.redHighWater.clear();
       }
       return false;
     }
+    autoProtection.highWaterUpdatedAt=n(result.data.updatedAt,Date.now());
     return true;
   }catch(error){
     autoProtection.lastError=String(error?.message||'ENGINE_HIGH_WATER_SAVE_FAILED');
@@ -1186,8 +1227,7 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
   return false;
 }
 
-async function pruneAutoHighWater(){
-  if(!autoProtection.highWaterLoaded||userStreamReady(stream.state)!==true)return false;
+function pruneAutoHighWaterEntries(){
   const active=new Set(
     (streamProjection().binancePositions||[])
       .filter(position=>Math.abs(n(position?.positionAmt??position?.quantity,0))>0)
@@ -1207,6 +1247,12 @@ async function pruneAutoHighWater(){
       changed=true;
     }
   }
+  return changed;
+}
+
+async function pruneAutoHighWater(){
+  if(!autoProtection.highWaterLoaded||userStreamReady(stream.state)!==true)return false;
+  const changed=pruneAutoHighWaterEntries();
   if(changed)await persistAutoHighWaterNow();
   return changed;
 }
@@ -3163,6 +3209,15 @@ async function processStreamPayload(payload){
   if(!scopedPayload)return {state:stream.state,applied:false,ignored:true,reason:'OUTSIDE_ZENITH_SCOPE'};
   const result=applyUserDataEvent(stream.state,scopedPayload);
   stream.state=result.state;
+  if(result.applied===true&&String(result.kind||'')==='ACCOUNT'&&autoProtection.highWaterLoaded){
+    const changed=pruneAutoHighWaterEntries();
+    const saved=await persistAutoHighWaterNow();
+    if(!saved){
+      autoProtection.lastError=changed
+        ?'AUTO_HIGH_WATER_ACCOUNT_PRUNE_NOT_PERSISTED'
+        :'AUTO_HIGH_WATER_ACCOUNT_UPDATE_NOT_PERSISTED';
+    }
+  }
   if([
     'LISTEN_KEY_EXPIRED',
     'STREAM_EVENT_OUT_OF_ORDER',
