@@ -6,6 +6,7 @@ import { REAL_RISK_LIMITS, DEFAULT_MAX_ACTIVE_POSITIONS } from '../lib/risk-poli
 const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 const worker=await readFile(new URL('../server/zenith-engine-worker.mjs',import.meta.url),'utf8');
 const repair=await readFile(new URL('../lib/maxloss-repair.mjs',import.meta.url),'utf8');
+const zenithSync=await readFile(new URL('../api/zenith-sync.js',import.meta.url),'utf8');
 
 function block(startText,endText){
   const start=html.indexOf(startText);
@@ -13,6 +14,11 @@ function block(startText,endText){
   assert.ok(start>=0&&end>start,`missing block ${startText}`);
   return html.slice(start,end);
 }
+
+test('active exact-sale validation is present once without a duplicate branch',()=>{
+  const needle="if (!exactSaleEnabled && exactSalePrice !== 0) return { ok:false, reason:'ACTIVE_EXACT_SALE_PRICE_MUST_BE_ZERO' };";
+  assert.equal(zenithSync.split(needle).length-1,1);
+});
 
 test('each token can override Futures margin and leverage independently',()=>{
   const fill=block('function fillFutures()','function fillBot()');
