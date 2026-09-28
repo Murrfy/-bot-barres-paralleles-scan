@@ -111,3 +111,25 @@ test('active protection-table config command is server-only and carries no Binan
   assert.equal(d.body.type,'EXEC_UPDATE_ACTIVE_CONFIG');
   assert.deepEqual(d.body.activeConfig,activeConfig);
 });
+
+
+test('user devalidation cancel dispatch may omit order id but preserves explicit intent',()=>{
+  const d=buildMasterCommandDispatch({
+    id:'command-devalidate-1234',
+    type:'EXEC_CANCEL_ENTRY',
+    payload:{symbol:'BTCUSDT',cancelIntent:'USER_DEVALIDATE'}
+  });
+  assert.equal(d.supported,true);
+  assert.equal(d.endpoint,'/api/binance-protective-execute');
+  assert.equal(d.body.symbol,'BTCUSDT');
+  assert.equal(d.body.cancelIntent,'USER_DEVALIDATE');
+  assert.equal('clientOrderId' in d.body,false);
+});
+
+test('cancel dispatch rejects unknown voluntary intents',()=>{
+  assert.throws(()=>buildMasterCommandDispatch({
+    id:'command-devalidate-1234',
+    type:'EXEC_CANCEL_ENTRY',
+    payload:{symbol:'BTCUSDT',cancelIntent:'SOMETHING_ELSE'}
+  }),/CANCEL_INTENT_INVALID/);
+});
