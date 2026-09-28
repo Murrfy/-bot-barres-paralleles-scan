@@ -1,11 +1,14 @@
 /*
-================================================================
-⛔⛔⛔  BLOC 2 VERROUILLÉ — POSITIONS RÉELLES / SORTIES / PROTECTIONS.  ⛔⛔⛔
+================================================================================
+⛔⛔⛔  BLOC 2 VERROUILLÉ — POSITIONS RÉELLES / SORTIES / PROTECTIONS  ⛔⛔⛔
+
+        NE TOUCHEZ PAS À CE PUTAIN DE BLOC SANS L'ACCORD EXPLICITE DE WALTER.
+
 MAX-LOSS, protections progressives, ventes partielles, récupération des restes,
 réconciliation Binance et nettoyage des ordres Zenith associés.
-AUCUNE MODIFICATION, RÉÉCRITURE, SIMPLIFICATION OU "AMÉLIORATION"
+AUCUNE MODIFICATION, RÉÉCRITURE, SIMPLIFICATION, DÉPLACEMENT OU "AMÉLIORATION"
 SANS L'ACCORD EXPLICITE DE WALTER ET SANS REPASSER LES TESTS DU BLOC 2.
-================================================================
+================================================================================
 */
 import crypto from 'node:crypto';
 import {
