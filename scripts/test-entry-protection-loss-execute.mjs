@@ -84,3 +84,19 @@ test('flat partial-entry transition clear is exact and atomic, never a broad Red
   assert.match(block,/HDEL/);
   assert.match(block,/KEY_ENTRY_TRANSITIONS/);
 });
+
+
+test('worker cancels flat partial entry before write-ahead and restarts a fresh pass for orphan cleanup',async()=>{
+  const worker=await readFile(new URL('../server/zenith-engine-worker.mjs',import.meta.url),'utf8');
+  assert.match(worker,/pendingEntryCancelRecoveryTargets/);
+  const reconcileStart=worker.indexOf('async function reconcile(secondPass=false)');
+  const reconcileEnd=worker.indexOf('async function awaitReconciliation',reconcileStart);
+  const block=worker.slice(reconcileStart,reconcileEnd);
+  const cancelAt=block.indexOf('pendingEntryCancelRecoveryTargets(data.report)');
+  const writeAheadAt=block.indexOf('pendingEntryWriteAheadRecoveryTargets(data.report)',cancelAt);
+  const orphanAt=block.indexOf('orphanZenithCleanupOrders(data.report)',writeAheadAt);
+  assert.ok(cancelAt>=0&&writeAheadAt>cancelAt&&orphanAt>writeAheadAt);
+  assert.match(block,/partialFillFlatRecovery\?false:true/);
+  assert.match(worker,/ENTRY_PARTIAL_FILL_FLAT_CANCELED/);
+  assert.match(worker,/ENTRY_PARTIAL_FILL_FLAT_RACE/);
+});
