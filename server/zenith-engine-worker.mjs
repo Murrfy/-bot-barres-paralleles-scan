@@ -3690,6 +3690,13 @@ async function runCancelEntry(command,raw,dispatch){
   if(!result.response.ok||result.data?.ok!==true){
     return handleMutationFailure(raw,result.response,result.data,'CANCEL_ENTRY');
   }
+  if(result.data?.userDevalidate===true&&result.data?.devalidateNoOrder===true){
+    return safeAckAfterReconcile(raw,{
+      userDevalidate:true,
+      devalidateNoOrder:true,
+      transitionCleared:result.data?.transitionCleared===true,
+    },'USER_DEVALIDATE_ACK_RETRY');
+  }
   const status=String(result.data?.result?.order?.status||'').toUpperCase();
   if(status==='FILLED'||result.data?.result?.disposition==='ALREADY_FILLED'){
     await failCommand(raw,'ENTRY_ALREADY_FILLED');
