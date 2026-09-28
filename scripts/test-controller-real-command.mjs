@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildControllerRealCloseCommand, realPositionKey, buildControllerCancelEntryCommand, realEntryOrderKey } from '../lib/controller-real-command.mjs';
+import { buildControllerRealCloseCommand, realPositionKey, buildControllerCancelEntryCommand, buildControllerDevalidateEntryCommand, realEntryOrderKey } from '../lib/controller-real-command.mjs';
 
 const longPosition={
   symbol:'btcusdt',
@@ -75,4 +75,25 @@ test('controller refuses external or non-entry order cancellation',()=>{
   assert.throws(()=>buildControllerCancelEntryCommand({...base,side:'SELL'}),/CANCEL_TARGET_NOT_BUY/);
   assert.throws(()=>buildControllerCancelEntryCommand({...base,type:'MARKET'}),/CANCEL_TARGET_NOT_LIMIT/);
   assert.throws(()=>buildControllerCancelEntryCommand({...base,timeInForce:'IOC'}),/CANCEL_TARGET_NOT_GTC/);
+});
+
+
+test('controller devalidation can stop a watched entry even before an order id exists',()=>{
+  const c=buildControllerDevalidateEntryCommand('btcusdt',null,1800000000000);
+  assert.equal(c.type,'EXEC_CANCEL_ENTRY');
+  assert.equal(c.payload.symbol,'BTCUSDT');
+  assert.equal(c.payload.cancelIntent,'USER_DEVALIDATE');
+  assert.equal('clientOrderId' in c.payload,false);
+  assert.match(c.clientCommandId,/^realdevalidate:BTCUSDT:/);
+});
+
+test('controller devalidation carries only an exact observed Zenith entry when one exists',()=>{
+  const order={symbol:'BTCUSDT',clientOrderId:'zth-ENT-0123456789abcdef01234567',side:'BUY',type:'LIMIT',timeInForce:'GTC',positionSide:'BOTH',reduceOnly:false};
+  const c=buildControllerDevalidateEntryCommand('BTCUSDT',order,1800000000001);
+  assert.equal(c.payload.clientOrderId,order.clientOrderId);
+  assert.equal(c.payload.cancelIntent,'USER_DEVALIDATE');
+  assert.throws(
+    ()=>buildControllerDevalidateEntryCommand('ETHUSDT',order,1800000000001),
+    /CANCEL_TARGET_SYMBOL_MISMATCH/
+  );
 });
