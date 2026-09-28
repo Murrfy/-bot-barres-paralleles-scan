@@ -753,77 +753,46 @@ export default async function handler(req,res){
       return send(res,400,{ok:false,code:'CANCEL_TARGET_NOT_ZENITH_ENTRY',writeAttempted:false});
     }
 
-    if(userDevalidateCancel&&!clientOrderId){
-      if(!writesEnabled){
-        return send(res,423,{
-          ok:false,code:'BINANCE_WRITE_LOCKED',
-          realTradingEnabled:REAL_TRADING_ENABLED,
-          binanceWriteEnabled:BINANCE_WRITE_ENABLED,
-          pairingDisabled:PAIRING_DISABLED,
-          writeAttempted:false,
-        });
+    const noOrderUserDevalidate=userDevalidateCancel&&!clientOrderId;
+    if(!clientOrderId&&!noOrderUserDevalidate){
+      return send(res,400,{ok:false,code:'CANCEL_TARGET_NOT_ZENITH_ENTRY',writeAttempted:false});
+    }
+    const liveOrder=clientOrderId?runtimeEntryOrder(runtimeState,symbol,clientOrderId):null;
+    if(clientOrderId){
+      if(!liveOrder)return send(res,409,{ok:false,code:'ENTRY_ORDER_NOT_OPEN',writeAttempted:false});
+      if(String(liveOrder.side||'').toUpperCase()!=='BUY'){
+        return send(res,409,{ok:false,code:'CANCEL_TARGET_NOT_BUY',writeAttempted:false});
       }
-      if(!(await requireFinalProtectiveMaster(res,master)))return;
-      let cleared=0;
-      if(userDevalidateTransition){
-        cleared=await clearEntryTransitionAfterUserDevalidate(userDevalidateTransition);
-        if(cleared<0){
+      if(String(liveOrder.type||'').toUpperCase()!=='LIMIT'){
+        return send(res,409,{ok:false,code:'CANCEL_TARGET_NOT_LIMIT',writeAttempted:false});
+      }
+      if(String(liveOrder.timeInForce||'').toUpperCase()!=='GTC'){
+        return send(res,409,{ok:false,code:'CANCEL_TARGET_NOT_GTC',writeAttempted:false});
+      }
+      if(partialEntryCancelTarget){
+        const original=Number(liveOrder?.origQty);
+        const executed=Number(liveOrder?.executedQty);
+        const remaining=original-executed;
+        if(String(liveOrder.status||'').toUpperCase()!=='PARTIALLY_FILLED'||
+           !(original>0)||!(executed>0)||!(remaining>0)||
+           !sameQuantity(original,partialEntryCancelTarget.quantity)||
+           !sameQuantity(executed,partialEntryCancelTarget.executedQuantity)||
+           !sameQuantity(remaining,partialEntryCancelTarget.remainingQuantity)){
           return send(res,409,{
-            ok:false,code:'USER_DEVALIDATE_TRANSITION_CHANGED',
-            transitionClearResult:cleared,writeAttempted:false,
+            ok:false,
+            code:partialEntryExitStartedTarget
+              ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_RUNTIME_MISMATCH'
+              :'ENTRY_PARTIAL_FILL_FLAT_RUNTIME_MISMATCH',
+            writeAttempted:false
           });
         }
       }
-      await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
-        at:Date.now(),kind:'USER_DEVALIDATE_NO_ENTRY_ORDER',
-        deviceId:master.deviceId,commandId,symbol,
-        transitionCleared:cleared===1,
-      })]);
-      await redis(['LTRIM',KEY_AUDIT,'0','199']);
-      return send(res,200,{
-        ok:true,userDevalidate:true,devalidateNoOrder:true,
-        transitionCleared:cleared===1,
-        protectionCleanupRequired:Boolean(userDevalidateTransition?.protectionClientAlgoId),
-      });
-    }
-
-    if(!clientOrderId){
-      return send(res,400,{ok:false,code:'CANCEL_TARGET_NOT_ZENITH_ENTRY',writeAttempted:false});
-    }
-    const liveOrder=runtimeEntryOrder(runtimeState,symbol,clientOrderId);
-    if(!liveOrder)return send(res,409,{ok:false,code:'ENTRY_ORDER_NOT_OPEN',writeAttempted:false});
-    if(String(liveOrder.side||'').toUpperCase()!=='BUY'){
-      return send(res,409,{ok:false,code:'CANCEL_TARGET_NOT_BUY',writeAttempted:false});
-    }
-    if(String(liveOrder.type||'').toUpperCase()!=='LIMIT'){
-      return send(res,409,{ok:false,code:'CANCEL_TARGET_NOT_LIMIT',writeAttempted:false});
-    }
-    if(String(liveOrder.timeInForce||'').toUpperCase()!=='GTC'){
-      return send(res,409,{ok:false,code:'CANCEL_TARGET_NOT_GTC',writeAttempted:false});
-    }
-    if(partialEntryCancelTarget){
-      const original=Number(liveOrder?.origQty);
-      const executed=Number(liveOrder?.executedQty);
-      const remaining=original-executed;
-      if(String(liveOrder.status||'').toUpperCase()!=='PARTIALLY_FILLED'||
-         !(original>0)||!(executed>0)||!(remaining>0)||
-         !sameQuantity(original,partialEntryCancelTarget.quantity)||
-         !sameQuantity(executed,partialEntryCancelTarget.executedQuantity)||
-         !sameQuantity(remaining,partialEntryCancelTarget.remainingQuantity)){
-        return send(res,409,{
-          ok:false,
-          code:partialEntryExitStartedTarget
-            ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_RUNTIME_MISMATCH'
-            :'ENTRY_PARTIAL_FILL_FLAT_RUNTIME_MISMATCH',
-          writeAttempted:false
-        });
+      if(liveOrder.reduceOnly===true||liveOrder.reduceOnly==='true'){
+        return send(res,409,{ok:false,code:'CANCEL_TARGET_IS_REDUCE_ONLY',writeAttempted:false});
       }
-    }
-    if(liveOrder.reduceOnly===true||liveOrder.reduceOnly==='true'){
-      return send(res,409,{ok:false,code:'CANCEL_TARGET_IS_REDUCE_ONLY',writeAttempted:false});
-    }
-    if(String(liveOrder.positionSide||'BOTH').toUpperCase()!=='BOTH'){
-      return send(res,409,{ok:false,code:'HEDGE_MODE_UNSUPPORTED',writeAttempted:false});
+      if(String(liveOrder.positionSide||'BOTH').toUpperCase()!=='BOTH'){
+        return send(res,409,{ok:false,code:'HEDGE_MODE_UNSUPPORTED',writeAttempted:false});
+      }
     }
     if(!writesEnabled){
       return send(res,423,{
@@ -878,6 +847,31 @@ export default async function handler(req,res){
     }
 
     if(!(await requireFinalProtectiveMaster(res,master)))return;
+
+    if(noOrderUserDevalidate){
+      let cleared=0;
+      if(userDevalidateTransition){
+        cleared=await clearEntryTransitionAfterUserDevalidate(userDevalidateTransition);
+        if(cleared<0){
+          return send(res,409,{
+            ok:false,code:'USER_DEVALIDATE_TRANSITION_CHANGED',
+            transitionClearResult:cleared,writeAttempted:false,
+          });
+        }
+      }
+      await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+        at:Date.now(),kind:'USER_DEVALIDATE_NO_ENTRY_ORDER',
+        deviceId:master.deviceId,commandId,symbol,
+        transitionCleared:cleared===1,
+      })]);
+      await redis(['LTRIM',KEY_AUDIT,'0','199']);
+      return send(res,200,{
+        ok:true,userDevalidate:true,devalidateNoOrder:true,
+        transitionCleared:cleared===1,
+        protectionCleanupRequired:Boolean(userDevalidateTransition?.protectionClientAlgoId),
+      });
+    }
+
     try{
       const result=await cancelEntryOrderIdempotent({
         apiKey,secret,symbol,clientOrderId,writesEnabled:true,timestamp:Date.now(),
