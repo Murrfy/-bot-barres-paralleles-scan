@@ -9,7 +9,7 @@ const updateApi = read('api/binance-protective-update-execute.js');
 const sync = read('api/zenith-sync.js');
 const engine = read('server/zenith-engine-worker.mjs');
 const entryTransition = read('lib/entry-transition.mjs');
-const entryGate = read('lib/entry-protection-gate.mjs');
+const entryProtectionPlan = read('lib/entry-protection-plan.mjs');
 const protectiveCommand = read('lib/protective-command.mjs');
 const reconcile = read('api/binance-reconcile.js');
 
@@ -37,7 +37,7 @@ test('operational MAX-LOSS identity paths contain no STOP_MARKET writer contract
     ['central sync',sync],
     ['engine worker',engine],
     ['entry transition',entryTransition],
-    ['entry protection gate',entryGate],
+    ['entry protection plan',entryProtectionPlan],
     ['protective command',protectiveCommand],
   ]){
     assert.doesNotMatch(source,/STOP_MARKET/,name+' still contains STOP_MARKET');
