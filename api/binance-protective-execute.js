@@ -7,6 +7,7 @@ import {
   protectiveRepairTarget,
   pendingEntryCancelRecoveryAllowed,
   pendingEntryPartialFillFlatTargets,
+  pendingEntryPartialFillExitStartedTargets,
   persistedSaleRemainderRecoveryAllowed,
   triggeredProgressiveRemainderRecoveryAllowed,
   triggeredMaxLossRemainderRecoveryAllowed,
@@ -592,12 +593,21 @@ export default async function handler(req,res){
       row.entryClientOrderId===String(req.body?.clientOrderId||'')
     )||null
     :null;
+  const partialEntryExitStartedTarget=type==='EXEC_CANCEL_ENTRY'
+    ?pendingEntryPartialFillExitStartedTargets(report).find(row=>
+      row.symbol===String(req.body?.symbol||'').toUpperCase()&&
+      row.entryClientOrderId===String(req.body?.clientOrderId||'')
+    )||null
+    :null;
+  const partialEntryCancelTarget=partialEntryFlatTarget||partialEntryExitStartedTarget;
   if(pendingEntryCancelRecovery&&String(master?.principal||'')!=='engine'){
     return send(res,423,{
       ok:false,
       code:partialEntryFlatTarget
         ?'ENTRY_PARTIAL_FILL_FLAT_RECOVERY_ENGINE_REQUIRED'
-        :'ENTRY_PROTECTION_RECOVERY_ENGINE_REQUIRED',
+        :partialEntryExitStartedTarget
+          ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_RECOVERY_ENGINE_REQUIRED'
+          :'ENTRY_PROTECTION_RECOVERY_ENGINE_REQUIRED',
       writeAttempted:false
     });
   }
@@ -665,8 +675,14 @@ export default async function handler(req,res){
     const symbol=String(req.body?.symbol||'').toUpperCase();
     const clientOrderId=String(req.body?.clientOrderId||'');
     const commandId=String(req.body?.commandId||'');
-    if(partialEntryFlatTarget&&commandId!==partialEntryFlatTarget.commandId){
-      return send(res,409,{ok:false,code:'ENTRY_PARTIAL_FILL_FLAT_COMMAND_MISMATCH',writeAttempted:false});
+    if(partialEntryCancelTarget&&commandId!==partialEntryCancelTarget.commandId){
+      return send(res,409,{
+        ok:false,
+        code:partialEntryExitStartedTarget
+          ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_COMMAND_MISMATCH'
+          :'ENTRY_PARTIAL_FILL_FLAT_COMMAND_MISMATCH',
+        writeAttempted:false
+      });
     }
     if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!/^zth-ENT-[a-f0-9]{24}$/i.test(clientOrderId)){
       return send(res,400,{ok:false,code:'CANCEL_TARGET_NOT_ZENITH_ENTRY',writeAttempted:false});
@@ -682,16 +698,22 @@ export default async function handler(req,res){
     if(String(liveOrder.timeInForce||'').toUpperCase()!=='GTC'){
       return send(res,409,{ok:false,code:'CANCEL_TARGET_NOT_GTC',writeAttempted:false});
     }
-    if(partialEntryFlatTarget){
+    if(partialEntryCancelTarget){
       const original=Number(liveOrder?.origQty);
       const executed=Number(liveOrder?.executedQty);
       const remaining=original-executed;
       if(String(liveOrder.status||'').toUpperCase()!=='PARTIALLY_FILLED'||
          !(original>0)||!(executed>0)||!(remaining>0)||
-         !sameQuantity(original,partialEntryFlatTarget.quantity)||
-         !sameQuantity(executed,partialEntryFlatTarget.executedQuantity)||
-         !sameQuantity(remaining,partialEntryFlatTarget.remainingQuantity)){
-        return send(res,409,{ok:false,code:'ENTRY_PARTIAL_FILL_FLAT_RUNTIME_MISMATCH',writeAttempted:false});
+         !sameQuantity(original,partialEntryCancelTarget.quantity)||
+         !sameQuantity(executed,partialEntryCancelTarget.executedQuantity)||
+         !sameQuantity(remaining,partialEntryCancelTarget.remainingQuantity)){
+        return send(res,409,{
+          ok:false,
+          code:partialEntryExitStartedTarget
+            ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_RUNTIME_MISMATCH'
+            :'ENTRY_PARTIAL_FILL_FLAT_RUNTIME_MISMATCH',
+          writeAttempted:false
+        });
       }
     }
     if(liveOrder.reduceOnly===true||liveOrder.reduceOnly==='true'){
@@ -709,6 +731,49 @@ export default async function handler(req,res){
         writeAttempted:false,
       });
     }
+    if(partialEntryExitStartedTarget){
+      try{
+        const directOrder=await queryOrderByClientId({
+          apiKey,secret,symbol,clientOrderId,timestamp:Date.now(),
+        });
+        const directStatus=String(directOrder?.status||'').toUpperCase();
+        if(directStatus==='FILLED'){
+          return send(res,200,{
+            ok:true,result:{order:directOrder,disposition:'ALREADY_FILLED',writeAttempted:false},
+            partialFillExitStartedRecovery:true,fillRace:true,transitionCleared:false,
+          });
+        }
+        const original=Number(directOrder?.origQty);
+        const executed=Number(directOrder?.executedQty);
+        const remaining=original-executed;
+        if(directStatus!=='PARTIALLY_FILLED'||
+           !(original>0)||!(executed>0)||!(remaining>0)||
+           !sameQuantity(original,partialEntryExitStartedTarget.quantity)||
+           executed+Math.max(1e-12,Math.abs(executed)*1e-10)<
+             Number(partialEntryExitStartedTarget.executedQuantity)){
+          return send(res,409,{
+            ok:false,code:'ENTRY_PARTIAL_FILL_EXIT_STARTED_DIRECT_ORDER_CHANGED',
+            writeAttempted:false
+          });
+        }
+        const directLiveQty=await liveBinancePositionQuantity({
+          apiKey,secret,symbol,direction:partialEntryExitStartedTarget.direction,
+        });
+        const tolerance=Math.max(1e-12,Math.abs(executed)*1e-10);
+        if(!(directLiveQty>0)||!(directLiveQty<executed-tolerance)){
+          return send(res,409,{
+            ok:false,code:'ENTRY_PARTIAL_FILL_EXIT_STARTED_DIRECT_PROOF_CHANGED',
+            liveQuantity:directLiveQty,executedQuantity:executed,writeAttempted:false
+          });
+        }
+      }catch(e){
+        return send(res,503,{
+          ok:false,code:'ENTRY_PARTIAL_FILL_EXIT_STARTED_PROOF_UNAVAILABLE',
+          binanceCode:e?.code??null,writeAttempted:false
+        });
+      }
+    }
+
     if(!(await requireFinalProtectiveMaster(res,master)))return;
     try{
       const result=await cancelEntryOrderIdempotent({
@@ -718,9 +783,59 @@ export default async function handler(req,res){
         at:Date.now(),kind:'BINANCE_ENTRY_CANCEL_DISPATCH',
         deviceId:master.deviceId,commandId,symbol,clientOrderId,
         disposition:result.disposition,writeAttempted:result.writeAttempted===true,
-        recoveryKind:partialEntryFlatTarget?'PARTIAL_FILL_FLAT':'PROTECTION_LOSS',
+        recoveryKind:partialEntryFlatTarget
+          ?'PARTIAL_FILL_FLAT'
+          :partialEntryExitStartedTarget
+            ?'PARTIAL_FILL_EXIT_STARTED'
+            :'PROTECTION_LOSS',
       })]);
       await redis(['LTRIM',KEY_AUDIT,'0','199']);
+
+      if(partialEntryExitStartedTarget){
+        const status=String(result?.order?.status||'').toUpperCase();
+        const disposition=String(result?.disposition||'').toUpperCase();
+        if(status==='FILLED'||disposition==='ALREADY_FILLED'){
+          return send(res,200,{
+            ok:true,result,partialFillExitStartedRecovery:true,
+            fillRace:true,transitionCleared:false,
+          });
+        }
+        const terminal=['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status);
+        if(!terminal){
+          return send(res,409,{
+            ok:false,code:'ENTRY_PARTIAL_FILL_EXIT_STARTED_CANCEL_NOT_TERMINAL',
+            writeAttempted:result?.writeAttempted===true,result,
+          });
+        }
+
+        const liveQty=await liveBinancePositionQuantity({
+          apiKey,secret,symbol,direction:partialEntryExitStartedTarget.direction,
+        });
+        const cleared=await clearPartialEntryTransitionAfterCertifiedFlat(partialEntryExitStartedTarget);
+        if(cleared!==1){
+          return send(res,409,{
+            ok:false,code:'ENTRY_PARTIAL_FILL_EXIT_STARTED_TRANSITION_CHANGED',
+            transitionClearResult:cleared,writeAttempted:result?.writeAttempted===true,
+          });
+        }
+        await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+          at:Date.now(),kind:'ENTRY_PARTIAL_FILL_EXIT_STARTED_RECOVERED',
+          deviceId:master.deviceId,commandId,symbol,clientOrderId,
+          protectionClientAlgoId:partialEntryExitStartedTarget.protectionClientAlgoId,
+          executedQuantity:Number(result?.order?.executedQty||partialEntryExitStartedTarget.executedQuantity),
+          canceledRemainderQuantity:Number(result?.order?.origQty||partialEntryExitStartedTarget.quantity)-
+            Number(result?.order?.executedQty||partialEntryExitStartedTarget.executedQuantity),
+          liveQuantity:liveQty,
+          transitionCleared:true,
+        })]);
+        await redis(['LTRIM',KEY_AUDIT,'0','199']);
+        return send(res,200,{
+          ok:true,result,partialFillExitStartedRecovery:true,
+          fillRace:false,transitionCleared:true,liveQuantity:liveQty,
+          protectionRepairRequired:liveQty>1e-12,
+          protectionCleanupRequired:liveQty<=1e-12&&partialEntryExitStartedTarget.protectionPresent===true,
+        });
+      }
 
       if(partialEntryFlatTarget){
         const status=String(result?.order?.status||'').toUpperCase();
