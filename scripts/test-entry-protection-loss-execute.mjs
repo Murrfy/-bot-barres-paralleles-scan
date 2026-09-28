@@ -141,3 +141,37 @@ test('sale-started cancellation clears only the exact transition then returns fr
   assert.match(block,/protectionRepairRequired:liveQty>1e-12/);
   assert.match(block,/transitionCleared:true/);
 });
+
+
+test('user devalidation clears exact transition and acknowledges no-order preparation',async()=>{
+  const source=await readFile(new URL('../api/binance-protective-execute.js',import.meta.url),'utf8');
+  const helperStart=source.indexOf('async function clearEntryTransitionAfterUserDevalidate');
+  const helperEnd=source.indexOf('async function requireCurrentMaster',helperStart);
+  assert.ok(helperStart>=0&&helperEnd>helperStart);
+  const helper=source.slice(helperStart,helperEnd);
+  assert.match(helper,/PROTECTION_PREPARED/);
+  assert.match(helper,/ENTRY_SUBMITTED/);
+  assert.match(helper,/entryClientOrderId/);
+  assert.match(helper,/protectionClientAlgoId/);
+  assert.match(helper,/HDEL/);
+
+  const handlerStart=source.indexOf("if(type==='EXEC_CANCEL_ENTRY')");
+  const nextSymbol=source.indexOf("const symbol=String(req.body?.symbol||'').toUpperCase();",handlerStart+40);
+  const handler=source.slice(handlerStart,nextSymbol>handlerStart?nextSymbol:handlerStart+18000);
+  assert.match(source,/cancelIntent==='USER_DEVALIDATE'/);
+  assert.match(source,/USER_DEVALIDATE_TRANSITION_AMBIGUOUS/);
+  assert.match(source,/USER_DEVALIDATE_NO_ENTRY_ORDER/);
+  assert.match(source,/USER_DEVALIDATE_ENTRY_CANCELED/);
+  assert.match(source,/clearEntryTransitionAfterUserDevalidate\(userDevalidateTransition\)/);
+});
+
+test('worker does not ACK a no-order devalidation until reconciliation succeeds',async()=>{
+  const worker=await readFile(new URL('../server/zenith-engine-worker.mjs',import.meta.url),'utf8');
+  const start=worker.indexOf('async function runCancelEntry');
+  const end=worker.indexOf('async function',start+30);
+  const block=worker.slice(start,end);
+  const marker=block.indexOf('devalidateNoOrder===true');
+  const reconcileAck=block.indexOf('safeAckAfterReconcile',marker);
+  assert.ok(marker>=0&&reconcileAck>marker);
+  assert.match(block,/USER_DEVALIDATE_ACK_RETRY/);
+});
