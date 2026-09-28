@@ -280,3 +280,26 @@ test('red recovery waits if even the first reached floor is no longer executable
   assert.equal(r.reason,'RED_MAX_LOSS_REACHED_STAGE_NOT_CURRENTLY_EXECUTABLE');
   assert.equal(r.redRecoverySatisfied,false);
 });
+
+test('a direct jump from level 1 to level 100 selects level 100 immediately',()=>{
+  const hundredStages=Array.from({length:100},(_,i)=>({
+    enabled:true,
+    arm:105+i*100,
+    floor:100+i*100,
+  }));
+  const r=evaluateMasterAutoProgressiveProtection({
+    position:long,
+    markPrice:10105,
+    protectionStages:hundredStages,
+    currentOrders:[],
+    priceFilter:filter,
+    previousHighWaterProfitUsd:105,
+  });
+  assert.equal(r.action,'REPLACE');
+  assert.equal(r.stage.armProfitUsd,10005);
+  assert.equal(r.stage.protectedProfitUsd,10000);
+  assert.equal(r.stage.index,99);
+  assert.equal(r.level.triggerPrice,10100);
+  assert.ok(r.level.actualProtectedProfitUsd>=10000);
+});
+
