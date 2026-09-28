@@ -4,6 +4,7 @@ import {
   normalizeEntryTransition,
   transitionProtectionMatches,
   transitionEntryMatches,
+  partialEntryTransitionProtectionCoversPosition,
   evaluateEntryTransitionReconciliation,
 } from '../lib/entry-transition.mjs';
 
@@ -84,4 +85,43 @@ test('submitted transition requires entry order until a matching position exists
     actualPositions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2'}],now
   });
   assert.deepEqual(filled.missingEntries,[]);
+});
+
+
+test('partial LIMIT entry keeps its full prepared MAX-LOSS as covering protection',()=>{
+  const record={...base,state:'ENTRY_SUBMITTED',entryClientOrderId:entry.clientOrderId};
+  const tr=normalizeEntryTransition(record,{now}).transition;
+  const partialEntry={...entry,status:'PARTIALLY_FILLED',executedQty:'0.08'};
+  const position={symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.08'};
+
+  assert.equal(partialEntryTransitionProtectionCoversPosition({
+    protection,
+    position,
+    activeTransitions:[tr],
+    actualOrders:[protection,partialEntry],
+  }),true);
+});
+
+test('partial-entry MAX-LOSS exception is rejected for mismatched fill, identity or terminal entry',()=>{
+  const record={...base,state:'ENTRY_SUBMITTED',entryClientOrderId:entry.clientOrderId};
+  const tr=normalizeEntryTransition(record,{now}).transition;
+  const position={symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.08'};
+  const partial={...entry,status:'PARTIALLY_FILLED',executedQty:'0.08'};
+
+  assert.equal(partialEntryTransitionProtectionCoversPosition({
+    protection,position,activeTransitions:[tr],
+    actualOrders:[protection,{...partial,executedQty:'0.07'}],
+  }),false);
+  assert.equal(partialEntryTransitionProtectionCoversPosition({
+    protection:{...protection,clientAlgoId:'zth-MAX-other'},
+    position,activeTransitions:[tr],actualOrders:[partial],
+  }),false);
+  assert.equal(partialEntryTransitionProtectionCoversPosition({
+    protection,position,activeTransitions:[tr],
+    actualOrders:[protection,{...partial,status:'FILLED'}],
+  }),false);
+  assert.equal(partialEntryTransitionProtectionCoversPosition({
+    protection,position,activeTransitions:[tr],
+    actualOrders:[protection,{...partial,status:'CANCELED'}],
+  }),false);
 });

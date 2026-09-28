@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, sameOriginMutation, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
-import { evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches } from '../lib/entry-transition.mjs';
+import { evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches, partialEntryTransitionProtectionCoversPosition } from '../lib/entry-transition.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -1111,10 +1111,17 @@ function authorizedPendingMaxLossEdit(position, actualOrders, processingCommands
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions, actualOrders, processingCommands = [], masterDeviceId = '') {
+function enforceConfiguredMaxLossSafety(
+  result, controllerState, actualPositions, actualOrders, processingCommands = [], masterDeviceId = '', entryTransitions = []
+) {
   const unavailable = [];
   const exceeds = [];
   const missingConfiguredProtection = [];
+  const transitionState=evaluateEntryTransitionReconciliation({
+    transitions:entryTransitions,
+    actualOrders,
+    actualPositions,
+  });
 
   for (const position of Array.isArray(actualPositions) ? actualPositions : []) {
     const key = positionKey(position);
@@ -1142,7 +1149,14 @@ function enforceConfiguredMaxLossSafety(result, controllerState, actualPositions
       if (String(order?.type || '').toUpperCase() !== 'STOP') continue;
       if (String(order?.timeInForce || '').toUpperCase() !== 'IOC') continue;
       if (order?.reduceOnly !== true || order?.closePosition === true) continue;
-      if (Math.abs(number(order?.origQty, NaN) - quantity) > 1e-12) continue;
+      const exactQuantity=Math.abs(number(order?.origQty, NaN)-quantity)<=1e-12;
+      const partialEntryCover=!exactQuantity&&partialEntryTransitionProtectionCoversPosition({
+        protection:order,
+        position,
+        activeTransitions:transitionState.active,
+        actualOrders,
+      });
+      if(!exactQuantity&&!partialEntryCover)continue;
       if (String(order?.priceMatch || '').toUpperCase() !== 'OPPONENT') continue;
       // A manually corrected Binance MAX-LOSS is acceptable when the live order itself
       // satisfies every Zenith safety constraint; ownership of the client id is not safety proof.
@@ -1360,7 +1374,14 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
       if (String(order?.type || '').toUpperCase() !== 'STOP') continue;
       if (String(order?.timeInForce || '').toUpperCase() !== 'IOC') continue;
       if (order?.reduceOnly !== true || order?.closePosition === true) continue;
-      if (Math.abs(number(order?.origQty, NaN) - quantity) > 1e-12) continue;
+      const exactQuantity=Math.abs(number(order?.origQty, NaN)-quantity)<=1e-12;
+      const partialEntryCover=!exactQuantity&&partialEntryTransitionProtectionCoversPosition({
+        protection:order,
+        position,
+        activeTransitions:transitionState.active,
+        actualOrders,
+      });
+      if(!exactQuantity&&!partialEntryCover)continue;
       if (String(order?.priceMatch || '').toUpperCase() !== 'OPPONENT') continue;
       // Accept a unique external Binance MAX-LOSS when its actual live parameters are
       // exactly safe; forbidden market protective forms remain rejected.
@@ -2001,7 +2022,8 @@ export default async function handler(req, res) {
       actualPositions,
       actualOrders,
       processingCommands,
-      device.deviceId
+      device.deviceId,
+      entryTransitions
     );
     result.differences.activeSaleRemainderRecoveries=saleRemainderState.active;
     result.differences.invalidSaleRemainderRecoveries=saleRemainderState.invalid;
