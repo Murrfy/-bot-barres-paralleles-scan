@@ -1357,8 +1357,12 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
   if (transitionState.invalid.length) reasons.push('ENTRY_TRANSITION_STATE_INVALID');
   if (transitionState.missingProtections.length) reasons.push('ENTRY_TRANSITION_PROTECTION_MISSING');
   if (transitionState.missingEntries.length) reasons.push('ENTRY_TRANSITION_ENTRY_MISSING');
-  if (transitionState.partialFillFlatEntries.length) reasons.push('ENTRY_TRANSITION_PARTIAL_FILL_FLAT');
-  if (transitionState.partialFillExitStartedEntries.length) reasons.push('ENTRY_TRANSITION_PARTIAL_FILL_EXIT_STARTED');
+  if (Array.isArray(transitionState.partialFillFlatEntries)&&transitionState.partialFillFlatEntries.length) {
+    reasons.push('ENTRY_TRANSITION_PARTIAL_FILL_FLAT');
+  }
+  if (Array.isArray(transitionState.partialFillExitStartedEntries)&&transitionState.partialFillExitStartedEntries.length) {
+    reasons.push('ENTRY_TRANSITION_PARTIAL_FILL_EXIT_STARTED');
+  }
   if (untrackedPositions.length) reasons.push('UNTRACKED_BINANCE_POSITION');
   if (missingPositions.length) reasons.push('MISSING_BINANCE_POSITION');
   if (quantityMismatches.length) reasons.push('BINANCE_POSITION_QUANTITY_MISMATCH');
