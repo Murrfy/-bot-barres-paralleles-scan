@@ -477,11 +477,14 @@ if (!orderIntent.includes("ENTRY_PREFLIGHT_MAX_AGE_MS = 5000") ||
 }
 
 const riskPolicy = fs.readFileSync('lib/risk-policy.mjs', 'utf8');
-const entryProtectionGate = fs.readFileSync('lib/entry-protection-gate.mjs','utf8');
-if (!entryProtectionGate.includes("import { REAL_RISK_LIMITS } from './risk-policy.mjs'") ||
-    !entryProtectionGate.includes("/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId || ''))") ||
-    !entryProtectionGate.includes('impliedLossUsd > REAL_RISK_LIMITS.maxLossUsd + 1e-8')) {
-  fail('future real-entry protection gate must require a Zenith-managed emergency stop within the shared $400 cap');
+const entryProtectionPlan = fs.readFileSync('lib/entry-protection-plan.mjs','utf8');
+const entryTransition = fs.readFileSync('lib/entry-transition.mjs','utf8');
+if (!entryProtectionPlan.includes("if(entrySide!=='BUY')throw new Error('ENTRY_BUY_ONLY')") ||
+    !entryProtectionPlan.includes("protectionKind:'MAX_LOSS'") ||
+    !entryProtectionPlan.includes('buildEmergencyMaxLossLevel') ||
+    !entryTransition.includes("validId(protectionClientAlgoId,'zth-MAX-')") ||
+    !entryTransition.includes('impliedLossUsd>REAL_RISK_LIMITS.maxLossUsd+1e-8')) {
+  fail('current real-entry path must require BUY-only entry with exact Zenith MAX-LOSS identity inside the shared $400 cap');
 }
 if (!riskPolicy.includes('DEFAULT_MAX_ACTIVE_POSITIONS = 3') ||
     riskPolicy.includes('maxActivePositions: 3') ||
