@@ -4,6 +4,7 @@ import {
   pendingEntryProtectionLossTargets,
   pendingEntryProtectionLossCancelAllowed,
   pendingEntryPartialFillFlatTargets,
+  pendingEntryPartialFillExitStartedTargets,
   pendingEntryCancelRecoveryTargets,
   pendingEntryCancelRecoveryAllowed,
 } from '../lib/protective-command.mjs';
@@ -118,4 +119,55 @@ test('flat partial-entry recovery rejects inconsistent quantities, wrong quarant
   assert.equal(pendingEntryCancelRecoveryAllowed(make([basePartial]),{
     symbol:'BTCUSDT',clientOrderId:'zth-ENT-000000000000000000000000'
   }),false);
+});
+
+
+test('sale-started partial entry quarantine yields one exact cancel target',()=>{
+  const saleStarted={
+    ...target,
+    maxLossUsd:40,
+    protectionTriggerPrice:49800,
+    executedQuantity:0.08,
+    remainingQuantity:0.12,
+    liveQuantity:0.04,
+    protectionPresent:true,
+  };
+  const r={
+    version:2,status:'CLEAN_REAL_WITH_QUARANTINES',failClosed:false,reasons:[],
+    symbolQuarantines:[{
+      symbol:'BTCUSDT',direction:'LONG',
+      reason:'ENTRY_PARTIAL_FILL_EXIT_STARTED_RECOVERY_PENDING',
+      remainingQuantity:null,since:Date.now(),
+    }],
+    differences:{entryTransitions:{partialFillExitStartedEntries:[saleStarted]}},
+  };
+  const targets=pendingEntryPartialFillExitStartedTargets(r);
+  assert.equal(targets.length,1);
+  assert.equal(targets[0].executedQuantity,0.08);
+  assert.equal(targets[0].liveQuantity,0.04);
+  assert.equal(targets[0].remainingQuantity,0.12);
+  const combined=pendingEntryCancelRecoveryTargets(r);
+  assert.equal(combined.length,1);
+  assert.equal(combined[0].recoveryKind,'PARTIAL_FILL_EXIT_STARTED');
+  assert.equal(pendingEntryCancelRecoveryAllowed(r,{
+    symbol:'BTCUSDT',clientOrderId:target.entryClientOrderId
+  }),true);
+});
+
+test('sale-started partial entry recovery rejects a live quantity that has not been reduced',()=>{
+  const row={
+    ...target,maxLossUsd:40,protectionTriggerPrice:49800,
+    executedQuantity:0.08,remainingQuantity:0.12,liveQuantity:0.08,
+    protectionPresent:true,
+  };
+  const r={
+    version:2,status:'CLEAN_REAL_WITH_QUARANTINES',failClosed:false,reasons:[],
+    symbolQuarantines:[{
+      symbol:'BTCUSDT',direction:'LONG',
+      reason:'ENTRY_PARTIAL_FILL_EXIT_STARTED_RECOVERY_PENDING',since:Date.now(),
+    }],
+    differences:{entryTransitions:{partialFillExitStartedEntries:[row]}},
+  };
+  assert.deepEqual(pendingEntryPartialFillExitStartedTargets(r),[]);
+  assert.deepEqual(pendingEntryCancelRecoveryTargets(r),[]);
 });
