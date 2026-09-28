@@ -249,7 +249,7 @@ const lastAggIds=new Map(),lastAggTimes=new Map(),recoveringSymbols=new Set(),pe
 let cursorSaveTimer=null;
 let binanceAccount={connected:false,configured:false,walletBalance:null,availableBalance:null,realPositions:0,positions:[],standardOrders:[],algoOrders:[],openOrders:0,latencyMs:null,lastOk:0,error:''},binanceAccountTimer=null;
 let binanceHistory={connected:false,history:[],totals:{gain:0,loss:0,net:0},generatedAt:0,lastOk:0,error:''},binanceHistoryTimer=null;
-let controllerRealCommandModule=null,controllerRealProtectionModule=null,realClosePending=new Set(),realCancelPending=new Set(),realProtectiveUpdatePending=new Map(),realMarketEntryPending=new Set();
+let controllerRealCommandModule=null,controllerRealProtectionModule=null,realClosePending=new Set(),realCancelPending=new Set(),userDevalidatePending=new Set(),realProtectiveUpdatePending=new Map(),realMarketEntryPending=new Set();
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_REAL_PROTECTIVE_PENDING_KEY='zenith_real_protective_pending_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null,controllerStateSyncBusy=false,controllerStateHydrated=false;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
@@ -1697,7 +1697,7 @@ function addManualProtectionStage(){
 function renderProtectionEditor(stages,target=40,minCount=0){const arr=protectionsForTarget(stages,target,minCount),head=`<div class="protectionHead"><span class="armHead">ATTEINT</span><span class="floorHead">PROTÉGÉ</span></div>`,item=(st,i)=>`<div class="protectionItem" title="Protection ${i+1} : +${st.arm} → +${st.floor}"><input id="tProtect${i+1}" type="checkbox" ${st.enabled?'checked':''} aria-label="Activer protection ${i+1}"><span class="protectionNum">${i+1}</span><input id="tProtect${i+1}Arm" type="number" min="0" step="0.1" inputmode="decimal" value="${st.arm}" aria-label="Gain atteint protection ${i+1}"><span class="protectionArrow">→</span><input id="tProtect${i+1}Floor" type="number" min="0" step="0.1" inputmode="decimal" value="${st.floor}" aria-label="Gain protégé protection ${i+1}"></div>`;const mid=Math.ceil(arr.length/2);$('protectionEditor').innerHTML=`<div class="protectionGrid"><div class="protectionColumn">${head}${arr.slice(0,mid).map((st,j)=>item(st,j)).join('')}</div><div class="protectionColumn">${head}${arr.slice(mid).map((st,j)=>item(st,mid+j)).join('')}</div></div><div class="protectionAddRow"><button id="addProtectionStageBtn" type="button" class="btn protectionAddBtn" aria-label="Ajouter une protection">+</button></div>`;const add=$('addProtectionStageBtn');if(add)add.onclick=addManualProtectionStage}
 function applyProtectionVisibility(){const cb=$('showProtectionsToggle'),details=$('protectionDetails');if(!cb||!details)return;cb.checked=settings.showProtections!==false;details.hidden=!cb.checked}
 function syncProtectionsToTarget(target){if(!selectedSymbol)return;const localActive=openBySymbol(selectedSymbol),realActive=controllerRealPositionBySymbol(selectedSymbol),active=localActive||realActive;if(validated[selectedSymbol]&&!active)return;const current=protectionDraft(),saved=localActive?.protectionStages||tokenSettings[selectedSymbol]?.protectionStages||settings.protectionStages,merged=current.length?current:saved,minCount=localActive?reachedProtectionCount(merged,localActive.maxProfit):realActive?(Array.isArray(saved)?saved.length:0):0;renderProtectionEditor(merged,target,minCount);setTokenFieldsEnabled()}
-function fillToken(){const s=selectedSymbol,has=!!s;$('tokenNoSelection').hidden=has;$('tokenSettingsWrap').hidden=!has;applyProtectionVisibility();$('settingsSymbol').textContent=s||'—';$('selectedSymbolLabel').textContent=s||'—';$('selectedPriceLabel').textContent=`Prix : ${s?price(lastPrices.get(s)):'—'}`;renderSelectedCurrentPrice();if(!has){fillFutures();return}const localActive=openBySymbol(s),realActive=controllerRealPositionBySymbol(s),active=localActive||realActive,t=tokenSettings[s]||{},c={...settings,...t},manual=localActive?n(localActive.baseTargetProfit,n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit))):n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit));$('tTarget').value=manual;$('tTarget').dataset.manualTarget=manual;$('tTarget').dataset.exactAuto='0';const shownProtections=localActive?.protectionStages||t.protectionStages||settings.protectionStages,minCount=localActive?reachedProtectionCount(shownProtections,localActive.maxProfit):realActive?(Array.isArray(shownProtections)?shownProtections.length:0):0;renderProtectionEditor(shownProtections,manual,minCount);const pendingMaxLoss=realActive?realProtectiveUpdatePending.get(realUpdatePendingKey(realActive,'MAX_LOSS')):null;$('tMaxLoss').value=Number.isFinite(n(pendingMaxLoss?.maxLossUsd,NaN))?n(pendingMaxLoss.maxLossUsd):n(localActive?.maxLoss,n(t.maxLoss,settings.maxLoss));$('tExactBuy').checked=!!t.exactBuyEnabled;$('tExactBuyPrice').value=n(t.exactBuyPrice)||'';$('tExactSale').checked=!!t.exactSaleEnabled;$('tExactSalePrice').value=n(t.exactSalePrice)||'';$('devalidateBtn').disabled=!validated[s];$('tokenCloseNowBtn').disabled=!localActive;$('instantBuyBtn').disabled=!!active||n(binanceAccount.realPositions,0)>=n(settings.maxActive,3);fillFutures();updateTokenPreview()}
+function fillToken(){const s=selectedSymbol,has=!!s;$('tokenNoSelection').hidden=has;$('tokenSettingsWrap').hidden=!has;applyProtectionVisibility();$('settingsSymbol').textContent=s||'—';$('selectedSymbolLabel').textContent=s||'—';$('selectedPriceLabel').textContent=`Prix : ${s?price(lastPrices.get(s)):'—'}`;renderSelectedCurrentPrice();if(!has){fillFutures();return}const localActive=openBySymbol(s),realActive=controllerRealPositionBySymbol(s),active=localActive||realActive,t=tokenSettings[s]||{},c={...settings,...t},manual=localActive?n(localActive.baseTargetProfit,n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit))):n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit));$('tTarget').value=manual;$('tTarget').dataset.manualTarget=manual;$('tTarget').dataset.exactAuto='0';const shownProtections=localActive?.protectionStages||t.protectionStages||settings.protectionStages,minCount=localActive?reachedProtectionCount(shownProtections,localActive.maxProfit):realActive?(Array.isArray(shownProtections)?shownProtections.length:0):0;renderProtectionEditor(shownProtections,manual,minCount);const pendingMaxLoss=realActive?realProtectiveUpdatePending.get(realUpdatePendingKey(realActive,'MAX_LOSS')):null;$('tMaxLoss').value=Number.isFinite(n(pendingMaxLoss?.maxLossUsd,NaN))?n(pendingMaxLoss.maxLossUsd):n(localActive?.maxLoss,n(t.maxLoss,settings.maxLoss));$('tExactBuy').checked=!!t.exactBuyEnabled;$('tExactBuyPrice').value=n(t.exactBuyPrice)||'';$('tExactSale').checked=!!t.exactSaleEnabled;$('tExactSalePrice').value=n(t.exactSalePrice)||'';$('devalidateBtn').disabled=!validated[s]||userDevalidatePending.has(s);$('tokenCloseNowBtn').disabled=!localActive;$('instantBuyBtn').disabled=!!active||n(binanceAccount.realPositions,0)>=n(settings.maxActive,3);fillFutures();updateTokenPreview()}
 async function persistAndVerifyTokenFuturesSettings(symbol,margin,leverage){
   const s=String(symbol||'').toUpperCase();
   saveLocalOnly();
@@ -1925,7 +1925,118 @@ async function saveToken(){
   if(!futuresPersisted.ok)return setStatus(`${s} : réglages du jeton NON confirmés — ${futuresPersisted.reason}. La marge locale reste ${margin.toFixed(2)} $ mais Zenith ne la considère pas enregistrée.`,true);
   setStatus(buyEnabled?`${s} validé : ajouté à la liste et surveillé pour achat à ${price(buyPrice)} · marge ${margin.toFixed(2)} $ conservée.`:`${s} enregistré sans surveillance · marge ${margin.toFixed(2)} $ conservée.`)
 }
-function devalidateSelected(){const s=selectedSymbol;if(!s)return;delete validated[s];delete missedSignals[s];delete revalidateBlock[s];delete manualTokens[s];save();syncRealtime();renderAll();setStatus(`${s} : surveillance annulée, retiré de la liste.`)}
+function managedRealEntryForSymbol(symbol){
+  const s=String(symbol||'').toUpperCase();
+  const rows=(Array.isArray(binanceAccount.standardOrders)?binanceAccount.standardOrders:[])
+    .filter(order=>
+      String(order?.symbol||'').toUpperCase()===s&&
+      /^zth-ENT-[a-f0-9]{24}$/i.test(String(order?.clientOrderId||''))&&
+      String(order?.side||'').toUpperCase()==='BUY'&&
+      String(order?.type||'').toUpperCase()==='LIMIT'&&
+      String(order?.timeInForce||'').toUpperCase()==='GTC'&&
+      order?.reduceOnly!==true&&order?.reduceOnly!=='true'&&
+      String(order?.positionSide||'BOTH').toUpperCase()==='BOTH'
+    );
+  if(rows.length>1)throw new Error('PLUSIEURS_ENTREES_ZENITH');
+  return rows[0]||null;
+}
+async function waitControllerCommandTerminal(commandId,timeoutMs=45000){
+  const id=String(commandId||'');
+  if(!/^[A-Za-z0-9._:-]{8,128}$/.test(id))throw new Error('COMMAND_ID_INVALID');
+  const deadline=Date.now()+Math.max(5000,n(timeoutMs,45000));
+  while(Date.now()<deadline){
+    const r=await fetch('/api/zenith-sync?action=command-status&commandId='+encodeURIComponent(id),{
+      cache:'no-store',headers:{Accept:'application/json'}
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
+    const status=String(q.status||'PENDING').toUpperCase();
+    if(status==='ACK')return q;
+    if(status==='FAIL')throw new Error(String(q.reason||'COMMAND_FAILED'));
+    await new Promise(resolve=>setTimeout(resolve,500));
+  }
+  throw new Error('COMMAND_ACK_TIMEOUT');
+}
+async function devalidateSelected(){
+  const s=String(selectedSymbol||'').toUpperCase();
+  if(!s)return;
+  if(userDevalidatePending.has(s))return;
+  if(anyActivePositionBySymbol(s)){
+    return setStatus(`${s} est actif : l’achat surveillé ne peut plus être simplement annulé.`,true);
+  }
+  if(!validated[s])return setStatus(`${s} n’est pas actuellement surveillé.`,true);
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
+    return setStatus('Annulation refusée : iPhone contrôleur non vérifié.',true);
+  }
+  if(!confirm(
+    `Annuler l’achat surveillé de ${s} ?\n\n`+
+    `Zenith retirera d’abord le jeton de la surveillance centrale, puis annulera tout ordre LIMIT Zenith encore présent sur Binance.`
+  ))return;
+
+  userDevalidatePending.add(s);
+  const previousValidated=clone(validated[s]);
+  const previousMissed=missedSignals[s]?clone(missedSignals[s]):null;
+  const previousRevalidate=revalidateBlock[s]?clone(revalidateBlock[s]):null;
+  try{
+    // Stop future watch activity first. Keep manualTokens until Binance/MASTER ACK,
+    // so the symbol remains visible while the cancellation is in progress.
+    delete validated[s];
+    delete missedSignals[s];
+    delete revalidateBlock[s];
+    saveLocalOnly();
+    renderAll();
+    setStatus(`${s} : arrêt de la surveillance centrale…`);
+
+    if(controllerStateSyncTimer){
+      clearTimeout(controllerStateSyncTimer);
+      controllerStateSyncTimer=null;
+    }
+    const centralStopped=await syncControllerCloudStateNow();
+    if(!centralStopped)throw new Error(controllerSyncState.error||'CONTROLLER_STATE_SYNC_FAILED');
+
+    await refreshBinanceAccount();
+    const observedOrder=managedRealEntryForSymbol(s);
+    const mod=await loadControllerRealCommandModule();
+    const command=mod.buildControllerDevalidateEntryCommand(s,observedOrder,Date.now());
+
+    const r=await fetch('/api/zenith-sync?action=command',{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify(command)
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true)throw new Error(q?.reason||q?.code||q?.error||('HTTP '+r.status));
+    setStatus(`${s} : annulation Binance/transition en cours de confirmation…`);
+    await waitControllerCommandTerminal(q.commandId,45000);
+
+    await refreshBinanceAccount();
+    if(managedRealEntryForSymbol(s)){
+      throw new Error('ENTRY_STILL_OPEN_AFTER_ACK');
+    }
+
+    delete manualTokens[s];
+    saveLocalOnly();
+    await syncControllerCloudStateNow().catch(()=>false);
+    syncRealtime();
+    renderAll();
+    setStatus(`${s} : achat surveillé annulé et confirmé. Aucun ancien ordre Zenith ne peut reprendre l’achat.`);
+  }catch(e){
+    // If central watch removal itself failed, restore the previous watch locally.
+    // Once central removal succeeded, leaving the watch disabled is safer than
+    // recreating it while an entry cancellation may still be settling.
+    if(controllerSyncState.error&&String(controllerSyncState.error).includes('CONTROLLER_STATE')){
+      validated[s]=previousValidated;
+      if(previousMissed)missedSignals[s]=previousMissed;else delete missedSignals[s];
+      if(previousRevalidate)revalidateBlock[s]=previousRevalidate;else delete revalidateBlock[s];
+      saveLocalOnly();
+    }
+    renderAll();
+    setStatus(`${s} : annulation NON confirmée — ${String(e?.message||'erreur')}. Zenith ne considérera pas cette annulation comme terminée.`,true);
+  }finally{
+    userDevalidatePending.delete(s);
+    renderAll();
+  }
+}
 function tokenDefaults(){if(!selectedSymbol)return;if(anyActivePositionBySymbol(selectedSymbol))return setStatus(`${selectedSymbol} est actif : réinitialisation interdite. L’objectif de gain, le prix déterminé de VENTE, les protections et la perte MAX peuvent être modifiés.`,true);if(validated[selectedSymbol])return setStatus(`${selectedSymbol} est surveillé : annule d’abord l’achat surveillé.`,true);delete tokenSettings[selectedSymbol];delete validated[selectedSymbol];delete revalidateBlock[selectedSymbol];delete missedSignals[selectedSymbol];delete manualTokens[selectedSymbol];save();syncRealtime();renderAll();setStatus(`${selectedSymbol} revenu aux réglages par défaut.`)}
 function positionCfg(s){const c=cfg(s);return{margin:n(c.margin),leverage:n(c.leverage),marginType:'ISOLATED',notional:notional(c),binanceQty:n(c.binanceQty),binanceEffectiveNotional:n(c.binanceEffectiveNotional),targetProfit:n(c.targetProfit),maxLoss:n(c.maxLoss),protectionStages:normalizeProtections(c.protectionStages,n(c.manualTargetProfit,n(c.targetProfit,settings.targetProfit)))}}
 async function currentMarketPrice(s){try{const d=await jf(`/fapi/v1/ticker/price?symbol=${encodeURIComponent(s)}`),p=n(d.price);if(p)lastPrices.set(s,p);return p}catch(_){return 0}}
