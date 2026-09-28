@@ -1974,6 +1974,7 @@ async function devalidateSelected(){
   ))return;
 
   userDevalidatePending.add(s);
+  let centralWatchStopped=false;
   const previousValidated=clone(validated[s]);
   const previousMissed=missedSignals[s]?clone(missedSignals[s]):null;
   const previousRevalidate=revalidateBlock[s]?clone(revalidateBlock[s]):null;
@@ -1993,6 +1994,7 @@ async function devalidateSelected(){
     }
     const centralStopped=await syncControllerCloudStateNow();
     if(!centralStopped)throw new Error(controllerSyncState.error||'CONTROLLER_STATE_SYNC_FAILED');
+    centralWatchStopped=true;
 
     await refreshBinanceAccount();
     const observedOrder=managedRealEntryForSymbol(s);
@@ -2024,7 +2026,7 @@ async function devalidateSelected(){
     // If central watch removal itself failed, restore the previous watch locally.
     // Once central removal succeeded, leaving the watch disabled is safer than
     // recreating it while an entry cancellation may still be settling.
-    if(controllerSyncState.error&&String(controllerSyncState.error).includes('CONTROLLER_STATE')){
+    if(!centralWatchStopped){
       validated[s]=previousValidated;
       if(previousMissed)missedSignals[s]=previousMissed;else delete missedSignals[s];
       if(previousRevalidate)revalidateBlock[s]=previousRevalidate;else delete revalidateBlock[s];
