@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { orphanZenithCleanupOrders, expiredEntryOrphanProtections, maxLossSymbolIsQuarantined } from '../lib/protective-command.mjs';
+import { executionReadiness } from '../api/binance-protective-execute.js';
+
+function stableStringify(value){
+  if(value===null||typeof value!=='object')return JSON.stringify(value);
+  if(Array.isArray(value))return '['+value.map(v=>v===undefined?'null':stableStringify(v)).join(',')+']';
+  return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+stableStringify(value[k])).join(',')+'}';
+}
+function sha256(value){return crypto.createHash('sha256').update(String(value)).digest('hex');}
 
 function report(rows,reasons=['ORPHAN_ZENITH_PROTECTIVE_ORDER']){
   return {
@@ -130,4 +139,35 @@ test('server worker keeps localized orphan cleanup failures local but legacy mis
   assert.match(block,/markOrphanCleanupFailure\([\s\S]*ORPHAN_CLEANUP_RECONCILIATION_FAILED/);
   assert.match(block,/markOrphanCleanupFailure\(reason,target\.symbol\)/);
   assert.match(block,/markOrphanCleanupFailure\('ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED',target\.symbol\)/);
+});
+
+
+test('orphan cleanup quarantine blocks re-entry on the same symbol but not another clean symbol',()=>{
+  const now=Date.now();
+  const data={
+    executionMode:'REAL',
+    userStream:{connected:true,ready:true,failClosed:false,needsReconciliation:false},
+  };
+  const runtimeState={masterDeviceId:'engine-master',updatedAt:now,data};
+  const local=localReport([standard]);
+  local.observedAt=now;
+  local.runtimeDataHash=sha256(stableStringify(data));
+
+  assert.equal(
+    executionReadiness(runtimeState,local,'engine-master','',false,false,'BTCUSDT:LONG',false),
+    'SYMBOL_MAX_LOSS_QUARANTINED'
+  );
+  assert.equal(
+    executionReadiness(runtimeState,local,'engine-master','',false,false,'ETHUSDT:LONG',false),
+    ''
+  );
+});
+
+test('both LIMIT and immediate MARKET entry paths pass through the same symbol-local readiness fence',async()=>{
+  const api=await readFile(new URL('../api/binance-entry-execute.js',import.meta.url),'utf8');
+  const readiness=api.indexOf('const beforeReason=entryReadinessReason(before,master.deviceId,symbol,side,pendingEntryRecovery)');
+  const preflight=api.indexOf('let preflight=await runLiveEntryPreflight',readiness);
+  assert.ok(readiness>=0&&preflight>readiness);
+  assert.match(api,/const marketEntry=type==='EXEC_OPEN_MARKET_POSITION'&&phase==='SUBMIT_MARKET_ENTRY'/);
+  assert.match(api,/const limitEntry=type==='EXEC_OPEN_POSITION'&&\['PREPARE_PROTECTION','SUBMIT_ENTRY'\]\.includes\(phase\)/);
 });
