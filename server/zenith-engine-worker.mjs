@@ -27,7 +27,7 @@ import { planAutomaticTargetExit } from '../lib/auto-target-exit.mjs';
 import { buildMaxLossRepairPlan } from '../lib/maxloss-repair.mjs';
 import { highestReachedProtectionStage } from '../lib/real-protection-levels.mjs';
 import {
-  pendingEntryProtectionLossTargets,
+  pendingEntryCancelRecoveryTargets,
   pendingEntryWriteAheadRecoveryTargets,
   expiredEntryOrphanProtections,
   persistedSaleRemainderRecoveryTargets,
@@ -2518,8 +2518,8 @@ async function recoverPendingEntryWriteAhead(report){
 }
 
 async function cancelPendingEntriesMissingPreparedProtection(report){
-  const targets=pendingEntryProtectionLossTargets(report);
-  if(!targets.length)return {handled:false,canceled:0,filledRace:false,reason:'NO_PENDING_ENTRY_PROTECTION_LOSS'};
+  const targets=pendingEntryCancelRecoveryTargets(report);
+  if(!targets.length)return {handled:false,canceled:0,filledRace:false,reason:'NO_PENDING_ENTRY_CANCEL_RECOVERY'};
 
   let canceled=0;
   let filledRace=false;
@@ -2532,7 +2532,10 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
     };
     const result=await callProtectiveExecute(body);
     if(!result.response.ok||result.data?.ok!==true){
-      const reason='ENTRY_PROTECTION_LOSS_CANCEL_'+String(
+      const prefix=target.recoveryKind==='PARTIAL_FILL_FLAT'
+        ?'ENTRY_PARTIAL_FILL_FLAT_CANCEL_'
+        :'ENTRY_PROTECTION_LOSS_CANCEL_';
+      const reason=prefix+String(
         result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status)
       );
       entryWatch.lastError=reason;
@@ -2543,14 +2546,17 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
 
     const disposition=String(result.data?.result?.disposition||'').toUpperCase();
     const status=String(result.data?.result?.order?.status||'').toUpperCase();
-    if(disposition==='ALREADY_FILLED'||status==='FILLED'){
+    if(disposition==='ALREADY_FILLED'||status==='FILLED'||result.data?.fillRace===true){
       // Race: the LIMIT filled before cancellation won. Never close the position here.
-      // The next reconciliation hands the live position to the normal MAX-LOSS repair path.
+      // The next reconciliation hands the live position to normal MAX-LOSS handling.
       filledRace=true;
-      log('ENTRY_PROTECTION_LOSS_FILL_RACE',{
+      log(target.recoveryKind==='PARTIAL_FILL_FLAT'
+        ?'ENTRY_PARTIAL_FILL_FLAT_RACE'
+        :'ENTRY_PROTECTION_LOSS_FILL_RACE',{
         symbol:target.symbol,
         commandId:target.commandId,
         clientOrderId:target.entryClientOrderId,
+        liveQuantity:n(result.data?.liveQuantity,0),
       });
       continue;
     }
@@ -2577,11 +2583,16 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
       watchState.blockedAt=Date.now();
       entryWatch.states.set(target.symbol,watchState);
     }
-    log('ENTRY_CANCELED_AFTER_MAXLOSS_LOSS',{
+    log(target.recoveryKind==='PARTIAL_FILL_FLAT'
+      ?'ENTRY_PARTIAL_FILL_FLAT_CANCELED'
+      :'ENTRY_CANCELED_AFTER_MAXLOSS_LOSS',{
       symbol:target.symbol,
       commandId:target.commandId,
       clientOrderId:target.entryClientOrderId,
+      protectionClientAlgoId:String(target.protectionClientAlgoId||''),
       terminalStatus,
+      transitionCleared:result.data?.transitionCleared===true,
+      protectionCleanupRequired:result.data?.protectionCleanupRequired===true,
     });
   }
 
@@ -2592,7 +2603,11 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
     handled:true,
     canceled,
     filledRace,
-    reason:filledRace?'ENTRY_FILL_RACE_RECONCILE':'ENTRY_CANCELLED_AFTER_MAXLOSS_LOSS',
+    reason:filledRace
+      ?'ENTRY_FILL_RACE_RECONCILE'
+      :(targets.some(row=>row.recoveryKind==='PARTIAL_FILL_FLAT')
+        ?'ENTRY_PARTIAL_FILL_FLAT_CANCELLED'
+        :'ENTRY_CANCELLED_AFTER_MAXLOSS_LOSS'),
   };
 }
 
@@ -2933,13 +2948,18 @@ async function reconcile(secondPass=false){
       if(recovered.handled)return false;
     }
 
-    const pendingProtectionLoss=pendingEntryProtectionLossTargets(data.report);
-    if(pendingProtectionLoss.length){
+    const pendingEntryCancels=pendingEntryCancelRecoveryTargets(data.report);
+    if(pendingEntryCancels.length){
       if(secondPass){
+        const target=pendingEntryCancels[0];
         await markEntryTransitionRecoveryFailure(
-          'ENTRY_PROTECTION_LOSS_CANCEL_RECONCILIATION_FAILED',
-          pendingProtectionLoss[0]?.symbol,
-          'ENTRY_PROTECTION_RECOVERY_PENDING'
+          target?.recoveryKind==='PARTIAL_FILL_FLAT'
+            ?'ENTRY_PARTIAL_FILL_FLAT_CANCEL_RECONCILIATION_FAILED'
+            :'ENTRY_PROTECTION_LOSS_CANCEL_RECONCILIATION_FAILED',
+          target?.symbol,
+          target?.recoveryKind==='PARTIAL_FILL_FLAT'
+            ?'ENTRY_PARTIAL_FILL_FLAT_RECOVERY_PENDING'
+            :'ENTRY_PROTECTION_RECOVERY_PENDING'
         );
         return false;
       }
