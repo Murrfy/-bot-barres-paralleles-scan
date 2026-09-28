@@ -58,8 +58,9 @@ test('handler wires entry cancel recovery only through exact classifiers and eng
 test('flat partial-entry cancel proves terminal entry and certified flat before clearing transition',async()=>{
   const source=await readFile(new URL('../api/binance-protective-execute.js',import.meta.url),'utf8');
   const start=source.indexOf("if(type==='EXEC_CANCEL_ENTRY')");
-  const end=source.indexOf("const symbol=String(req.body?.symbol||'').toUpperCase();",start+30);
-  assert.ok(start>=0&&end>start);
+  const firstSymbol=source.indexOf("const symbol=String(req.body?.symbol||'').toUpperCase();",start);
+  const end=source.indexOf("const symbol=String(req.body?.symbol||'').toUpperCase();",firstSymbol+1);
+  assert.ok(start>=0&&firstSymbol>start&&end>firstSymbol);
   const block=source.slice(start,end);
   const cancelAt=block.indexOf('cancelEntryOrderIdempotent({');
   const terminalAt=block.indexOf("const terminal=['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status)",cancelAt);
