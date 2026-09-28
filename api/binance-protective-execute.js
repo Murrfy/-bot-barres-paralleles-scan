@@ -5,7 +5,8 @@ import { placeStandardOrderIdempotent, cancelEntryOrderIdempotent, signedBinance
 import {
   protectionOnlyMismatchTarget,
   protectiveRepairTarget,
-  pendingEntryProtectionLossCancelAllowed,
+  pendingEntryCancelRecoveryAllowed,
+  pendingEntryPartialFillFlatTargets,
   persistedSaleRemainderRecoveryAllowed,
   triggeredProgressiveRemainderRecoveryAllowed,
   triggeredMaxLossRemainderRecoveryAllowed,
@@ -25,6 +26,7 @@ const KEY_AUDIT=`${PREFIX}:audit`;
 const KEY_REAL_EXECUTION_ARMED=`${PREFIX}:safety:real-execution-armed`;
 const KEY_MASTER_MODE=`${PREFIX}:master-mode`;
 const KEY_SALE_REMAINDER_RECOVERIES=`${PREFIX}:sale-remainder-recoveries`;
+const KEY_ENTRY_TRANSITIONS=`${PREFIX}:entry-transitions`;
 const DEPLOYMENT_SHA=String(process.env.VERCEL_GIT_COMMIT_SHA||'');
 
 const REDIS_URL =
@@ -67,6 +69,26 @@ async function redis(command){
   if(!r.ok||data?.error)throw new Error(data?.error||`Redis HTTP ${r.status}`);
   return data?.result;
 }
+async function clearPartialEntryTransitionAfterCertifiedFlat(target){
+  const script=[
+    "local raw = redis.call('HGET', KEYS[1], ARGV[1])",
+    "if not raw then return 0 end",
+    "local ok, value = pcall(cjson.decode, raw)",
+    "if not ok then return -1 end",
+    "if string.upper(tostring(value.state or '')) ~= 'ENTRY_SUBMITTED' then return -2 end",
+    "if string.upper(tostring(value.symbol or '')) ~= ARGV[2] then return -3 end",
+    "if tostring(value.entryClientOrderId or '') ~= ARGV[3] then return -4 end",
+    "if tostring(value.protectionClientAlgoId or '') ~= ARGV[4] then return -5 end",
+    "redis.call('HDEL', KEYS[1], ARGV[1])",
+    "return 1"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL',script,'1',KEY_ENTRY_TRANSITIONS,
+    String(target.commandId),String(target.symbol),
+    String(target.entryClientOrderId),String(target.protectionClientAlgoId),
+  ]));
+}
+
 async function requireCurrentMaster(req){
   for(const token of deviceTokenCandidates(req)){
     const tokenHash=sha256(token);
@@ -560,12 +582,24 @@ export default async function handler(req,res){
     direction:req.body?.direction,
     closeAll:req.body?.closeAll,
   });
-  const pendingEntryCancelRecovery=type==='EXEC_CANCEL_ENTRY'&&pendingEntryProtectionLossCancelAllowed(report,{
+  const pendingEntryCancelRecovery=type==='EXEC_CANCEL_ENTRY'&&pendingEntryCancelRecoveryAllowed(report,{
     symbol:req.body?.symbol,
     clientOrderId:req.body?.clientOrderId,
   });
+  const partialEntryFlatTarget=type==='EXEC_CANCEL_ENTRY'
+    ?pendingEntryPartialFillFlatTargets(report).find(row=>
+      row.symbol===String(req.body?.symbol||'').toUpperCase()&&
+      row.entryClientOrderId===String(req.body?.clientOrderId||'')
+    )||null
+    :null;
   if(pendingEntryCancelRecovery&&String(master?.principal||'')!=='engine'){
-    return send(res,423,{ok:false,code:'ENTRY_PROTECTION_RECOVERY_ENGINE_REQUIRED',writeAttempted:false});
+    return send(res,423,{
+      ok:false,
+      code:partialEntryFlatTarget
+        ?'ENTRY_PARTIAL_FILL_FLAT_RECOVERY_ENGINE_REQUIRED'
+        :'ENTRY_PROTECTION_RECOVERY_ENGINE_REQUIRED',
+      writeAttempted:false
+    });
   }
   const maxLossRemainderRecovery=type==='EXEC_CLOSE_POSITION'&&
     triggeredMaxLossRemainderRecoveryAllowed(report,req.body);
@@ -631,6 +665,9 @@ export default async function handler(req,res){
     const symbol=String(req.body?.symbol||'').toUpperCase();
     const clientOrderId=String(req.body?.clientOrderId||'');
     const commandId=String(req.body?.commandId||'');
+    if(partialEntryFlatTarget&&commandId!==partialEntryFlatTarget.commandId){
+      return send(res,409,{ok:false,code:'ENTRY_PARTIAL_FILL_FLAT_COMMAND_MISMATCH',writeAttempted:false});
+    }
     if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!/^zth-ENT-[a-f0-9]{24}$/i.test(clientOrderId)){
       return send(res,400,{ok:false,code:'CANCEL_TARGET_NOT_ZENITH_ENTRY',writeAttempted:false});
     }
@@ -644,6 +681,18 @@ export default async function handler(req,res){
     }
     if(String(liveOrder.timeInForce||'').toUpperCase()!=='GTC'){
       return send(res,409,{ok:false,code:'CANCEL_TARGET_NOT_GTC',writeAttempted:false});
+    }
+    if(partialEntryFlatTarget){
+      const original=Number(liveOrder?.origQty);
+      const executed=Number(liveOrder?.executedQty);
+      const remaining=original-executed;
+      if(String(liveOrder.status||'').toUpperCase()!=='PARTIALLY_FILLED'||
+         !(original>0)||!(executed>0)||!(remaining>0)||
+         !sameQuantity(original,partialEntryFlatTarget.quantity)||
+         !sameQuantity(executed,partialEntryFlatTarget.executedQuantity)||
+         !sameQuantity(remaining,partialEntryFlatTarget.remainingQuantity)){
+        return send(res,409,{ok:false,code:'ENTRY_PARTIAL_FILL_FLAT_RUNTIME_MISMATCH',writeAttempted:false});
+      }
     }
     if(liveOrder.reduceOnly===true||liveOrder.reduceOnly==='true'){
       return send(res,409,{ok:false,code:'CANCEL_TARGET_IS_REDUCE_ONLY',writeAttempted:false});
@@ -669,8 +718,60 @@ export default async function handler(req,res){
         at:Date.now(),kind:'BINANCE_ENTRY_CANCEL_DISPATCH',
         deviceId:master.deviceId,commandId,symbol,clientOrderId,
         disposition:result.disposition,writeAttempted:result.writeAttempted===true,
+        recoveryKind:partialEntryFlatTarget?'PARTIAL_FILL_FLAT':'PROTECTION_LOSS',
       })]);
       await redis(['LTRIM',KEY_AUDIT,'0','199']);
+
+      if(partialEntryFlatTarget){
+        const status=String(result?.order?.status||'').toUpperCase();
+        const disposition=String(result?.disposition||'').toUpperCase();
+        if(status==='FILLED'||disposition==='ALREADY_FILLED'){
+          return send(res,200,{
+            ok:true,result,partialFillFlatRecovery:true,
+            fillRace:true,transitionCleared:false,
+          });
+        }
+        const terminal=['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status);
+        if(!terminal){
+          return send(res,409,{
+            ok:false,code:'ENTRY_PARTIAL_FILL_FLAT_CANCEL_NOT_TERMINAL',
+            writeAttempted:result?.writeAttempted===true,result,
+          });
+        }
+
+        const liveQty=await liveBinancePositionQuantity({
+          apiKey,secret,symbol,direction:partialEntryFlatTarget.direction,
+        });
+        if(liveQty>1e-12){
+          return send(res,200,{
+            ok:true,result,partialFillFlatRecovery:true,
+            fillRace:true,liveQuantity:liveQty,transitionCleared:false,
+          });
+        }
+
+        const cleared=await clearPartialEntryTransitionAfterCertifiedFlat(partialEntryFlatTarget);
+        if(cleared!==1){
+          return send(res,409,{
+            ok:false,code:'ENTRY_PARTIAL_FILL_FLAT_TRANSITION_CHANGED',
+            transitionClearResult:cleared,writeAttempted:result?.writeAttempted===true,
+          });
+        }
+        await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+          at:Date.now(),kind:'ENTRY_PARTIAL_FILL_FLAT_RECOVERED',
+          deviceId:master.deviceId,commandId,symbol,clientOrderId,
+          protectionClientAlgoId:partialEntryFlatTarget.protectionClientAlgoId,
+          executedQuantity:partialEntryFlatTarget.executedQuantity,
+          canceledRemainderQuantity:partialEntryFlatTarget.remainingQuantity,
+          certifiedFlat:true,
+        })]);
+        await redis(['LTRIM',KEY_AUDIT,'0','199']);
+        return send(res,200,{
+          ok:true,result,partialFillFlatRecovery:true,
+          fillRace:false,transitionCleared:true,
+          protectionCleanupRequired:partialEntryFlatTarget.protectionPresent===true,
+        });
+      }
+
       return send(res,200,{ok:true,result});
     }catch(e){
       const retryAfter=binanceBackoffSecondsFromError(e);
