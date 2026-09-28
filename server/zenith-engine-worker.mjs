@@ -2534,7 +2534,9 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
     if(!result.response.ok||result.data?.ok!==true){
       const prefix=target.recoveryKind==='PARTIAL_FILL_FLAT'
         ?'ENTRY_PARTIAL_FILL_FLAT_CANCEL_'
-        :'ENTRY_PROTECTION_LOSS_CANCEL_';
+        :target.recoveryKind==='PARTIAL_FILL_EXIT_STARTED'
+          ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_CANCEL_'
+          :'ENTRY_PROTECTION_LOSS_CANCEL_';
       const reason=prefix+String(
         result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status)
       );
@@ -2552,7 +2554,9 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
       filledRace=true;
       log(target.recoveryKind==='PARTIAL_FILL_FLAT'
         ?'ENTRY_PARTIAL_FILL_FLAT_RACE'
-        :'ENTRY_PROTECTION_LOSS_FILL_RACE',{
+        :target.recoveryKind==='PARTIAL_FILL_EXIT_STARTED'
+          ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_RACE'
+          :'ENTRY_PROTECTION_LOSS_FILL_RACE',{
         symbol:target.symbol,
         commandId:target.commandId,
         clientOrderId:target.entryClientOrderId,
@@ -2569,7 +2573,11 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
       terminalStatus=String(terminal?.status||terminalStatus||'').toUpperCase();
     }
     if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus)){
-      const reason='ENTRY_PROTECTION_LOSS_CANCEL_NOT_CONFIRMED';
+      const reason=target.recoveryKind==='PARTIAL_FILL_FLAT'
+        ?'ENTRY_PARTIAL_FILL_FLAT_CANCEL_NOT_CONFIRMED'
+        :target.recoveryKind==='PARTIAL_FILL_EXIT_STARTED'
+          ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_CANCEL_NOT_CONFIRMED'
+          :'ENTRY_PROTECTION_LOSS_CANCEL_NOT_CONFIRMED';
       entryWatch.lastError=reason;
       runtime.error=reason;
       scheduleReconcile(500);
@@ -2585,7 +2593,9 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
     }
     log(target.recoveryKind==='PARTIAL_FILL_FLAT'
       ?'ENTRY_PARTIAL_FILL_FLAT_CANCELED'
-      :'ENTRY_CANCELED_AFTER_MAXLOSS_LOSS',{
+      :target.recoveryKind==='PARTIAL_FILL_EXIT_STARTED'
+        ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_CANCELED'
+        :'ENTRY_CANCELED_AFTER_MAXLOSS_LOSS',{
       symbol:target.symbol,
       commandId:target.commandId,
       clientOrderId:target.entryClientOrderId,
@@ -2607,7 +2617,9 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
       ?'ENTRY_FILL_RACE_RECONCILE'
       :(targets.some(row=>row.recoveryKind==='PARTIAL_FILL_FLAT')
         ?'ENTRY_PARTIAL_FILL_FLAT_CANCELLED'
-        :'ENTRY_CANCELLED_AFTER_MAXLOSS_LOSS'),
+        :targets.some(row=>row.recoveryKind==='PARTIAL_FILL_EXIT_STARTED')
+          ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_CANCELLED'
+          :'ENTRY_CANCELLED_AFTER_MAXLOSS_LOSS'),
   };
 }
 
@@ -2952,26 +2964,31 @@ async function reconcile(secondPass=false){
     if(pendingEntryCancels.length){
       if(secondPass){
         const target=pendingEntryCancels[0];
+        const recoveryKind=String(target?.recoveryKind||'');
         await markEntryTransitionRecoveryFailure(
-          target?.recoveryKind==='PARTIAL_FILL_FLAT'
+          recoveryKind==='PARTIAL_FILL_FLAT'
             ?'ENTRY_PARTIAL_FILL_FLAT_CANCEL_RECONCILIATION_FAILED'
-            :'ENTRY_PROTECTION_LOSS_CANCEL_RECONCILIATION_FAILED',
+            :recoveryKind==='PARTIAL_FILL_EXIT_STARTED'
+              ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_CANCEL_RECONCILIATION_FAILED'
+              :'ENTRY_PROTECTION_LOSS_CANCEL_RECONCILIATION_FAILED',
           target?.symbol,
-          target?.recoveryKind==='PARTIAL_FILL_FLAT'
+          recoveryKind==='PARTIAL_FILL_FLAT'
             ?'ENTRY_PARTIAL_FILL_FLAT_RECOVERY_PENDING'
-            :'ENTRY_PROTECTION_RECOVERY_PENDING'
+            :recoveryKind==='PARTIAL_FILL_EXIT_STARTED'
+              ?'ENTRY_PARTIAL_FILL_EXIT_STARTED_RECOVERY_PENDING'
+              :'ENTRY_PROTECTION_RECOVERY_PENDING'
         );
         return false;
       }
       const recovered=await cancelPendingEntriesMissingPreparedProtection(data.report);
       if(!recovered.handled)return false;
-      const partialFillFlatRecovery=pendingEntryCancels
-        .some(row=>row?.recoveryKind==='PARTIAL_FILL_FLAT');
+      const partialEntryTerminalRecovery=pendingEntryCancels
+        .some(row=>['PARTIAL_FILL_FLAT','PARTIAL_FILL_EXIT_STARTED'].includes(String(row?.recoveryKind||'')));
       stream.reconcileBusy=false;
       await sleep(100);
-      // A flat partial-entry recovery removes the transition. Start a fresh pass so
-      // its prepared MAX-LOSS can immediately enter the proven orphan cleanup path.
-      return reconcile(partialFillFlatRecovery?false:true);
+      // A partial-entry terminal recovery removes (or terminalizes) the old entry.
+      // Start a fresh pass so MAX-LOSS/target/orphan state is rebuilt from Binance.
+      return reconcile(partialEntryTerminalRecovery?false:true);
     }
 
     const writeAheadRecovery=pendingEntryWriteAheadRecoveryTargets(data.report);
