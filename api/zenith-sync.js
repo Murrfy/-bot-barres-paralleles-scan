@@ -1,3 +1,17 @@
+/*
+================================================================================
+⛔⛔⛔  BLOC 5 VERROUILLÉ — MASTER / ADMIN / PAUSE / PANIC / CONTRÔLEUR  ⛔⛔⛔
+
+        NE TOUCHEZ PAS À CE PUTAIN DE BLOC SANS L'ACCORD EXPLICITE DE WALTER.
+
+Périmètre : autorité MASTER serveur, rôle contrôleur, code ADMIN, PAUSE/REPRISE,
+PANIC manuel, révocation MASTER, reprise du contrôle sur un nouvel appareil,
+sessions/epochs de rôle et synchronisation du contrôleur.
+Ne jamais réintroduire un MASTER navigateur/iPad.
+AUCUNE MODIFICATION, RÉÉCRITURE, SIMPLIFICATION, DÉPLACEMENT OU "AMÉLIORATION"
+SANS L'ACCORD EXPLICITE DE WALTER ET SANS REPASSER LES TESTS DU BLOC 5.
+================================================================================
+*/
 import crypto from 'node:crypto';
 import { DEVICE_SESSION_MAX_AGE_SECONDS, ENGINE_DEVICE_SESSION_IDLE_MAX_AGE_SECONDS, bearerToken, cookieToken, setDeviceSessionCookie, clearDeviceSessionCookie, sameOriginMutation, validDeviceId, roleAssignmentKey, deviceRoleAssignmentActive } from '../lib/device-session.mjs';
 import {
