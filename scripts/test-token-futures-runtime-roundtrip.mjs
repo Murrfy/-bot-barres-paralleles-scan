@@ -61,6 +61,7 @@ function makeHarness(){
 
   vm.runInContext(`
     const STORAGE_KEY='zenith-runtime-margin-test';
+    const ZENITH_CONTROLLER_REV_KEY='zenith-controller-revision-test';
     const DEFAULT_PROTECTIONS=[];
     const DEFAULTS={
       margin:1000,leverage:10,marginType:'ISOLATED',maxActive:3,
@@ -85,6 +86,7 @@ function makeHarness(){
     let lastAggIds=new Map(),lastAggTimes=new Map();
     let controllerIdentity={paired:false,role:'',lastOk:0,error:''};
     let controllerStateSyncTimer=null;
+    let controllerStateHydrated=false;
     let controllerSyncState={conflict:false,lastOk:0,error:''};
 
     function legacyDefaultProtectionProfile(){return false}
@@ -115,6 +117,7 @@ function makeHarness(){
 
   for(const name of [
     'normalizeRecordBlock','saveLocalOnly','load','fillFutures',
+    'applyControllerCloudStateSnapshot',
     'persistAndVerifyTokenFuturesSettings','saveFutures'
   ]){
     vm.runInContext(extractFunction(name),context);
@@ -173,4 +176,54 @@ test('stale deployment guard is loaded before the inline Zenith application',()=
   assert.match(guard,/response\.headers\.get\('etag'\)/);
   assert.match(guard,/window\.location\.reload\(\)/);
   assert.match(guard,/visibilitychange/);
+});
+
+
+test('central controller state restores a per-token Futures margin before the UI uses the BOT default',()=>{
+  const {context,elements,storage}=makeHarness();
+
+  vm.runInContext("selectedSymbol='BTCUSDT'; tokenSettings={}; fillFutures()",context);
+  assert.equal(Number(elements.get('fMargin').value),1000);
+
+  const state={
+    revision:7,
+    data:{
+      settings:{
+        margin:1000,leverage:10,marginType:'ISOLATED',maxActive:3,
+        targetProfit:40,maxLoss:40,protectionStages:[]
+      },
+      tokenSettings:{
+        BTCUSDT:{
+          enabled:true,margin:125,leverage:7,marginType:'ISOLATED',
+          targetProfit:40,manualTargetProfit:40,maxLoss:40,protectionStages:[]
+        }
+      },
+      manualTokens:{},
+      validated:{}
+    }
+  };
+  context.__centralState=state;
+  assert.equal(vm.runInContext('applyControllerCloudStateSnapshot(__centralState)',context),true);
+  vm.runInContext('fillFutures()',context);
+
+  assert.equal(Number(elements.get('fMargin').value),125);
+  assert.equal(Number(elements.get('fLev').value),7);
+  assert.equal(vm.runInContext('tokenSettings.BTCUSDT.margin',context),125);
+  assert.equal(vm.runInContext('tokenSettings.BTCUSDT.leverage',context),7);
+  assert.equal(storage.get('zenith-controller-revision-test'),'7');
+
+  const persisted=JSON.parse(storage.get('zenith-runtime-margin-test'));
+  assert.equal(persisted.tokenSettings.BTCUSDT.margin,125);
+  assert.equal(persisted.tokenSettings.BTCUSDT.leverage,7);
+});
+
+test('controller startup hydrates central state before any local state sync can overwrite it',()=>{
+  const refresh=extractFunction('refreshControllerIdentity');
+  const hydrate=extractFunction('hydrateControllerCloudStateFromServer');
+  const hydrateAt=refresh.indexOf('await hydrateControllerCloudStateFromServer()');
+  const syncAt=refresh.indexOf('scheduleControllerCloudStateSync()');
+  assert.ok(hydrateAt>=0&&syncAt>hydrateAt);
+  assert.match(hydrate,/expectedHash!==actualHash/);
+  assert.match(hydrate,/applyControllerCloudStateSnapshot\(state\)/);
+  assert.match(hydrate,/controllerStateHydrated=true/);
 });
