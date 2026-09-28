@@ -151,6 +151,18 @@ test('watched tokens freeze settings while active positions keep only safe contr
   assert.match(locks,/\$\('tMaxLoss'\)\.disabled=!realActive\|\|activeSettingPending/);
   assert.match(locks,/\['tExactSale','tExactSalePrice','tTarget'\]\.forEach\(id=>\$\(id\)\.disabled=activeSettingPending\)/);
   assert.match(locks,/\$\('fMargin'\)\.disabled=true;\$\('fLev'\)\.disabled=true/);
+  assert.match(locks,/\$\('devalidateBtn'\)\.disabled=!validated\[selectedSymbol\]/);
+});
+
+test('devalidation removes only watch state and never mutates active buy margin or Binance position',()=>{
+  const devalidate=block('function devalidateSelected()','function tokenDefaults()');
+  assert.match(devalidate,/delete validated\[s\]/);
+  assert.match(devalidate,/delete missedSignals\[s\]/);
+  assert.match(devalidate,/delete revalidateBlock\[s\]/);
+  assert.doesNotMatch(devalidate,/tokenSettings\[s\]\s*=/);
+  assert.doesNotMatch(devalidate,/openPositions/);
+  assert.doesNotMatch(devalidate,/margin\s*=/);
+  assert.doesNotMatch(devalidate,/EXEC_CANCEL_ENTRY|cancelEntry|binance|fetch\(/i);
 });
 
 test('active-position gain target persists and recalculates the active target price',()=>{
