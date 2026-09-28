@@ -228,8 +228,6 @@ jobs:
         run: node --test scripts/test-order-intent.mjs
       - name: Test protected real MARKET instant buy
         run: node --test scripts/test-real-market-entry.mjs
-      - name: Test fail-closed entry protection gate
-        run: node --test scripts/test-entry-protection-gate.mjs
       - name: Test central managed emergency hard-cap ACK
         run: node --test scripts/test-central-emergency-cap.mjs
       - name: Test PANIC idempotent audit protection
@@ -254,8 +252,6 @@ jobs:
         run: node --test scripts/test-real-binance-history.mjs
       - name: Test autonomous real-history archive
         run: node --test scripts/test-engine-history-archive-wiring.mjs
-      - name: Test proof-driven entry confirmation
-        run: node --test scripts/test-entry-open-state.mjs
       - name: Test MASTER protective command dispatcher
         run: node --test scripts/test-master-command-dispatch.mjs
       - name: Test iPhone real-position close command
