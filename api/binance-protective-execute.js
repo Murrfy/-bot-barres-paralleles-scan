@@ -90,6 +90,27 @@ async function clearPartialEntryTransitionAfterCertifiedFlat(target){
   ]));
 }
 
+async function clearEntryTransitionAfterUserDevalidate(target){
+  const script=[
+    "local raw = redis.call('HGET', KEYS[1], ARGV[1])",
+    "if not raw then return 0 end",
+    "local ok, value = pcall(cjson.decode, raw)",
+    "if not ok then return -1 end",
+    "local state = string.upper(tostring(value.state or ''))",
+    "if state ~= 'PROTECTION_PREPARED' and state ~= 'ENTRY_SUBMITTED' then return -2 end",
+    "if string.upper(tostring(value.symbol or '')) ~= ARGV[2] then return -3 end",
+    "if tostring(value.entryClientOrderId or '') ~= ARGV[3] then return -4 end",
+    "if tostring(value.protectionClientAlgoId or '') ~= ARGV[4] then return -5 end",
+    "redis.call('HDEL', KEYS[1], ARGV[1])",
+    "return 1"
+  ].join('\n');
+  return Number(await redis([
+    'EVAL',script,'1',KEY_ENTRY_TRANSITIONS,
+    String(target.commandId),String(target.symbol),
+    String(target.entryClientOrderId||''),String(target.protectionClientAlgoId||''),
+  ]));
+}
+
 async function requireCurrentMaster(req){
   for(const token of deviceTokenCandidates(req)){
     const tokenHash=sha256(token);
@@ -600,6 +621,27 @@ export default async function handler(req,res){
     )||null
     :null;
   const partialEntryCancelTarget=partialEntryFlatTarget||partialEntryExitStartedTarget;
+  const cancelIntent=type==='EXEC_CANCEL_ENTRY'
+    ?String(req.body?.cancelIntent||'').toUpperCase()
+    :'';
+  if(cancelIntent&&cancelIntent!=='USER_DEVALIDATE'){
+    return send(res,400,{ok:false,code:'CANCEL_INTENT_INVALID',writeAttempted:false});
+  }
+  const userDevalidateCancel=type==='EXEC_CANCEL_ENTRY'&&cancelIntent==='USER_DEVALIDATE';
+  const userDevalidateSymbol=String(req.body?.symbol||'').toUpperCase();
+  const userDevalidateRequestedId=String(req.body?.clientOrderId||'');
+  const userDevalidateTransitions=userDevalidateCancel
+    ?(Array.isArray(report?.differences?.entryTransitions?.active)
+      ?report.differences.entryTransitions.active.filter(row=>
+        String(row?.symbol||'').toUpperCase()===userDevalidateSymbol&&
+        (!userDevalidateRequestedId||String(row?.entryClientOrderId||'')===userDevalidateRequestedId)
+      )
+      :[])
+    :[];
+  if(userDevalidateTransitions.length>1){
+    return send(res,409,{ok:false,code:'USER_DEVALIDATE_TRANSITION_AMBIGUOUS',writeAttempted:false});
+  }
+  const userDevalidateTransition=userDevalidateTransitions[0]||null;
   if(pendingEntryCancelRecovery&&String(master?.principal||'')!=='engine'){
     return send(res,423,{
       ok:false,
@@ -673,7 +715,7 @@ export default async function handler(req,res){
 
   if(type==='EXEC_CANCEL_ENTRY'){
     const symbol=String(req.body?.symbol||'').toUpperCase();
-    const clientOrderId=String(req.body?.clientOrderId||'');
+    let clientOrderId=String(req.body?.clientOrderId||'');
     const commandId=String(req.body?.commandId||'');
     if(partialEntryCancelTarget&&commandId!==partialEntryCancelTarget.commandId){
       return send(res,409,{
@@ -684,7 +726,68 @@ export default async function handler(req,res){
         writeAttempted:false
       });
     }
-    if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!/^zth-ENT-[a-f0-9]{24}$/i.test(clientOrderId)){
+    if(!/^[A-Z0-9]{3,30}$/.test(symbol)){
+      return send(res,400,{ok:false,code:'CANCEL_SYMBOL_INVALID',writeAttempted:false});
+    }
+    if(userDevalidateCancel&&!clientOrderId&&userDevalidateTransition?.entryClientOrderId){
+      clientOrderId=String(userDevalidateTransition.entryClientOrderId||'');
+    }
+    if(userDevalidateCancel&&!clientOrderId){
+      const candidates=(Array.isArray(runtimeState?.data?.binanceOrders)?runtimeState.data.binanceOrders:[])
+        .filter(order=>
+          String(order?.orderClass||'STANDARD').toUpperCase()==='STANDARD'&&
+          String(order?.symbol||'').toUpperCase()===symbol&&
+          /^zth-ENT-[a-f0-9]{24}$/i.test(String(order?.clientOrderId||''))&&
+          String(order?.side||'').toUpperCase()==='BUY'&&
+          String(order?.type||'').toUpperCase()==='LIMIT'&&
+          String(order?.timeInForce||'').toUpperCase()==='GTC'&&
+          order?.reduceOnly!==true&&order?.reduceOnly!=='true'&&
+          String(order?.positionSide||'BOTH').toUpperCase()==='BOTH'
+        );
+      if(candidates.length>1){
+        return send(res,409,{ok:false,code:'USER_DEVALIDATE_ENTRY_AMBIGUOUS',writeAttempted:false});
+      }
+      if(candidates.length===1)clientOrderId=String(candidates[0].clientOrderId||'');
+    }
+    if(clientOrderId&&!/^zth-ENT-[a-f0-9]{24}$/i.test(clientOrderId)){
+      return send(res,400,{ok:false,code:'CANCEL_TARGET_NOT_ZENITH_ENTRY',writeAttempted:false});
+    }
+
+    if(userDevalidateCancel&&!clientOrderId){
+      if(!writesEnabled){
+        return send(res,423,{
+          ok:false,code:'BINANCE_WRITE_LOCKED',
+          realTradingEnabled:REAL_TRADING_ENABLED,
+          binanceWriteEnabled:BINANCE_WRITE_ENABLED,
+          pairingDisabled:PAIRING_DISABLED,
+          writeAttempted:false,
+        });
+      }
+      if(!(await requireFinalProtectiveMaster(res,master)))return;
+      let cleared=0;
+      if(userDevalidateTransition){
+        cleared=await clearEntryTransitionAfterUserDevalidate(userDevalidateTransition);
+        if(cleared<0){
+          return send(res,409,{
+            ok:false,code:'USER_DEVALIDATE_TRANSITION_CHANGED',
+            transitionClearResult:cleared,writeAttempted:false,
+          });
+        }
+      }
+      await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+        at:Date.now(),kind:'USER_DEVALIDATE_NO_ENTRY_ORDER',
+        deviceId:master.deviceId,commandId,symbol,
+        transitionCleared:cleared===1,
+      })]);
+      await redis(['LTRIM',KEY_AUDIT,'0','199']);
+      return send(res,200,{
+        ok:true,userDevalidate:true,devalidateNoOrder:true,
+        transitionCleared:cleared===1,
+        protectionCleanupRequired:Boolean(userDevalidateTransition?.protectionClientAlgoId),
+      });
+    }
+
+    if(!clientOrderId){
       return send(res,400,{ok:false,code:'CANCEL_TARGET_NOT_ZENITH_ENTRY',writeAttempted:false});
     }
     const liveOrder=runtimeEntryOrder(runtimeState,symbol,clientOrderId);
@@ -783,13 +886,55 @@ export default async function handler(req,res){
         at:Date.now(),kind:'BINANCE_ENTRY_CANCEL_DISPATCH',
         deviceId:master.deviceId,commandId,symbol,clientOrderId,
         disposition:result.disposition,writeAttempted:result.writeAttempted===true,
-        recoveryKind:partialEntryFlatTarget
-          ?'PARTIAL_FILL_FLAT'
-          :partialEntryExitStartedTarget
-            ?'PARTIAL_FILL_EXIT_STARTED'
-            :'PROTECTION_LOSS',
+        recoveryKind:userDevalidateCancel
+          ?'USER_DEVALIDATE'
+          :partialEntryFlatTarget
+            ?'PARTIAL_FILL_FLAT'
+            :partialEntryExitStartedTarget
+              ?'PARTIAL_FILL_EXIT_STARTED'
+              :'PROTECTION_LOSS',
       })]);
       await redis(['LTRIM',KEY_AUDIT,'0','199']);
+
+      if(userDevalidateCancel){
+        const status=String(result?.order?.status||'').toUpperCase();
+        const disposition=String(result?.disposition||'').toUpperCase();
+        if(status==='FILLED'||disposition==='ALREADY_FILLED'){
+          return send(res,200,{
+            ok:true,result,userDevalidate:true,
+            fillRace:true,transitionCleared:false,
+          });
+        }
+        const terminal=['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status);
+        if(!terminal){
+          return send(res,409,{
+            ok:false,code:'USER_DEVALIDATE_CANCEL_NOT_TERMINAL',
+            writeAttempted:result?.writeAttempted===true,result,
+          });
+        }
+
+        let cleared=0;
+        if(userDevalidateTransition){
+          cleared=await clearEntryTransitionAfterUserDevalidate(userDevalidateTransition);
+          if(cleared<0){
+            return send(res,409,{
+              ok:false,code:'USER_DEVALIDATE_TRANSITION_CHANGED',
+              transitionClearResult:cleared,writeAttempted:result?.writeAttempted===true,
+            });
+          }
+        }
+        await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+          at:Date.now(),kind:'USER_DEVALIDATE_ENTRY_CANCELED',
+          deviceId:master.deviceId,commandId,symbol,clientOrderId,
+          terminalStatus:status,transitionCleared:cleared===1,
+        })]);
+        await redis(['LTRIM',KEY_AUDIT,'0','199']);
+        return send(res,200,{
+          ok:true,result,userDevalidate:true,
+          fillRace:false,transitionCleared:cleared===1,
+          protectionCleanupRequired:Boolean(userDevalidateTransition?.protectionClientAlgoId),
+        });
+      }
 
       if(partialEntryExitStartedTarget){
         const status=String(result?.order?.status||'').toUpperCase();
