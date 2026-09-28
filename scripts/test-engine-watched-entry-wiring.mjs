@@ -61,10 +61,14 @@ test('SUBMIT requires exact stream-confirmed prepared MAX-LOSS',()=>{
 });
 
 test('lost prepared MAX-LOSS cancels pending LIMIT before generic reconciliation handling',()=>{
-  const target=worker.indexOf('pendingEntryProtectionLossTargets(data.report)');
+  const target=worker.indexOf('pendingEntryCancelRecoveryTargets(data.report)');
   const cancel=worker.indexOf('cancelPendingEntriesMissingPreparedProtection(data.report)',target);
-  const orphan=worker.indexOf('orphanZenithCleanupOrders(data.report)',target);
-  assert.ok(target>=0&&cancel>target&&orphan>cancel);
+  const writeAhead=worker.indexOf('pendingEntryWriteAheadRecoveryTargets(data.report)',cancel);
+  const orphan=worker.indexOf('orphanZenithCleanupOrders(data.report)',writeAhead);
+  assert.ok(target>=0&&cancel>target&&writeAhead>cancel&&orphan>writeAhead);
+  const cancelBlock=worker.slice(target,writeAhead);
+  assert.match(cancelBlock,/ENTRY_PROTECTION_RECOVERY_PENDING/);
+  assert.match(cancelBlock,/ENTRY_PARTIAL_FILL_FLAT_RECOVERY_PENDING/);
   assert.match(worker,/type:'EXEC_CANCEL_ENTRY'[\s\S]*clientOrderId:target\.entryClientOrderId/);
   assert.match(worker,/ENTRY_PROTECTION_LOSS_FILL_RACE/);
 });
