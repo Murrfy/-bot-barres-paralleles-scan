@@ -1,3 +1,15 @@
+/*
+================================================================================
+BLOC 6 VERROUILLE — MOTEUR 24/7 / USER STREAM / RESTART / INSTANCE FENCING
+
+NE TOUCHEZ PAS A CE PUTAIN DE BLOC SANS L'ACCORD EXPLICITE DE WALTER.
+
+Perimetre : session user-stream Binance, snapshot REST de reprise, etat stream,
+rehydratation apres restart, fencing d'instance moteur et continuite 24/7.
+Ne jamais reintroduire un MASTER navigateur/iPad ni contourner le fencing serveur.
+AUCUNE MODIFICATION SANS L'ACCORD EXPLICITE DE WALTER ET SANS REPASSER LES TESTS DU BLOC 6.
+================================================================================
+*/
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 

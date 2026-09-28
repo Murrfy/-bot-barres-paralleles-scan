@@ -1,3 +1,8 @@
+# ================================================================================
+# BLOC 6 VERROUILLE — RUNTIME SERVEUR 24/7
+# NE TOUCHEZ PAS A CE PUTAIN DE BLOC SANS L'ACCORD EXPLICITE DE WALTER.
+# Render reste le worker 24/7 sur main; toute modification exige les tests du bloc 6.
+# ================================================================================
 services:
   - type: worker
     name: zenith-engine-24x7
