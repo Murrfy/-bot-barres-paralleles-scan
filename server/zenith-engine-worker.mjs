@@ -2965,9 +2965,13 @@ async function reconcile(secondPass=false){
       }
       const recovered=await cancelPendingEntriesMissingPreparedProtection(data.report);
       if(!recovered.handled)return false;
+      const partialFillFlatRecovery=pendingEntryCancels
+        .some(row=>row?.recoveryKind==='PARTIAL_FILL_FLAT');
       stream.reconcileBusy=false;
       await sleep(100);
-      return reconcile(true);
+      // A flat partial-entry recovery removes the transition. Start a fresh pass so
+      // its prepared MAX-LOSS can immediately enter the proven orphan cleanup path.
+      return reconcile(partialFillFlatRecovery?false:true);
     }
 
     const writeAheadRecovery=pendingEntryWriteAheadRecoveryTargets(data.report);
