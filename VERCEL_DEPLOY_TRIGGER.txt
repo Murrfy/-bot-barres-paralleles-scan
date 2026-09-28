@@ -1,1 +1,0 @@
-Trigger Vercel deployment after connecting the repository. No bot code changed.

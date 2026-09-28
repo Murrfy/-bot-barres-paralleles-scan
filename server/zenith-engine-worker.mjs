@@ -1,3 +1,12 @@
+/*
+================================================================
+⛔⛔⛔  BLOC 2 VERROUILLÉ — POSITIONS RÉELLES / SORTIES / PROTECTIONS.  ⛔⛔⛔
+MAX-LOSS, protections progressives, ventes partielles, récupération des restes,
+réconciliation Binance et nettoyage des ordres Zenith associés.
+AUCUNE MODIFICATION, RÉÉCRITURE, SIMPLIFICATION OU "AMÉLIORATION"
+SANS L'ACCORD EXPLICITE DE WALTER ET SANS REPASSER LES TESTS DU BLOC 2.
+================================================================
+*/
 import crypto from 'node:crypto';
 import {
   createUserStreamState,
