@@ -26,6 +26,39 @@ test('each token can override Futures margin and leverage independently',()=>{
 });
 
 
+
+test('per-token Futures save is verified locally and against central controller state',()=>{
+  const verify=block('async function persistAndVerifyTokenFuturesSettings','async function saveFutures()');
+  assert.match(verify,/localStorage\.getItem\(STORAGE_KEY\)/);
+  assert.match(verify,/LOCAL_TOKEN_FUTURES_NOT_PERSISTED/);
+  assert.match(verify,/await syncControllerCloudStateNow\(\)/);
+  assert.match(verify,/action=controller-state/);
+  assert.match(verify,/q\.state\?\.data\?\.tokenSettings\?\.\[s\]/);
+  assert.match(verify,/CENTRAL_TOKEN_FUTURES_MISMATCH/);
+
+  const save=block('async function saveFutures()','function readBotSettings()');
+  assert.match(save,/await persistAndVerifyTokenFuturesSettings\(s,margin,leverage\)/);
+  assert.match(save,/Futures enregistré et vérifié/);
+  assert.match(save,/marge\/levier NON confirmés/);
+});
+
+test('saving the token also persists the currently displayed Futures margin and leverage',()=>{
+  const save=block('async function saveToken()','function devalidateSelected()');
+  assert.match(save,/margin=Math\.max\(1,n\(\$\('fMargin'\)\.value,n\(old\.margin,settings\.margin\)\)\)/);
+  assert.match(save,/leverage=Math\.round\(n\(\$\('fLev'\)\.value,n\(old\.leverage,settings\.leverage\)\)\)/);
+  assert.match(save,/configuredMargin=margin/);
+  assert.match(save,/const futures=futuresDraft\(s,margin,leverage,'LIMIT'\)/);
+  assert.match(save,/tokenSettings\[s\]=\{\.\.\.old,enabled:true,margin,leverage,marginType:'ISOLATED',binanceQty:futures\.qty,binanceEffectiveNotional:futures\.effectiveNotional/);
+  assert.match(save,/await persistAndVerifyTokenFuturesSettings\(s,margin,leverage\)/);
+});
+
+test('controller-state writes are serialized so an older save cannot race a newer token margin',()=>{
+  const sync=block('async function syncControllerCloudStateNow()','function scheduleControllerCloudStateSync()');
+  assert.match(sync,/while\(controllerStateSyncBusy\)await new Promise/);
+  assert.match(sync,/controllerStateSyncBusy=true/);
+  assert.match(sync,/finally\{[\s\S]*controllerStateSyncBusy=false/);
+});
+
 test('locked operational defaults are +40 target, -40 MAX-LOSS and protection 1 at +30 to +20',()=>{
   assert.match(html,/const DEFAULT_PROTECTIONS=\[\{enabled:true,arm:30,floor:20\}\]/);
   assert.match(html,/const DEFAULTS=\{[^\n]*targetProfit:40,maxLoss:40,protectionStages:DEFAULT_PROTECTIONS/);
@@ -74,7 +107,7 @@ test('token gain, max-loss and progressive protections persist as token override
 
 test('per-token MAX-LOSS cannot be saved above that token configured margin',()=>{
   const save=block('async function saveToken()','function devalidateSelected()');
-  assert.match(save,/configuredMargin=Math\.max\(0,n\(old\.margin,settings\.margin\)\)/);
+  assert.match(save,/configuredMargin=margin/);
   assert.match(save,/requestedMaxLoss>configuredMargin/);
   assert.match(save,/elle ne peut pas dépasser la marge configurée du jeton/);
 });
