@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {
   pendingEntryProtectionLossTargets,
   pendingEntryProtectionLossCancelAllowed,
+  pendingEntryPartialFillFlatTargets,
+  pendingEntryCancelRecoveryTargets,
+  pendingEntryCancelRecoveryAllowed,
 } from '../lib/protective-command.mjs';
 
 const target={
@@ -60,4 +63,59 @@ test('missing-order reason is accepted only for exact lost MAX-LOSS identity',()
     orderClass:'STANDARD',symbol:'ETHUSDT',clientOrderId:'manual-other'
   });
   assert.deepEqual(pendingEntryProtectionLossTargets(unrelated),[]);
+});
+
+
+test('flat partial-entry quarantine yields one exact cancel target',()=>{
+  const partialTarget={
+    ...target,
+    maxLossUsd:40,
+    protectionTriggerPrice:49800,
+    executedQuantity:0.08,
+    remainingQuantity:0.12,
+    protectionPresent:true,
+  };
+  const r={
+    version:2,status:'CLEAN_REAL_WITH_QUARANTINES',failClosed:false,reasons:[],
+    symbolQuarantines:[{
+      symbol:'BTCUSDT',direction:'LONG',
+      reason:'ENTRY_PARTIAL_FILL_FLAT_RECOVERY_PENDING',
+      remainingQuantity:null,since:Date.now(),
+    }],
+    differences:{entryTransitions:{partialFillFlatEntries:[partialTarget]}},
+  };
+  const targets=pendingEntryPartialFillFlatTargets(r);
+  assert.equal(targets.length,1);
+  assert.equal(targets[0].remainingQuantity,0.12);
+  assert.equal(targets[0].recoveryKind,undefined);
+  const combined=pendingEntryCancelRecoveryTargets(r);
+  assert.equal(combined.length,1);
+  assert.equal(combined[0].recoveryKind,'PARTIAL_FILL_FLAT');
+  assert.equal(pendingEntryCancelRecoveryAllowed(r,{
+    symbol:'BTCUSDT',clientOrderId:target.entryClientOrderId
+  }),true);
+});
+
+test('flat partial-entry recovery rejects inconsistent quantities, wrong quarantine or other entry id',()=>{
+  const basePartial={
+    ...target,maxLossUsd:40,protectionTriggerPrice:49800,
+    executedQuantity:0.08,remainingQuantity:0.12,protectionPresent:true,
+  };
+  const make=rows=>({
+    version:2,status:'CLEAN_REAL_WITH_QUARANTINES',failClosed:false,reasons:[],
+    symbolQuarantines:[{
+      symbol:'BTCUSDT',direction:'LONG',
+      reason:'ENTRY_PARTIAL_FILL_FLAT_RECOVERY_PENDING',since:Date.now()
+    }],
+    differences:{entryTransitions:{partialFillFlatEntries:rows}},
+  });
+  assert.deepEqual(pendingEntryPartialFillFlatTargets(make([
+    {...basePartial,remainingQuantity:0.11}
+  ])),[]);
+  const wrong=make([basePartial]);
+  wrong.symbolQuarantines[0].reason='ENTRY_WRITEAHEAD_RECOVERY_PENDING';
+  assert.deepEqual(pendingEntryPartialFillFlatTargets(wrong),[]);
+  assert.equal(pendingEntryCancelRecoveryAllowed(make([basePartial]),{
+    symbol:'BTCUSDT',clientOrderId:'zth-ENT-000000000000000000000000'
+  }),false);
 });

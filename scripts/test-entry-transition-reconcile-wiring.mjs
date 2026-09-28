@@ -29,3 +29,13 @@ test('partial entry full-size MAX-LOSS exception is wired through both reconcili
   assert.match(reconcile,/activeTransitions:transitionState\.active/);
   assert.match(reconcile,/device\.deviceId,\s*entryTransitions\s*\)/);
 });
+
+
+test('flat partial-entry state is reported and localized before write-ahead recovery can recreate it',()=>{
+  assert.match(reconcile,/ENTRY_TRANSITION_PARTIAL_FILL_FLAT/);
+  assert.match(reconcile,/partialFillFlatEntries: transitionPartialFillFlatEntries/);
+  assert.match(reconcile,/ENTRY_PARTIAL_FILL_FLAT_RECOVERY_PENDING/);
+  const localizer=reconcile.indexOf("reasons.length===1&&reasons[0]==='ENTRY_TRANSITION_PARTIAL_FILL_FLAT'");
+  const writeAhead=reconcile.indexOf("reasons.length===1&&reasons[0]==='ENTRY_TRANSITION_ENTRY_MISSING'");
+  assert.ok(localizer>=0&&writeAhead>localizer);
+});

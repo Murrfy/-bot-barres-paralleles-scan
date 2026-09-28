@@ -97,9 +97,16 @@ test('worker keeps exact entry recovery failures local and preserves global fall
   assert.doesNotMatch(recover,/await invalidateStream\(/);
   assert.match(recover,/ENTRY_WRITEAHEAD_RECOVERY_PENDING/);
 
-  const reconcileStart=source.indexOf('const pendingProtectionLoss=pendingEntryProtectionLossTargets');
-  const reconcileEnd=source.indexOf('const maxLossOverlap=',reconcileStart);
-  const reconcile=source.slice(reconcileStart,reconcileEnd);
-  assert.match(reconcile,/ENTRY_PROTECTION_RECOVERY_PENDING/);
-  assert.match(reconcile,/ENTRY_WRITEAHEAD_RECOVERY_PENDING/);
+  const cancelStart=source.indexOf('const pendingEntryCancels=pendingEntryCancelRecoveryTargets');
+  const writeAheadStart=source.indexOf('const writeAheadRecovery=pendingEntryWriteAheadRecoveryTargets',cancelStart);
+  const maxLossStart=source.indexOf('const maxLossOverlap=',writeAheadStart);
+  assert.ok(cancelStart>=0&&writeAheadStart>cancelStart&&maxLossStart>writeAheadStart);
+
+  const cancelBlock=source.slice(cancelStart,writeAheadStart);
+  assert.match(cancelBlock,/ENTRY_PROTECTION_RECOVERY_PENDING/);
+  assert.match(cancelBlock,/ENTRY_PARTIAL_FILL_FLAT_RECOVERY_PENDING/);
+  assert.match(cancelBlock,/cancelPendingEntriesMissingPreparedProtection\(data\.report\)/);
+
+  const writeAheadBlock=source.slice(writeAheadStart,maxLossStart);
+  assert.match(writeAheadBlock,/ENTRY_WRITEAHEAD_RECOVERY_PENDING/);
 });

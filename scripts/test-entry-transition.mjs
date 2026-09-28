@@ -125,3 +125,34 @@ test('partial-entry MAX-LOSS exception is rejected for mismatched fill, identity
     actualOrders:[protection,{...partial,status:'CANCELED'}],
   }),false);
 });
+
+
+test('partially filled entry with no remaining position is flagged for immediate cancel recovery',()=>{
+  const record={...base,state:'ENTRY_SUBMITTED',entryClientOrderId:entry.clientOrderId};
+  const partial={...entry,status:'PARTIALLY_FILLED',executedQty:'0.08'};
+  const r=evaluateEntryTransitionReconciliation({
+    transitions:[record],actualOrders:[protection,partial],actualPositions:[],now
+  });
+  assert.equal(r.partialFillFlatEntries.length,1);
+  assert.equal(r.partialFillFlatEntries[0].executedQuantity,0.08);
+  assert.ok(Math.abs(r.partialFillFlatEntries[0].remainingQuantity-0.12)<1e-12);
+  assert.equal(r.partialFillFlatEntries[0].entryClientOrderId,entry.clientOrderId);
+  assert.equal(r.allowedOrderIdentities.has('BTCUSDT:client:'+entry.clientOrderId),true);
+  assert.equal(r.allowedOrderIdentities.has('BTCUSDT:algo-client:'+protection.clientAlgoId),true);
+});
+
+test('new entry or live partial position never enters flat-partial cancel recovery',()=>{
+  const record={...base,state:'ENTRY_SUBMITTED',entryClientOrderId:entry.clientOrderId};
+  const fresh=evaluateEntryTransitionReconciliation({
+    transitions:[record],actualOrders:[protection,{...entry,status:'NEW',executedQty:'0'}],
+    actualPositions:[],now
+  });
+  assert.deepEqual(fresh.partialFillFlatEntries,[]);
+
+  const partial=evaluateEntryTransitionReconciliation({
+    transitions:[record],
+    actualOrders:[protection,{...entry,status:'PARTIALLY_FILLED',executedQty:'0.08'}],
+    actualPositions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.08'}],now
+  });
+  assert.deepEqual(partial.partialFillFlatEntries,[]);
+});
