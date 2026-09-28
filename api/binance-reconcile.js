@@ -870,6 +870,27 @@ function localizeEntryTransitionRecoveryAnomalies(result,observedAt=Date.now()){
     return true;
   };
 
+  if(reasons.length===1&&reasons[0]==='ENTRY_TRANSITION_PARTIAL_FILL_FLAT'){
+    const rows=Array.isArray(entryDiff.partialFillFlatEntries)?entryDiff.partialFillFlatEntries:[];
+    if(!rows.length)return result;
+    for(const row of rows){
+      const symbol=String(row?.symbol||'').toUpperCase();
+      const direction=String(row?.direction||'').toUpperCase();
+      const entryId=String(row?.entryClientOrderId||'');
+      const protectionId=String(row?.protectionClientAlgoId||'');
+      const quantity=Number(row?.quantity);
+      const executed=Number(row?.executedQuantity);
+      const remaining=Number(row?.remainingQuantity);
+      if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(direction)||
+         !/^zth-ENT-[A-Za-z0-9._:-]+$/.test(entryId)||entryId.length>36||
+         !/^zth-MAX-[A-Za-z0-9._:-]+$/.test(protectionId)||protectionId.length>36||
+         !(quantity>0)||!(executed>0)||!(remaining>0)||
+         Math.abs((executed+remaining)-quantity)>Math.max(1e-12,quantity*1e-10))return result;
+    }
+    setLocalized(rows,'ENTRY_PARTIAL_FILL_FLAT_RECOVERY_PENDING');
+    return result;
+  }
+
   if(reasons.includes('ENTRY_TRANSITION_PROTECTION_MISSING')){
     const allowed=new Set(['ENTRY_TRANSITION_PROTECTION_MISSING','MISSING_BINANCE_ORDER']);
     if(reasons.some(reason=>!allowed.has(reason)))return result;
@@ -1306,6 +1327,7 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
   if (transitionState.invalid.length) reasons.push('ENTRY_TRANSITION_STATE_INVALID');
   if (transitionState.missingProtections.length) reasons.push('ENTRY_TRANSITION_PROTECTION_MISSING');
   if (transitionState.missingEntries.length) reasons.push('ENTRY_TRANSITION_ENTRY_MISSING');
+  if (transitionState.partialFillFlatEntries.length) reasons.push('ENTRY_TRANSITION_PARTIAL_FILL_FLAT');
   if (untrackedPositions.length) reasons.push('UNTRACKED_BINANCE_POSITION');
   if (missingPositions.length) reasons.push('MISSING_BINANCE_POSITION');
   if (quantityMismatches.length) reasons.push('BINANCE_POSITION_QUANTITY_MISMATCH');
@@ -1483,6 +1505,23 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
       };
     });
 
+  const transitionPartialFillFlatEntries=(Array.isArray(transitionState.partialFillFlatEntries)
+    ?transitionState.partialFillFlatEntries:[]).map(row=>({
+      commandId:row.commandId,
+      symbol:row.symbol,
+      direction:row.direction,
+      quantity:row.quantity,
+      limitPrice:row.limitPrice,
+      maxLossUsd:row.maxLossUsd,
+      protectionTriggerPrice:row.protectionTriggerPrice,
+      entryClientOrderId:row.entryClientOrderId,
+      protectionClientAlgoId:row.protectionClientAlgoId,
+      executedQuantity:row.executedQuantity,
+      remainingQuantity:row.remainingQuantity,
+      expiresAt:row.expiresAt,
+      protectionPresent:actualOrders.some(order=>transitionProtectionMatches(order,row)),
+    }));
+
   const failClosed = reasons.length > 0;
 
   return {
@@ -1535,6 +1574,7 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
         })),
         missingProtectionPendingEntries: transitionMissingProtectionPendingEntries,
         entryMissingPreparedProtections: transitionEntryMissingPreparedProtections,
+        partialFillFlatEntries: transitionPartialFillFlatEntries,
         expiredProtectionOnly: (Array.isArray(transitionState.expiredProtectionOnly)?transitionState.expiredProtectionOnly:[]).map(row => ({
           state:row.state,
           commandId:row.commandId,
