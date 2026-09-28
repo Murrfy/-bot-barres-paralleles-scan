@@ -260,6 +260,8 @@ jobs:
         run: node --test scripts/test-master-command-dispatch.mjs
       - name: Test iPhone real-position close command
         run: node --test scripts/test-controller-real-command.mjs
+      - name: Test watched-entry devalidation
+        run: node --test scripts/test-devalidate-real-entry.mjs
       - name: Test iPhone real exit and protection commands
         run: node --test scripts/test-controller-protective-command.mjs
       - name: Test strict iPhone protection inventory
