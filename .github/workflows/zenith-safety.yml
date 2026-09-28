@@ -1,3 +1,10 @@
+# ================================================================================
+# BLOC 7 VERROUILLE — ACCES BINANCE / PERMISSIONS / WRITERS / BACKOFF
+# NE TOUCHEZ PAS A CE PUTAIN DE BLOC SANS L'ACCORD EXPLICITE DE WALTER.
+# Toute modification de ces garanties exige les tests du bloc 7:
+# permissions de la cle de trading, separation lecture/trading, writers idempotents,
+# recuperation des resultats ambigus et backoff partage Binance 429/418.
+# ================================================================================
 name: Zenith Safety Checks
 
 on:
