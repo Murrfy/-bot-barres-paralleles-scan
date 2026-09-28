@@ -135,7 +135,7 @@ test('partially filled entry with no remaining position is flagged for immediate
   });
   assert.equal(r.partialFillFlatEntries.length,1);
   assert.equal(r.partialFillFlatEntries[0].executedQuantity,0.08);
-  assert.equal(r.partialFillFlatEntries[0].remainingQuantity,0.12);
+  assert.ok(Math.abs(r.partialFillFlatEntries[0].remainingQuantity-0.12)<1e-12);
   assert.equal(r.partialFillFlatEntries[0].entryClientOrderId,entry.clientOrderId);
   assert.equal(r.allowedOrderIdentities.has('BTCUSDT:client:'+entry.clientOrderId),true);
   assert.equal(r.allowedOrderIdentities.has('BTCUSDT:algo-client:'+protection.clientAlgoId),true);
