@@ -1,3 +1,15 @@
+/*
+================================================================================
+⛔⛔⛔  BLOC 3 VERROUILLÉ — SURVEILLANCE / ENTRÉE RÉELLE  ⛔⛔⛔
+
+        NE TOUCHEZ PAS À CE PUTAIN DE BLOC SANS L'ACCORD EXPLICITE DE WALTER.
+
+Jeton surveillé, entrée LIMIT/MARKET, réservation de place, transition d'entrée,
+protection MAX-LOSS avant entrée, entrée partielle et récupérations associées.
+AUCUNE MODIFICATION, RÉÉCRITURE, SIMPLIFICATION, DÉPLACEMENT OU "AMÉLIORATION"
+SANS L'ACCORD EXPLICITE DE WALTER ET SANS REPASSER LES TESTS DU BLOC 3.
+================================================================================
+*/
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { buildEntryOrderPlan } from '../lib/order-intent.mjs';
