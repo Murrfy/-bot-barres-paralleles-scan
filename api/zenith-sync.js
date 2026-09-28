@@ -1,5 +1,18 @@
 /*
 ================================================================================
+BLOC 5 VERROUILLE — MASTER / ADMIN / PAUSE / PANIC / CONTROLEUR
+
+NE TOUCHEZ PAS A CE PUTAIN DE BLOC SANS L'ACCORD EXPLICITE DE WALTER.
+
+Perimetre : autorite MASTER serveur, role controleur, code ADMIN, PAUSE/REPRISE,
+PANIC manuel, revocation MASTER, reprise du controle sur un nouvel appareil,
+sessions/epochs de role et synchronisation du controleur.
+Ne jamais reintroduire un MASTER navigateur/iPad.
+AUCUNE MODIFICATION SANS L'ACCORD EXPLICITE DE WALTER ET SANS REPASSER LES TESTS DU BLOC 5.
+================================================================================
+*/
+/*
+================================================================================
 ⛔⛔⛔  BLOC 5 VERROUILLÉ — MASTER / ADMIN / PAUSE / PANIC / CONTRÔLEUR  ⛔⛔⛔
 
         NE TOUCHEZ PAS À CE PUTAIN DE BLOC SANS L'ACCORD EXPLICITE DE WALTER.
