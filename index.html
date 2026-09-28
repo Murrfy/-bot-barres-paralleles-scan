@@ -144,7 +144,15 @@
               <label class="field">Prix objectif calculé<input id="tTargetPreview" readonly></label>
               <label class="field">Perte maximale ($)<input id="tMaxLoss" type="number" min="2" max="400" step="1"></label>
             </div>
-            <div class="actions"><button id="saveTokenBtn" class="btn good">Enregistrer le jeton</button><button id="instantBuyBtn" class="btn primary">Achat immédiat</button><button id="devalidateBtn" class="btn danger">Annuler l’achat surveillé</button></div>
+            <!--
+    ========================================================================
+    ⛔ BLOC 3 VERROUILLÉ — NE TOUCHEZ PAS À CE PUTAIN DE BLOC SANS
+       L'ACCORD EXPLICITE DE WALTER.
+    « Annuler l’achat surveillé » retire uniquement l’état de surveillance.
+    JAMAIS l’achat exécuté, JAMAIS la marge, JAMAIS la position Binance.
+    ========================================================================
+    -->
+    <div class="actions"><button id="saveTokenBtn" class="btn good">Enregistrer le jeton</button><button id="instantBuyBtn" class="btn primary">Achat immédiat</button><button id="devalidateBtn" class="btn danger">Annuler l’achat surveillé</button></div>
             <div class="actions"><button id="tokenDefaultsBtn" class="btn">Réinitialiser réglages jeton</button><button id="tokenCloseNowBtn" class="btn danger">Fermer position</button></div>
             <div class="warning mt8">
               <label class="protectionTitle"><input id="showProtectionsToggle" type="checkbox" checked aria-label="Afficher les protections progressives"><b>Protections progressives des gains</b></label>
