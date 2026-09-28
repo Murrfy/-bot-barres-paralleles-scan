@@ -155,6 +155,13 @@
           </div>
         </div>
 
+        <!--
+        ================================================================
+        ⚠️  NE PAS TOUCHER À CE PUTAIN DE BLOC FUTURES PERPÉTUEL. RIEN.
+        Ce bloc est verrouillé. Ne pas le modifier, déplacer, simplifier,
+        réécrire ou remplacer sans demande EXPLICITE de Walter.
+        ================================================================
+        -->
         <div id="futuresPane" class="pane">
           <div class="panelTitle"><h2>Détails Futures perpétuel</h2><span id="futuresSymbol" class="hint">—</span></div>
           <div id="futuresNoSelection" class="hint">Recherche ou sélectionne un jeton.</div>
@@ -1615,6 +1622,13 @@ let audioCtx=null;
 function ensureAudio(){if(!settings.sound)return null;try{if(!audioCtx)audioCtx=new (window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==='suspended')audioCtx.resume();return audioCtx}catch(_){return null}}
 function tradeAlert(kind){if(settings.sound){try{const ctx=ensureAudio();if(ctx){const o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=kind==='buy'?740:520;g.gain.setValueAtTime(.0001,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.07,ctx.currentTime+.01);g.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+.16);o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+.17)}}catch(_){}}if(settings.vibrate&&navigator.vibrate){try{navigator.vibrate(kind==='buy'?[80]:[80,50,80])}catch(_){}}}
 function fillGeneral(){fillFutures();fillBot()}
+/*
+================================================================
+⚠️  NE PAS TOUCHER À CE PUTAIN DE CODE FUTURES PERPÉTUEL. RIEN.
+Les fonctions Futures ci-dessous sont verrouillées.
+Aucune modification sans demande EXPLICITE de Walter.
+================================================================
+*/
 function fillFutures(){const s=selectedSymbol,has=!!s;$('futuresNoSelection').hidden=has;$('futuresSettingsWrap').hidden=!has;$('futuresSymbol').textContent=s||'—';if(!has)return;const t=tokenSettings[s]||{},margin=Math.max(1,n(t.margin,settings.margin)),lev=clamp(n(t.leverage,settings.leverage),1,10);$('fMargin').value=margin;$('fLev').value=lev;const d=futuresDraft(s,margin,lev,'LIMIT');$('fSummary').textContent=`Marge : ISOLÉE · Notionnel demandé : $${(margin*lev).toFixed(2)}${d.qty>0?` · effectif ≈ $${d.effectiveNotional.toFixed(2)}`:''}`;$('fLimits').textContent=limitsText(s,margin,lev)}
 function fillBot(){$('bDefaultMargin').value=n(settings.margin,1000);$('bDefaultLeverage').value=Math.round(n(settings.leverage,10));$('bMaxActive').value=settings.maxActive;$('bTheme').value=settings.theme==='light'?'light':'dark';$('bSound').checked=settings.sound!==false;$('bVibrate').checked=settings.vibrate!==false;const summary=$('defaultRiskSummary');if(summary)summary.textContent=`Défauts risque : marge ISOLÉE ${n(settings.margin).toFixed(2)} · x${Math.round(n(settings.leverage))} · objectif +${n(settings.targetProfit).toFixed(2)} · MAX -${n(settings.maxLoss).toFixed(2)} · ${Array.isArray(settings.protectionStages)?settings.protectionStages.length:0} protections`;const btn=$('saveBotDefaultsBtn');if(btn)btn.disabled=!selectedSymbol}
 function setTokenFieldsEnabled(){
