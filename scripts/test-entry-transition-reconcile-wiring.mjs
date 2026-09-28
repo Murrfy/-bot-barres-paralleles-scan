@@ -20,3 +20,12 @@ test('only exact transition order identities are exempted from untracked/orphan 
   assert.match(reconcile,/ENTRY_TRANSITION_STATE_INVALID/);
   assert.match(reconcile,/ENTRY_TRANSITION_RUNTIME_NOT_REAL/);
 });
+
+
+test('partial entry full-size MAX-LOSS exception is wired through both reconciliation safety passes',()=>{
+  assert.match(reconcile,/partialEntryTransitionProtectionCoversPosition/);
+  const calls=(reconcile.match(/partialEntryTransitionProtectionCoversPosition\(\{/g)||[]).length;
+  assert.equal(calls,2);
+  assert.match(reconcile,/activeTransitions:transitionState\.active/);
+  assert.match(reconcile,/device\.deviceId,\s*entryTransitions\s*\)/);
+});
