@@ -50,9 +50,11 @@ test('handler wires entry cancel recovery only through exact classifiers and eng
   const source=await readFile(new URL('../api/binance-protective-execute.js',import.meta.url),'utf8');
   assert.match(source,/pendingEntryCancelRecoveryAllowed\(report,/);
   assert.match(source,/pendingEntryPartialFillFlatTargets\(report\)/);
+  assert.match(source,/pendingEntryPartialFillExitStartedTargets\(report\)/);
   assert.match(source,/type==='EXEC_CANCEL_ENTRY'/);
   assert.match(source,/ENTRY_PROTECTION_RECOVERY_ENGINE_REQUIRED/);
   assert.match(source,/ENTRY_PARTIAL_FILL_FLAT_RECOVERY_ENGINE_REQUIRED/);
+  assert.match(source,/ENTRY_PARTIAL_FILL_EXIT_STARTED_RECOVERY_ENGINE_REQUIRED/);
 });
 
 test('flat partial-entry cancel proves terminal entry and certified flat before clearing transition',async()=>{
@@ -97,7 +99,45 @@ test('worker cancels flat partial entry before write-ahead and restarts a fresh 
   const writeAheadAt=block.indexOf('pendingEntryWriteAheadRecoveryTargets(data.report)',cancelAt);
   const orphanAt=block.indexOf('orphanZenithCleanupOrders(data.report)',writeAheadAt);
   assert.ok(cancelAt>=0&&writeAheadAt>cancelAt&&orphanAt>writeAheadAt);
-  assert.match(block,/partialFillFlatRecovery\?false:true/);
+  assert.match(block,/partialEntryTerminalRecovery\?false:true/);
+  assert.match(block,/PARTIAL_FILL_EXIT_STARTED/);
   assert.match(worker,/ENTRY_PARTIAL_FILL_FLAT_CANCELED/);
   assert.match(worker,/ENTRY_PARTIAL_FILL_FLAT_RACE/);
+  assert.match(worker,/ENTRY_PARTIAL_FILL_EXIT_STARTED_CANCELED/);
+  assert.match(worker,/ENTRY_PARTIAL_FILL_EXIT_STARTED_RACE/);
+});
+
+
+test('sale-started partial entry is re-proven directly on Binance before final MASTER gate and cancellation',async()=>{
+  const source=await readFile(new URL('../api/binance-protective-execute.js',import.meta.url),'utf8');
+  const start=source.indexOf("if(type==='EXEC_CANCEL_ENTRY')");
+  const firstSymbol=source.indexOf("const symbol=String(req.body?.symbol||'').toUpperCase();",start);
+  const end=source.indexOf("const symbol=String(req.body?.symbol||'').toUpperCase();",firstSymbol+1);
+  assert.ok(start>=0&&firstSymbol>start&&end>firstSymbol);
+  const block=source.slice(start,end);
+
+  const target=block.indexOf('if(partialEntryExitStartedTarget)');
+  const directOrder=block.indexOf('queryOrderByClientId({',target);
+  const directPosition=block.indexOf('liveBinancePositionQuantity({',directOrder);
+  const relation=block.indexOf('directLiveQty<executed-tolerance',directPosition);
+  const gate=block.indexOf('requireFinalProtectiveMaster(res,master)',relation);
+  const cancel=block.indexOf('cancelEntryOrderIdempotent({',gate);
+  assert.ok(target>=0&&directOrder>target&&directPosition>directOrder&&relation>directPosition&&gate>relation&&cancel>gate);
+  assert.match(block,/ENTRY_PARTIAL_FILL_EXIT_STARTED_DIRECT_PROOF_CHANGED/);
+  assert.match(block,/ENTRY_PARTIAL_FILL_EXIT_STARTED_PROOF_UNAVAILABLE/);
+});
+
+test('sale-started cancellation clears only the exact transition then returns fresh live quantity for protection repair',async()=>{
+  const source=await readFile(new URL('../api/binance-protective-execute.js',import.meta.url),'utf8');
+  const start=source.indexOf('if(partialEntryExitStartedTarget)');
+  const end=source.indexOf('if(partialEntryFlatTarget)',start);
+  assert.ok(start>=0&&end>start);
+  const block=source.slice(start,end);
+  const cancel=block.indexOf('cancelEntryOrderIdempotent({');
+  const terminal=block.indexOf("const terminal=['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status)",cancel);
+  const live=block.indexOf('liveBinancePositionQuantity({',terminal);
+  const clear=block.indexOf('clearPartialEntryTransitionAfterCertifiedFlat(partialEntryExitStartedTarget)',live);
+  assert.ok(cancel>=0&&terminal>cancel&&live>terminal&&clear>live);
+  assert.match(block,/protectionRepairRequired:liveQty>1e-12/);
+  assert.match(block,/transitionCleared:true/);
 });

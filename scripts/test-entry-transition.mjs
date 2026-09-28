@@ -156,3 +156,45 @@ test('new entry or live partial position never enters flat-partial cancel recove
   });
   assert.deepEqual(partial.partialFillFlatEntries,[]);
 });
+
+
+test('normal partial LIMIT entry with live quantity equal to cumulative fill is not treated as sale-started',()=>{
+  const record={...base,state:'ENTRY_SUBMITTED',entryClientOrderId:entry.clientOrderId};
+  const partial={...entry,status:'PARTIALLY_FILLED',executedQty:'0.08'};
+  const r=evaluateEntryTransitionReconciliation({
+    transitions:[record],
+    actualOrders:[protection,partial],
+    actualPositions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.08'}],
+    now
+  });
+  assert.deepEqual(r.partialFillExitStartedEntries,[]);
+  assert.deepEqual(r.partialFillFlatEntries,[]);
+});
+
+test('partial LIMIT entry is flagged once a sale has reduced live quantity below cumulative entry fill',()=>{
+  const record={...base,state:'ENTRY_SUBMITTED',entryClientOrderId:entry.clientOrderId};
+  const partial={...entry,status:'PARTIALLY_FILLED',executedQty:'0.08'};
+  const r=evaluateEntryTransitionReconciliation({
+    transitions:[record],
+    actualOrders:[protection,partial],
+    actualPositions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.04'}],
+    now
+  });
+  assert.equal(r.partialFillExitStartedEntries.length,1);
+  assert.equal(r.partialFillExitStartedEntries[0].executedQuantity,0.08);
+  assert.equal(r.partialFillExitStartedEntries[0].liveQuantity,0.04);
+  assert.ok(Math.abs(r.partialFillExitStartedEntries[0].remainingQuantity-0.12)<1e-12);
+  assert.deepEqual(r.partialFillFlatEntries,[]);
+  assert.equal(r.allowedOrderIdentities.has('BTCUSDT:client:'+entry.clientOrderId),true);
+  assert.equal(r.allowedOrderIdentities.has('BTCUSDT:algo-client:'+protection.clientAlgoId),true);
+});
+
+test('fully flat partial entry remains in the existing flat recovery, not sale-started recovery',()=>{
+  const record={...base,state:'ENTRY_SUBMITTED',entryClientOrderId:entry.clientOrderId};
+  const partial={...entry,status:'PARTIALLY_FILLED',executedQty:'0.08'};
+  const r=evaluateEntryTransitionReconciliation({
+    transitions:[record],actualOrders:[protection,partial],actualPositions:[],now
+  });
+  assert.equal(r.partialFillFlatEntries.length,1);
+  assert.deepEqual(r.partialFillExitStartedEntries,[]);
+});

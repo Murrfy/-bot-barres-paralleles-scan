@@ -39,3 +39,15 @@ test('flat partial-entry state is reported and localized before write-ahead reco
   const writeAhead=reconcile.indexOf("reasons.length===1&&reasons[0]==='ENTRY_TRANSITION_ENTRY_MISSING'");
   assert.ok(localizer>=0&&writeAhead>localizer);
 });
+
+
+test('sale-started partial entry is reported and localized before write-ahead recovery',()=>{
+  assert.match(reconcile,/ENTRY_TRANSITION_PARTIAL_FILL_EXIT_STARTED/);
+  assert.match(reconcile,/partialFillExitStartedEntries: transitionPartialFillExitStartedEntries/);
+  assert.match(reconcile,/ENTRY_PARTIAL_FILL_EXIT_STARTED_RECOVERY_PENDING/);
+  assert.match(reconcile,/liveQuantity<executed-tolerance/);
+  const saleStarted=reconcile.indexOf("reasons.includes('ENTRY_TRANSITION_PARTIAL_FILL_EXIT_STARTED')");
+  const flat=reconcile.indexOf("reasons.length===1&&reasons[0]==='ENTRY_TRANSITION_PARTIAL_FILL_FLAT'");
+  const writeAhead=reconcile.indexOf("reasons.length===1&&reasons[0]==='ENTRY_TRANSITION_ENTRY_MISSING'");
+  assert.ok(saleStarted>=0&&flat>saleStarted&&writeAhead>flat);
+});
