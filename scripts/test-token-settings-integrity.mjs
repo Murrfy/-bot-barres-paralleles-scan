@@ -107,7 +107,7 @@ test('token gain, max-loss and progressive protections persist as token override
 
 test('per-token MAX-LOSS cannot be saved above that token configured margin',()=>{
   const save=block('async function saveToken()','function devalidateSelected()');
-  assert.match(save,/configuredMargin=Math\.max\(0,n\(old\.margin,settings\.margin\)\)/);
+  assert.match(save,/configuredMargin=margin/);
   assert.match(save,/requestedMaxLoss>configuredMargin/);
   assert.match(save,/elle ne peut pas dépasser la marge configurée du jeton/);
 });
