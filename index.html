@@ -251,7 +251,7 @@ let binanceAccount={connected:false,configured:false,walletBalance:null,availabl
 let binanceHistory={connected:false,history:[],totals:{gain:0,loss:0,net:0},generatedAt:0,lastOk:0,error:''},binanceHistoryTimer=null;
 let controllerRealCommandModule=null,controllerRealProtectionModule=null,realClosePending=new Set(),realCancelPending=new Set(),realProtectiveUpdatePending=new Map(),realMarketEntryPending=new Set();
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_REAL_PROTECTIVE_PENDING_KEY='zenith_real_protective_pending_v1';
-let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null,controllerStateSyncBusy=false;
+let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null,controllerStateSyncBusy=false,controllerStateHydrated=false;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
 let masterControlState={mode:'',masterRegistered:false,masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,realExecutionArmed:false,error:''};
 let serverEntryWatch={states:{},updatedAt:0,lastOk:0,error:''},serverEntryWatchTimer=null;
@@ -1150,6 +1150,78 @@ async function controllerMasterAction(action){
     await refreshMasterControls();
   }
 }
+function applyControllerCloudStateSnapshot(state){
+  const revision=Math.max(0,n(state?.revision,0));
+  const data=state?.data&&typeof state.data==='object'&&!Array.isArray(state.data)?state.data:null;
+  if(!(revision>0)||!data)return false;
+
+  const remoteSettings=data.settings&&typeof data.settings==='object'&&!Array.isArray(data.settings)?data.settings:{};
+  settings={...settings,...remoteSettings};
+  settings.maxLoss=Math.min(400,Math.max(2,n(settings.maxLoss,40)));
+  settings.marginType='ISOLATED';
+  settings.protectionStages=normalizeProtections(settings.protectionStages,settings.targetProfit);
+
+  tokenSettings=normalizeRecordBlock(data.tokenSettings);
+  for(const t of Object.values(tokenSettings)){
+    const legacyTokenDefaults=n(t?.targetProfit)===3000&&n(t?.manualTargetProfit,3000)===3000&&
+      n(t?.maxLoss)===400&&legacyDefaultProtectionProfile(t?.protectionStages);
+    if(legacyTokenDefaults){
+      t.targetProfit=40;t.manualTargetProfit=40;t.maxLoss=40;t.protectionStages=clone(DEFAULT_PROTECTIONS);
+    }
+    t.maxLoss=Math.min(400,Math.max(2,n(t?.maxLoss,settings.maxLoss)));
+    t.marginType='ISOLATED';
+    if(Array.isArray(t?.protectionStages)&&t.protectionStages.length===9){
+      t.protectionStages=normalizeProtections(
+        t.protectionStages,
+        n(t.manualTargetProfit,n(t.targetProfit,settings.targetProfit))
+      );
+    }
+  }
+
+  manualTokens=normalizeRecordBlock(data.manualTokens);
+  validated=normalizeRecordBlock(data.validated);
+  localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(revision));
+  saveLocalOnly();
+  controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
+  return true;
+}
+
+async function hydrateControllerCloudStateFromServer(){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
+    return {ok:false,remoteFound:false,reason:'CONTROLLER_NOT_VERIFIED'};
+  }
+  try{
+    const r=await fetch('/api/zenith-sync?action=controller-state',{
+      cache:'no-store',
+      headers:{Accept:'application/json'}
+    });
+    const q=await r.json().catch(()=>({}));
+    if(!r.ok||q?.ok!==true){
+      return {ok:false,remoteFound:false,reason:q?.code||q?.error||('HTTP_'+r.status)};
+    }
+    const state=q?.state||null;
+    if(!state){
+      controllerStateHydrated=true;
+      return {ok:true,remoteFound:false};
+    }
+    const data=state?.data&&typeof state.data==='object'&&!Array.isArray(state.data)?state.data:null;
+    const expectedHash=String(state?.stateHash||'');
+    const actualHash=data?await sha256Hex(stableStringify(data)):'';
+    if(!data||!expectedHash||expectedHash!==actualHash){
+      return {ok:false,remoteFound:true,reason:'CONTROLLER_STATE_HASH_INVALID'};
+    }
+    if(!applyControllerCloudStateSnapshot(state)){
+      return {ok:false,remoteFound:true,reason:'CONTROLLER_STATE_APPLY_FAILED'};
+    }
+    controllerStateHydrated=true;
+    renderAll();
+    syncRealtime();
+    return {ok:true,remoteFound:true,revision:Math.max(0,n(state.revision,0))};
+  }catch(e){
+    return {ok:false,remoteFound:false,reason:String(e?.message||'CONTROLLER_STATE_HYDRATE_FAILED')};
+  }
+}
+
 async function refreshControllerIdentity(){
   const token=localStorage.getItem(ZENITH_DEVICE_TOKEN_KEY)||'';
   try{
@@ -1169,7 +1241,21 @@ async function refreshControllerIdentity(){
     controllerIdentity={paired:true,role:'controller',lastOk:Date.now(),error:''};
     renderControllerIdentity();
     renderMasterControls();
-    scheduleControllerCloudStateSync();
+
+    if(!controllerStateHydrated){
+      const hydration=await hydrateControllerCloudStateFromServer();
+      if(!hydration.ok){
+        controllerSyncState={conflict:true,lastOk:0,error:hydration.reason||'CONTROLLER_STATE_HYDRATE_FAILED'};
+        renderControllerIdentity();
+        refreshMasterControls();
+        startServerEntryWatch();
+        return false;
+      }
+      if(hydration.remoteFound!==true)scheduleControllerCloudStateSync();
+    }else{
+      scheduleControllerCloudStateSync();
+    }
+
     refreshMasterControls();
     startServerEntryWatch();
     return true;
