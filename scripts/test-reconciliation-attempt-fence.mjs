@@ -42,11 +42,27 @@ test('begin marker is fenced by current MASTER role, lease and role epoch',()=>{
   assert.ok(handler.includes("'MASTER_ROLE_EPOCH_CHANGED_DURING_RECONCILE'"));
 });
 
-test('final clean report commits only for the same attempt and unchanged runtime',()=>{
+test('final clean report commits only for the same attempt and unchanged semantic runtime',()=>{
   assert.ok(commit.includes("tostring(value.attemptId or '') ~= ARGV[1]"));
-  assert.ok(commit.includes("(redis.call('GET', KEYS[2]) or '') ~= ARGV[2]"));
+  assert.ok(commit.includes("local currentRuntime = redis.call('GET', KEYS[2]) or ''"));
+  assert.ok(commit.includes("local currentRuntimeOk, currentState = pcall(cjson.decode, currentRuntime)"));
+  assert.ok(commit.includes("local expectedRuntimeOk, expectedState = pcall(cjson.decode, ARGV[2])"));
+  assert.ok(commit.includes("currentState.updatedAt = nil"));
+  assert.ok(commit.includes("expectedState.updatedAt = nil"));
+  assert.ok(commit.includes("if not deepEqual(currentState, expectedState) then return -1 end"));
+  assert.equal(commit.includes("(redis.call('GET', KEYS[2]) or '') ~= ARGV[2]"),false);
   assert.ok(commit.includes("redis.call('SET', KEYS[1], ARGV[3], 'EX', '30')"));
   assert.ok(handler.includes("commitReconciliationAttempt(stored, runtimeRaw || '', attemptId, device)"));
+});
+
+test('heartbeat-only timestamp refresh cannot invalidate reconciliation but all other runtime fields remain fenced',()=>{
+  assert.ok(commit.includes("local function deepEqual(a, b)"));
+  assert.ok(commit.includes("currentState.updatedAt = nil"));
+  assert.ok(commit.includes("expectedState.updatedAt = nil"));
+  assert.equal(commit.includes("currentState.data = nil"),false);
+  assert.equal(commit.includes("expectedState.data = nil"),false);
+  assert.equal(commit.includes("currentState.controllerRevision = nil"),false);
+  assert.equal(commit.includes("currentState.appliedRevision = nil"),false);
 });
 
 test('final clean report cannot commit after MASTER authority changes',()=>{
