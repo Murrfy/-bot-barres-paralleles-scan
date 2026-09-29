@@ -92,7 +92,7 @@ jobs:
           const branches = [...new Set(
             list.split(/\r?\n/)
               .map(v => v.trim())
-              .filter(v => v && v !== 'main' && v !== 'HEAD')
+              .filter(v => v && v !== 'main' && v !== 'HEAD' && v !== 'zenith-work')
           )].sort();
 
           const mainTree = execFileSync(
