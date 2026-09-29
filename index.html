@@ -201,7 +201,7 @@
 
       <div class="block mt8">
         <div class="panelTitle"><h2>Historique</h2><span id="historyTotals" class="hint"></span></div>
-        <div class="history"><table><thead><tr><th>Date</th><th>Jeton</th><th>Entrée</th><th>Sortie</th><th>Brut</th><th>Frais Binance</th><th>Funding</th><th>Net</th></tr></thead><tbody id="historyBody"></tbody></table></div>
+        <div class="history"><table><thead><tr><th>Date</th><th>Jeton</th><th>Entrée</th><th>Sortie</th><th>Durée</th><th>Brut</th><th>Frais Binance</th><th>Funding</th><th>Net</th></tr></thead><tbody id="historyBody"></tbody></table></div>
       </div>
     </section>
   </div>
@@ -856,6 +856,7 @@ function renderRealPositions(){
   wrap.innerHTML=rows.map((p,i)=>{
     const amt=n(p.positionAmt,0),qty=Math.abs(amt),dir=amt>=0?'LONG':'SHORT';
     const pnl=n(p.unrealizedProfit,0),side=String(p.positionSide||'BOTH').toUpperCase();
+    const openedAt=Math.max(0,n(p.openedAt,n(p.lifecycleAt,n(p.positionLifecycleAt,n(p.updateTime,0)))));
     const key=controllerRealCommandModule?controllerRealCommandModule.realPositionKey(p):'';
     const closePending=key&&realClosePending.has(key);
     const inv=realProtectionInventory(p);
@@ -888,6 +889,7 @@ function renderRealPositions(){
         <span class="posSym">RÉEL · ${escapeHtml(p.symbol)} · ${dir}</span>
         <span class="posLive">
           <span class="maxLossState ${emergencyReady?'ok':'bad'}">${emergencyReady?'🟢 MAX-LOSS : ACTIVE':inv.maxLossConflict?'🔴 MAX-LOSS : À VÉRIFIER':'🔴 MAX-LOSS ABSENTE — RÉPARATION EN COURS'}</span>
+          <span class="posElapsed">${openedAt>0?elapsedHMS(openedAt):'—'}</span>
           <span class="posPnl ${pnl>=0?'pos':'neg'}">${money(pnl)}</span>
         </span>
       </div>
@@ -1631,7 +1633,7 @@ function renderHistory(){
   const t=totals(),totalEl=$('historyTotals'),body=$('historyBody');if(!totalEl||!body)return;
   totalEl.textContent=binanceHistory.connected?money(t.gain)+' / '+money(-t.loss)+' · net '+money(t.net):(binanceHistory.error?'Binance indisponible':'chargement Binance…');
   const rows=Array.isArray(binanceHistory.history)?binanceHistory.history:[];
-  body.innerHTML=rows.length?rows.slice(0,80).map(row=>{const netExact=row?.exactNetUsdt===true&&Number.isFinite(Number(row?.netUsdt)),net=netExact?n(row.netUsdt):NaN,gross=n(row.grossRealizedPnl),netClass=netExact?(net>=0?'pos':'neg'):'active';return '<tr><td>'+fmtDate(row.closedAt||row.openedAt)+'</td><td><b>'+escapeHtml(row.symbol)+'</b></td><td>'+price(row.entryPrice)+'</td><td>'+price(row.exitPrice)+'</td><td class="historyPnl '+(gross>=0?'pos':'neg')+'">'+money(gross)+'</td><td>'+historyFeeText(row)+'</td><td>'+historyFundingText(row)+'</td><td class="historyPnl '+netClass+'">'+(netExact?money(net):'NET À VÉRIFIER')+'</td></tr>';}).join(''):'<tr><td colspan="8" class="hint">'+(binanceHistory.error?'Historique Binance indisponible.':'Aucun trade Zenith réel fermé.')+'</td></tr>';
+  body.innerHTML=rows.length?rows.slice(0,80).map(row=>{const netExact=row?.exactNetUsdt===true&&Number.isFinite(Number(row?.netUsdt)),net=netExact?n(row.netUsdt):NaN,gross=n(row.grossRealizedPnl),netClass=netExact?(net>=0?'pos':'neg'):'active',opened=n(row.openedAt,0),closed=n(row.closedAt,0),chrono=opened>0&&closed>=opened?durationHMS(opened,closed):'—';return '<tr><td>'+fmtDate(row.closedAt||row.openedAt)+'</td><td><b>'+escapeHtml(row.symbol)+'</b></td><td>'+price(row.entryPrice)+'</td><td>'+price(row.exitPrice)+'</td><td>'+chrono+'</td><td class="historyPnl '+(gross>=0?'pos':'neg')+'">'+money(gross)+'</td><td>'+historyFeeText(row)+'</td><td>'+historyFundingText(row)+'</td><td class="historyPnl '+netClass+'">'+(netExact?money(net):'NET À VÉRIFIER')+'</td></tr>';}).join(''):'<tr><td colspan="9" class="hint">'+(binanceHistory.error?'Historique Binance indisponible.':'Aucun trade Zenith réel fermé.')+'</td></tr>';
 }
 function applyTheme(){const theme=settings.theme==='light'?'light':'dark';document.documentElement.dataset.theme=theme;const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute('content',theme==='light'?'#eef3f8':'#07111d')}
 let audioCtx=null;
@@ -2076,7 +2078,7 @@ $('showProtectionsToggle').addEventListener('change',()=>{settings.showProtectio
 $('adminCodeCancel').onclick=()=>closeAdminCodeModal(null);$('adminCodeConfirm').onclick=submitAdminCodeModal;$('adminCodeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submitAdminCodeModal()}else if(e.key==='Escape'){e.preventDefault();closeAdminCodeModal(null)}});$('adminCodeModal').addEventListener('pointerdown',e=>{if(e.target===e.currentTarget)closeAdminCodeModal(null)});
 $('masterAuthorizeBtn').onclick=controllerAuthorizeMaster;$('masterPauseBtn').onclick=()=>controllerMasterAction('master-pause');$('masterCancelPauseBtn').onclick=()=>controllerMasterAction('master-pause-cancel');$('masterResumeBtn').onclick=()=>controllerMasterAction('master-resume');$('panicStopBtn').onclick=controllerPanicStop;$('masterRevokeBtn').onclick=controllerRevokeMaster;$('panicClearBtn').onclick=controllerClearPanic;
 $('refreshHistoryBtn').onclick=()=>refreshBinanceHistory();
-document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio()},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls()}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(openPositions.length)renderHistory();if(Object.values(missedSignals).some(x=>x?.state==='waiting')||Object.keys(serverEntryWatch?.states||{}).length)renderTable()},1000);
+document.addEventListener('pointerdown',()=>{if(settings.sound)ensureAudio()},{passive:true});window.addEventListener('online',syncRealtime);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){syncRealtime();recoverAllTracked();renderAll();refreshControllerIdentity();refreshMasterControls()}});setInterval(()=>{expireWaitingSignals();processWaitingSignals();if(n(binanceAccount.realPositions)>0)renderRealPositions();if(openPositions.length)renderHistory();if(Object.values(missedSignals).some(x=>x?.state==='waiting')||Object.keys(serverEntryWatch?.states||{}).length)renderTable()},1000);
 load();restoreRealProtectiveUpdatePending();applyTheme();renderAll();for(const [key,pending] of realProtectiveUpdatePending.entries())void checkRealTrackedCommandStatus(key,pending);ensureExchange().then(()=>{if(selectedSymbol)fillFutures()}).catch(e=>{setStatus(`Limites Binance indisponibles au démarrage : ${e.message}. Les nouveaux achats restent bloqués tant que les règles Binance ne sont pas chargées.`,true)}).finally(()=>syncRealtime());startBinanceAccountReadOnly();startBinanceHistory();startControllerIdentityCheck();
 </script>
 </body>
