@@ -64,6 +64,8 @@ jobs:
               for (const pr of pulls) {
                 if (!pr?.merged_at) continue;
                 if (String(pr?.base?.ref || '') !== 'main') continue;
+                if (String(pr?.head?.repo?.full_name || '') !== repo) continue;
+
                 const branch = String(pr?.head?.ref || '');
                 const headSha = String(pr?.head?.sha || '');
                 if (!branch || !headSha) continue;
