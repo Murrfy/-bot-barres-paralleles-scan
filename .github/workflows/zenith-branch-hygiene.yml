@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   prune-noop-branches:
@@ -22,7 +23,7 @@ jobs:
       - name: Fetch every branch
         run: git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*' --prune
 
-      - name: Delete only branches that add nothing to main
+      - name: Delete only branches proven safe to remove
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
@@ -33,6 +34,56 @@ jobs:
           const repo = process.env.GH_REPOSITORY;
           const token = process.env.GH_TOKEN;
           if (!repo || !token) throw new Error('GitHub workflow credentials unavailable');
+
+          const headers = {
+            Authorization: 'Bearer ' + token,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+          };
+
+          async function githubJson(path) {
+            const response = await fetch('https://api.github.com' + path, { headers });
+            const text = await response.text();
+            let data = null;
+            try { data = text ? JSON.parse(text) : null; } catch {}
+            if (!response.ok) {
+              throw new Error('GitHub API ' + response.status + ' for ' + path + ': ' + text.slice(0, 300));
+            }
+            return data;
+          }
+
+          async function latestMergedHeadsByBranch() {
+            const latest = new Map();
+            for (let page = 1; ; page += 1) {
+              const pulls = await githubJson(
+                '/repos/' + repo + '/pulls?state=closed&per_page=100&page=' + page +
+                '&sort=updated&direction=desc'
+              );
+              if (!Array.isArray(pulls) || pulls.length === 0) break;
+
+              for (const pr of pulls) {
+                if (!pr?.merged_at) continue;
+                if (String(pr?.base?.ref || '') !== 'main') continue;
+                if (String(pr?.head?.repo?.full_name || '') !== repo) continue;
+
+                const branch = String(pr?.head?.ref || '');
+                const headSha = String(pr?.head?.sha || '');
+                if (!branch || !headSha) continue;
+
+                const previous = latest.get(branch);
+                if (!previous || Date.parse(pr.merged_at) > Date.parse(previous.mergedAt)) {
+                  latest.set(branch, {
+                    headSha,
+                    mergedAt: pr.merged_at,
+                    prNumber: Number(pr.number || 0),
+                  });
+                }
+              }
+
+              if (pulls.length < 100) break;
+            }
+            return latest;
+          }
 
           const list = execFileSync(
             'git',
@@ -52,11 +103,13 @@ jobs:
             { encoding: 'utf8' }
           ).trim();
 
+          const mergedHeads = await latestMergedHeadsByBranch();
           const safe = [];
           const review = [];
           let ancestorSafe = 0;
           let noopMergeSafe = 0;
-          let tombstoneOnlySafe = 0;
+          let mergedPrUnchangedSafe = 0;
+          let tombstoneAfterMergedPrSafe = 0;
           const TOMBSTONE = '00_⛔_BRANCHE_MORTE_NE_PAS_UTILISER.md';
 
           for (const branch of branches) {
@@ -87,43 +140,44 @@ jobs:
               }
             } catch {}
 
-            try {
-              const uniqueCommits = execFileSync(
-                'git',
-                ['rev-list', 'origin/main..' + ref],
-                { encoding: 'utf8' }
-              ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+            const merged = mergedHeads.get(branch);
+            if (merged) {
+              try {
+                const tip = execFileSync(
+                  'git',
+                  ['rev-parse', ref],
+                  { encoding: 'utf8' }
+                ).trim();
 
-              if (uniqueCommits.length > 0) {
-                let sawPath = false;
-                let tombstoneOnly = true;
-
-                for (const commit of uniqueCommits) {
-                  const paths = execFileSync(
-                    'git',
-                    ['diff-tree', '-m', '--root', '--no-commit-id', '--name-only', '-r', commit],
-                    { encoding: 'utf8' }
-                  ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
-
-                  if (paths.length === 0) {
-                    tombstoneOnly = false;
-                    break;
-                  }
-
-                  sawPath = true;
-                  if (paths.some(path => path !== TOMBSTONE)) {
-                    tombstoneOnly = false;
-                    break;
-                  }
-                }
-
-                if (sawPath && tombstoneOnly) {
+                if (tip === merged.headSha) {
                   safe.push(branch);
-                  tombstoneOnlySafe += 1;
+                  mergedPrUnchangedSafe += 1;
                   continue;
                 }
-              }
-            } catch {}
+
+                execFileSync(
+                  'git',
+                  ['merge-base', '--is-ancestor', merged.headSha, ref],
+                  { stdio: 'ignore' }
+                );
+
+                const diff = execFileSync(
+                  'git',
+                  ['diff', '--name-status', merged.headSha + '..' + ref],
+                  { encoding: 'utf8' }
+                ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+
+                if (
+                  diff.length === 1 &&
+                  /^[AM]\s+/.test(diff[0]) &&
+                  diff[0].replace(/^[AM]\s+/, '') === TOMBSTONE
+                ) {
+                  safe.push(branch);
+                  tombstoneAfterMergedPrSafe += 1;
+                  continue;
+                }
+              } catch {}
+            }
 
             review.push(branch);
           }
@@ -133,15 +187,10 @@ jobs:
             ' safe=' + safe.length +
             ' ancestorSafe=' + ancestorSafe +
             ' noopMergeSafe=' + noopMergeSafe +
-            ' tombstoneOnlySafe=' + tombstoneOnlySafe +
+            ' mergedPrUnchangedSafe=' + mergedPrUnchangedSafe +
+            ' tombstoneAfterMergedPrSafe=' + tombstoneAfterMergedPrSafe +
             ' review=' + review.length
           );
-
-          const headers = {
-            Authorization: 'Bearer ' + token,
-            Accept: 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28',
-          };
 
           let deleted = 0;
           let skipped = 0;
