@@ -110,6 +110,7 @@ jobs:
           let noopMergeSafe = 0;
           let mergedPrUnchangedSafe = 0;
           let tombstoneAfterMergedPrSafe = 0;
+          let tombstoneOnlyUniqueSafe = 0;
           const TOMBSTONE = '00_⛔_BRANCHE_MORTE_NE_PAS_UTILISER.md';
 
           for (const branch of branches) {
@@ -137,6 +138,44 @@ jobs:
                 safe.push(branch);
                 noopMergeSafe += 1;
                 continue;
+              }
+            } catch {}
+
+            try {
+              const uniqueCommits = execFileSync(
+                'git',
+                ['rev-list', 'origin/main..' + ref],
+                { encoding: 'utf8' }
+              ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+
+              if (uniqueCommits.length > 0) {
+                let sawPath = false;
+                let tombstoneOnly = true;
+
+                for (const commit of uniqueCommits) {
+                  const paths = execFileSync(
+                    'git',
+                    ['diff-tree', '-m', '--root', '--no-commit-id', '--name-only', '-r', commit],
+                    { encoding: 'utf8' }
+                  ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+
+                  if (paths.length === 0) {
+                    tombstoneOnly = false;
+                    break;
+                  }
+
+                  sawPath = true;
+                  if (paths.some(path => path !== TOMBSTONE)) {
+                    tombstoneOnly = false;
+                    break;
+                  }
+                }
+
+                if (sawPath && tombstoneOnly) {
+                  safe.push(branch);
+                  tombstoneOnlyUniqueSafe += 1;
+                  continue;
+                }
               }
             } catch {}
 
@@ -189,6 +228,7 @@ jobs:
             ' noopMergeSafe=' + noopMergeSafe +
             ' mergedPrUnchangedSafe=' + mergedPrUnchangedSafe +
             ' tombstoneAfterMergedPrSafe=' + tombstoneAfterMergedPrSafe +
+            ' tombstoneOnlyUniqueSafe=' + tombstoneOnlyUniqueSafe +
             ' review=' + review.length
           );
 
