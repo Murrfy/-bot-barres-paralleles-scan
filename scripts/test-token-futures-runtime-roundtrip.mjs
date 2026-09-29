@@ -84,10 +84,11 @@ function makeHarness(){
     let openPositions=[],history=[],dismissed={},selectedSymbol='';
     let lastPrices=new Map([['BTCUSDT',100],['ETHUSDT',50]]);
     let lastAggIds=new Map(),lastAggTimes=new Map();
-    let controllerIdentity={paired:false,role:'',lastOk:0,error:''};
+    let controllerIdentity={paired:true,role:'controller',lastOk:Date.now(),error:''};
     let controllerStateSyncTimer=null;
-    let controllerStateHydrated=false;
+    let controllerStateHydrated=true;
     let controllerSyncState={conflict:false,lastOk:0,error:''};
+    let __remoteTokenSettings={},__remoteRevision=1;
 
     function legacyDefaultProtectionProfile(){return false}
     function normalizeProtections(stages){return Array.isArray(stages)?stages:[]}
@@ -112,7 +113,16 @@ function makeHarness(){
     function validateLimitPrice(){return ''}
     function setStatus(message,error=false){$('status').textContent=String(message);$('status').error=!!error}
     function renderAll(){fillFutures()}
-    async function syncControllerCloudStateNow(){return true}
+    async function refreshControllerIdentity(){return controllerIdentity.paired&&controllerIdentity.role==='controller'&&controllerStateHydrated}
+    async function syncControllerCloudStateNow(){
+      if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'&&controllerStateHydrated))return false;
+      __remoteTokenSettings=clone(tokenSettings);
+      __remoteRevision++;
+      return true;
+    }
+    async function fetch(){
+      return {ok:true,status:200,json:async()=>({ok:true,state:{revision:__remoteRevision,data:{tokenSettings:clone(__remoteTokenSettings)}}})};
+    }
   `,context);
 
   for(const name of [
@@ -166,6 +176,54 @@ test('per-token Futures margin survives save, token switch and full reload',asyn
   assert.equal(vm.runInContext("tokenSettings.BTCUSDT.leverage",context),7);
   assert.equal(Number(elements.get('fMargin').value),125);
   assert.equal(Number(elements.get('fLev').value),7);
+});
+
+test('Futures save refuses to claim success before controller state is ready',async()=>{
+  const {context,elements,storage}=makeHarness();
+
+  vm.runInContext(`
+    selectedSymbol='BTCUSDT';
+    tokenSettings.BTCUSDT={enabled:true,margin:250,leverage:5,marginType:'ISOLATED'};
+    saveLocalOnly();
+    controllerIdentity={paired:false,role:'',lastOk:0,error:''};
+    controllerStateHydrated=false;
+  `,context);
+  elements.get('fMargin').value='125';
+  elements.get('fLev').value='7';
+
+  await vm.runInContext('saveFutures()',context);
+
+  assert.equal(vm.runInContext('tokenSettings.BTCUSDT.margin',context),250);
+  assert.equal(vm.runInContext('tokenSettings.BTCUSDT.leverage',context),5);
+  assert.equal(Number(elements.get('fMargin').value),250);
+  assert.equal(Number(elements.get('fLev').value),5);
+  assert.equal(elements.get('status').error,true);
+  assert.match(elements.get('status').textContent,/NON enregistré/);
+  const persisted=JSON.parse(storage.get('zenith-runtime-margin-test'));
+  assert.equal(persisted.tokenSettings.BTCUSDT.margin,250);
+});
+
+test('Futures save rolls back an unconfirmed central write instead of displaying it as saved',async()=>{
+  const {context,elements}=makeHarness();
+
+  vm.runInContext(`
+    selectedSymbol='BTCUSDT';
+    tokenSettings.BTCUSDT={enabled:true,margin:250,leverage:5,marginType:'ISOLATED'};
+    saveLocalOnly();
+    syncControllerCloudStateNow=async()=>{controllerSyncState.error='TEST_SYNC_FAILED';return false};
+  `,context);
+  elements.get('fMargin').value='125';
+  elements.get('fLev').value='7';
+
+  await vm.runInContext('saveFutures()',context);
+
+  assert.equal(vm.runInContext('tokenSettings.BTCUSDT.margin',context),250);
+  assert.equal(vm.runInContext('tokenSettings.BTCUSDT.leverage',context),5);
+  assert.equal(Number(elements.get('fMargin').value),250);
+  assert.equal(Number(elements.get('fLev').value),5);
+  assert.equal(elements.get('status').error,true);
+  assert.match(elements.get('status').textContent,/TEST_SYNC_FAILED/);
+  assert.match(elements.get('status').textContent,/ancien réglage a été conservé/i);
 });
 
 test('stale deployment guard is loaded before the inline Zenith application',()=>{

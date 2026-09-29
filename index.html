@@ -1741,8 +1741,8 @@ async function persistAndVerifyTokenFuturesSettings(symbol,margin,leverage){
     return {ok:false,reason:'LOCAL_TOKEN_FUTURES_NOT_PERSISTED'};
   }
 
-  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
-    return {ok:true,central:false};
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'&&controllerStateHydrated)){
+    return {ok:false,reason:'CONTROLLER_STATE_NOT_READY'};
   }
 
   if(controllerStateSyncTimer){
@@ -1777,7 +1777,54 @@ async function persistAndVerifyTokenFuturesSettings(symbol,margin,leverage){
   }
 }
 
-async function saveFutures(){const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);if(anyActivePositionBySymbol(s))return setStatus(`${s} est actif : marge et levier sont verrouillés. L’objectif de gain, le prix déterminé de VENTE, les protections et la perte MAX peuvent être modifiés.`,true);if(validated[s])return setStatus(`${s} est surveillé : annule d’abord l’achat surveillé avant de modifier ses paramètres.`,true);const old=tokenSettings[s]||{},margin=Math.max(1,n($('fMargin').value,settings.margin)),leverage=Math.round(n($('fLev').value,settings.leverage));if(!(margin>=1&&margin<=1000))return setStatus('La marge doit être comprise entre 1 $ et 1 000 $.',true);if(leverage<1||leverage>10)return setStatus('Le levier doit être compris entre x1 et x10.',true);try{await ensureExchange();if(!(n(lastPrices.get(s))>0))await currentMarketPrice(s)}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}const d=futuresDraft(s,margin,leverage,'LIMIT');if(!d.ok)return setStatus(`${s} : réglage refusé par les limites Binance — ${d.error}.`,true);const buy=tokenExactBuy(s),sale=tokenExactSale(s),buyErr=buy>0?validateLimitPrice(s,buy,'Prix d’achat'):'';if(buyErr)return setStatus(`${s} : ${buyErr}.`,true);const saleErr=sale>0?validateLimitPrice(s,sale,'Prix de vente'):'';if(saleErr)return setStatus(`${s} : ${saleErr}.`,true);tokenSettings[s]={...old,enabled:true,margin,leverage,marginType:'ISOLATED',binanceQty:d.qty,binanceEffectiveNotional:d.effectiveNotional};const active=openBySymbol(s);if(active){active.margin=margin;active.leverage=leverage;active.marginType='ISOLATED';active.notional=d.effectiveNotional||margin*leverage;active.binanceQty=d.qty;active.stopExitPrice=priceForPnl(active.entryPrice,active.notional,-active.maxLoss);if(active.manualSaleTarget&&n(active.targetPrice)>active.entryPrice)active.targetProfit=exactProfitFor(active.entryPrice,active.targetPrice,{margin:active.notional/leverage,leverage});else active.targetPrice=priceForPnl(active.entryPrice,active.notional,active.targetProfit)}const persisted=await persistAndVerifyTokenFuturesSettings(s,margin,leverage);renderAll();if(!persisted.ok)return setStatus(`${s} : marge/levier NON confirmés — ${persisted.reason}. La valeur locale reste affichée mais Zenith ne la considère pas enregistrée.`,true);setStatus(`${s} : Futures enregistré et vérifié — ISOLÉE ${margin.toFixed(2)}, x${leverage}, quantité Binance ${d.qty}, notionnel effectif ≈ ${d.effectiveNotional.toFixed(2)}.`)}
+async function saveFutures(){
+  const s=selectedSymbol;
+  if(!s)return setStatus('Sélectionne un jeton.',true);
+  if(anyActivePositionBySymbol(s))return setStatus(`${s} est actif : marge et levier sont verrouillés. L’objectif de gain, le prix déterminé de VENTE, les protections et la perte MAX peuvent être modifiés.`,true);
+  if(validated[s])return setStatus(`${s} est surveillé : annule d’abord l’achat surveillé avant de modifier ses paramètres.`,true);
+
+  const margin=Math.max(1,n($('fMargin').value,settings.margin));
+  const leverage=Math.round(n($('fLev').value,settings.leverage));
+  if(!(margin>=1&&margin<=1000))return setStatus('La marge doit être comprise entre 1 $ et 1 000 $.',true);
+  if(leverage<1||leverage>10)return setStatus('Le levier doit être compris entre x1 et x10.',true);
+
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'&&controllerStateHydrated)){
+    const ready=await refreshControllerIdentity();
+    if(!ready||!(controllerIdentity.paired&&controllerIdentity.role==='controller'&&controllerStateHydrated)){
+      fillFutures();
+      return setStatus(`${s} : Futures NON enregistré — contrôleur/synchronisation centrale non prêt. Réessaie dans un instant.`,true);
+    }
+  }
+
+  const hadOld=Object.prototype.hasOwnProperty.call(tokenSettings,s);
+  const old=hadOld?clone(tokenSettings[s]):null;
+
+  try{
+    await ensureExchange();
+    if(!(n(lastPrices.get(s))>0))await currentMarketPrice(s);
+  }catch(e){
+    return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true);
+  }
+  const d=futuresDraft(s,margin,leverage,'LIMIT');
+  if(!d.ok)return setStatus(`${s} : réglage refusé par les limites Binance — ${d.error}.`,true);
+  const buy=tokenExactBuy(s),sale=tokenExactSale(s),buyErr=buy>0?validateLimitPrice(s,buy,'Prix d’achat'):'';
+  if(buyErr)return setStatus(`${s} : ${buyErr}.`,true);
+  const saleErr=sale>0?validateLimitPrice(s,sale,'Prix de vente'):'';
+  if(saleErr)return setStatus(`${s} : ${saleErr}.`,true);
+
+  tokenSettings[s]={...(old||{}),enabled:true,margin,leverage,marginType:'ISOLATED',binanceQty:d.qty,binanceEffectiveNotional:d.effectiveNotional};
+  const persisted=await persistAndVerifyTokenFuturesSettings(s,margin,leverage);
+  if(!persisted.ok){
+    if(hadOld)tokenSettings[s]=old;
+    else delete tokenSettings[s];
+    saveLocalOnly();
+    renderAll();
+    return setStatus(`${s} : Futures NON enregistré — ${persisted.reason}. L’ancien réglage a été conservé.`,true);
+  }
+
+  renderAll();
+  setStatus(`${s} : Futures enregistré et vérifié — ISOLÉE ${margin.toFixed(2)}, x${leverage}, quantité Binance ${d.qty}, notionnel effectif ≈ ${d.effectiveNotional.toFixed(2)}.`);
+}
 function readBotSettings(){const requested=Math.trunc(n($('bMaxActive').value,settings.maxActive||3)),margin=n($('bDefaultMargin').value,NaN),leverage=Math.round(n($('bDefaultLeverage').value,NaN));return{margin,leverage,marginType:'ISOLATED',maxActive:Number.isSafeInteger(requested)&&requested>=1?requested:3,theme:$('bTheme').value==='light'?'light':'dark',sound:$('bSound').checked,vibrate:$('bVibrate').checked}}
 function applyBotSettings(message='Réglages BOT enregistrés.'){const next=readBotSettings(),themeChanged=next.theme!==settings.theme,soundEnabled=next.sound&&!settings.sound;settings={...settings,...next};save();if(themeChanged)applyTheme();if(soundEnabled)ensureAudio();renderKpis();fillBot();if(selectedSymbol)fillToken();setStatus(message)}
 function saveBot(){const next=readBotSettings(),margin=next.margin,leverage=next.leverage,wantsVibrate=$('bVibrate').checked,tradingChanged=Math.abs(n(next.margin)-n(settings.margin))>1e-8||Math.round(n(next.leverage))!==Math.round(n(settings.leverage))||Math.trunc(n(next.maxActive))!==Math.trunc(n(settings.maxActive));if(tradingChanged&&(openPositions.length||n(binanceAccount.realPositions)>0||Object.keys(validated).length))return setStatus('Réglages BOT de trading verrouillés : une position ou un achat surveillé est en cours.',true);if(!(margin>=1&&margin<=1000))return setStatus('Marge par défaut invalide : entre 1 $ et 1 000 $.',true);if(leverage<1||leverage>10)return setStatus('Levier par défaut invalide : entre x1 et x10.',true);if(n(settings.maxLoss,40)>margin)return setStatus('Marge par défaut invalide : elle ne peut pas être inférieure à la perte maximale par défaut.',true);applyBotSettings('Réglages BOT enregistrés.');if(wantsVibrate&&!('vibrate' in navigator))setStatus('Réglages BOT enregistrés. La vibration est activée dans Zenith, mais ce navigateur ne prend pas en charge la vibration.',true)}
