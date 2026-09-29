@@ -643,7 +643,13 @@ if (!binanceReconcile.includes('async function beginReconciliationAttempt') ||
     !binanceReconcile.includes("'BINANCE_RECONCILIATION_IN_PROGRESS'") ||
     !binanceReconcile.includes('async function commitReconciliationAttempt') ||
     !binanceReconcile.includes("tostring(value.attemptId or '') ~= ARGV[1]") ||
-    !binanceReconcile.includes("(redis.call('GET', KEYS[2]) or '') ~= ARGV[2]") ||
+    !binanceReconcile.includes("local currentRuntime = redis.call('GET', KEYS[2]) or ''") ||
+    !binanceReconcile.includes("local currentRuntimeOk, currentState = pcall(cjson.decode, currentRuntime)") ||
+    !binanceReconcile.includes("local expectedRuntimeOk, expectedState = pcall(cjson.decode, ARGV[2])") ||
+    !binanceReconcile.includes("currentState.updatedAt = nil") ||
+    !binanceReconcile.includes("expectedState.updatedAt = nil") ||
+    !binanceReconcile.includes("if not deepEqual(currentState, expectedState) then return -1 end") ||
+    binanceReconcile.includes("(redis.call('GET', KEYS[2]) or '') ~= ARGV[2]") ||
     !binanceReconcile.includes("if registered ~= ARGV[3] then return -1 end") ||
     !binanceReconcile.includes("if lease ~= ARGV[3] then return -2 end") ||
     !binanceReconcile.includes("if roleEpoch ~= ARGV[4] then return -3 end") ||
@@ -655,7 +661,7 @@ if (!binanceReconcile.includes('async function beginReconciliationAttempt') ||
     !binanceReconcile.includes("'MASTER_ROLE_EPOCH_CHANGED_DURING_RECONCILE'") ||
     !binanceReconcile.includes('async function failReconciliationAttempt') ||
     !binanceReconcile.includes("'BINANCE_RECONCILIATION_SUPERSEDED'")) {
-  fail('Binance reconciliation must invalidate stale CLEAN state before remote reads and fence begin/final commit by current MASTER authority, attempt id and runtime state');
+  fail('Binance reconciliation must invalidate stale CLEAN state before remote reads and fence begin/final commit by current MASTER authority, attempt id and semantic runtime state while ignoring heartbeat-only updatedAt');
 }
 const reconciliationHandlerStart = binanceReconcile.indexOf('export default async function handler');
 const reconciliationHandler = reconciliationHandlerStart >= 0 ? binanceReconcile.slice(reconciliationHandlerStart) : '';
