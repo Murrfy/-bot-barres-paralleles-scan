@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  prune-fully-merged-branches:
+  prune-noop-branches:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -22,7 +22,7 @@ jobs:
       - name: Fetch every branch
         run: git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*' --prune
 
-      - name: Delete only branches fully merged into main
+      - name: Delete only branches that add nothing to main
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
@@ -34,22 +34,70 @@ jobs:
           const token = process.env.GH_TOKEN;
           if (!repo || !token) throw new Error('GitHub workflow credentials unavailable');
 
-          const raw = execFileSync(
+          const list = execFileSync(
             'git',
-            ['for-each-ref', '--format=%(refname:strip=3)', '--merged=origin/main', 'refs/remotes/origin/'],
+            ['for-each-ref', '--format=%(refname:strip=3)', 'refs/remotes/origin/'],
             { encoding: 'utf8' }
           );
 
           const branches = [...new Set(
-            raw.split(/\r?\n/)
+            list.split(/\r?\n/)
               .map(v => v.trim())
               .filter(v => v && v !== 'main' && v !== 'HEAD')
           )].sort();
 
-          console.log(`Fully merged branches eligible for deletion: ${branches.length}`);
+          const mainTree = execFileSync(
+            'git',
+            ['rev-parse', 'origin/main^{tree}'],
+            { encoding: 'utf8' }
+          ).trim();
+
+          const safe = [];
+          const review = [];
+          let ancestorSafe = 0;
+          let noopMergeSafe = 0;
+
+          for (const branch of branches) {
+            const ref = 'origin/' + branch;
+
+            try {
+              execFileSync(
+                'git',
+                ['merge-base', '--is-ancestor', ref, 'origin/main'],
+                { stdio: 'ignore' }
+              );
+              safe.push(branch);
+              ancestorSafe += 1;
+              continue;
+            } catch {}
+
+            try {
+              const mergedTree = execFileSync(
+                'git',
+                ['merge-tree', '--write-tree', 'origin/main', ref],
+                { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+              ).trim().split(/\s+/)[0];
+
+              if (mergedTree === mainTree) {
+                safe.push(branch);
+                noopMergeSafe += 1;
+                continue;
+              }
+            } catch {}
+
+            review.push(branch);
+          }
+
+          console.log(
+            'Branch classification: total=' + branches.length +
+            ' safe=' + safe.length +
+            ' ancestorSafe=' + ancestorSafe +
+            ' noopMergeSafe=' + noopMergeSafe +
+            ' review=' + review.length
+          );
 
           const headers = {
-            Authorization: `Bearer ${token}`,
+            Authorization: 'Bearer ' + token,
             Accept: 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28',
           };
@@ -57,26 +105,34 @@ jobs:
           let deleted = 0;
           let skipped = 0;
 
-          for (const branch of branches) {
+          for (const branch of safe) {
             const encoded = branch.split('/').map(encodeURIComponent).join('/');
-            const url = `https://api.github.com/repos/${repo}/git/refs/heads/${encoded}`;
+            const url = 'https://api.github.com/repos/' + repo + '/git/refs/heads/' + encoded;
             const response = await fetch(url, { method: 'DELETE', headers });
 
             if (response.status === 204) {
               deleted += 1;
-              console.log(`deleted: ${branch}`);
+              console.log('deleted: ' + branch);
               continue;
             }
 
             if (response.status === 404 || response.status === 422) {
               skipped += 1;
-              console.log(`skipped: ${branch} (HTTP ${response.status})`);
+              console.log('skipped: ' + branch + ' (HTTP ' + response.status + ')');
               continue;
             }
 
             const body = await response.text();
-            throw new Error(`Failed deleting ${branch}: HTTP ${response.status} ${body.slice(0, 300)}`);
+            throw new Error('Failed deleting ' + branch + ': HTTP ' + response.status + ' ' + body.slice(0, 300));
           }
 
-          console.log(`Branch hygiene complete. deleted=${deleted} skipped=${skipped}`);
+          console.log(
+            'Branch hygiene complete. deleted=' + deleted +
+            ' skipped=' + skipped +
+            ' review=' + review.length
+          );
+          if (review.length) {
+            console.log('Branches still requiring review:');
+            for (const branch of review) console.log('review: ' + branch);
+          }
           NODE
