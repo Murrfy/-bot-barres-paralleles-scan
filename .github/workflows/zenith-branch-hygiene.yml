@@ -202,7 +202,7 @@ jobs:
 
                 const diff = execFileSync(
                   'git',
-                  ['diff', '--name-status', merged.headSha + '..' + ref],
+                  ['-c', 'core.quotepath=false', 'diff', '--name-status', merged.headSha + '..' + ref],
                   { encoding: 'utf8' }
                 ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
 
