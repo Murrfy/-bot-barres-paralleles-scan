@@ -159,6 +159,9 @@ test('UI history is Binance-real only and never displays protection level number
   assert.match(block,/grossRealizedPnl/);
   assert.match(block,/historyFeeText\(row\)/);
   assert.match(block,/historyFundingText\(row\)/);
+  assert.match(html,/<th>Durée<\/th>/);
+  assert.match(block,/durationHMS\(opened,closed\)/);
+  assert.match(block,/closed>=opened/);
   assert.match(block,/netUsdt/);
   assert.doesNotMatch(helpers+block,/Niveau|Protection|level/i);
   assert.ok(html.includes('id="refreshHistoryBtn"'));

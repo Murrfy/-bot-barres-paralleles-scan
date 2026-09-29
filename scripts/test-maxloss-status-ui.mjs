@@ -12,6 +12,8 @@ test('real active position shows only a compact MAX-LOSS state in its header',()
   assert.match(block,/🟢 MAX-LOSS : ACTIVE/);
   assert.match(block,/🔴 MAX-LOSS ABSENTE — RÉPARATION EN COURS/);
   assert.match(block,/maxLossState/);
+  assert.match(block,/const openedAt=Math\.max\(0,n\(p\.openedAt,n\(p\.lifecycleAt,n\(p\.positionLifecycleAt,n\(p\.updateTime,0\)\)\)\)\)/);
+  assert.match(block,/class="posElapsed">\$\{openedAt>0\?elapsedHMS\(openedAt\):'—'\}/);
   assert.doesNotMatch(block,/MODIFICATIONS OBJECTIF \/ PROTECTION GAIN BLOQUÉES/);
 });
 
