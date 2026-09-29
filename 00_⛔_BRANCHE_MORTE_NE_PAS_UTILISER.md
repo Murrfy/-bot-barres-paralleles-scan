@@ -1,13 +1,17 @@
-# ⛔⛔⛔ BRANCHE MORTE / LEGACY / DANGEREUSE ⛔⛔⛔
+# ⛔ FAUSSE DIRECTION — ANCIEN PLAFOND DUR À 3 — NE PAS UTILISER
 
-## NE PAS UTILISER. NE PAS MODIFIER. NE PAS PRENDRE COMME SOURCE.
+Cette branche contient une ancienne règle qui imposait un maximum absolu de 3 positions actives.
 
-Cette branche contient un état ancien, remplacé, incomplet ou potentiellement contradictoire avec le fonctionnement actuel de Zenith.
+## RÈGLE ACTUELLE DE ZENITH
+- `3` est la valeur par défaut.
+- L'utilisateur peut configurer une valeur supérieure à 3.
+- Zenith ne doit pas réintroduire de plafond dur à 3.
+
+Cette branche est conservée uniquement comme historique technique.
+Ne pas fusionner, cherry-pick, reprendre ses anciens tests ou utiliser son ancienne règle comme référence métier.
 
 **SOURCE OFFICIELLE UNIQUE : `main`.**
 
-Ne jamais récupérer du code, une règle métier, un test ou un comportement depuis cette branche sans comparaison préalable avec `main`.
+Toute modification future de cette règle doit partir de `main` et nécessite l'accord explicite de Walter.
 
-## ⛔ AUCUNE MODIFICATION SANS L'ACCORD EXPLICITE DE WALTER.
-
-Cette branche est conservée uniquement comme historique technique tant qu'elle ne peut pas être supprimée physiquement.
+Audit ménage : 2026-09-29.
