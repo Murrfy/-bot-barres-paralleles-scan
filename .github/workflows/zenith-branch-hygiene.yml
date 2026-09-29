@@ -257,10 +257,61 @@ jobs:
             throw new Error('Failed deleting ' + branch + ': HTTP ' + response.status + ' ' + body.slice(0, 300));
           }
 
+          let workBranchSync = 'unchanged';
+          try {
+            const workRef = 'origin/zenith-work';
+            const workSha = execFileSync(
+              'git',
+              ['rev-parse', workRef],
+              { encoding: 'utf8' }
+            ).trim();
+            const mainSha = execFileSync(
+              'git',
+              ['rev-parse', 'origin/main'],
+              { encoding: 'utf8' }
+            ).trim();
+
+            if (workSha !== mainSha) {
+              execFileSync(
+                'git',
+                ['merge-base', '--is-ancestor', workRef, 'origin/main'],
+                { stdio: 'ignore' }
+              );
+
+              const syncHeaders = {
+                ...headers,
+                'Content-Type': 'application/json',
+              };
+              const syncResponse = await fetch(
+                'https://api.github.com/repos/' + repo + '/git/refs/heads/zenith-work',
+                {
+                  method: 'PATCH',
+                  headers: syncHeaders,
+                  body: JSON.stringify({ sha: mainSha, force: false }),
+                }
+              );
+              if (!syncResponse.ok) {
+                const body = await syncResponse.text();
+                throw new Error(
+                  'Failed syncing zenith-work: HTTP ' +
+                  syncResponse.status + ' ' + body.slice(0, 300)
+                );
+              }
+              workBranchSync = 'fast-forwarded';
+            }
+          } catch (error) {
+            workBranchSync = 'skipped';
+            console.log(
+              'zenith-work sync skipped: ' +
+              String(error?.message || error || 'unknown')
+            );
+          }
+
           console.log(
             'Branch hygiene complete. deleted=' + deleted +
             ' skipped=' + skipped +
-            ' review=' + review.length
+            ' review=' + review.length +
+            ' zenithWorkSync=' + workBranchSync
           );
           if (review.length) {
             console.log('Branches still requiring review:');
