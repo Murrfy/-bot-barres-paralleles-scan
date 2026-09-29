@@ -112,6 +112,8 @@ jobs:
           let mergedPrUnchangedSafe = 0;
           let tombstoneAfterMergedPrSafe = 0;
           let tombstoneOnlyUniqueSafe = 0;
+          let patchEquivalentSafe = 0;
+          let patchEquivalentTombstoneSafe = 0;
           const TOMBSTONE = '00_⛔_BRANCHE_MORTE_NE_PAS_UTILISER.md';
 
           for (const branch of branches) {
@@ -180,6 +182,62 @@ jobs:
               }
             } catch {}
 
+            try {
+              const uniqueMergeCommits = execFileSync(
+                'git',
+                ['rev-list', '--merges', 'origin/main..' + ref],
+                { encoding: 'utf8' }
+              ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+
+              if (uniqueMergeCommits.length === 0) {
+                const cherry = execFileSync(
+                  'git',
+                  ['cherry', 'origin/main', ref],
+                  { encoding: 'utf8' }
+                ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+
+                if (cherry.length > 0) {
+                  const plusCommits = cherry
+                    .filter(line => line.startsWith('+ '))
+                    .map(line => line.slice(2).trim())
+                    .filter(Boolean);
+
+                  if (plusCommits.length === 0) {
+                    safe.push(branch);
+                    patchEquivalentSafe += 1;
+                    continue;
+                  }
+
+                  let plusSawPath = false;
+                  let plusTombstoneOnly = true;
+                  for (const commit of plusCommits) {
+                    const paths = execFileSync(
+                      'git',
+                      ['-c', 'core.quotepath=false', 'diff-tree', '--root', '--no-commit-id', '--name-only', '-r', commit],
+                      { encoding: 'utf8' }
+                    ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+
+                    if (paths.length === 0) {
+                      plusTombstoneOnly = false;
+                      break;
+                    }
+
+                    plusSawPath = true;
+                    if (paths.some(path => path !== TOMBSTONE)) {
+                      plusTombstoneOnly = false;
+                      break;
+                    }
+                  }
+
+                  if (plusSawPath && plusTombstoneOnly) {
+                    safe.push(branch);
+                    patchEquivalentTombstoneSafe += 1;
+                    continue;
+                  }
+                }
+              }
+            } catch {}
+
             const merged = mergedHeads.get(branch);
             if (merged) {
               try {
@@ -230,6 +288,8 @@ jobs:
             ' mergedPrUnchangedSafe=' + mergedPrUnchangedSafe +
             ' tombstoneAfterMergedPrSafe=' + tombstoneAfterMergedPrSafe +
             ' tombstoneOnlyUniqueSafe=' + tombstoneOnlyUniqueSafe +
+            ' patchEquivalentSafe=' + patchEquivalentSafe +
+            ' patchEquivalentTombstoneSafe=' + patchEquivalentTombstoneSafe +
             ' review=' + review.length
           );
 
