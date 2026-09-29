@@ -1827,6 +1827,17 @@ async function beginReconciliationAttempt(marker, device) {
 
 async function commitReconciliationAttempt(report, runtimeRaw, attemptId, device) {
   const script = [
+    "local function deepEqual(a, b)",
+    "  if type(a) ~= type(b) then return false end",
+    "  if type(a) ~= 'table' then return a == b end",
+    "  for k, v in pairs(a) do",
+    "    if not deepEqual(v, b[k]) then return false end",
+    "  end",
+    "  for k, _ in pairs(b) do",
+    "    if a[k] == nil then return false end",
+    "  end",
+    "  return true",
+    "end",
     "local current = redis.call('GET', KEYS[1])",
     "if not current then return 0 end",
     "local ok, value = pcall(cjson.decode, current)",
@@ -1837,7 +1848,13 @@ async function commitReconciliationAttempt(report, runtimeRaw, attemptId, device
     "if lease ~= ARGV[4] then return -3 end",
     "local roleEpoch = tostring(redis.call('GET', KEYS[5]) or '0')",
     "if roleEpoch ~= ARGV[5] then return -4 end",
-    "if (redis.call('GET', KEYS[2]) or '') ~= ARGV[2] then return -1 end",
+    "local currentRuntime = redis.call('GET', KEYS[2]) or ''",
+    "local currentRuntimeOk, currentState = pcall(cjson.decode, currentRuntime)",
+    "local expectedRuntimeOk, expectedState = pcall(cjson.decode, ARGV[2])",
+    "if not currentRuntimeOk or not expectedRuntimeOk then return -1 end",
+    "currentState.updatedAt = nil",
+    "expectedState.updatedAt = nil",
+    "if not deepEqual(currentState, expectedState) then return -1 end",
     "redis.call('SET', KEYS[1], ARGV[3], 'EX', '30')",
     "return 1"
   ].join('\n');
