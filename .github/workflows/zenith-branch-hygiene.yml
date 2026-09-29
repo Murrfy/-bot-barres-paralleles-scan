@@ -94,7 +94,7 @@ jobs:
           const branches = [...new Set(
             list.split(/\r?\n/)
               .map(v => v.trim())
-              .filter(v => v && v !== 'main' && v !== 'HEAD')
+              .filter(v => v && v !== 'main' && v !== 'HEAD' && v !== 'zenith-work')
           )].sort();
 
           const mainTree = execFileSync(
@@ -104,6 +104,7 @@ jobs:
           ).trim();
 
           const mergedHeads = await latestMergedHeadsByBranch();
+          console.log('Merged PR branch heads mapped: ' + mergedHeads.size);
           const safe = [];
           const review = [];
           let ancestorSafe = 0;
@@ -155,7 +156,7 @@ jobs:
                 for (const commit of uniqueCommits) {
                   const paths = execFileSync(
                     'git',
-                    ['diff-tree', '-m', '--root', '--no-commit-id', '--name-only', '-r', commit],
+                    ['-c', 'core.quotepath=false', 'diff-tree', '-m', '--root', '--no-commit-id', '--name-only', '-r', commit],
                     { encoding: 'utf8' }
                   ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
 
@@ -202,7 +203,7 @@ jobs:
 
                 const diff = execFileSync(
                   'git',
-                  ['diff', '--name-status', merged.headSha + '..' + ref],
+                  ['-c', 'core.quotepath=false', 'diff', '--name-status', merged.headSha + '..' + ref],
                   { encoding: 'utf8' }
                 ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
 
@@ -256,10 +257,61 @@ jobs:
             throw new Error('Failed deleting ' + branch + ': HTTP ' + response.status + ' ' + body.slice(0, 300));
           }
 
+          let workBranchSync = 'unchanged';
+          try {
+            const workRef = 'origin/zenith-work';
+            const workSha = execFileSync(
+              'git',
+              ['rev-parse', workRef],
+              { encoding: 'utf8' }
+            ).trim();
+            const mainSha = execFileSync(
+              'git',
+              ['rev-parse', 'origin/main'],
+              { encoding: 'utf8' }
+            ).trim();
+
+            if (workSha !== mainSha) {
+              execFileSync(
+                'git',
+                ['merge-base', '--is-ancestor', workRef, 'origin/main'],
+                { stdio: 'ignore' }
+              );
+
+              const syncHeaders = {
+                ...headers,
+                'Content-Type': 'application/json',
+              };
+              const syncResponse = await fetch(
+                'https://api.github.com/repos/' + repo + '/git/refs/heads/zenith-work',
+                {
+                  method: 'PATCH',
+                  headers: syncHeaders,
+                  body: JSON.stringify({ sha: mainSha, force: false }),
+                }
+              );
+              if (!syncResponse.ok) {
+                const body = await syncResponse.text();
+                throw new Error(
+                  'Failed syncing zenith-work: HTTP ' +
+                  syncResponse.status + ' ' + body.slice(0, 300)
+                );
+              }
+              workBranchSync = 'fast-forwarded';
+            }
+          } catch (error) {
+            workBranchSync = 'skipped';
+            console.log(
+              'zenith-work sync skipped: ' +
+              String(error?.message || error || 'unknown')
+            );
+          }
+
           console.log(
             'Branch hygiene complete. deleted=' + deleted +
             ' skipped=' + skipped +
-            ' review=' + review.length
+            ' review=' + review.length +
+            ' zenithWorkSync=' + workBranchSync
           );
           if (review.length) {
             console.log('Branches still requiring review:');

@@ -10,6 +10,20 @@ const htmlFiles = [
 
 let failed = false;
 
+// Repository-governance guard: old branches explicitly marked dead/historical
+// must never be reused as a source for main.
+const DEAD_BRANCH_MARKER = '00_⛔_BRANCHE_MORTE_NE_PAS_UTILISER.md';
+if (fs.existsSync(DEAD_BRANCH_MARKER)) {
+  fail('Dead/historical branch marker detected: this branch must never be merged or reused as a source of truth');
+}
+
+// Zenith development uses one permanent working branch to prevent branch sprawl.
+// Dependabot remains allowed for GitHub Actions maintenance.
+const pullRequestHead = String(process.env.GITHUB_HEAD_REF || '');
+if (pullRequestHead && pullRequestHead !== 'zenith-work' && !pullRequestHead.startsWith('dependabot/')) {
+  fail(`Unauthorized Zenith PR source branch: ${pullRequestHead}. Use zenith-work only.`);
+}
+
 const runtimePolicy = JSON.parse(fs.readFileSync('package.json','utf8'));
 if (runtimePolicy?.engines?.node !== '24.x') {
   fail('package.json must pin Zenith to Node 24.x');
