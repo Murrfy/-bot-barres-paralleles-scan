@@ -56,6 +56,8 @@ jobs:
           const review = [];
           let ancestorSafe = 0;
           let noopMergeSafe = 0;
+          let tombstoneOnlySafe = 0;
+          const TOMBSTONE = '00_⛔_BRANCHE_MORTE_NE_PAS_UTILISER.md';
 
           for (const branch of branches) {
             const ref = 'origin/' + branch;
@@ -85,6 +87,44 @@ jobs:
               }
             } catch {}
 
+            try {
+              const uniqueCommits = execFileSync(
+                'git',
+                ['rev-list', 'origin/main..' + ref],
+                { encoding: 'utf8' }
+              ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+
+              if (uniqueCommits.length > 0) {
+                let sawPath = false;
+                let tombstoneOnly = true;
+
+                for (const commit of uniqueCommits) {
+                  const paths = execFileSync(
+                    'git',
+                    ['diff-tree', '-m', '--root', '--no-commit-id', '--name-only', '-r', commit],
+                    { encoding: 'utf8' }
+                  ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+
+                  if (paths.length === 0) {
+                    tombstoneOnly = false;
+                    break;
+                  }
+
+                  sawPath = true;
+                  if (paths.some(path => path !== TOMBSTONE)) {
+                    tombstoneOnly = false;
+                    break;
+                  }
+                }
+
+                if (sawPath && tombstoneOnly) {
+                  safe.push(branch);
+                  tombstoneOnlySafe += 1;
+                  continue;
+                }
+              }
+            } catch {}
+
             review.push(branch);
           }
 
@@ -93,6 +133,7 @@ jobs:
             ' safe=' + safe.length +
             ' ancestorSafe=' + ancestorSafe +
             ' noopMergeSafe=' + noopMergeSafe +
+            ' tombstoneOnlySafe=' + tombstoneOnlySafe +
             ' review=' + review.length
           );
 
