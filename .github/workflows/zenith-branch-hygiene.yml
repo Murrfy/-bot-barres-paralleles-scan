@@ -114,10 +114,85 @@ jobs:
           let tombstoneOnlyUniqueSafe = 0;
           let patchEquivalentSafe = 0;
           let patchEquivalentTombstoneSafe = 0;
+          let archivedDeadBranchSafe = 0;
           const TOMBSTONE = '00_⛔_BRANCHE_MORTE_NE_PAS_UTILISER.md';
+          const ARCHIVE_TAG_PREFIX = 'zenith-legacy/';
 
           for (const branch of branches) {
             const ref = 'origin/' + branch;
+
+            let hasDeadMarker = false;
+            try {
+              execFileSync(
+                'git',
+                ['cat-file', '-e', ref + ':' + TOMBSTONE],
+                { stdio: 'ignore' }
+              );
+              hasDeadMarker = true;
+            } catch {}
+
+            if (hasDeadMarker) {
+              try {
+                const tip = execFileSync(
+                  'git',
+                  ['rev-parse', ref],
+                  { encoding: 'utf8' }
+                ).trim();
+                const archiveRef = 'refs/tags/' + ARCHIVE_TAG_PREFIX + branch;
+                const encodedRef = ('tags/' + ARCHIVE_TAG_PREFIX + branch)
+                  .split('/').map(encodeURIComponent).join('/');
+                const existing = await fetch(
+                  'https://api.github.com/repos/' + repo + '/git/ref/' + encodedRef,
+                  { headers }
+                );
+
+                if (existing.status === 200) {
+                  const data = await existing.json();
+                  const archivedSha = String(data?.object?.sha || '');
+                  if (archivedSha !== tip) {
+                    console.log(
+                      'archive conflict: ' + branch +
+                      ' existing=' + archivedSha + ' current=' + tip
+                    );
+                    review.push(branch);
+                    continue;
+                  }
+                } else if (existing.status === 404) {
+                  const createResponse = await fetch(
+                    'https://api.github.com/repos/' + repo + '/git/refs',
+                    {
+                      method: 'POST',
+                      headers: { ...headers, 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ ref: archiveRef, sha: tip }),
+                    }
+                  );
+                  if (createResponse.status !== 201) {
+                    const body = await createResponse.text();
+                    throw new Error(
+                      'Failed archiving ' + branch + ': HTTP ' +
+                      createResponse.status + ' ' + body.slice(0, 300)
+                    );
+                  }
+                } else {
+                  const body = await existing.text();
+                  throw new Error(
+                    'Failed checking archive for ' + branch + ': HTTP ' +
+                    existing.status + ' ' + body.slice(0, 300)
+                  );
+                }
+
+                safe.push(branch);
+                archivedDeadBranchSafe += 1;
+                continue;
+              } catch (error) {
+                console.log(
+                  'archive skipped: ' + branch + ' — ' +
+                  String(error?.message || error || 'unknown')
+                );
+                review.push(branch);
+                continue;
+              }
+            }
 
             try {
               execFileSync(
@@ -290,6 +365,7 @@ jobs:
             ' tombstoneOnlyUniqueSafe=' + tombstoneOnlyUniqueSafe +
             ' patchEquivalentSafe=' + patchEquivalentSafe +
             ' patchEquivalentTombstoneSafe=' + patchEquivalentTombstoneSafe +
+            ' archivedDeadBranchSafe=' + archivedDeadBranchSafe +
             ' review=' + review.length
           );
 
