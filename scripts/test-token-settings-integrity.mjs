@@ -27,7 +27,7 @@ test('each token can override Futures margin and leverage independently',()=>{
   assert.match(fill,/tokenSettings\[s\]/);
   assert.match(fill,/t\.margin,settings\.margin/);
   assert.match(fill,/t\.leverage,settings\.leverage/);
-  assert.match(save,/tokenSettings\[s\]=\{\.\.\.old,enabled:true,margin,leverage,marginType:'ISOLATED'/);
+  assert.match(save,/tokenSettings\[s\]=\{\.\.\.\(old\|\|\{\}\),enabled:true,margin,leverage,marginType:'ISOLATED'/);
   assert.match(cfg,/base=\{\.\.\.settings,\.\.\.t\}/);
 });
 
@@ -45,7 +45,9 @@ test('per-token Futures save is verified locally and against central controller 
   const save=block('async function saveFutures()','function readBotSettings()');
   assert.match(save,/await persistAndVerifyTokenFuturesSettings\(s,margin,leverage\)/);
   assert.match(save,/Futures enregistré et vérifié/);
-  assert.match(save,/marge\/levier NON confirmés/);
+  assert.match(save,/Futures NON enregistré/);
+  assert.match(save,/L’ancien réglage a été conservé/);
+  assert.match(verify,/CONTROLLER_STATE_NOT_READY/);
 });
 
 test('saving the token also persists the currently displayed Futures margin and leverage',()=>{
