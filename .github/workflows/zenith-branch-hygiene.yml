@@ -155,7 +155,7 @@ jobs:
                 for (const commit of uniqueCommits) {
                   const paths = execFileSync(
                     'git',
-                    ['diff-tree', '-m', '--root', '--no-commit-id', '--name-only', '-r', commit],
+                    ['-c', 'core.quotepath=false', 'diff-tree', '-m', '--root', '--no-commit-id', '--name-only', '-r', commit],
                     { encoding: 'utf8' }
                   ).split(/\r?\n/).map(v => v.trim()).filter(Boolean);
 
