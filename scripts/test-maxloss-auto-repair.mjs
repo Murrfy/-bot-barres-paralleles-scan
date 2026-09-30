@@ -64,6 +64,8 @@ test('missing position or exchange tick metadata fails closed',()=>{
   const noFilter=buildMaxLossRepairPlan({
     report:report(),
     positions:[{symbol:'BTCUSDT',positionAmt:'0.2',entryPrice:'50000'}],
+    tokenSettings:{BTCUSDT:{maxLoss:400,margin:1000}},
+    settings:{maxLoss:400,margin:1000},
     priceFilters:{},
   });
   assert.equal(noFilter.action,'BLOCK');
