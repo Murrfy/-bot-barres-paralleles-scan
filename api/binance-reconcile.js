@@ -1450,7 +1450,8 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
         ? (entryPrice - trigger) * quantity
         : (trigger - entryPrice) * quantity;
       const configuredMaxLoss = configuredMaxLossUsd(controllerState, symbol);
-      if (!(configuredMaxLoss >= 2) || impliedLossUsd > configuredMaxLoss + 1e-8) {
+      const configuredMargin = configuredMarginUsd(controllerState, symbol);
+      if (!(configuredMaxLoss >= 2) || !(configuredMargin > 0) || configuredMaxLoss > configuredMargin + 1e-8 || impliedLossUsd > configuredMaxLoss + 1e-8) {
         unsafeMaxLossProtections.push({
           key,
           symbol: position.symbol,
