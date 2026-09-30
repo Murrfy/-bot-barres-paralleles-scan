@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "1-interface-utilisateur",
-  "scopeRevision": 2,
+  "scopeRevision": 3,
   "allowedPaths": [
     "index.html",
     "controller-status.html",
@@ -15,7 +15,6 @@
     "scripts/test-protection-visibility-toggle.mjs",
     "scripts/test-real-only-ui.mjs",
     "scripts/test-csp-inline-script-hashes.mjs",
-    "scripts/test-csp-style-hashes.mjs",
-    "ZENITH_MASTER_PLAN.md"
+    "scripts/test-csp-style-hashes.mjs"
   ]
 }
