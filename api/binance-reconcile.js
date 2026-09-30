@@ -1181,8 +1181,14 @@ function enforceConfiguredMaxLossSafety(
       position, actualOrders, processingCommands, controllerState, masterDeviceId
     );
     const effectiveMaxLoss = pendingEdit?.requestedMaxLossUsd || configuredMaxLoss;
+    const configuredMargin = configuredMarginUsd(controllerState, position.symbol);
     if (!(effectiveMaxLoss > 0)) {
       unavailable.push(key);
+      missingConfiguredProtection.push(key);
+      continue;
+    }
+    if (configuredMargin > 0 && effectiveMaxLoss > configuredMargin + 1e-8) {
+      exceeds.push({ key, symbol: position.symbol, direction: position.direction, configuredMaxLossUsd: configuredMaxLoss, configuredMarginUsd: configuredMargin, hardMaxLossUsd: configuredMargin });
       missingConfiguredProtection.push(key);
       continue;
     }
