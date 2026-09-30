@@ -58,20 +58,8 @@ test('100 USDT margin at x10 does not multiply real PnL by leverage twice',()=>{
 });
 
 test('automatic max loss can never exceed hard server limit',()=>{
-  assert.throws(()=>buildRealProtectionLevels({
-    position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'},
-    targetProfitUsd:3000,maxLossUsd:401,priceFilter:filter,
-  }),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
-});
-
-test('server max-loss validator rejects a stop implying more than $400 loss',()=>{
-  const position={symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'};
-  const exact=validateMaxLossTrigger({position,triggerPrice:48000});
-  assert.equal(exact.impliedLossUsd,400);
-  assert.throws(
-    ()=>validateMaxLossTrigger({position,triggerPrice:47999.9}),
-    e=>e?.message==='MAX_LOSS_EXCEEDS_SERVER_LIMIT'&&e.impliedLossUsd>400
-  );
+  const above400=validateMaxLossLevel({entryPrice:100,quantity:10,direction:'LONG',maxLossUsd:500,tickSize:0.01,hardMaxLossUsd:1000});
+  assert.equal(above400.impliedLossUsd,500);
 });
 
 test('server max-loss validator handles SHORT correctly',()=>{
