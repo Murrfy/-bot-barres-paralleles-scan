@@ -72,6 +72,7 @@ function harness({permission=safePermission(),permissionHttpStatus=200}={}){
         else if(cmd[1]==='zenith:v1:safety:real-execution-armed') result=fx.arm;
         else if(cmd[1]==='zenith:v1:master-mode') result='RUNNING';
         else if(cmd[1]==='zenith:v1:safety:emergency-stop') result='0';
+        else if(cmd[1]==='zenith:v1:controller-state') result=JSON.stringify({revision:1,stateHash:'test-hash',data:{settings:{maxActive:3}}});
       }else if(cmd[0]==='EVAL'&&String(cmd[3]||'').includes(':rate:entry-execution:')) result=1;
       return new Response(JSON.stringify({result}));
     }
