@@ -611,7 +611,7 @@ export default async function handler(req,res){
       try{
         const normalized=preflight.evaluation.normalized||{};
         protectionPlan=buildEntryProtectionPlan({
-          commandId,symbol,side,quantity:Number(plan.params.quantity),limitPrice,maxLoss,
+          commandId,symbol,side,quantity:Number(plan.params.quantity),limitPrice,maxLoss,margin,
           priceFilter:{
             tickSize:normalized.priceTickSize,
             minPrice:normalized.minPrice,
