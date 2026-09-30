@@ -31,6 +31,8 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
+      - name: Enforce active chapter scope
+        run: node scripts/check-chapter-scope.mjs
       - name: Check secret hygiene
         run: node scripts/check-secret-hygiene.mjs
       - name: Check dangerous runtime primitives
