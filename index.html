@@ -142,7 +142,7 @@
             <div class="formgrid">
               <label class="field">Objectif gain ($)<input id="tTarget" type="number" min="1" step="1"></label>
               <label class="field">Prix objectif calculé<input id="tTargetPreview" readonly></label>
-              <label class="field">Perte maximale ($)<input id="tMaxLoss" type="number" min="2" max="400" step="1"></label>
+              <label class="field">Perte maximale ($)<input id="tMaxLoss" type="number" min="2" step="1"></label>
             </div>
             <!--
     ========================================================================
@@ -451,7 +451,7 @@ function persistRealProtectiveUpdatePending(){
       const hasServerId=/^[A-Za-z0-9._:-]{8,128}$/.test(commandId),hasClientId=/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId);
       const maxLossUsd=n(pending?.maxLossUsd,NaN);
       if((!hasServerId&&!hasClientId)||!(at>0)||now-at>30*24*60*60*1000)continue;
-      if(kind==='MAX_LOSS'&&!(maxLossUsd>=2&&maxLossUsd<=400))continue;
+      if(kind==='MAX_LOSS'&&!(maxLossUsd>=2))continue;
       rows.push({
         key,
         symbol:String(pending?.symbol||'').toUpperCase(),
@@ -479,7 +479,7 @@ function restoreRealProtectiveUpdatePending(){
       const tracked=kind==='MAX_LOSS'||Boolean(activeConfig);
       if(!tracked||!/^[A-Z0-9]{3,30}:(?:LONG|SHORT):(?:MAX_LOSS|EXIT|ACTIVE_CONFIG)$/.test(key)||!/^[A-Z0-9]{3,30}$/.test(symbol)||
          (!hasServerId&&!hasClientId)||!(at>0)||now-at>30*24*60*60*1000)continue;
-      if(kind==='MAX_LOSS'&&!(maxLossUsd>=2&&maxLossUsd<=400))continue;
+      if(kind==='MAX_LOSS'&&!(maxLossUsd>=2))continue;
       realProtectiveUpdatePending.set(key,{
         symbol,kind,price:priceValue,
         ...(kind==='MAX_LOSS'?{maxLossUsd}:{}),
@@ -1186,7 +1186,7 @@ function applyControllerCloudStateSnapshot(state){
 
   const remoteSettings=data.settings&&typeof data.settings==='object'&&!Array.isArray(data.settings)?data.settings:{};
   settings={...settings,...remoteSettings};
-  settings.maxLoss=Math.min(400,Math.max(2,n(settings.maxLoss,40)));
+  settings.maxLoss=Math.min(Math.max(2,n(settings.margin,1000)),Math.max(2,n(settings.maxLoss,40)));
   settings.marginType='ISOLATED';
   settings.protectionStages=normalizeProtections(settings.protectionStages,settings.targetProfit);
 
