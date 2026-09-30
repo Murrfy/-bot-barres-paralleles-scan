@@ -24,6 +24,10 @@ const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
   .replace(
     /^import \{ jsonStructureStatus, plainJsonObject \} from '\.\.\/lib\/json-structure\.mjs';\n/m,
     "const jsonStructureStatus=()=>({ok:true,reason:'JSON_STRUCTURE_OK'}); const plainJsonObject=value=>Boolean(value&&typeof value==='object'&&!Array.isArray(value));\n"
+  )
+  .replace(
+    /^import \{ binanceSigningMode, signBinanceParams \} from '\.\.\/lib\/binance-order-writer\.mjs';\n/m,
+    "const binanceSigningMode=()=> 'HMAC'; const signBinanceParams=params=>params;\n"
   );
 const { masterConfigSyncStatus, stableStringify, reconciliationRuntimeMatches, executionRuntimeReadinessStatus } = await import(
   'data:text/javascript;base64,' +
