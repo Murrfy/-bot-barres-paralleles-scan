@@ -1422,6 +1422,7 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
     const entryPrice = number(position.entryPrice, NaN);
     const quantity = positionQty(position);
     const expectedSide = position.direction === 'LONG' ? 'SELL' : 'BUY';
+    const configuredMaxLoss = configuredMaxLossUsd(controllerState, position.symbol);
     const valid = [];
     for (const order of actualOrders) {
       if (String(order?.orderClass || '').toUpperCase() !== 'ALGO') continue;
