@@ -497,7 +497,7 @@ if (!entryProtectionPlan.includes("if(entrySide!=='BUY')throw new Error('ENTRY_B
     !entryProtectionPlan.includes("protectionKind:'MAX_LOSS'") ||
     !entryProtectionPlan.includes('buildEmergencyMaxLossLevel') ||
     !entryTransition.includes("validId(protectionClientAlgoId,'zth-MAX-')") ||
-    !entryTransition.includes('impliedLossUsd>configuredMaxLossUsd+1e-8')) {
+    !entryTransition.includes('impliedLossUsd>maxLossUsd+1e-8')) {
   fail('current real-entry path must require BUY-only entry with exact Zenith MAX-LOSS identity inside the token-specific configured loss bound');
 }
 if (!riskPolicy.includes('DEFAULT_MAX_ACTIVE_POSITIONS = 3') ||
@@ -505,7 +505,7 @@ if (!riskPolicy.includes('DEFAULT_MAX_ACTIVE_POSITIONS = 3') ||
     !riskPolicy.includes('maxLeverage: 10') ||
     !riskPolicy.includes('maxMarginUsdt: 1000') ||
     !riskPolicy.includes('maxNotionalUsdt: 10000') ||
-    !riskPolicy.includes("'MAX_LOSS_OVER_MARGIN'") ||
+    !riskPolicy.includes("'MAX_LOSS_EXCEEDS_MARGIN'") ||
     !riskPolicy.includes('POSITION_MODE_HEDGE_UNSUPPORTED') ||
     !riskPolicy.includes('MARGIN_TYPE_NOT_ISOLATED')) {
   fail('real-entry risk policy must keep default position concurrency plus leverage, margin, notional, loss, position-mode and isolated-margin gates');
@@ -592,7 +592,7 @@ if (!protectiveUpdateExecute.includes('validateMaxLossTrigger({') ||
   fail('real MAX-LOSS updates must be revalidated server-side against the token-specific allowed loss');
 }
 
-if (!protectiveUpdateExecute.includes('impliedLossUsd<=allowedMaxLoss+1e-8') ||
+if (!protectiveUpdateExecute.includes('impliedLossUsd<=cap+1e-8') ||
     !engineWorker.includes('function safeMaxLossOrders(position,orders,hardMaxLossUsd)') ||
     !engineWorker.includes('impliedLossUsd<=cap+1e-8')) {
   fail('progressive protection must accept only an emergency MAX-LOSS within the token-specific allowed loss');
@@ -601,7 +601,7 @@ if (!protectiveUpdateExecute.includes('impliedLossUsd<=allowedMaxLoss+1e-8') ||
 if (!index.includes('id="tMaxLoss" type="number" min="2" step="1"') ||
     !index.includes('requestedMaxLoss>=2&&requestedMaxLoss<=configuredMargin') ||
     !index.includes('maxLoss:requestedMaxLoss') ||
-    !index.includes('settings.maxLoss=Math.max(2,n(settings.maxLoss,40))')) {
+    !index.includes('settings.maxLoss=Math.min(Math.max(2,n(settings.margin,1000)),Math.max(2,n(settings.maxLoss,40)))')) {
   fail('controller MAX-LOSS settings must use token margin as upper bound while keeping the locked $40 operational fallback');
 }
 if (!index.includes('targetProfit:40,maxLoss:40,protectionStages:DEFAULT_PROTECTIONS') ||
@@ -698,7 +698,7 @@ if (!binanceReconcile.includes('runtimeDataHash') || !binanceReconcile.includes(
 }
 
 if (!binanceReconcile.includes('unsafeMaxLossProtections') ||
-    !binanceReconcile.includes('impliedLossUsd > configuredMaxLossUsd + 1e-8')) {
+    !binanceReconcile.includes('impliedLossUsd > configuredMaxLoss + 1e-8')) {
   fail('Binance reconciliation must reject emergency MAX-LOSS orders whose implied loss exceeds the token-specific configured loss');
 }
 
@@ -771,7 +771,7 @@ const deviceSessionSource = fs.readFileSync('lib/device-session.mjs', 'utf8');
 if (!sync.includes('function runtimeEmergencyProtection(runtimeState, symbol, direction, entryPrice, quantity, excludeClientAlgoId') ||
     !sync.includes("if (!clientAlgoId || clientAlgoId.length > 36) return false") ||
     sync.includes("/^zth-MAX-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId || ''))") ||
-    !sync.includes('impliedLossUsd <= configuredMaxLossUsd + 1e-8')) {
+    !sync.includes('impliedLossUsd > configuredMaxLoss + 1e-8')) {
   fail('central execution ACK must independently accept one safe Binance emergency stop within the token-specific configured loss');
 }
 if (!sync.includes('sameOriginMutation(req)') || !sync.includes("'ORIGIN_FORBIDDEN'") ||
