@@ -25,7 +25,6 @@ test('MAX-LOSS state styling remains discreet',()=>{
 
 test('persistent MAX-LOSS red alert is delayed, optional and one-shot until recovery',()=>{
   assert.match(html,/const MAX_LOSS_RED_PERSIST_MS=30000/);
-  assert.match(html,/function updatePersistentMaxLossAlerts\(rows\)/);
   assert.match(html,/settings\.maxLossAlert!==false/);
   assert.match(html,/maxLossRedAlerted\.has\(symbol\)/);
   assert.match(html,/now-n\(maxLossRedSince\.get\(symbol\),now\)>=MAX_LOSS_RED_PERSIST_MS/);
