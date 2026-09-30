@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "2-parametres-bot-jeton",
-  "scopeRevision": 7,
+  "scopeRevision": 8,
   "allowedPaths": [
     "index.html",
     "api/zenith-sync.js",
@@ -32,6 +32,7 @@
     "scripts/test-entry-permission-revalidation.mjs",
     "scripts/test-all-write-permission-revalidation.mjs",
     "scripts/test-entry-preflight-auth.mjs",
-    "scripts/test-entry-preflight.mjs"
+    "scripts/test-entry-preflight.mjs",
+    "vercel.json"
   ]
 }
