@@ -327,3 +327,12 @@ test('configured protection lists are never truncated by a lower calculated targ
   assert.match(normalize,/Math\.max\(protectionCountForTarget\(target\),src\.length\)/);
   assert.doesNotMatch(normalize,/target==null/);
 });
+
+
+test('full token save refuses to commit Futures overrides before central controller state is ready',()=>{
+  const save=block('async function saveToken()','function devalidateSelected()');
+  assert.match(save,/controllerIdentity\.paired&&controllerIdentity\.role==='controller'&&controllerStateHydrated/);
+  assert.match(save,/await refreshControllerIdentity\(\)/);
+  assert.match(save,/réglages du jeton NON enregistrés — contrôleur\/synchronisation centrale non prêt/);
+  assert.match(save,/await persistAndVerifyTokenFuturesSettings\(s,margin,leverage\)/);
+});
