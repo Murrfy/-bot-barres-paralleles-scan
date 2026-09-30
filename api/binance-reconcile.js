@@ -2136,7 +2136,7 @@ export default async function handler(req, res) {
     const actualOrders = [...standardOrders, ...algoOrders];
     const scopedRuntimeState=runtimeStateWithinScope(runtimeState,scopeSymbols);
     const result = enforceConfiguredMaxLossSafety(
-      reconcile(scopedRuntimeState, actualPositions, actualOrders, entryTransitions),
+      reconcile(scopedRuntimeState, actualPositions, actualOrders, entryTransitions, controllerState),
       controllerState,
       actualPositions,
       actualOrders,
