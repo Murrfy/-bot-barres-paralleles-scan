@@ -37,7 +37,6 @@ import {
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import { jsonStructureStatus, plainJsonObject } from '../lib/json-structure.mjs';
-import { binanceSigningMode, signBinanceParams } from '../lib/binance-order-writer.mjs';
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL ||
@@ -276,6 +275,7 @@ async function fetchBinanceApiPermissions() {
     throw error;
   }
 
+  const { signBinanceParams } = await import('../lib/binance-order-writer.mjs');
   const query = signBinanceParams(new URLSearchParams({
     timestamp: String(serverTime),
     recvWindow: String(BINANCE_PERMISSION_RECV_WINDOW),
@@ -3861,6 +3861,7 @@ export default async function handler(req, res) {
       if (!blockers.length) {
         try {
           apiPermissions = await fetchBinanceApiPermissions();
+          const { binanceSigningMode } = await import('../lib/binance-order-writer.mjs');
           const tradingSigningMode = binanceSigningMode(process.env.BINANCE_TRADING_API_SECRET || '');
           blockers.push(...binanceApiPermissionBlockers(apiPermissions, { signingMode: tradingSigningMode }));
         } catch (e) {
