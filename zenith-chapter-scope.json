@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "1-interface-utilisateur",
-  "scopeRevision": 4,
+  "scopeRevision": 5,
   "allowedPaths": [
     "index.html",
     "controller-status.html",
@@ -9,6 +9,7 @@
     "pair-controller.html",
     "replace-controller.html",
     "vercel.json",
+    "api/zenith-sync.js",
     "scripts/test-token-settings-integrity.mjs",
     "scripts/test-token-futures-runtime-roundtrip.mjs",
     "scripts/test-maxloss-status-ui.mjs",
