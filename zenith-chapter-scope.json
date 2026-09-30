@@ -1,22 +1,21 @@
 {
   "version": 1,
-  "activeChapter": "1-interface-utilisateur",
-  "scopeRevision": 5,
+  "activeChapter": "2-parametres-bot-jeton",
+  "scopeRevision": 6,
   "allowedPaths": [
     "index.html",
-    "controller-status.html",
-    "master-admin.html",
-    "pair-controller.html",
-    "replace-controller.html",
-    "vercel.json",
     "api/zenith-sync.js",
+    "server/zenith-engine-worker.mjs",
+    "lib/risk-policy.mjs",
+    "lib/binance-symbol-config.mjs",
     "scripts/test-token-settings-integrity.mjs",
     "scripts/test-token-futures-runtime-roundtrip.mjs",
-    "scripts/test-maxloss-status-ui.mjs",
-    "scripts/test-protection-visibility-toggle.mjs",
-    "scripts/test-real-only-ui.mjs",
-    "scripts/test-csp-inline-script-hashes.mjs",
-    "scripts/test-csp-style-hashes.mjs",
+    "scripts/test-master-sync.mjs",
+    "scripts/test-cloud-controller-master-sync.mjs",
+    "scripts/test-binance-symbol-config.mjs",
+    "scripts/test-entry-symbol-config-wiring.mjs",
+    "scripts/test-engine-worker-runtime.mjs",
+    "scripts/test-entry-slot-reservation-gate.mjs",
     "ZENITH_MASTER_PLAN.md"
   ]
 }
