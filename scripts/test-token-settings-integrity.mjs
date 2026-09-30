@@ -224,6 +224,18 @@ test('BOT save persists editable global margin and leverage without touching per
   assert.doesNotMatch(saveBot,/tokenSettings\s*=/);
 });
 
+test('BOT exposes and persists the important MAX-LOSS red notification setting',()=>{
+  assert.match(html,/id="bMaxLossAlert"[^>]*type="checkbox"/);
+  assert.match(html,/Notification importante si le MAX-LOSS d’un jeton actif devient rouge/);
+  assert.match(html,/const DEFAULTS=\{[^\n]*maxLossAlert:true/);
+  const fill=block('function fillBot()','function setTokenFieldsEnabled()');
+  assert.match(fill,/\$\('bMaxLossAlert'\)\.checked=settings\.maxLossAlert!==false/);
+  const saveBot=block('function readBotSettings()','async function saveSelectedAsDefaults()');
+  assert.match(saveBot,/maxLossAlert:\$\('bMaxLossAlert'\)\.checked/);
+  const cloud=block('function controllerCloudStatePayload(','async function syncControllerCloudStateNow()');
+  assert.doesNotMatch(cloud,/\['theme','sound','vibrate','showProtections','maxLossAlert'\]/);
+});
+
 test('BOT trading defaults cannot change while a position or watched entry is active',()=>{
   const saveBot=block('function readBotSettings()','async function saveSelectedAsDefaults()');
   assert.match(saveBot,/tradingChanged=/);
