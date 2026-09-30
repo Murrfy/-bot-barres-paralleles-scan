@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "3-sortie-risque",
-  "scopeRevision": 11,
+  "scopeRevision": 12,
   "allowedPaths": [
     "index.html",
     "api/zenith-sync.js",
@@ -37,6 +37,7 @@
     "scripts/test-maxloss-status-ui.mjs",
     "lib/order-intent.mjs",
     "lib/protective-command.mjs",
-    "scripts/test-protective-command.mjs"
+    "scripts/test-protective-command.mjs",
+    "scripts/check-zenith.mjs"
   ]
 }
