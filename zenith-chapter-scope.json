@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "2-parametres-bot-jeton",
-  "scopeRevision": 6,
+  "scopeRevision": 7,
   "allowedPaths": [
     "index.html",
     "api/zenith-sync.js",
@@ -16,6 +16,22 @@
     "scripts/test-entry-symbol-config-wiring.mjs",
     "scripts/test-engine-worker-runtime.mjs",
     "scripts/test-entry-slot-reservation-gate.mjs",
-    "ZENITH_MASTER_PLAN.md"
+    "ZENITH_MASTER_PLAN.md",
+    "api/binance-entry-preflight.js",
+    "api/binance-entry-execute.js",
+    "api/binance-protective-execute.js",
+    "api/binance-protective-update-execute.js",
+    "api/binance-order-test.js",
+    "lib/binance-order-writer.mjs",
+    "lib/binance-api-permissions.mjs",
+    "lib/binance-algo-writer.mjs",
+    "scripts/test-binance-order-writer.mjs",
+    "scripts/test-binance-algo-writer.mjs",
+    "scripts/test-binance-api-permissions.mjs",
+    "scripts/test-binance-order-test.mjs",
+    "scripts/test-entry-permission-revalidation.mjs",
+    "scripts/test-all-write-permission-revalidation.mjs",
+    "scripts/test-entry-preflight-auth.mjs",
+    "scripts/test-entry-preflight.mjs"
   ]
 }
