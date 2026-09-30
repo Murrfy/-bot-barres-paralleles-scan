@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "activeChapter": "1-interface-utilisateur",
+  "scopeRevision": 1,
+  "allowedPaths": [
+    "index.html",
+    "controller-status.html",
+    "master-admin.html",
+    "pair-controller.html",
+    "replace-controller.html",
+    "vercel.json",
+    "scripts/test-token-settings-integrity.mjs",
+    "scripts/test-token-futures-runtime-roundtrip.mjs",
+    "scripts/test-maxloss-status-ui.mjs",
+    "scripts/test-protection-visibility-toggle.mjs",
+    "scripts/test-real-only-ui.mjs",
+    "scripts/test-csp-inline-script-hashes.mjs",
+    "scripts/test-csp-style-hashes.mjs"
+  ]
+}
