@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "3-sortie-risque",
-  "scopeRevision": 20,
+  "scopeRevision": 21,
   "allowedPaths": [
     "index.html",
     "api/zenith-sync.js",
@@ -45,6 +45,8 @@
     "lib/entry-transition.mjs",
     "scripts/test-reconcile.mjs",
     "scripts/test-active-maxloss-transition.mjs",
-    "scripts/test-entry-transition-reconcile-wiring.mjs"
+    "scripts/test-entry-transition-reconcile-wiring.mjs",
+    "lib/entry-protection-plan.mjs",
+    "scripts/test-entry-protection-plan.mjs"
   ]
 }
