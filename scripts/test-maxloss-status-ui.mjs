@@ -30,6 +30,12 @@ test('persistent MAX-LOSS red alert is delayed, optional and one-shot until reco
   assert.match(html,/maxLossRedAlerted\.has\(symbol\)/);
   assert.match(html,/now-n\(maxLossRedSince\.get\(symbol\),now\)>=MAX_LOSS_RED_PERSIST_MS/);
   assert.match(html,/maxLossRedAlerted\.delete\(symbol\)/);
-  assert.match(html,/updatePersistentMaxLossAlerts\(rows\)/);
+  assert.match(html,/updatePersistentMaxLossAlerts\(rows,binanceAccount\.lastOk\)/);
+  assert.match(html,/function updatePersistentMaxLossAlerts\(rows,snapshotAt\)/);
+  assert.match(html,/const freshAt=Math\.max\(0,n\(snapshotAt,0\)\)/);
+  assert.match(html,/if\(!freshAt\)return/);
+  assert.match(html,/const previous=maxLossRedSnapshotAt\.get\(symbol\)\|\|0/);
+  assert.match(html,/if\(freshAt<=previous\)continue/);
+  assert.match(html,/maxLossRedSnapshotAt\.set\(symbol,freshAt\)/);
   assert.match(html,/ALERTE MAX-LOSS/);
 });
