@@ -850,6 +850,7 @@ function renderRealPositions(){
     return;
   }
   const rows=Array.isArray(binanceAccount.positions)?binanceAccount.positions:[];
+  updatePersistentMaxLossAlerts(rows);
   note.textContent=`${rows.length} position(s) · lecture Binance`;
   if(!rows.length){
     wrap.innerHTML='<div class="hint">Aucune position réelle ouverte sur Binance.</div>';
