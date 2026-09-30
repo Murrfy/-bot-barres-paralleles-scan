@@ -930,11 +930,7 @@ export default async function handler(req,res){
   }
 
   const exitMode=String(req.body?.exitMode||'PROTECTIVE_IOC').toUpperCase();
-  if(exitMode==='REMAINDER_MARKET'){
-    if(!partialTargetRemainder&&!progressiveRemainderRecovery&&!maxLossRemainderRecovery&&!incompleteProtectiveRemainder&&!persistedRemainderRecovery){
-      return send(res,423,{ok:false,code:'SALE_REMAINDER_PROOF_REQUIRED',writeAttempted:false});
-    }
-  }else if(exitMode!=='PROTECTIVE_IOC'){
+  if(exitMode!=='PROTECTIVE_IOC'){
     return send(res,400,{ok:false,code:'EXIT_MODE_LIMIT_REQUIRED',writeAttempted:false});
   }
 
@@ -966,89 +962,7 @@ export default async function handler(req,res){
     });
   }
 
-  if(exitMode==='REMAINDER_MARKET'){
-    let wrote=false;
-    const attempts=[];
-    let recoveryState=null;
-    try{
-      if(persistedRemainderRecovery){
-        recoveryState=await loadSaleRemainderRecovery(symbol,dir);
-        if(!recoveryState||String(recoveryState.commandId)!==commandId){
-          return send(res,409,{ok:false,code:'SALE_REMAINDER_PERSISTED_STATE_MISSING',writeAttempted:false});
-        }
-      }else{
-        const source=saleRemainderSource({
-          reqBody:req.body,partialTargetRemainder,progressiveRemainderRecovery,
-          maxLossRemainderRecovery,incompleteProtectiveRemainder,
-        });
-        if(!source){
-          return send(res,423,{ok:false,code:'SALE_REMAINDER_SOURCE_INVALID',writeAttempted:false});
-        }
-        recoveryState=await beginSaleRemainderRecovery(source);
-      }
-
-      let liveRemaining=await liveBinancePositionQuantity({apiKey,secret,symbol,direction:dir});
-      if(!(liveRemaining>1e-12)){
-        await clearSaleRemainderRecovery(recoveryState);
-        return send(res,200,{
-          ok:true,remainderMarketClosed:true,attempts,remainingQuantity:0,
-          alreadyClosed:true,
-        });
-      }
-      if(Math.abs(liveRemaining-liveQty)>Math.max(1e-12,liveQty*1e-10)){
-        return send(res,409,{
-          ok:false,code:'SALE_REMAINDER_LIVE_POSITION_CHANGED',
-          liveQuantity:liveRemaining,writeAttempted:false,
-        });
-      }
-
-      while(Number(recoveryState.nextAttempt)<4&&liveRemaining>1e-12){
-        const attempt=Math.floor(Number(recoveryState.nextAttempt));
-        const attemptQuantity=Number(recoveryState.attemptQuantity);
-        if(!(attemptQuantity>0)||
-           liveRemaining>attemptQuantity+Math.max(1e-12,attemptQuantity*1e-10)){
-          return send(res,409,{
-            ok:false,code:'SALE_REMAINDER_STATE_QUANTITY_INCONSISTENT',
-            liveQuantity:liveRemaining,attemptQuantity,writeAttempted:wrote,
-          });
-        }
-
-        const marketPlan=buildExitOrderPlan({
-          commandId,symbol,direction:dir,quantity:attemptQuantity,
-          exitMode:'REMAINDER_MARKET',attempt,
-        });
-
-        let marketResult;
-        const priorAttemptAlreadyReduced=
-          liveRemaining<attemptQuantity-Math.max(1e-12,attemptQuantity*1e-10);
-        if(priorAttemptAlreadyReduced){
-          let existing=null;
-          try{
-            existing=await queryOrderByClientId({
-              apiKey,secret,symbol,
-              clientOrderId:String(marketPlan.params.newClientOrderId||''),
-              timestamp:Date.now(),
-            });
-          }catch(e){
-            if(Number(e?.code)===-2013){
-              return send(res,409,{
-                ok:false,code:'SALE_REMAINDER_PREVIOUS_ATTEMPT_NOT_FOUND',
-                writeAttempted:wrote,attempt,attemptQuantity,liveQuantity:liveRemaining,
-              });
-            }
-            throw e;
-          }
-          if(!marketAttemptIdentityMatches(existing,marketPlan)){
-            return send(res,409,{
-              ok:false,code:'SALE_REMAINDER_PREVIOUS_ATTEMPT_IDENTITY_MISMATCH',
-              writeAttempted:wrote,attempt,attemptQuantity,liveQuantity:liveRemaining,
-            });
-          }
-          marketResult={
-            ok:true,disposition:'EXISTING',writeAttempted:false,order:existing,
-          };
-        }else{
-          if(!(await requireFinalProtectiveMaster(res,master)))return;
+  if(!(await requireFinalProtectiveMaster(res,master)))return;
           marketResult=await placeStandardOrderIdempotent({
             apiKey,secret,orderParams:marketPlan.params,writesEnabled:true,timestamp:Date.now(),
           });
