@@ -21,3 +21,15 @@ test('MAX-LOSS state styling remains discreet',()=>{
   assert.match(html,/\.maxLossState\{font-size:7px;/);
   assert.doesNotMatch(html,/\.maxLossState\{[^}]*font-size:(?:1[2-9]|[2-9][0-9])px/);
 });
+
+
+test('persistent MAX-LOSS red alert is delayed, optional and one-shot until recovery',()=>{
+  assert.match(html,/const MAX_LOSS_RED_PERSIST_MS=30000/);
+  assert.match(html,/function updatePersistentMaxLossAlerts\(rows\)/);
+  assert.match(html,/settings\.maxLossAlert!==false/);
+  assert.match(html,/maxLossRedAlerted\.has\(symbol\)/);
+  assert.match(html,/now-n\(maxLossRedSince\.get\(symbol\),now\)>=MAX_LOSS_RED_PERSIST_MS/);
+  assert.match(html,/maxLossRedAlerted\.delete\(symbol\)/);
+  assert.match(html,/updatePersistentMaxLossAlerts\(rows\)/);
+  assert.match(html,/ALERTE MAX-LOSS/);
+});
