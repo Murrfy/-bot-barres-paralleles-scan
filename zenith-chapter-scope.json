@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "3-sortie-risque",
-  "scopeRevision": 15,
+  "scopeRevision": 16,
   "allowedPaths": [
     "index.html",
     "api/zenith-sync.js",
@@ -40,6 +40,7 @@
     "scripts/test-protective-command.mjs",
     "scripts/check-zenith.mjs",
     "api/binance-reconcile.js",
-    "scripts/test-real-protection-levels.mjs"
+    "scripts/test-real-protection-levels.mjs",
+    "lib/real-protection-levels.mjs"
   ]
 }
