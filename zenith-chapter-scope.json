@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "activeChapter": "2-parametres-bot-jeton",
-  "scopeRevision": 13,
+  "activeChapter": "3-sortie-risque",
+  "scopeRevision": 14,
   "allowedPaths": [
     "index.html",
     "api/zenith-sync.js",
