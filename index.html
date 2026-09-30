@@ -1976,10 +1976,10 @@ async function saveToken(){
   if(!(margin>=1&&margin<=1000))return setStatus('La marge du jeton doit être comprise entre 1 $ et 1 000 $.',true);
   if(leverage<1||leverage>10)return setStatus('Le levier du jeton doit être compris entre x1 et x10.',true);
   const requestedMaxLoss=n($('tMaxLoss').value,settings.maxLoss);
+  const configuredMargin=margin;
   if(!(requestedMaxLoss>=2&&requestedMaxLoss<=configuredMargin)){
     return setStatus('Perte maximale invalide : minimum 2 $ et maximum égal à la marge du jeton.',true);
   }
-  const configuredMargin=margin;
   if(!(configuredMargin>0)||requestedMaxLoss>configuredMargin){
     return setStatus('Perte maximale invalide : elle ne peut pas dépasser la marge configurée du jeton.',true);
   }
