@@ -60,6 +60,15 @@ test('Futures draft survives the Futures to token-settings tab transition before
   assert.match(tabs,/\$\('fLev'\)\.value=futuresLeverage/);
 });
 
+test('unsaved Futures draft is protected from background renderAll resets',()=>{
+  const fill=block('function fillFutures()','function fillBot()');
+  assert.match(fill,/dataset\.draftSymbol/);
+  assert.match(fill,/keepDraft/);
+  assert.match(fill,/if\(!keepDraft\)/);
+  const inputs=block("['fMargin','fLev'].forEach", "['tExactBuy','tExactSell']");
+  assert.match(inputs,/dataset\.draftSymbol=selectedSymbol/);
+});
+
 test('saving the token also persists the currently displayed Futures margin and leverage',()=>{
   const save=block('async function saveToken()','function devalidateSelected()');
   assert.match(save,/margin=Math\.max\(1,n\(\$\('fMargin'\)\.value,n\(old\.margin,settings\.margin\)\)\)/);
