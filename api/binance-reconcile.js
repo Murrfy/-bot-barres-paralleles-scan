@@ -1072,7 +1072,7 @@ function orderProtectsPosition(order, position) {
   return order?.reduceOnly === true || order?.closePosition === true;
 }
 
-function configuredMaxLossUsd(controllerState, symbol) {
+function configuredMaxLossUsd(controllerState, position.symbol) {
   const data = controllerState?.data && typeof controllerState.data === 'object' ? controllerState.data : null;
   if (!data) return NaN;
   const sym = String(symbol || '').toUpperCase();
@@ -1083,7 +1083,7 @@ function configuredMaxLossUsd(controllerState, symbol) {
   return value > 0 ? value : NaN;
 }
 
-function configuredMarginUsd(controllerState, symbol) {
+function configuredMarginUsd(controllerState, position.symbol) {
   const data = controllerState?.data && typeof controllerState.data === 'object' ? controllerState.data : null;
   if (!data) return NaN;
   const sym = String(symbol || '').toUpperCase();
