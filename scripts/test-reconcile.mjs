@@ -584,7 +584,7 @@ test('MAX-LOSS exactly at the hard $400 cap remains valid', () => {
 
 test('reconciliation rejects a Zenith MAX-LOSS above the configured per-token cap', () => {
   const baseResult = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
-  const controllerState = {data:{settings:{maxLoss:400},tokenSettings:{BTCUSDT:{maxLoss:100}}}};
+  const controllerState = {data:{settings:{maxLoss:400},tokenSettings:{BTCUSDT:{maxLoss:100,margin:1000}}}};
   const result = enforceConfiguredMaxLossSafety(baseResult,controllerState,[normalized],[normalizedEmergency]);
   assert.equal(result.failClosed,true);
   assert.ok(result.reasons.includes('MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT'));
@@ -597,7 +597,7 @@ test('reconciliation rejects a Zenith MAX-LOSS above the configured per-token ca
 test('reconciliation accepts MAX-LOSS exactly within the configured per-token cap', () => {
   const tight = normalizeActualAlgoOrder({...emergency,algoId:177,clientAlgoId:'zth-MAX-tight',triggerPrice:'49900'});
   const baseResult = reconcile(runtime([position], [tight]), [normalized], [tight]);
-  const controllerState = {data:{settings:{maxLoss:400},tokenSettings:{BTCUSDT:{maxLoss:100}}}};
+  const controllerState = {data:{settings:{maxLoss:400},tokenSettings:{BTCUSDT:{maxLoss:100,margin:1000}}}};
   const result = enforceConfiguredMaxLossSafety(baseResult,controllerState,[normalized],[tight]);
   assert.equal(result.reasons.includes('MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT'),false);
   assert.equal(result.reasons.includes('CONFIGURED_MAX_LOSS_UNAVAILABLE'),false);
@@ -607,7 +607,7 @@ test('reconciliation accepts MAX-LOSS exactly within the configured per-token ca
 test('configured cap also accepts an exact safe manual Binance MAX-LOSS', () => {
   const manual = normalizeActualAlgoOrder({...emergency,algoId:178,clientAlgoId:'manual-max-loss',triggerPrice:'49900'});
   const baseResult = reconcile(runtime([position], [manual]), [normalized], [manual]);
-  const controllerState = {data:{settings:{maxLoss:400},tokenSettings:{BTCUSDT:{maxLoss:100}}}};
+  const controllerState = {data:{settings:{maxLoss:400},tokenSettings:{BTCUSDT:{maxLoss:100,margin:1000}}}};
   const result = enforceConfiguredMaxLossSafety(baseResult,controllerState,[normalized],[manual]);
   assert.equal(result.failClosed,false);
   assert.equal(result.reasons.includes('MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT'),false);
