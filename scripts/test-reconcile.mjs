@@ -562,20 +562,19 @@ test('external reduce-only order is not classified as a Zenith orphan', () => {
 });
 
 
-test('MAX-LOSS beyond the hard $400 cap is treated as missing protection', () => {
-  const unsafe = normalizeActualAlgoOrder({
+test('MAX-LOSS above $400 remains valid when token margin allows it', () => {
+  const wider = normalizeActualAlgoOrder({
     ...emergency,
     algoId:177,
-    clientAlgoId:'zth-MAX-too-far',
-    triggerPrice:'49599'
+    clientAlgoId:'zth-MAX-over-400',
+    triggerPrice:'49500'
   });
-  const result = reconcile(runtime([position], [unsafe]), [normalized], [unsafe]);
-  assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
-  assert.equal(result.differences.unsafeMaxLossProtections.length,1);
-  assert.ok(result.differences.unsafeMaxLossProtections[0].impliedLossUsd>400);
+  const result = reconcile(runtime([position], [wider]), [normalized], [wider]);
+  assert.equal(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'),false);
+  assert.equal(result.differences.unsafeMaxLossProtections.length,0);
 });
 
-test('MAX-LOSS exactly at the hard $400 cap remains valid', () => {
+test('MAX-LOSS exactly at $400 remains valid', () => {
   const result = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
   assert.equal(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'),false);
   assert.equal(result.differences.unsafeMaxLossProtections.length,0);
