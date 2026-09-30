@@ -17,6 +17,7 @@ test('LONG automatic levels use exact quantity and conservative tick rounding',(
     targetProfitUsd:1,
     maxLossUsd:1,
     priceFilter:filter,
+    hardMaxLossUsd:1000,
   });
   assert.equal(levels.direction,'LONG');
   assert.equal(levels.targetPrice,100.4);
@@ -31,6 +32,7 @@ test('SHORT automatic levels round in the opposite market direction but remain c
     targetProfitUsd:1,
     maxLossUsd:1,
     priceFilter:filter,
+    hardMaxLossUsd:1000,
   });
   assert.equal(levels.direction,'SHORT');
   assert.equal(levels.targetPrice,99.6);
@@ -57,28 +59,28 @@ test('100 USDT margin at x10 does not multiply real PnL by leverage twice',()=>{
   assert.equal(priceForLinearPnl({entryPrice:100,quantity,direction:'LONG',pnlUsd:-40}),96);
 });
 
-test('automatic max loss can never exceed hard server limit',()=>{
+test('automatic max loss can never exceed the token-specific allowed loss',()=>{
   assert.throws(()=>buildRealProtectionLevels({
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'},
-    targetProfitUsd:3000,maxLossUsd:401,priceFilter:filter,
+    targetProfitUsd:3000,maxLossUsd:501,priceFilter:filter,hardMaxLossUsd:500,
   }),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
 });
 
-test('server max-loss validator rejects a stop implying more than $400 loss',()=>{
+test('server max-loss validator uses the token-specific allowed loss',()=>{
   const position={symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'};
-  const exact=validateMaxLossTrigger({position,triggerPrice:48000});
-  assert.equal(exact.impliedLossUsd,400);
+  const exact=validateMaxLossTrigger({position,triggerPrice:47500,hardMaxLossUsd:500});
+  assert.equal(exact.impliedLossUsd,500);
   assert.throws(
-    ()=>validateMaxLossTrigger({position,triggerPrice:47999.9}),
-    e=>e?.message==='MAX_LOSS_EXCEEDS_SERVER_LIMIT'&&e.impliedLossUsd>400
+    ()=>validateMaxLossTrigger({position,triggerPrice:47499.9,hardMaxLossUsd:500}),
+    e=>e?.message==='MAX_LOSS_EXCEEDS_SERVER_LIMIT'&&e.impliedLossUsd>500
   );
 });
 
 test('server max-loss validator handles SHORT correctly',()=>{
   const position={symbol:'ETHUSDT',positionSide:'BOTH',positionAmt:'-2',entryPrice:'3000'};
-  const exact=validateMaxLossTrigger({position,triggerPrice:3200});
-  assert.equal(exact.impliedLossUsd,400);
-  assert.throws(()=>validateMaxLossTrigger({position,triggerPrice:3200.1}),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
+  const exact=validateMaxLossTrigger({position,triggerPrice:3250,hardMaxLossUsd:500});
+  assert.equal(exact.impliedLossUsd,500);
+  assert.throws(()=>validateMaxLossTrigger({position,triggerPrice:3250.1,hardMaxLossUsd:500}),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
 });
 
 
@@ -110,6 +112,7 @@ test('progressive protection uses one Binance trigger/LIMIT price that preserves
     armProfitUsd:40,
     protectedProfitUsd:39.8,
     priceFilter:filter,
+    hardMaxLossUsd:1000,
   });
   assert.equal(level.armProfitUsd,40);
   assert.equal(level.protectedProfitUsd,39.8);
@@ -123,6 +126,7 @@ test('SHORT progressive protection also preserves at least the requested floor',
     armProfitUsd:40,
     protectedProfitUsd:39.8,
     priceFilter:filter,
+    hardMaxLossUsd:1000,
   });
   assert.equal(level.triggerPrice,level.limitPrice);
   assert.ok(level.actualProtectedProfitUsd>=39.8);
@@ -135,6 +139,7 @@ test('requested +40 target can round to +40.02 but never below +40',()=>{
     targetProfitUsd:40,
     maxLossUsd:10,
     priceFilter:filter,
+    hardMaxLossUsd:1000,
   });
   assert.equal(levels.targetPrice,233.4);
   assert.ok(Math.abs(levels.actualTargetProfitUsd-40.02)<1e-8);
@@ -147,6 +152,7 @@ test('SHORT requested +40 target also rounds to at least +40, never below',()=>{
     targetProfitUsd:40,
     maxLossUsd:10,
     priceFilter:filter,
+    hardMaxLossUsd:1000,
   });
   assert.equal(levels.targetPrice,66.6);
   assert.ok(Math.abs(levels.actualTargetProfitUsd-40.02)<1e-8);
@@ -159,6 +165,7 @@ test('requested +7.80 protected floor rounds on the protective side, never below
     armProfitUsd:8,
     protectedProfitUsd:7.8,
     priceFilter:filter,
+    hardMaxLossUsd:1000,
   });
   assert.equal(level.triggerPrice,level.limitPrice);
   assert.ok(level.actualProtectedProfitUsd>=7.8);
@@ -171,6 +178,7 @@ test('MAX-LOSS tick rounding never exceeds requested loss between ticks',()=>{
     targetProfitUsd:8,
     maxLossUsd:7.8,
     priceFilter:filter,
+    hardMaxLossUsd:1000,
   });
   assert.ok(levels.actualMaxLossUsd<=7.8+1e-8);
 });
