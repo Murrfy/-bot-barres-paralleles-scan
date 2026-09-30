@@ -50,6 +50,16 @@ test('per-token Futures save is verified locally and against central controller 
   assert.match(verify,/CONTROLLER_STATE_NOT_READY/);
 });
 
+test('Futures draft survives the Futures to token-settings tab transition before final save',()=>{
+  const tabs=block("document.querySelectorAll('.tab').forEach(b=>b.onclick=", "$('manualTokenAddBtn').onclick=addManualToken");
+  assert.match(tabs,/fromFutures/);
+  assert.match(tabs,/futuresMargin=fromFutures&&selectedSymbol\?\$\('fMargin'\)\.value:null/);
+  assert.match(tabs,/futuresLeverage=fromFutures&&selectedSymbol\?\$\('fLev'\)\.value:null/);
+  assert.match(tabs,/b\.dataset\.pane==='tokenPane'/);
+  assert.match(tabs,/\$\('fMargin'\)\.value=futuresMargin/);
+  assert.match(tabs,/\$\('fLev'\)\.value=futuresLeverage/);
+});
+
 test('saving the token also persists the currently displayed Futures margin and leverage',()=>{
   const save=block('async function saveToken()','function devalidateSelected()');
   assert.match(save,/margin=Math\.max\(1,n\(\$\('fMargin'\)\.value,n\(old\.margin,settings\.margin\)\)\)/);
