@@ -1190,7 +1190,7 @@ function execMarketOpenPayloadStatus(payload, now = Date.now()) {
   if (orderType !== 'MARKET') return { ok:false, reason:'MARKET_ENTRY_TYPE_REQUIRED' };
   if (!(margin > 0) || margin > REAL_RISK_LIMITS.maxMarginUsdt) return { ok:false, reason:'MARGIN_INVALID' };
   if (!(leverage > 0) || leverage > REAL_RISK_LIMITS.maxLeverage) return { ok:false, reason:'LEVERAGE_INVALID' };
-  if (!(maxLoss > 0) || maxLoss > margin return { ok:false, reason:'MAX_LOSS_INVALID' };
+  if (!(maxLoss > 0) || maxLoss > margin) return { ok:false, reason:'MAX_LOSS_INVALID' };
   if (!Number.isFinite(requestedAt) || requestedAt <= 0) return { ok:false, reason:'REQUESTED_AT_INVALID' };
   const age = Number(now) - requestedAt;
   if (!Number.isFinite(age) || age < -5000 || age > 30000) return { ok:false, reason:'MARKET_ENTRY_REQUEST_STALE' };
