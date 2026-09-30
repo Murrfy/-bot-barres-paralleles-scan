@@ -462,7 +462,7 @@ function evaluateTriggeredMaxLossRemainder({
   const impliedLossUsd=dir==='LONG'
     ?(entryPrice-triggerPrice)*originalQty
     :(triggerPrice-entryPrice)*originalQty;
-  if(!(impliedLossUsd>=0)||impliedLossUsd>configured+1e-8||impliedLossUsd>REAL_RISK_LIMITS.maxLossUsd+1e-8)return null;
+  if(!(impliedLossUsd>=0)||impliedLossUsd>configured+1e-8)return null;
 
   const actualStatus=String(actualOrder?.status||'').toUpperCase();
   const initialExecuted=number(actualOrder?.executedQty,NaN);
@@ -1080,7 +1080,7 @@ function configuredMaxLossUsd(controllerState, symbol) {
   const globalSettings = data.settings && typeof data.settings === 'object' ? data.settings : {};
   const token = tokenSettings[sym] && typeof tokenSettings[sym] === 'object' ? tokenSettings[sym] : {};
   const value = number(token.maxLoss, number(globalSettings.maxLoss, NaN));
-  return value > 0 ? Math.min(value, REAL_RISK_LIMITS.maxLossUsd) : NaN;
+  return value > 0 ? value : NaN;
 }
 
 function configuredMarginUsd(controllerState, symbol) {
@@ -1128,7 +1128,7 @@ function authorizedPendingMaxLossEdit(position, actualOrders, processingCommands
     const requestedMaxLossUsd = number(payload.maxLossUsd, NaN);
     const triggerPrice = number(payload.triggerPrice, NaN);
     const commandQuantity = number(payload.quantity, NaN);
-    if (!(requestedMaxLossUsd >= 2 && requestedMaxLossUsd <= REAL_RISK_LIMITS.maxLossUsd)) continue;
+    if (!(requestedMaxLossUsd >= 2 && requestedMaxLossUsd <= Math.abs(n(position?.isolatedMargin,NaN)))) continue;
     const configuredMargin = configuredMarginUsd(controllerState, symbol);
     if (!(configuredMargin > 0) || requestedMaxLossUsd > configuredMargin + 1e-8) continue;
     if (!(triggerPrice > 0) || !(commandQuantity > 0) || Math.abs(commandQuantity - quantity) > 1e-12) continue;
@@ -1236,7 +1236,7 @@ function enforceConfiguredMaxLossSafety(
           impliedLossUsd,
           configuredMaxLossUsd: configuredMaxLoss,
           pendingRequestedMaxLossUsd: pendingEdit?.requestedMaxLossUsd || null,
-          hardMaxLossUsd: REAL_RISK_LIMITS.maxLossUsd,
+          hardMaxLossUsd: configuredMaxLossUsd,
           clientAlgoId,
           algoId: String(order?.algoId || ''),
         });
@@ -1449,17 +1449,9 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
       const impliedLossUsd = position.direction === 'LONG'
         ? (entryPrice - trigger) * quantity
         : (trigger - entryPrice) * quantity;
-      if (impliedLossUsd > REAL_RISK_LIMITS.maxLossUsd + 1e-8) {
-        unsafeMaxLossProtections.push({
-          key,
-          symbol: position.symbol,
-          direction: position.direction,
-          triggerPrice: trigger,
-          impliedLossUsd,
-          hardMaxLossUsd: REAL_RISK_LIMITS.maxLossUsd,
-          clientAlgoId: String(order?.clientAlgoId || ''),
-          algoId: String(order?.algoId || ''),
-        });
+      if (impliedLossUsd > configuredMaxLossUsd + 1e-8) {
+    return null;
+  });
         continue;
       }
       valid.push(order);
