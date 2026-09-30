@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "3-sortie-risque",
-  "scopeRevision": 10,
+  "scopeRevision": 11,
   "allowedPaths": [
     "index.html",
     "api/zenith-sync.js",
@@ -34,6 +34,9 @@
     "scripts/test-entry-preflight-auth.mjs",
     "scripts/test-entry-preflight.mjs",
     "vercel.json",
-    "scripts/test-maxloss-status-ui.mjs"
+    "scripts/test-maxloss-status-ui.mjs",
+    "lib/order-intent.mjs",
+    "lib/protective-command.mjs",
+    "scripts/test-protective-command.mjs"
   ]
 }
