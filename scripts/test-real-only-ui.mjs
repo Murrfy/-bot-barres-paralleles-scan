@@ -80,3 +80,21 @@ test('completed LIMIT-only audit still leaves all explicit real-execution arm ga
     'real-entry write switch must be enabled before production arm'
   );
 });
+
+
+test('controller status reads stored reconciliation through safety without triggering reconciliation',()=>{
+  const statusHtml=fs.readFileSync('controller-status.html','utf8');
+  const sync=fs.readFileSync('api/zenith-sync.js','utf8');
+  assert.doesNotMatch(statusHtml,/fetch\(['"]\/api\/binance-reconcile/);
+  assert.match(statusHtml,/\/api\/zenith-sync\?action=safety/);
+  assert.match(statusHtml,/rq\?\.reconciliation/);
+  const start=sync.indexOf("if (action === 'safety' && req.method === 'GET')");
+  const end=sync.indexOf("if (action === 'master-preflight'",start);
+  assert.ok(start>=0&&end>start,'safety block missing');
+  const safety=sync.slice(start,end);
+  assert.match(safety,/KEY_RECONCILE_LAST/);
+  assert.match(safety,/KEY_STATE/);
+  assert.match(safety,/reconciliationRuntimeMatches/);
+  assert.match(safety,/BINANCE_RECONCILIATION_STALE/);
+  assert.match(safety,/reconciliation,/);
+});

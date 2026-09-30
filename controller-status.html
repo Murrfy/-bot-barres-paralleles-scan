@@ -97,45 +97,36 @@ function show(msg,type=''){const e=document.getElementById('status');e.textConte
         ' · commandes '+String(rq.pendingCommands||0)+' en attente / '+String(rq.processingCommands||0)+' en traitement.';
 
       safety.className='status '+(locked&&emergencyStop&&noMasterLease?'ok':'warn');
+
+      const reconcile=document.getElementById('reconcile');
+      const reconciliation=rq?.reconciliation;
+      if(!reconciliation?.verified){
+        reconcile.textContent='Réconciliation Binance non vérifiée : '+String(reconciliation?.reason||'état indisponible')+'.';
+        reconcile.className='status err';
+      }else{
+        const actualPositions=Number(reconciliation.positions||0);
+        const actualOrders=Number(reconciliation.orders||0);
+        const reasons=Array.isArray(reconciliation.reasons)?reconciliation.reasons:[];
+        if(reconciliation.failClosed===true){
+          reconcile.textContent=
+            'Réconciliation Binance BLOQUANTE · positions réelles '+actualPositions+
+            ' · ordres ouverts '+actualOrders+
+            ' · écarts : '+(reasons.join(', ')||'inconnus')+'.';
+          reconcile.className='status err';
+        }else{
+          reconcile.textContent=
+            'Réconciliation Binance OK · positions réelles '+actualPositions+
+            ' · ordres ouverts '+actualOrders+
+            ' · aucun écart détecté.';
+          reconcile.className='status ok';
+        }
+      }
     }catch(se){
       const safety=document.getElementById('safety');
       safety.textContent='État sécurité non vérifié : '+String(se?.message||'erreur')+'.';
       safety.className='status err';
-    }
-
-    try{
-      const br=await fetch('/api/binance-reconcile',{
-        headers:{Accept:'application/json'},
-        cache:'no-store'
-      });
-      const bq=await br.json().catch(()=>({}));
       const reconcile=document.getElementById('reconcile');
-
-      if(!br.ok||bq?.ok!==true||!bq?.report){
-        throw new Error(bq?.code||bq?.error||('HTTP '+br.status));
-      }
-
-      const report=bq.report;
-      const actualPositions=Number(report?.actual?.positions||0);
-      const actualOrders=Number(report?.actual?.orders||0);
-      const reasons=Array.isArray(report?.reasons)?report.reasons:[];
-
-      if(report.failClosed===true){
-        reconcile.textContent=
-          'Réconciliation Binance BLOQUANTE · positions réelles '+actualPositions+
-          ' · ordres ouverts '+actualOrders+
-          ' · écarts : '+(reasons.join(', ')||'inconnus')+'.';
-        reconcile.className='status err';
-      }else{
-        reconcile.textContent=
-          'Réconciliation Binance OK · positions réelles '+actualPositions+
-          ' · ordres ouverts '+actualOrders+
-          ' · aucun écart détecté.';
-        reconcile.className='status ok';
-      }
-    }catch(se){
-      const reconcile=document.getElementById('reconcile');
-      reconcile.textContent='Réconciliation Binance non vérifiée : '+String(se?.message||'erreur')+'.';
+      reconcile.textContent='Réconciliation Binance non vérifiée : état sécurité inaccessible.';
       reconcile.className='status err';
     }
   }catch(e){

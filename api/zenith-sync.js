@@ -4070,7 +4070,7 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res);
       if (!device) return;
 
-      const [currentMaster, controllerDevice, masterDevice, pending, processing, controllerRaw, emergencyStop, currentMasterMode, engineDisabledRaw] = await Promise.all([
+      const [currentMaster, controllerDevice, masterDevice, pending, processing, controllerRaw, emergencyStop, currentMasterMode, engineDisabledRaw, reconcileRaw, runtimeRaw] = await Promise.all([
         masterDeviceId(),
         roleDeviceId('controller'),
         roleDeviceId('master'),
@@ -4080,6 +4080,8 @@ export default async function handler(req, res) {
         emergencyStopActive(),
         masterMode(),
         redis(['GET', KEY_ENGINE_DISABLED]),
+        redis(['GET', KEY_RECONCILE_LAST]),
+        redis(['GET', KEY_STATE]),
       ]);
 
       let controllerRevision = 0;
@@ -4091,6 +4093,70 @@ export default async function handler(req, res) {
         controllerUpdatedAt = Number(parsed?.updatedAt || 0);
         controllerStateHash = String(parsed?.stateHash || '');
       } catch {}
+
+      let reconciliation = {
+        verified: false,
+        failClosed: true,
+        reason: 'BINANCE_RECONCILIATION_REQUIRED',
+        observedAt: 0,
+        ageMs: null,
+        positions: 0,
+        orders: 0,
+        reasons: [],
+      };
+      if (reconcileRaw) {
+        const report = parseStoredJson(reconcileRaw);
+        if (!report) {
+          reconciliation.reason = 'BINANCE_RECONCILIATION_INVALID';
+        } else {
+          const observedAt = Number(report.observedAt || 0);
+          const ageMs = Date.now() - observedAt;
+          const positions = Number(report?.actual?.positions);
+          const orders = Number(report?.actual?.orders);
+          const reasons = Array.isArray(report?.reasons)
+            ? report.reasons.map(value => String(value)).slice(0, 50)
+            : [];
+          const baseValid =
+            report.version === 2 &&
+            Array.isArray(report.reasons) &&
+            report.actual &&
+            Number.isInteger(positions) &&
+            positions >= 0 &&
+            Number.isInteger(orders) &&
+            orders >= 0 &&
+            Boolean(report.runtimeDataHash || report.runtimeHash);
+
+          reconciliation = {
+            verified: false,
+            failClosed: true,
+            reason: 'BINANCE_RECONCILIATION_INVALID',
+            observedAt: Number.isFinite(observedAt) ? observedAt : 0,
+            ageMs: Number.isFinite(ageMs) ? ageMs : null,
+            positions: Number.isInteger(positions) && positions >= 0 ? positions : 0,
+            orders: Number.isInteger(orders) && orders >= 0 ? orders : 0,
+            reasons,
+          };
+
+          if (!baseValid) {
+            reconciliation.reason = 'BINANCE_RECONCILIATION_INVALID';
+          } else if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 30000) {
+            reconciliation.reason = 'BINANCE_RECONCILIATION_STALE';
+          } else if (!reconciliationRuntimeMatches(report, runtimeRaw)) {
+            reconciliation.reason = 'BINANCE_RECONCILIATION_RUNTIME_CHANGED';
+          } else {
+            reconciliation = {
+              verified: true,
+              failClosed: report.failClosed !== false,
+              reason: report.failClosed === false ? '' : 'BINANCE_RECONCILIATION_MISMATCH',
+              observedAt,
+              ageMs,
+              positions,
+              orders,
+              reasons,
+            };
+          }
+        }
+      }
 
       const configSync = await readMasterConfigSync(currentMaster || masterDevice || '');
       const heartbeatRaw = await redis(['GET', KEY_MASTER_HEARTBEAT]);
@@ -4128,6 +4194,7 @@ export default async function handler(req, res) {
         masterHeartbeatAt: heartbeat.at,
         masterHeartbeatAgeMs: heartbeat.ageMs,
         masterHeartbeatFresh: heartbeat.fresh,
+        reconciliation,
         commandClaimTtlMs: COMMAND_CLAIM_TTL_MS,
       });
     }
