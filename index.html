@@ -1977,7 +1977,7 @@ async function saveToken(){
   if(leverage<1||leverage>10)return setStatus('Le levier du jeton doit être compris entre x1 et x10.',true);
   const requestedMaxLoss=n($('tMaxLoss').value,settings.maxLoss);
   if(!(requestedMaxLoss>=2&&requestedMaxLoss<=400)){
-    return setStatus('Perte maximale invalide : Zenith réel impose un minimum de 2 $ et un plafond de 400 $.',true);
+    return setStatus('Perte maximale invalide : minimum 2 $ et maximum égal à la marge du jeton.',true);
   }
   const configuredMargin=margin;
   if(!(configuredMargin>0)||requestedMaxLoss>configuredMargin){
