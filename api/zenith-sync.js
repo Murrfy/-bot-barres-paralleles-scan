@@ -1190,7 +1190,7 @@ function execMarketOpenPayloadStatus(payload, now = Date.now()) {
   if (orderType !== 'MARKET') return { ok:false, reason:'MARKET_ENTRY_TYPE_REQUIRED' };
   if (!(margin > 0) || margin > REAL_RISK_LIMITS.maxMarginUsdt) return { ok:false, reason:'MARGIN_INVALID' };
   if (!(leverage > 0) || leverage > REAL_RISK_LIMITS.maxLeverage) return { ok:false, reason:'LEVERAGE_INVALID' };
-  if (!(maxLoss > 0) || maxLoss > REAL_RISK_LIMITS.maxLossUsd) return { ok:false, reason:'MAX_LOSS_INVALID' };
+  if (!(maxLoss > 0) || maxLoss > margin return { ok:false, reason:'MAX_LOSS_INVALID' };
   if (!Number.isFinite(requestedAt) || requestedAt <= 0) return { ok:false, reason:'REQUESTED_AT_INVALID' };
   const age = Number(now) - requestedAt;
   if (!Number.isFinite(age) || age < -5000 || age > 30000) return { ok:false, reason:'MARKET_ENTRY_REQUEST_STALE' };
@@ -1381,7 +1381,7 @@ function runtimeEmergencyProtection(runtimeState, symbol, direction, entryPrice,
     const impliedLossUsd = dir === 'LONG'
       ? (entry - trigger) * qty
       : (trigger - entry) * qty;
-    return impliedLossUsd <= REAL_RISK_LIMITS.maxLossUsd + 1e-8;
+    return impliedLossUsd >= 0;
   });
 }
 
@@ -2133,7 +2133,7 @@ async function prepareActiveMaxLossControllerCommit(command, payloadStatus, devi
       !Number.isFinite(Number(payloadStatus?.maxLossUsd))) return null;
 
   const requestedMaxLossUsd = Number(payloadStatus.maxLossUsd);
-  if (!(requestedMaxLossUsd >= 2 && requestedMaxLossUsd <= REAL_RISK_LIMITS.maxLossUsd)) {
+  if (!(requestedMaxLossUsd >= 2)) {
     const e = new Error('MAX_LOSS_USD_INVALID'); e.code = 'MAX_LOSS_USD_INVALID'; throw e;
   }
 
@@ -2264,7 +2264,7 @@ async function prepareActiveConfigControllerCommit(command, payloadStatus, devic
   if (!(margin > 0) || margin > REAL_RISK_LIMITS.maxMarginUsdt) {
     const e = new Error('CONFIGURED_MARGIN_INVALID'); e.code = 'CONFIGURED_MARGIN_INVALID'; throw e;
   }
-  if (!(maxLoss >= 2) || maxLoss > REAL_RISK_LIMITS.maxLossUsd || maxLoss > margin + 1e-8) {
+  if (!(maxLoss >= 2) || maxLoss > margin + 1e-8) {
     const e = new Error('CONFIGURED_MAX_LOSS_INVALID'); e.code = 'CONFIGURED_MAX_LOSS_INVALID'; throw e;
   }
   if (!(leverage >= 1) || leverage > REAL_RISK_LIMITS.maxLeverage) {
@@ -5474,7 +5474,7 @@ export default async function handler(req, res) {
             side !== 'BUY' ||
             orderType !== 'MARKET' ||
             !(configuredMaxLoss > 0) ||
-            configuredMaxLoss > REAL_RISK_LIMITS.maxLossUsd ||
+            configuredMaxLoss > Number(payload.margin) + 1e-8 ||
             !/^zth-ENT-[A-Za-z0-9._:-]+$/.test(clientOrderId) ||
             proofStatus !== 'FILLED' ||
             !(proofEntryPrice > 0) ||
