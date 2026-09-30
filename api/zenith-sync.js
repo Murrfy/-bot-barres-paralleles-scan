@@ -215,10 +215,10 @@ function binanceCredentialSeparationBlockers({
   return blockers;
 }
 
-function binanceApiPermissionBlockers(permission) {
+function binanceApiPermissionBlockers(permission, { signingMode = 'HMAC' } = {}) {
   if (!permission || typeof permission !== 'object') return ['BINANCE_API_PERMISSIONS_UNAVAILABLE'];
   const blockers = [];
-  if (permission.ipRestrict !== true) blockers.push('BINANCE_API_IP_RESTRICTION_REQUIRED');
+  if (String(signingMode || 'HMAC').toUpperCase() !== 'ED25519' && permission.ipRestrict !== true) blockers.push('BINANCE_API_IP_RESTRICTION_REQUIRED');
   if (permission.enableReading !== true) blockers.push('BINANCE_API_READING_REQUIRED');
   if (permission.enableFutures !== true) blockers.push('BINANCE_API_FUTURES_REQUIRED');
   const forbidden = [
@@ -275,12 +275,11 @@ async function fetchBinanceApiPermissions() {
     throw error;
   }
 
-  const query = new URLSearchParams({
+  const { signBinanceParams } = await import('../lib/binance-order-writer.mjs');
+  const query = signBinanceParams(new URLSearchParams({
     timestamp: String(serverTime),
     recvWindow: String(BINANCE_PERMISSION_RECV_WINDOW),
-  });
-  const signature = crypto.createHmac('sha256', secret).update(query.toString()).digest('hex');
-  query.set('signature', signature);
+  }), secret);
 
   return binanceJson(`${BINANCE_API_BASE}${BINANCE_API_RESTRICTIONS_PATH}?${query.toString()}`, {
     method: 'GET',
@@ -3862,7 +3861,9 @@ export default async function handler(req, res) {
       if (!blockers.length) {
         try {
           apiPermissions = await fetchBinanceApiPermissions();
-          blockers.push(...binanceApiPermissionBlockers(apiPermissions));
+          const { binanceSigningMode } = await import('../lib/binance-order-writer.mjs');
+          const tradingSigningMode = binanceSigningMode(process.env.BINANCE_TRADING_API_SECRET || '');
+          blockers.push(...binanceApiPermissionBlockers(apiPermissions, { signingMode: tradingSigningMode }));
         } catch (e) {
           blockers.push(e?.code || 'BINANCE_API_PERMISSION_CHECK_FAILED');
         }

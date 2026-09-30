@@ -68,3 +68,19 @@ test('test-order rate limit blocks before any Binance request',async()=>{
     globalThis.fetch=original;
   }
 });
+
+
+test('test-order payload supports Ed25519 trading signatures',()=>{
+  const {privateKey,publicKey}=crypto.generateKeyPairSync('ed25519');
+  const privatePem=privateKey.export({format:'pem',type:'pkcs8'}).toString();
+  const params=cleanParams({symbol:'BTCUSDT',side:'SELL',type:'MARKET',quantity:'0.02',reduceOnly:'true',newClientOrderId:'zth-EXT-abcdef1234567890'});
+  const body=signedBody(params,privatePem,1234567890);
+  const parsed=new URLSearchParams(body);
+  const signature=parsed.get('signature');
+  parsed.delete('signature');
+  assert.ok(signature);
+  assert.equal(
+    crypto.verify(null,Buffer.from(parsed.toString(),'utf8'),publicKey,Buffer.from(signature,'base64')),
+    true
+  );
+});

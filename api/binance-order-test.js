@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, sameOriginMutation, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
+import { signBinanceParams } from '../lib/binance-order-writer.mjs';
 
 const BASE='https://fapi.binance.com';
 const TEST_ORDER_PATH='/fapi/v1/order/test';
@@ -117,8 +118,7 @@ function cleanParams(value){
 }
 function signedBody(params,secret,timestamp){
   const q=new URLSearchParams({...params,timestamp:String(timestamp),recvWindow:String(RECV_WINDOW)});
-  const signature=crypto.createHmac('sha256',secret).update(q.toString()).digest('hex');
-  q.set('signature',signature);
+  signBinanceParams(q,secret);
   return q.toString();
 }
 

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { evaluateEntryRisk, REAL_RISK_LIMITS, DEFAULT_MAX_ACTIVE_POSITIONS } from '../lib/risk-policy.mjs';
+import { signBinanceParams } from '../lib/binance-order-writer.mjs';
 
 const BASE = 'https://fapi.binance.com';
 const RECV_WINDOW = 5000;
@@ -136,8 +137,7 @@ async function signedGet(path, apiKey, secret, serverTime, extra = {}) {
   for (const [key, value] of Object.entries(extra || {})) {
     if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
   }
-  const signature = crypto.createHmac('sha256', secret).update(params.toString()).digest('hex');
-  params.set('signature', signature);
+  signBinanceParams(params, secret);
   return jsonFetch(`${BASE}${path}?${params.toString()}`, {
     headers: { 'X-MBX-APIKEY': apiKey },
   });

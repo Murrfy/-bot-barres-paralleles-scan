@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { placeStandardOrderIdempotent, signedBinanceRequest, BinanceRequestError } from '../lib/binance-order-writer.mjs';
+import crypto from 'node:crypto';
+import { placeStandardOrderIdempotent, signedBinanceRequest, BinanceRequestError, signBinanceParams, binanceSigningMode } from '../lib/binance-order-writer.mjs';
 
 function jsonResponse(body,status=200){return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}})}
 const order={symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',type:'LIMIT',timeInForce:'IOC',quantity:'0.02',reduceOnly:'true',priceMatch:'OPPONENT',newClientOrderId:'zth-EXI-0123456789abcdef01234567'};
@@ -114,5 +115,32 @@ test('Binance 429 preserves Retry-After metadata without marking execution ambig
       e.status===429 &&
       e.retryAfterSeconds===17 &&
       e.ambiguous===false
+  );
+});
+
+
+test('Ed25519 signing produces a Binance-compatible verifiable signature',()=>{
+  const {privateKey,publicKey}=crypto.generateKeyPairSync('ed25519');
+  const privatePem=privateKey.export({format:'pem',type:'pkcs8'}).toString();
+  const params=new URLSearchParams({symbol:'BTCUSDT',timestamp:'1000',recvWindow:'5000'});
+  const payload=params.toString();
+  signBinanceParams(params,privatePem);
+  const signature=params.get('signature');
+  assert.equal(binanceSigningMode(privatePem),'ED25519');
+  assert.ok(signature);
+  assert.equal(
+    crypto.verify(null,Buffer.from(payload,'utf8'),publicKey,Buffer.from(signature,'base64')),
+    true
+  );
+});
+
+test('plain Binance secrets continue to use HMAC signing',()=>{
+  const params=new URLSearchParams({symbol:'BTCUSDT',timestamp:'1000',recvWindow:'5000'});
+  const payload=params.toString();
+  signBinanceParams(params,'secret-test');
+  assert.equal(binanceSigningMode('secret-test'),'HMAC');
+  assert.equal(
+    params.get('signature'),
+    crypto.createHmac('sha256','secret-test').update(payload).digest('hex')
   );
 });
