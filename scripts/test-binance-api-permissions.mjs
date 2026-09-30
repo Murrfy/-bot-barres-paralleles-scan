@@ -74,3 +74,16 @@ test('distinct Binance read and trading API keys are required', () => {
     tradingApiKey:'same-key-123',
   }), ['BINANCE_TRADING_KEY_MUST_DIFFER_FROM_READ_KEY']);
 });
+
+
+test('unrestricted Ed25519 Futures-only key is accepted without an IP restriction', () => {
+  assert.deepEqual(
+    binanceApiPermissionBlockers({...safe, ipRestrict:false},{signingMode:'ED25519'}),
+    []
+  );
+});
+
+test('unrestricted HMAC Futures-only key still requires an IP restriction', () => {
+  const blockers=binanceApiPermissionBlockers({...safe, ipRestrict:false},{signingMode:'HMAC'});
+  assert.ok(blockers.includes('BINANCE_API_IP_RESTRICTION_REQUIRED'));
+});
