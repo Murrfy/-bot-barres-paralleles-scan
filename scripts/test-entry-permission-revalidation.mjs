@@ -123,3 +123,21 @@ test('unavailable trading-key permission check fails closed before Futures prefl
     assert.equal(h.futuresCalls,0);
   }finally{h.restore()}
 });
+
+
+test('unrestricted Ed25519 trading key passes permission gate and reaches Futures preflight',async()=>{
+  const {privateKey}=crypto.generateKeyPairSync('ed25519');
+  const previousSecret=process.env.BINANCE_TRADING_API_SECRET;
+  process.env.BINANCE_TRADING_API_SECRET=privateKey.export({format:'pem',type:'pkcs8'}).toString();
+  const h=harness({permission:safePermission({ipRestrict:false})});
+  try{
+    const res=response();
+    await handler(request(),res);
+    assert.equal(h.permissionCalls,2);
+    assert.ok(h.futuresCalls>0);
+    assert.notEqual(res.body?.code,'BINANCE_API_PERMISSION_REVALIDATION_BLOCKED');
+  }finally{
+    process.env.BINANCE_TRADING_API_SECRET=previousSecret;
+    h.restore();
+  }
+});
