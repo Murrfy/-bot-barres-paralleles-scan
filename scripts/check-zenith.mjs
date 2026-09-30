@@ -699,8 +699,8 @@ if (!binanceReconcile.includes('runtimeDataHash') || !binanceReconcile.includes(
 
 if (!binanceReconcile.includes("import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs'") ||
     !binanceReconcile.includes('unsafeMaxLossProtections') ||
-    !binanceReconcile.includes('impliedLossUsd > REAL_RISK_LIMITS.maxLossUsd + 1e-8')) {
-  fail('Binance reconciliation must reject emergency MAX-LOSS orders whose implied loss exceeds the shared $400 hard cap');
+    !binanceReconcile.includes('impliedLossUsd > configuredMaxLoss + 1e-8')) {
+  fail('Binance reconciliation must reject MAX-LOSS orders whose implied loss exceeds the configured token limit');
 }
 
 if (!binanceReconcile.includes('ORPHAN_ZENITH_PROTECTIVE_ORDER') ||
