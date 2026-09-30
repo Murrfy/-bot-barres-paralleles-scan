@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { revalidateBinanceTradingApiPermissions } from '../lib/binance-api-permissions.mjs';
 
 function safe(overrides={}){
@@ -69,4 +70,34 @@ test('every real matching-engine write API revalidates permissions before write 
       }
     }
   }
+});
+
+
+test('shared permission revalidation accepts unrestricted Ed25519 Futures-only trading key',async()=>{
+  const {privateKey,publicKey}=crypto.generateKeyPairSync('ed25519');
+  const privatePem=privateKey.export({format:'pem',type:'pkcs8'}).toString();
+  const original=globalThis.fetch;
+  let verified=false;
+  globalThis.fetch=async(url)=>{
+    const u=new URL(url);
+    if(u.pathname==='/api/v3/time')return new Response(JSON.stringify({serverTime:1700000000000}));
+    if(u.pathname==='/sapi/v1/account/apiRestrictions'){
+      const signature=u.searchParams.get('signature');
+      u.searchParams.delete('signature');
+      verified=Boolean(signature)&&crypto.verify(
+        null,
+        Buffer.from(u.searchParams.toString(),'utf8'),
+        publicKey,
+        Buffer.from(signature,'base64')
+      );
+      return new Response(JSON.stringify(safe({ipRestrict:false})));
+    }
+    throw new Error('unexpected '+url);
+  };
+  try{
+    const r=await revalidateBinanceTradingApiPermissions('ed25519-api-key',privatePem);
+    assert.equal(verified,true);
+    assert.equal(r.ok,true);
+    assert.deepEqual(r.blockers,[]);
+  }finally{globalThis.fetch=original}
 });
