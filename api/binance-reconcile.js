@@ -1293,7 +1293,7 @@ function enforceConfiguredMaxLossSafety(
   return result;
 }
 
-function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions = []) {
+function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions = [], controllerState = null) {
   const runtimeMode = String(runtimeState?.data?.executionMode || runtimeState?.data?.mode || '').toUpperCase();
   const runtimeIsReal = runtimeMode === 'REAL';
   const expectedPos = runtimeIsReal ? expectedPositions(runtimeState) : [];
@@ -1449,8 +1449,8 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
       const impliedLossUsd = position.direction === 'LONG'
         ? (entryPrice - trigger) * quantity
         : (trigger - entryPrice) * quantity;
-      const configuredMaxLoss = configuredMaxLossUsd(controllerState, symbol);
-      const configuredMargin = configuredMarginUsd(controllerState, symbol);
+      const configuredMaxLoss = configuredMaxLossUsd(controllerState, position.symbol);
+      const configuredMargin = configuredMarginUsd(controllerState, position.symbol);
       if (!(configuredMaxLoss >= 2) || !(configuredMargin > 0) || configuredMaxLoss > configuredMargin + 1e-8 || impliedLossUsd > configuredMaxLoss + 1e-8) {
         unsafeMaxLossProtections.push({
           key,
