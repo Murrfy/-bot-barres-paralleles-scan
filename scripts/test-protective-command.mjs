@@ -110,9 +110,10 @@ test('triggered progressive remainder recovery is bound to exact certified Binan
   const payload={
     type:'EXEC_CLOSE_POSITION',symbol:'BTCUSDT',direction:'LONG',quantity:0.3,closeAll:true,
     commandId:rows[0].recoveryCommandId,recoveryReason:'TRIGGERED_PROGRESSIVE_REMAINDER',
-    exitMode:'REMAINDER_MARKET'
+    exitMode:'PROTECTIVE_IOC'
   };
   assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,payload),true);
+  assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,{...payload,exitMode:'REMAINDER_MARKET'}),false);
   assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,{...payload,quantity:0.31}),false);
   assert.equal(triggeredProgressiveRemainderRecoveryAllowed(report,{...payload,recoveryReason:'TRIGGERED_MAX_LOSS_REMAINDER'}),false);
   assert.deepEqual(triggeredProgressiveRemainderTargets({...report,certifiedPositions:[{...report.certifiedPositions[0],quantity:0.31}]}),[]);
@@ -142,10 +143,11 @@ test('persisted sale remainder recovery can resume with a smaller certified live
   assert.equal(rows[0].currentQuantity,0.2);
   const payload={
     type:'EXEC_CLOSE_POSITION',symbol:'BTCUSDT',direction:'LONG',
-    quantity:0.2,closeAll:true,exitMode:'REMAINDER_MARKET',
+    quantity:0.2,closeAll:true,exitMode:'PROTECTIVE_IOC',
     commandId:rows[0].commandId,recoveryReason:'PERSISTED_SALE_REMAINDER'
   };
   assert.equal(persistedSaleRemainderRecoveryAllowed(report,payload),true);
+  assert.equal(persistedSaleRemainderRecoveryAllowed(report,{...payload,exitMode:'REMAINDER_MARKET'}),false);
   assert.equal(persistedSaleRemainderRecoveryAllowed(report,{...payload,quantity:0.3}),false);
   assert.deepEqual(
     persistedSaleRemainderRecoveryTargets({...report,certifiedPositions:[{...report.certifiedPositions[0],quantity:0.31}]}),
