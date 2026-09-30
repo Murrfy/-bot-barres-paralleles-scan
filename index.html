@@ -1957,6 +1957,13 @@ async function saveToken(){
   const localActive=openBySymbol(s),realActive=controllerRealPositionBySymbol(s),active=localActive||realActive,watched=!!validated[s]&&!active;
   if(watched)return setStatus(`${s} est surveillé : utilise « Annuler l’achat surveillé » avant de modifier ses paramètres.`,true);
   try{await ensureExchange()}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'&&controllerStateHydrated)){
+    const ready=await refreshControllerIdentity();
+    if(!ready||!(controllerIdentity.paired&&controllerIdentity.role==='controller'&&controllerStateHydrated)){
+      fillToken();
+      return setStatus(`${s} : réglages du jeton NON enregistrés — contrôleur/synchronisation centrale non prêt. Réessaie dans un instant.`,true);
+    }
+  }
   const old=tokenSettings[s]||{},protections=protectionDraft(),protectionError=protectionValidationError(protections);
   const margin=Math.max(1,n($('fMargin').value,n(old.margin,settings.margin)));
   const leverage=Math.round(n($('fLev').value,n(old.leverage,settings.leverage)));
