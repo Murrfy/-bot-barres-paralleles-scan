@@ -1953,6 +1953,13 @@ async function saveRealActiveTokenSettings(s,position,old,protections){
   }
 }
 async function saveToken(){
+  if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'&&controllerStateHydrated)){
+    const ready=await refreshControllerIdentity();
+    if(!ready||!(controllerIdentity.paired&&controllerIdentity.role==='controller'&&controllerStateHydrated)){
+      fillToken();
+      return setStatus(`${s} : réglages du jeton NON enregistrés — contrôleur/synchronisation centrale non prêt. Réessaie dans un instant.`,true);
+    }
+  }
   const s=selectedSymbol;if(!s)return setStatus('Sélectionne un jeton.',true);
   const localActive=openBySymbol(s),realActive=controllerRealPositionBySymbol(s),active=localActive||realActive,watched=!!validated[s]&&!active;
   if(watched)return setStatus(`${s} est surveillé : utilise « Annuler l’achat surveillé » avant de modifier ses paramètres.`,true);
