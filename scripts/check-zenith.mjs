@@ -602,7 +602,7 @@ if (!index.includes('id="tMaxLoss" type="number" min="2" step="1"') ||
     !index.includes('requestedMaxLoss>=2') ||
     !index.includes('maxLoss:requestedMaxLoss') ||
     !index.includes('settings.maxLoss=Math.max(2,n(settings.maxLoss,40))')) {
-  fail('controller MAX-LOSS settings must keep the hard $400 cap while using the locked $40 operational fallback');
+  fail('controller MAX-LOSS settings must keep the $2 minimum without a fixed upper cap while using the locked $40 operational fallback');
 }
 if (!index.includes('targetProfit:40,maxLoss:40,protectionStages:DEFAULT_PROTECTIONS') ||
     !index.includes('const DEFAULT_PROTECTIONS=[{enabled:true,arm:30,floor:20}]') ||
