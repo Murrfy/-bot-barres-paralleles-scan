@@ -1293,7 +1293,7 @@ function enforceConfiguredMaxLossSafety(
   return result;
 }
 
-function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions = []) {
+function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions = [], controllerState = null) {
   const runtimeMode = String(runtimeState?.data?.executionMode || runtimeState?.data?.mode || '').toUpperCase();
   const runtimeIsReal = runtimeMode === 'REAL';
   const expectedPos = runtimeIsReal ? expectedPositions(runtimeState) : [];
