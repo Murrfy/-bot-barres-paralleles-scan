@@ -15,7 +15,7 @@ test('worker reuses shared progressive planner and server risk cap',()=>{
   assert.ok(worker.includes("from '../lib/master-auto-protection.mjs'"));
   assert.ok(worker.includes('evaluateMasterAutoProgressiveProtection'));
   assert.ok(worker.includes("from '../lib/risk-policy.mjs'"));
-  assert.ok(worker.includes('REAL_RISK_LIMITS.maxLossUsd'));
+  assert.ok(!worker.includes('REAL_RISK_LIMITS.maxLossUsd'));
 });
 
 test('worker consumes configured protectionStages instead of embedding trading thresholds',()=>{
