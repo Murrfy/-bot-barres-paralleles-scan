@@ -285,3 +285,47 @@ test('controller startup hydrates central state before any local state sync can 
   assert.match(hydrate,/applyControllerCloudStateSnapshot\(state\)/);
   assert.match(hydrate,/controllerStateHydrated=true/);
 });
+
+
+test('Enregistrer le jeton restores the exact previous per-token state when central persistence fails',()=>{
+  const source=extractFunction('saveToken');
+  assert.match(source,/hadOldTokenSettings=Object\.prototype\.hasOwnProperty\.call\(tokenSettings,s\)/);
+  assert.match(source,/oldTokenSettings=hadOldTokenSettings\?clone\(tokenSettings\[s\]\):null/);
+  assert.match(source,/oldManualToken=snapshotRecord\(manualTokens,s\)/);
+  assert.match(source,/oldValidated=snapshotRecord\(validated,s\)/);
+  assert.match(source,/oldRevalidateBlock=snapshotRecord\(revalidateBlock,s\)/);
+  assert.match(source,/oldMissedSignal=snapshotRecord\(missedSignals,s\)/);
+  assert.match(source,/if\(!futuresPersisted\.ok\)\{/);
+  assert.match(source,/if\(hadOldTokenSettings\)tokenSettings\[s\]=oldTokenSettings;else delete tokenSettings\[s\]/);
+  assert.match(source,/restoreRecord\(manualTokens,s,oldManualToken\)/);
+  assert.match(source,/restoreRecord\(validated,s,oldValidated\)/);
+  assert.match(source,/restoreRecord\(revalidateBlock,s,oldRevalidateBlock\)/);
+  assert.match(source,/restoreRecord\(missedSignals,s,oldMissedSignal\)/);
+  assert.match(source,/L’ancien réglage a été conservé/);
+});
+
+test('central state keeps BTC and ETH Futures settings independent across hydration',()=>{
+  const {context,elements}=makeHarness();
+  const state={
+    revision:12,
+    data:{
+      settings:{margin:1000,leverage:10,marginType:'ISOLATED',maxActive:3,targetProfit:40,maxLoss:40,protectionStages:[]},
+      tokenSettings:{
+        BTCUSDT:{enabled:true,margin:125,leverage:7,marginType:'ISOLATED',maxLoss:40,protectionStages:[]},
+        ETHUSDT:{enabled:true,margin:300,leverage:4,marginType:'ISOLATED',maxLoss:40,protectionStages:[]}
+      },
+      manualTokens:{},validated:{}
+    }
+  };
+  context.__centralState=state;
+  assert.equal(vm.runInContext('applyControllerCloudStateSnapshot(__centralState)',context),true);
+  vm.runInContext("selectedSymbol='BTCUSDT'; fillFutures()",context);
+  assert.equal(Number(elements.get('fMargin').value),125);
+  assert.equal(Number(elements.get('fLev').value),7);
+  vm.runInContext("selectedSymbol='ETHUSDT'; fillFutures()",context);
+  assert.equal(Number(elements.get('fMargin').value),300);
+  assert.equal(Number(elements.get('fLev').value),4);
+  vm.runInContext("selectedSymbol='BTCUSDT'; fillFutures()",context);
+  assert.equal(Number(elements.get('fMargin').value),125);
+  assert.equal(Number(elements.get('fLev').value),7);
+});
