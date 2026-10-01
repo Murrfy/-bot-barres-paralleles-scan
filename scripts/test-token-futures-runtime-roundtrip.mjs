@@ -285,3 +285,18 @@ test('controller startup hydrates central state before any local state sync can 
   assert.match(hydrate,/applyControllerCloudStateSnapshot\(state\)/);
   assert.match(hydrate,/controllerStateHydrated=true/);
 });
+
+test('Enregistrer le jeton rolls back Futures settings when central persistence is not confirmed',async()=>{
+  const source=extractFunction('saveToken');
+  assert.match(source,/const old=tokenSettings\[s\]\|\|\{\}/);
+  assert.match(source,/const futuresPersisted=await persistAndVerifyTokenFuturesSettings\(s,margin,leverage\)/);
+  assert.match(source,/if\(!futuresPersisted\.ok\)\{/);
+  assert.match(source,/tokenSettings\[s\]=old/);
+  assert.match(source,/else delete tokenSettings\[s\]/);
+  assert.match(source,/delete validated\[s\]/);
+  assert.match(source,/saveLocalOnly\(\);fillToken\(\);renderAll\(\)/);
+  assert.match(source,/L’ancien réglage a été conservé/);
+  const rollbackAt=source.indexOf('if(!futuresPersisted.ok){');
+  const realtimeAt=source.indexOf('syncRealtime();renderAll();',rollbackAt);
+  assert.ok(realtimeAt>rollbackAt,'realtime sync must only happen after confirmed Futures persistence');
+});
