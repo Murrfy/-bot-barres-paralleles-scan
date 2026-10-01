@@ -1855,7 +1855,7 @@ async function saveSelectedAsDefaults(){
   if(!(margin>=1&&margin<=1000))return setStatus('Marge par défaut invalide : entre 1 $ et 1 000 $.',true);
   if(leverage<1||leverage>10)return setStatus('Levier par défaut invalide : entre x1 et x10.',true);
   if(!(target>0))return setStatus('Objectif de gain par défaut invalide : entre un montant supérieur à 0 $.',true);
-  if(!(maxLoss>=2&&maxLoss<=400))return setStatus('Perte maximale par défaut invalide : entre 2 $ et 400 $.',true);
+  if(!(maxLoss>=2))return setStatus('Perte maximale par défaut invalide : minimum 2 $.',true);
   if(maxLoss>margin)return setStatus('Perte maximale par défaut invalide : elle ne peut pas dépasser la marge par défaut.',true);
   if(protectionError)return setStatus(protectionError,true);
   try{await ensureExchange();if(!(n(lastPrices.get(s))>0))await currentMarketPrice(s)}catch(e){return setStatus(`Impossible de charger les limites Binance : ${e.message}`,true)}
