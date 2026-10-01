@@ -592,7 +592,7 @@ if (!protectiveUpdateExecute.includes('validateMaxLossTrigger({') ||
   fail('real MAX-LOSS updates must be revalidated server-side against the configured token loss cap');
 }
 
-if (!protectiveUpdateExecute.includes('impliedLossUsd<=allowedMaxLoss+1e-8') ||
+if (!protectiveUpdateExecute.includes('impliedLossUsd>allowedMaxLoss+1e-8') ||
     !engineWorker.includes('function safeMaxLossOrders(position,orders,hardMaxLossUsd)') ||
     !engineWorker.includes('impliedLossUsd<=cap+1e-8')) {
   fail('progressive protection must accept only an emergency MAX-LOSS that is itself within the configured token loss cap');
