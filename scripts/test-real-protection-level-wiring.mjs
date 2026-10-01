@@ -7,7 +7,10 @@ const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 
 test('real protective update server enforces hard max-loss validation before write',()=>{
   assert.match(api,/validateMaxLossTrigger\(\{/);
-  assert.match(api,/hardMaxLossUsd:REAL_RISK_LIMITS\.maxLossUsd/);
+  assert.match(api,/const configuredMargin=configuredMarginUsd\(state\.controllerState,update\.symbol\)/);
+  assert.match(api,/requestedMaxLoss>configuredMargin\+1e-8/);
+  assert.match(api,/hardMaxLossUsd:allowedMaxLoss/);
+  assert.doesNotMatch(api,/hardMaxLossUsd:REAL_RISK_LIMITS\.maxLossUsd/);
   assert.match(api,/MAX_LOSS_EXCEEDS_SERVER_LIMIT|MAX_LOSS_TRIGGER_INVALID/);
   const validationIndex=api.indexOf('validateMaxLossTrigger({');
   const writerIndex=api.indexOf('placeAlgoOrderIdempotent({');
