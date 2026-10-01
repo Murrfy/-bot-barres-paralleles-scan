@@ -88,7 +88,8 @@ test('Binance protective endpoint validates requested MAX-LOSS against margin an
   assert.match(protectiveApi,/const requestedMaxLoss=n\(update\.maxLossUsd,NaN\)/);
   assert.match(protectiveApi,/const allowedMaxLoss=activeEdit\?requestedMaxLoss:configuredMaxLoss/);
   assert.match(protectiveApi,/MAX_LOSS_EXCEEDS_CONFIGURED_MARGIN/);
-  assert.match(protectiveApi,/hardMaxLossUsd:configuredMargin/);
+  assert.match(protectiveApi,/requestedMaxLoss>configuredMargin\+1e-8/);
+  assert.match(protectiveApi,/hardMaxLossUsd:allowedMaxLoss/);
   assert.doesNotMatch(protectiveApi,/hardMaxLossUsd:Math\.min\(allowedMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
 });
 
