@@ -26,7 +26,8 @@ test('active real MAX-LOSS is editable only when no edit is pending',()=>{
 
 test('active MAX-LOSS dollars are calculated from live position and queued separately',()=>{
   const save=block(html,'async function saveRealActiveTokenSettings','async function saveToken()');
-  assert.match(save,/requestedMaxLoss>=2&&requestedMaxLoss<=400/);
+  assert.match(save,/requestedMaxLoss>=2/);
+  assert.doesNotMatch(save,/requestedMaxLoss>=2&&requestedMaxLoss<=400/);
   assert.match(save,/requestedMaxLoss>configuredMargin/);
   assert.match(save,/maxLossUsd:requestedMaxLoss/);
   assert.match(save,/wantedMaxLoss=n\(levels\.maxLossTriggerPrice,0\)/);
@@ -41,7 +42,8 @@ test('controller command carries bounded requested MAX-LOSS and keeps it in dedu
   assert.match(controllerCommand,/\{ maxLossUsd: requestedMaxLoss \}/);
   assert.match(controllerCommand,/baseCommandId \+ ':' \+ safeIdPart\(compactNumber\(requestedMaxLoss\)/);
   assert.match(protectiveCommand,/payload\.maxLossUsd/);
-  assert.match(protectiveCommand,/maxLossUsd>=2&&maxLossUsd<=400/);
+  assert.match(protectiveCommand,/maxLossUsd>=2/);
+  assert.doesNotMatch(protectiveCommand,/maxLossUsd>=2&&maxLossUsd<=400/);
 });
 
 test('iPhone commits active MAX-LOSS locally only from terminal server ACK metadata',()=>{
@@ -86,7 +88,9 @@ test('Binance protective endpoint validates requested MAX-LOSS against margin an
   assert.match(protectiveApi,/const requestedMaxLoss=n\(update\.maxLossUsd,NaN\)/);
   assert.match(protectiveApi,/const allowedMaxLoss=activeEdit\?requestedMaxLoss:configuredMaxLoss/);
   assert.match(protectiveApi,/MAX_LOSS_EXCEEDS_CONFIGURED_MARGIN/);
-  assert.match(protectiveApi,/hardMaxLossUsd:Math\.min\(allowedMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
+  assert.match(protectiveApi,/requestedMaxLoss>configuredMargin\+1e-8/);
+  assert.match(protectiveApi,/hardMaxLossUsd:allowedMaxLoss/);
+  assert.doesNotMatch(protectiveApi,/hardMaxLossUsd:Math\.min\(allowedMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
 });
 
 test('reconciliation authorizes only the exact processing MAX-LOSS command and exact managed Binance stop',()=>{
