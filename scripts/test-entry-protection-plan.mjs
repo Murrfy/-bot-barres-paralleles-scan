@@ -36,7 +36,7 @@ test('entry protection never exceeds the configured token margin',()=>{
   assert.throws(()=>buildEntryProtectionPlan({
     commandId:'entry-loss-123456',symbol:'BTCUSDT',side:'BUY',
     quantity:0.2,limitPrice:50000,maxLoss:401,margin:400,priceFilter,
-  }),/MAX_LOSS_EXCEEDS_MARGIN/);
+  }),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
 });
 
 test('tick rounding never makes actual loss exceed requested cap',()=>{
