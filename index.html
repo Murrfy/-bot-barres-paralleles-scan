@@ -2013,8 +2013,13 @@ async function saveToken(){
   tokenSettings[s]={...old,enabled:true,margin,leverage,marginType:'ISOLATED',binanceQty:futures.qty,binanceEffectiveNotional:futures.effectiveNotional,targetProfit:shown,manualTargetProfit:manual,protectionStages:savedProtections,maxLoss:requestedMaxLoss,exactBuyEnabled:buyEnabled,exactBuyPrice:buyPrice,exactBuySource:'settings',exactSaleEnabled:saleEnabled,exactSalePrice:salePrice,exactSaleSource:'settings'};
   if(buyEnabled){manualTokens[s]={symbol:s,last:market,addedAt:n(manualTokens[s]?.addedAt,Date.now())};validated[s]={buy:buyPrice,validatedAt:Date.now(),armedAbove:market>buyPrice,lastSeen:market||null};delete revalidateBlock[s];delete missedSignals[s]}else{delete validated[s];delete revalidateBlock[s];delete missedSignals[s];delete manualTokens[s]}
   const futuresPersisted=await persistAndVerifyTokenFuturesSettings(s,margin,leverage);
+  if(!futuresPersisted.ok){
+    if(Object.keys(old).length)tokenSettings[s]=old;else delete tokenSettings[s];
+    delete validated[s];delete revalidateBlock[s];delete missedSignals[s];delete manualTokens[s];
+    saveLocalOnly();fillToken();renderAll();
+    return setStatus(`${s} : réglages du jeton NON enregistrés — ${futuresPersisted.reason}. L’ancien réglage a été conservé.`,true);
+  }
   syncRealtime();renderAll();
-  if(!futuresPersisted.ok)return setStatus(`${s} : réglages du jeton NON confirmés — ${futuresPersisted.reason}. La marge locale reste ${margin.toFixed(2)} $ mais Zenith ne la considère pas enregistrée.`,true);
   setStatus(buyEnabled?`${s} validé : ajouté à la liste et surveillé pour achat à ${price(buyPrice)} · marge ${margin.toFixed(2)} $ conservée.`:`${s} enregistré sans surveillance · marge ${margin.toFixed(2)} $ conservée.`)
 }
 function devalidateSelected(){const s=selectedSymbol;if(!s)return;delete validated[s];delete missedSignals[s];delete revalidateBlock[s];delete manualTokens[s];save();syncRealtime();renderAll();setStatus(`${s} : surveillance annulée, retiré de la liste.`)}
