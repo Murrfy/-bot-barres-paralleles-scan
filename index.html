@@ -1190,7 +1190,17 @@ function applyControllerCloudStateSnapshot(state){
   settings.marginType='ISOLATED';
   settings.protectionStages=normalizeProtections(settings.protectionStages,settings.targetProfit);
 
-  tokenSettings=normalizeRecordBlock(data.tokenSettings);
+  const remoteTokenSettings=normalizeRecordBlock(data.tokenSettings);
+  const localTokenSettings=normalizeRecordBlock(tokenSettings);
+  tokenSettings={...localTokenSettings,...remoteTokenSettings};
+  for(const [symbol,localToken] of Object.entries(localTokenSettings)){
+    const remoteToken=remoteTokenSettings[symbol];
+    if(!remoteToken)continue;
+    const localMargin=n(localToken?.margin,NaN),remoteMargin=n(remoteToken?.margin,NaN);
+    const localLeverage=n(localToken?.leverage,NaN),remoteLeverage=n(remoteToken?.leverage,NaN);
+    if(Number.isFinite(localMargin)&&!Number.isFinite(remoteMargin))tokenSettings[symbol].margin=localMargin;
+    if(Number.isFinite(localLeverage)&&!Number.isFinite(remoteLeverage))tokenSettings[symbol].leverage=localLeverage;
+  }
   for(const t of Object.values(tokenSettings)){
     const legacyTokenDefaults=n(t?.targetProfit)===3000&&n(t?.manualTargetProfit,3000)===3000&&
       n(t?.maxLoss)===400&&legacyDefaultProtectionProfile(t?.protectionStages);
