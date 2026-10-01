@@ -16,6 +16,7 @@ test('LONG automatic levels use exact quantity and conservative tick rounding',(
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'3',entryPrice:'100'},
     targetProfitUsd:1,
     maxLossUsd:1,
+    hardMaxLossUsd:1000,
     priceFilter:filter,
   });
   assert.equal(levels.direction,'LONG');
@@ -30,6 +31,7 @@ test('SHORT automatic levels round in the opposite market direction but remain c
     position:{symbol:'ETHUSDT',positionSide:'BOTH',positionAmt:'-3',entryPrice:'100'},
     targetProfitUsd:1,
     maxLossUsd:1,
+    hardMaxLossUsd:1000,
     priceFilter:filter,
   });
   assert.equal(levels.direction,'SHORT');
