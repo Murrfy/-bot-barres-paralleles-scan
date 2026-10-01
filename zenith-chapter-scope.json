@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "activeChapter": "5-moteur-zenith-24x7",
-  "scopeRevision": 40,
+  "activeChapter": "3-sortie-risque",
+  "scopeRevision": 41,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "index.html",
