@@ -75,7 +75,7 @@ Un nouveau chapitre ne doit pas les réinterpréter sous prétexte de simplifica
 En particulier :
 - pas de retour aux anciens concepts abandonnés de scan / barres / SUP-MED-INF ;
 - pas de plafond fixe de trois positions ;
-- ventes LIMIT uniquement, sans fallback MARKET ;
+- ventes normales = LIMIT ; si une vente LIMIT n’exécute qu’une partie de la position, Zenith complète automatiquement le reliquat au MARKET afin de terminer la fermeture ;
 - MAX-LOSS = perte / STOP-LOSS, distinct des protections de gains ;
 - ne pas restaurer un ancien comportement simplement parce qu’il existe sur une vieille branche.
 
