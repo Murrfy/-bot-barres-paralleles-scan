@@ -937,7 +937,8 @@ export default async function handler(req,res){
 
   const exitMode=String(req.body?.exitMode||'PROTECTIVE_IOC').toUpperCase();
   if(exitMode==='REMAINDER_MARKET'){
-    if(!partialTargetRemainder&&!progressiveRemainderRecovery&&!maxLossRemainderRecovery&&!incompleteProtectiveRemainder&&!persistedRemainderRecovery&&!manualMaxLossPartialRemainder){
+    if(!partialTargetRemainder&&!progressiveRemainderRecovery&&!maxLossRemainderRecovery&&!incompleteProtectiveRemainder&&!persistedRemainderRecovery){
+      if(!manualMaxLossPartialRemainder)
       return send(res,423,{ok:false,code:'SALE_REMAINDER_PROOF_REQUIRED',writeAttempted:false});
     }
   }else if(exitMode!=='PROTECTIVE_IOC'){
