@@ -37,7 +37,7 @@ test('protective endpoint accepts MARKET only with exact progressive report proo
   assert.match(execute,/triggeredProgressiveRemainderRecoveryAllowed/);
   assert.match(execute,/PROGRESSIVE_REMAINDER_RECOVERY_ENGINE_REQUIRED/);
   assert.match(execute,/progressiveRemainderRecovery/);
-  assert.match(execute,/if\(!partialTargetRemainder&&!progressiveRemainderRecovery&&!maxLossRemainderRecovery&&!incompleteProtectiveRemainder&&!persistedRemainderRecovery&&!manualMaxLossPartialRemainder\)/);
+  assert.match(execute,/if\(!partialTargetRemainder&&!progressiveRemainderRecovery&&!maxLossRemainderRecovery&&!incompleteProtectiveRemainder&&!persistedRemainderRecovery\)/);
   assert.match(execute,/SALE_REMAINDER_PROOF_REQUIRED/);
   assert.match(execute,/maxLossRemainderRecovery\|\|progressiveRemainderRecovery/);
   assert.match(execute,/remainderMarketClosed:true/);
