@@ -24,8 +24,8 @@ const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
     /^import \{ evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches, partialEntryTransitionProtectionCoversPosition \} from '\.\.\/lib\/entry-transition\.mjs';\n/m,
     "const entryTransitionOrderIdentity = order => { const s=String(order?.symbol||'').toUpperCase(); if(order?.clientAlgoId)return s+':algo-client:'+String(order.clientAlgoId); if(order?.algoId)return s+':algo:'+String(order.algoId); if(order?.clientOrderId)return s+':client:'+String(order.clientOrderId); if(order?.orderId)return s+':id:'+String(order.orderId); return ''; }; const evaluateEntryTransitionReconciliation = () => ({active:[],invalid:[],expired:[],allowedOrderIdentities:new Set(),missingProtections:[],missingEntries:[],partialFillFlatEntries:[]}); const transitionEntryMatches = () => false; const transitionProtectionMatches = () => false; const partialEntryTransitionProtectionCoversPosition = () => false;\n"
   );
-const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies, zenithScopeSymbols, runtimeStateWithinScope } = await import(
-  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeOrphanProtectionAnomalies, zenithScopeSymbols, runtimeStateWithinScope };').toString('base64')
+const { default: handler, reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeManualMaxLossPartialClose, localizeOrphanProtectionAnomalies, zenithScopeSymbols, runtimeStateWithinScope } = await import(
+  'data:text/javascript;base64,' + Buffer.from(source + '\nexport { reconcile, enforceConfiguredMaxLossSafety, normalizeActualPosition, normalizeActualOrder, normalizeActualAlgoOrder, evaluateTriggeredMaxLossRemainder, detectTriggeredMaxLossRemainders, recoveryClientOrderId, localizeTriggeredMaxLossAnomalies, localizeMissingMaxLossRepair, localizeManualMaxLossPartialClose, localizeOrphanProtectionAnomalies, zenithScopeSymbols, runtimeStateWithinScope };').toString('base64')
 );
 const runtime = (positions = [], orders = [], mode = 'REAL') => ({
   updatedAt: Date.now(), data: { executionMode: mode, binancePositions: positions, binanceOrders: orders },
@@ -623,4 +623,48 @@ test('external STOP_MARKET is forbidden and never satisfies Zenith mandatory MAX
   assert.equal(result.differences.forbiddenMarketProtectiveOrders.length,1);
   assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
   assert.deepEqual(result.differences.missingMaxLossProtections, ['BTCUSDT:LONG']);
+});
+
+
+test('manual Binance partial close after missing MAX-LOSS is localized for MARKET remainder recovery',()=>{
+  const result={
+    version:2,status:'MISMATCH',failClosed:true,
+    reasons:['BINANCE_POSITION_QUANTITY_MISMATCH','MISSING_BINANCE_MAX_LOSS_PROTECTION'],
+    differences:{
+      quantityMismatches:[{symbol:'BTCUSDT',direction:'LONG',expectedQuantity:1,actualQuantity:0.4}],
+      missingMaxLossProtections:['BTCUSDT:LONG'],
+      missingProtections:[],missingOrders:[],ambiguousMaxLossProtections:[],
+      unsafeMaxLossProtections:[],configuredMaxLossUnavailable:[]
+    }
+  };
+  localizeManualMaxLossPartialClose(result,1700000005000);
+  assert.equal(result.failClosed,false);
+  assert.equal(result.status,'CLEAN_REAL_WITH_QUARANTINES');
+  assert.deepEqual(result.reasons,[]);
+  assert.deepEqual(result.symbolQuarantines,[{
+    symbol:'BTCUSDT',direction:'LONG',reason:'MANUAL_MAX_LOSS_PARTIAL_CLOSE_REMAINDER',
+    remainingQuantity:0.4,since:1700000005000
+  }]);
+});
+
+test('manual MAX-LOSS partial-close localization rejects unrelated or non-partial mismatches',()=>{
+  const base=()=>({
+    version:2,status:'MISMATCH',failClosed:true,
+    reasons:['BINANCE_POSITION_QUANTITY_MISMATCH','MISSING_BINANCE_MAX_LOSS_PROTECTION'],
+    differences:{
+      quantityMismatches:[{symbol:'BTCUSDT',direction:'LONG',expectedQuantity:1,actualQuantity:1.2}],
+      missingMaxLossProtections:['BTCUSDT:LONG']
+    }
+  });
+  const increased=base();
+  localizeManualMaxLossPartialClose(increased,1700000005000);
+  assert.equal(increased.failClosed,true);
+  assert.equal(increased.symbolQuarantines,undefined);
+
+  const unrelated=base();
+  unrelated.differences.quantityMismatches[0].actualQuantity=0.4;
+  unrelated.reasons.push('UNTRACKED_BINANCE_POSITION');
+  localizeManualMaxLossPartialClose(unrelated,1700000005000);
+  assert.equal(unrelated.failClosed,true);
+  assert.equal(unrelated.symbolQuarantines,undefined);
 });

@@ -733,6 +733,31 @@ function localizeTriggeredMaxLossAnomalies(result,recovery,observedAt=Date.now()
   return result;
 }
 
+function localizeManualMaxLossPartialClose(result,observedAt=Date.now()){
+  if(!result||result.version!==2&&result.version!==undefined)return result;
+  if(Array.isArray(result.symbolQuarantines)&&result.symbolQuarantines.length)return result;
+  const reasons=Array.isArray(result.reasons)?result.reasons.map(String):[];
+  const allowed=new Set(['BINANCE_POSITION_QUANTITY_MISMATCH','MISSING_BINANCE_PROTECTION','MISSING_BINANCE_MAX_LOSS_PROTECTION','MISSING_BINANCE_ORDER']);
+  if(!reasons.includes('BINANCE_POSITION_QUANTITY_MISMATCH')||
+     !reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION')||
+     reasons.some(reason=>!allowed.has(reason)))return result;
+  const diff=result.differences&&typeof result.differences==='object'?result.differences:{};
+  const rows=Array.isArray(diff.quantityMismatches)?diff.quantityMismatches:[];
+  const missing=[...new Set((Array.isArray(diff.missingMaxLossProtections)?diff.missingMaxLossProtections:[]).map(v=>String(v||'').toUpperCase()).filter(Boolean))];
+  if(rows.length!==1||missing.length!==1)return result;
+  const row=rows[0]||{};
+  const symbol=String(row.symbol||'').toUpperCase();
+  const direction=String(row.direction||'').toUpperCase();
+  const expectedQuantity=Number(row.expectedQuantity);
+  const actualQuantity=Number(row.actualQuantity);
+  const key=symbol+':'+direction;
+  if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(direction)||
+     missing[0]!==key||!(expectedQuantity>0)||!(actualQuantity>0)||!(actualQuantity<expectedQuantity))return result;
+  result.symbolQuarantines=[{symbol,direction,reason:'MANUAL_MAX_LOSS_PARTIAL_CLOSE_REMAINDER',remainingQuantity:actualQuantity,since:Number(observedAt)||Date.now()}];
+  result.reasons=[]; result.failClosed=false; result.status='CLEAN_REAL_WITH_QUARANTINES';
+  return result;
+}
+
 function localizeMissingMaxLossRepair(result,observedAt=Date.now()){
   if(!result||result.version!==2&&result.version!==undefined)return result;
   if(Array.isArray(result.symbolQuarantines)&&result.symbolQuarantines.length)return result;
@@ -1741,12 +1766,14 @@ function certifiedSaleRemainderRecoveries(records,positions,now=Date.now()){
       row?.version===1&&field===expectedField&&
       /^[A-Z0-9]{3,30}$/.test(symbol)&&['LONG','SHORT'].includes(dir)&&
       /^[A-Za-z0-9._:-]{8,128}$/.test(commandId)&&
-      ['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER','TRIGGERED_MAX_LOSS_REMAINDER','INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'].includes(sourceReason)&&
+      ['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER','TRIGGERED_MAX_LOSS_REMAINDER','INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER','MANUAL_MAX_LOSS_PARTIAL_CLOSE_REMAINDER'].includes(sourceReason)&&
       initialQuantity>0&&attemptQuantity>0&&attemptQuantity<=initialQuantity+Math.max(1e-12,initialQuantity*1e-10)&&
       nextAttempt>=0&&nextAttempt<=3&&
       createdAt>0&&updatedAt>=createdAt&&expiresAt>=updatedAt;
     let sourceValid=false;
-    if(sourceReason==='PARTIAL_TARGET_REMAINDER'||sourceReason==='INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'){
+    if(sourceReason==='MANUAL_MAX_LOSS_PARTIAL_CLOSE_REMAINDER'){
+      sourceValid=true;
+    }else if(sourceReason==='PARTIAL_TARGET_REMAINDER'||sourceReason==='INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'){
       const id=String(row?.previousClientOrderId||'');
       sourceValid=/^zth-EXI-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
     }else if(sourceReason==='TRIGGERED_PROGRESSIVE_REMAINDER'){
@@ -2173,6 +2200,7 @@ export default async function handler(req, res) {
     result.differences.pendingTriggeredMaxLossRemainders=triggeredRecovery.pending;
     result.differences.exhaustedTriggeredMaxLossRemainders=triggeredRecovery.exhausted;
     localizeTriggeredMaxLossAnomalies(result,triggeredRecovery,started);
+    localizeManualMaxLossPartialClose(result,started);
     localizeMissingMaxLossRepair(result,started);
     localizeOrphanProtectionAnomalies(result,started);
     localizeEntryTransitionRecoveryAnomalies(result,started);
