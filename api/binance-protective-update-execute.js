@@ -227,7 +227,7 @@ export function emergencyProtection(runtimeState,update,entryPrice,excludeClient
     const impliedLossUsd=update.direction==='LONG'
       ?(entryPrice-trigger)*quantity
       :(trigger-entryPrice)*quantity;
-    return impliedLossUsd<=REAL_RISK_LIMITS.maxLossUsd+1e-8;
+    return impliedLossUsd>=0;
   })||null;
 }
 
@@ -358,7 +358,7 @@ async function directBinancePriorityMaxLossProof({
   const quantity=Math.abs(n(position?.positionAmt,0));
   const entryPrice=n(position?.entryPrice,0);
   const expectedSide=dir==='LONG'?'SELL':'BUY';
-  const cap=Math.min(n(configuredMaxLoss,NaN),REAL_RISK_LIMITS.maxLossUsd);
+  const cap=n(configuredMaxLoss,NaN);
   if(!(quantity>0)||!(entryPrice>0)||!(cap>0))return {ok:false,reason:'BINANCE_PRIORITY_CONFIG_INVALID'};
 
   const safe=(Array.isArray(algoOrders)?algoOrders:[]).filter(o=>{
@@ -672,7 +672,7 @@ export default async function handler(req,res){
         const checked=validateMaxLossTrigger({
           position,
           triggerPrice:update.triggerPrice,
-          hardMaxLossUsd:Math.min(allowedMaxLoss,REAL_RISK_LIMITS.maxLossUsd),
+          hardMaxLossUsd:allowedMaxLoss,
         });
         if(checked.impliedLossUsd>allowedMaxLoss+1e-8){
           return send(res,409,{
@@ -690,7 +690,7 @@ export default async function handler(req,res){
           impliedLossUsd:Number.isFinite(Number(e?.impliedLossUsd))?Number(e.impliedLossUsd):null,
           configuredMaxLossUsd:configuredMaxLoss,
           requestedMaxLossUsd:activeEdit?requestedMaxLoss:null,
-          hardMaxLossUsd:REAL_RISK_LIMITS.maxLossUsd,
+          hardMaxLossUsd:allowedMaxLoss,
           writeAttempted:false,
         });
       }
