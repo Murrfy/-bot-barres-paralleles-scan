@@ -11,11 +11,10 @@ function between(startMarker,endMarker){
   return worker.slice(start,end);
 }
 
-test('worker reuses shared progressive planner and server risk cap',()=>{
+test('worker reuses shared progressive planner without a fixed global MAX-LOSS cap',()=>{
   assert.ok(worker.includes("from '../lib/master-auto-protection.mjs'"));
   assert.ok(worker.includes('evaluateMasterAutoProgressiveProtection'));
-  assert.ok(worker.includes("from '../lib/risk-policy.mjs'"));
-  assert.ok(worker.includes('REAL_RISK_LIMITS.maxLossUsd'));
+  assert.equal(worker.includes('REAL_RISK_LIMITS.maxLossUsd'),false);
 });
 
 test('worker consumes configured protectionStages instead of embedding trading thresholds',()=>{
