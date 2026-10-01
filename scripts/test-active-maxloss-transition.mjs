@@ -47,7 +47,8 @@ test('Binance execution independently enforces requested MAX-LOSS and configured
   assert.match(fn,/PREVIOUS_MAX_LOSS_IDENTITY_MISMATCH/);
   assert.match(fn,/configuredMarginUsd\(state\.controllerState,update\.symbol\)/);
   assert.match(fn,/MAX_LOSS_EXCEEDS_CONFIGURED_MARGIN/);
-  assert.match(fn,/Math\.min\(allowedMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
+  assert.match(fn,/hardMaxLossUsd:allowedMaxLoss/);
+  assert.doesNotMatch(fn,/Math\.min\(allowedMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
 });
 
 test('active MAX-LOSS cancellation requires the exact newly confirmed Zenith stop',()=>{
