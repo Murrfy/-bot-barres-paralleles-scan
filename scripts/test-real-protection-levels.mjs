@@ -136,6 +136,7 @@ test('requested +40 target can round to +40.02 but never below +40',()=>{
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.3',entryPrice:'100'},
     targetProfitUsd:40,
     maxLossUsd:10,
+    hardMaxLossUsd:1000,
     priceFilter:filter,
   });
   assert.equal(levels.targetPrice,233.4);
@@ -148,6 +149,7 @@ test('SHORT requested +40 target also rounds to at least +40, never below',()=>{
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'-0.3',entryPrice:'200'},
     targetProfitUsd:40,
     maxLossUsd:10,
+    hardMaxLossUsd:1000,
     priceFilter:filter,
   });
   assert.equal(levels.targetPrice,66.6);
@@ -172,6 +174,7 @@ test('MAX-LOSS tick rounding never exceeds requested loss between ticks',()=>{
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.7',entryPrice:'100'},
     targetProfitUsd:8,
     maxLossUsd:7.8,
+    hardMaxLossUsd:1000,
     priceFilter:filter,
   });
   assert.ok(levels.actualMaxLossUsd<=7.8+1e-8);
