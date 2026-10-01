@@ -59,28 +59,28 @@ test('100 USDT margin at x10 does not multiply real PnL by leverage twice',()=>{
   assert.equal(priceForLinearPnl({entryPrice:100,quantity,direction:'LONG',pnlUsd:-40}),96);
 });
 
-test('automatic max loss can never exceed hard server limit',()=>{
+test('automatic max loss can never exceed the configured margin bound',()=>{
   assert.throws(()=>buildRealProtectionLevels({
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'},
-    targetProfitUsd:3000,maxLossUsd:401,priceFilter:filter,
+    targetProfitUsd:3000,maxLossUsd:401,hardMaxLossUsd:400,priceFilter:filter,
   }),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
 });
 
-test('server max-loss validator rejects a stop implying more than $400 loss',()=>{
+test('server max-loss validator rejects a stop beyond the supplied configured bound',()=>{
   const position={symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'};
-  const exact=validateMaxLossTrigger({position,triggerPrice:48000});
+  const exact=validateMaxLossTrigger({position,triggerPrice:48000,hardMaxLossUsd:400});
   assert.equal(exact.impliedLossUsd,400);
   assert.throws(
-    ()=>validateMaxLossTrigger({position,triggerPrice:47999.9}),
+    ()=>validateMaxLossTrigger({position,triggerPrice:47999.9,hardMaxLossUsd:400}),
     e=>e?.message==='MAX_LOSS_EXCEEDS_SERVER_LIMIT'&&e.impliedLossUsd>400
   );
 });
 
 test('server max-loss validator handles SHORT correctly',()=>{
   const position={symbol:'ETHUSDT',positionSide:'BOTH',positionAmt:'-2',entryPrice:'3000'};
-  const exact=validateMaxLossTrigger({position,triggerPrice:3200});
+  const exact=validateMaxLossTrigger({position,triggerPrice:3200,hardMaxLossUsd:400});
   assert.equal(exact.impliedLossUsd,400);
-  assert.throws(()=>validateMaxLossTrigger({position,triggerPrice:3200.1}),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
+  assert.throws(()=>validateMaxLossTrigger({position,triggerPrice:3200.1,hardMaxLossUsd:400}),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
 });
 
 
