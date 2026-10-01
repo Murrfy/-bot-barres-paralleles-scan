@@ -142,7 +142,7 @@
             <div class="formgrid">
               <label class="field">Objectif gain ($)<input id="tTarget" type="number" min="1" step="1"></label>
               <label class="field">Prix objectif calculé<input id="tTargetPreview" readonly></label>
-              <label class="field">Perte maximale ($)<input id="tMaxLoss" type="number" min="2" max="400" step="1"></label>
+              <label class="field">Perte maximale ($)<input id="tMaxLoss" type="number" min="2" step="1"></label>
             </div>
             <!--
     ========================================================================
@@ -451,7 +451,7 @@ function persistRealProtectiveUpdatePending(){
       const hasServerId=/^[A-Za-z0-9._:-]{8,128}$/.test(commandId),hasClientId=/^[A-Za-z0-9._:-]{8,128}$/.test(clientCommandId);
       const maxLossUsd=n(pending?.maxLossUsd,NaN);
       if((!hasServerId&&!hasClientId)||!(at>0)||now-at>30*24*60*60*1000)continue;
-      if(kind==='MAX_LOSS'&&!(maxLossUsd>=2&&maxLossUsd<=400))continue;
+      if(kind==='MAX_LOSS'&&!(maxLossUsd>=2))continue;
       rows.push({
         key,
         symbol:String(pending?.symbol||'').toUpperCase(),
@@ -479,7 +479,7 @@ function restoreRealProtectiveUpdatePending(){
       const tracked=kind==='MAX_LOSS'||Boolean(activeConfig);
       if(!tracked||!/^[A-Z0-9]{3,30}:(?:LONG|SHORT):(?:MAX_LOSS|EXIT|ACTIVE_CONFIG)$/.test(key)||!/^[A-Z0-9]{3,30}$/.test(symbol)||
          (!hasServerId&&!hasClientId)||!(at>0)||now-at>30*24*60*60*1000)continue;
-      if(kind==='MAX_LOSS'&&!(maxLossUsd>=2&&maxLossUsd<=400))continue;
+      if(kind==='MAX_LOSS'&&!(maxLossUsd>=2))continue;
       realProtectiveUpdatePending.set(key,{
         symbol,kind,price:priceValue,
         ...(kind==='MAX_LOSS'?{maxLossUsd}:{}),
@@ -1186,11 +1186,21 @@ function applyControllerCloudStateSnapshot(state){
 
   const remoteSettings=data.settings&&typeof data.settings==='object'&&!Array.isArray(data.settings)?data.settings:{};
   settings={...settings,...remoteSettings};
-  settings.maxLoss=Math.min(400,Math.max(2,n(settings.maxLoss,40)));
+  settings.maxLoss=Math.min(Math.max(2,n(settings.margin,1000)),Math.max(2,n(settings.maxLoss,40)));
   settings.marginType='ISOLATED';
   settings.protectionStages=normalizeProtections(settings.protectionStages,settings.targetProfit);
 
-  tokenSettings=normalizeRecordBlock(data.tokenSettings);
+  const remoteTokenSettings=normalizeRecordBlock(data.tokenSettings);
+  const localTokenSettings=normalizeRecordBlock(tokenSettings);
+  tokenSettings={...localTokenSettings,...remoteTokenSettings};
+  for(const [symbol,localToken] of Object.entries(localTokenSettings)){
+    const remoteToken=remoteTokenSettings[symbol];
+    if(!remoteToken)continue;
+    const localMargin=n(localToken?.margin,NaN),remoteMargin=n(remoteToken?.margin,NaN);
+    const localLeverage=n(localToken?.leverage,NaN),remoteLeverage=n(remoteToken?.leverage,NaN);
+    if(Number.isFinite(localMargin)&&!Number.isFinite(remoteMargin))tokenSettings[symbol].margin=localMargin;
+    if(Number.isFinite(localLeverage)&&!Number.isFinite(remoteLeverage))tokenSettings[symbol].leverage=localLeverage;
+  }
   for(const t of Object.values(tokenSettings)){
     const legacyTokenDefaults=n(t?.targetProfit)===3000&&n(t?.manualTargetProfit,3000)===3000&&
       n(t?.maxLoss)===400&&legacyDefaultProtectionProfile(t?.protectionStages);
@@ -1866,7 +1876,7 @@ async function saveRealActiveTokenSettings(s,position,old,protections){
   const configuredMargin=Math.max(0,n(old.margin,settings.margin));
 
   if(!(manualTarget>0))return setStatus('Objectif de gain invalide : entre un montant supérieur à 0 $.',true);
-  if(!(requestedMaxLoss>=2&&requestedMaxLoss<=400))return setStatus('Perte maximale invalide : entre 2 $ et 400 $.',true);
+  if(!(requestedMaxLoss>=2))return setStatus('Perte maximale invalide : entre un montant supérieur ou égal à 2 $.',true);
   if(!(configuredMargin>0))return setStatus('Perte maximale non modifiée : marge configurée indisponible.',true);
   if(requestedMaxLoss>configuredMargin)return setStatus('Perte maximale invalide : elle ne peut pas dépasser la marge prévue du jeton ('+configuredMargin.toFixed(2)+' $).',true);
   if(saleEnabled&&!(salePrice>0))return setStatus('Entre un prix de vente déterminé supérieur à 0.',true);
