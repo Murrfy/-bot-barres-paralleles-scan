@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "3-sortie-risque",
-  "scopeRevision": 28,
+  "scopeRevision": 29,
   "allowedPaths": [
     "index.html",
     "api/zenith-sync.js",
@@ -55,6 +55,7 @@
     "scripts/test-active-target-protections-edit.mjs",
     "scripts/test-real-protection-level-wiring.mjs",
     "scripts/test-protective-update-conflicts.mjs",
-    "scripts/test-maxloss-hard-cap-wiring.mjs"
+    "scripts/test-maxloss-hard-cap-wiring.mjs",
+    "scripts/test-maxloss-ui-cap.mjs"
   ]
 }
