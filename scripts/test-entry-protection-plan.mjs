@@ -7,7 +7,7 @@ const priceFilter={filterType:'PRICE_FILTER',tickSize:'0.1',minPrice:'0.1',maxPr
 test('LONG entry protection is a LIMIT-only STOP IOC below the LIMIT entry',()=>{
   const plan=buildEntryProtectionPlan({
     commandId:'entry-long-123456',symbol:'BTCUSDT',side:'BUY',
-    quantity:0.2,limitPrice:50000,maxLoss:400,priceFilter,
+    quantity:0.2,limitPrice:50000,maxLoss:400,margin:1000,priceFilter,
   });
   assert.equal(plan.direction,'LONG');
   assert.equal(plan.triggerPrice,48000);
@@ -32,17 +32,17 @@ test('prepared entry protection refuses SELL/SHORT entries',()=>{
   }),/ENTRY_BUY_ONLY/);
 });
 
-test('entry protection never exceeds the server hard MAX-LOSS',()=>{
+test('entry protection never exceeds the token configured margin',()=>{
   assert.throws(()=>buildEntryProtectionPlan({
     commandId:'entry-loss-123456',symbol:'BTCUSDT',side:'BUY',
-    quantity:0.2,limitPrice:50000,maxLoss:401,priceFilter,
+    quantity:0.2,limitPrice:50000,maxLoss:401,margin:400,priceFilter,
   }),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
 });
 
 test('tick rounding never makes actual loss exceed requested cap',()=>{
   const plan=buildEntryProtectionPlan({
     commandId:'entry-round-12345',symbol:'BTCUSDT',side:'BUY',
-    quantity:3,limitPrice:100,maxLoss:10,
+    quantity:3,limitPrice:100,maxLoss:10,margin:100,
     priceFilter:{filterType:'PRICE_FILTER',tickSize:'0.1',minPrice:'0.1',maxPrice:'1000000'},
   });
   assert.ok(plan.actualMaxLossUsd<=10+1e-8);
