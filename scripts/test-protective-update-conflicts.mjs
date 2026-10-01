@@ -105,20 +105,20 @@ test('cancel-old progressive verifies the stale order own quantity after a parti
   assert.doesNotMatch(progressiveBlock,/expected\.quantity=String\(update\.quantity\)/);
 });
 
-test('emergency protection validator accepts $400 but rejects anything above the hard cap',()=>{
+test('emergency protection identity accepts a valid LONG loss-side STOP without a fixed global dollar cap',()=>{
   const base={orderClass:'ALGO',symbol:'BTCUSDT',side:'SELL',positionSide:'BOTH',
     type:'STOP',timeInForce:'IOC',quantity:'1',reduceOnly:true,closePosition:false,priceMatch:'OPPONENT',clientAlgoId:'zth-MAX-cap'};
   const update={symbol:'BTCUSDT',direction:'LONG',quantity:1};
   assert.ok(emergencyProtection(runtime([{...base,triggerPrice:'49600'}]),update,50000));
-  assert.equal(emergencyProtection(runtime([{...base,triggerPrice:'49599.99'}]),update,50000),null);
+  assert.ok(emergencyProtection(runtime([{...base,triggerPrice:'49599.99'}]),update,50000));
 });
 
-test('SHORT emergency protection uses the same $400 hard cap',()=>{
+test('SHORT emergency protection identity has no fixed global $400 cap',()=>{
   const base={orderClass:'ALGO',symbol:'BTCUSDT',side:'BUY',positionSide:'BOTH',
     type:'STOP',timeInForce:'IOC',quantity:'1',reduceOnly:true,closePosition:false,priceMatch:'OPPONENT',clientAlgoId:'zth-MAX-short'};
   const update={symbol:'BTCUSDT',direction:'SHORT',quantity:1};
   assert.ok(emergencyProtection(runtime([{...base,triggerPrice:'50400'}]),update,50000));
-  assert.equal(emergencyProtection(runtime([{...base,triggerPrice:'50400.01'}]),update,50000),null);
+  assert.ok(emergencyProtection(runtime([{...base,triggerPrice:'50400.01'}]),update,50000));
 });
 
 
@@ -164,12 +164,13 @@ test('progressive placement allows a normal Zenith zth-EXI target LIMIT',()=>{
 });
 
 
-test('server enforces the configured MAX-LOSS cap, not only the global $400 ceiling',()=>{
+test('server enforces the configured MAX-LOSS cap without a fixed global $400 ceiling',()=>{
   const source=fs.readFileSync('api/binance-protective-update-execute.js','utf8');
   assert.match(source,/KEY_CONTROLLER_STATE/);
   assert.match(source,/configuredMaxLossUsd\(state\.controllerState,update\.symbol\)/);
   assert.match(source,/const allowedMaxLoss=activeEdit\?requestedMaxLoss:configuredMaxLoss/);
-  assert.match(source,/Math\.min\(allowedMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
+  assert.match(source,/hardMaxLossUsd:allowedMaxLoss/);
+  assert.doesNotMatch(source,/Math\.min\(allowedMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
   assert.match(source,/MAX_LOSS_EXCEEDS_CONFIGURED_LIMIT/);
   assert.match(source,/CONFIGURED_MAX_LOSS_UNAVAILABLE/);
 });
