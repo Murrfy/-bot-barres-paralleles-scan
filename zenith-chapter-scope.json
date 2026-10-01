@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "4-cycle-jeton",
-  "scopeRevision": 33,
+  "scopeRevision": 34,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "index.html",
@@ -50,6 +50,7 @@
     "scripts/test-protective-update-conflicts.mjs",
     "scripts/test-real-protection-level-wiring.mjs",
     "scripts/test-real-protection-levels.mjs",
-    "vercel.json"
+    "vercel.json",
+    "scripts/test-active-maxloss-config-refresh.mjs"
   ]
 }
