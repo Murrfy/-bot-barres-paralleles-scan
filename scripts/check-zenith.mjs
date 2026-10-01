@@ -599,9 +599,11 @@ if (!protectiveUpdateExecute.includes('impliedLossUsd<=cap+1e-8') ||
 }
 
 if (!index.includes('id="tMaxLoss" type="number" min="2" step="1"') ||
-    !index.includes('requestedMaxLoss>=2&&requestedMaxLoss<=400') ||
+    !index.includes('if(!(requestedMaxLoss>=2))') ||
+    !index.includes('requestedMaxLoss>configuredMargin') ||
     !index.includes('maxLoss:requestedMaxLoss') ||
-    !index.includes('settings.maxLoss=Math.min(400,Math.max(2,n(settings.maxLoss,40)))')) {
+    !index.includes('settings.maxLoss=Math.max(2,n(settings.maxLoss,40))') ||
+    index.includes('requestedMaxLoss>=2&&requestedMaxLoss<=400')) {
   fail('controller MAX-LOSS settings must use token margin as upper bound while keeping the locked $40 operational fallback');
 }
 if (!index.includes('targetProfit:40,maxLoss:40,protectionStages:DEFAULT_PROTECTIONS') ||
