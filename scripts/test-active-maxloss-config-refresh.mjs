@@ -16,7 +16,8 @@ test('engine accepts active config drift only through the narrow safe token allo
   assert.match(fn,/\['settings','manualTokens','validated'\]/);
   assert.match(fn,/safeMutable=new Set/);
   assert.match(fn,/'maxLoss'.*'marginType'.*'targetProfit'.*'manualTargetProfit'.*'protectionStages'/s);
-  assert.match(fn,/maxLoss>=2&&maxLoss<=REAL_RISK_LIMITS\.maxLossUsd/);
+  assert.match(fn,/maxLoss>=2/);
+  assert.doesNotMatch(fn,/REAL_RISK_LIMITS\.maxLossUsd/);
   assert.match(fn,/maxLoss>margin\+1e-8/);
   assert.match(fn,/validActiveProtectionStages\(after\.protectionStages\)/);
   assert.match(fn,/ISOLATED/);
