@@ -562,26 +562,6 @@ test('external reduce-only order is not classified as a Zenith orphan', () => {
 });
 
 
-test('MAX-LOSS beyond the hard $400 cap is treated as missing protection', () => {
-  const unsafe = normalizeActualAlgoOrder({
-    ...emergency,
-    algoId:177,
-    clientAlgoId:'zth-MAX-too-far',
-    triggerPrice:'49599'
-  });
-  const result = reconcile(runtime([position], [unsafe]), [normalized], [unsafe]);
-  assert.ok(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'));
-  assert.equal(result.differences.unsafeMaxLossProtections.length,1);
-  assert.ok(result.differences.unsafeMaxLossProtections[0].impliedLossUsd>400);
-});
-
-test('MAX-LOSS exactly at the hard $400 cap remains valid', () => {
-  const result = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
-  assert.equal(result.reasons.includes('MISSING_BINANCE_MAX_LOSS_PROTECTION'),false);
-  assert.equal(result.differences.unsafeMaxLossProtections.length,0);
-});
-
-
 test('reconciliation rejects a Zenith MAX-LOSS above the configured per-token cap', () => {
   const baseResult = reconcile(runtime([position], [emergency]), [normalized], [normalizedEmergency]);
   const controllerState = {data:{settings:{maxLoss:400},tokenSettings:{BTCUSDT:{maxLoss:100}}}};

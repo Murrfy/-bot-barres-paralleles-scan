@@ -4,10 +4,11 @@ import { readFile } from 'node:fs/promises';
 
 const sync=await readFile(new URL('../api/zenith-sync.js',import.meta.url),'utf8');
 
-test('central ACK emergency validation requires live quantity and shared hard cap',()=>{
+test('central ACK emergency validation requires live quantity without legacy global hard cap',()=>{
   assert.match(sync,/function runtimeEmergencyProtection\(runtimeState, symbol, direction, entryPrice, quantity, excludeClientAlgoId = ''\)/);
   assert.match(sync,/const qty = Math\.abs\(Number\(quantity\)\)/);
-  assert.match(sync,/impliedLossUsd <= REAL_RISK_LIMITS\.maxLossUsd \+ 1e-8/);
+  assert.match(sync,/return impliedLossUsd >= 0/);
+  assert.doesNotMatch(sync,/impliedLossUsd <= REAL_RISK_LIMITS\.maxLossUsd \+ 1e-8/);
   assert.match(sync,/Math\.abs\(Number\(position\?\.positionAmt\|\|position\?\.quantity\|\|0\)\)/);
 });
 

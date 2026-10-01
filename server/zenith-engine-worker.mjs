@@ -651,7 +651,7 @@ function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig){
 
     const maxLoss=n(after.maxLoss,NaN);
     const margin=n(after.margin,n(nextConfig?.settings?.margin,NaN));
-    if(!(maxLoss>=2&&maxLoss<=REAL_RISK_LIMITS.maxLossUsd))return false;
+    if(!(maxLoss>=2))return false;
     if(!(margin>0)||maxLoss>margin+1e-8)return false;
     if(String(after.marginType||'ISOLATED').toUpperCase()!=='ISOLATED')return false;
 
@@ -1269,7 +1269,7 @@ async function pruneAutoHighWater(){
   return changed;
 }
 
-function safeMaxLossOrders(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.maxLossUsd){
+function safeMaxLossOrders(position,orders,hardMaxLossUsd){
   const amount=n(position?.positionAmt??position?.quantity,0);
   const direction=amount>=0?'LONG':'SHORT';
   const quantity=Math.abs(amount);
@@ -1302,7 +1302,7 @@ function safeMaxLossOrders(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.maxLo
   });
 }
 
-function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.maxLossUsd){
+function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd){
   const amount=n(position?.positionAmt??position?.quantity,0);
   const direction=amount>=0?'LONG':'SHORT';
   const quantity=Math.abs(amount);
@@ -1406,7 +1406,7 @@ function configuredMaxLossForSymbol(symbol){
     ?runtime.config.settings:{};
   const token=tokenSettings[wanted]&&typeof tokenSettings[wanted]==='object'?tokenSettings[wanted]:{};
   const value=n(token.maxLoss,n(globalSettings.maxLoss,NaN));
-  return value>0?Math.min(value,REAL_RISK_LIMITS.maxLossUsd):NaN;
+  return value>0?value:NaN;
 }
 
 async function executePartialTargetRemainder(plan){
@@ -3478,7 +3478,7 @@ async function safeAckActiveMaxLossAfterReconcile(raw,executionProof,body){
   const maxLossUsd=n(ack.maxLossUsd,NaN);
   const revision=Math.max(0,n(ack.controllerRevision,0));
   const expectedHash=String(ack.controllerStateHash||'');
-  if(!runtime.config||!symbol||!(maxLossUsd>=2&&maxLossUsd<=REAL_RISK_LIMITS.maxLossUsd)||
+  if(!runtime.config||!symbol||!(maxLossUsd>=2)||
      !(revision>0)||!expectedHash){
     runtime.synchronized=false;
     runtime.error='ACTIVE_MAX_LOSS_ACK_CONFIG_INVALID';

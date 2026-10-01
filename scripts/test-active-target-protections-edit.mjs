@@ -118,7 +118,7 @@ test('server revalidates preserved risk settings before active config revision c
   assert.match(prepare,/CONFIGURED_MAX_LOSS_INVALID/);
   assert.match(prepare,/CONFIGURED_LEVERAGE_INVALID/);
   assert.match(prepare,/CONFIGURED_MARGIN_TYPE_INVALID/);
-  assert.match(prepare,/REAL_RISK_LIMITS\.maxLossUsd/);
+  assert.doesNotMatch(prepare,/REAL_RISK_LIMITS\.maxLossUsd/);
   assert.match(prepare,/maxLoss > margin \+ 1e-8/);
   assert.match(prepare,/marginType:'ISOLATED'/);
 });

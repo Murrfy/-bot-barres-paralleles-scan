@@ -18,7 +18,7 @@ test('builds exact LONG MAX-LOSS repair from live position and controller config
   const plan=buildMaxLossRepairPlan({
     report:report(),
     positions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000',updateTime:123}],
-    tokenSettings:{BTCUSDT:{maxLoss:400,targetProfit:3000}},
+    tokenSettings:{BTCUSDT:{maxLoss:400,targetProfit:3000,margin:500}},
     settings:{maxLoss:400,targetProfit:3000},
     priceFilters:filter,
   });
@@ -30,16 +30,15 @@ test('builds exact LONG MAX-LOSS repair from live position and controller config
   assert.equal(plan.lifecycleAt,123);
 });
 
-test('repair clamps legacy configured loss to hard server cap',()=>{
+test('repair refuses configured MAX-LOSS above token margin',()=>{
   const plan=buildMaxLossRepairPlan({
     report:report(),
     positions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'}],
-    tokenSettings:{BTCUSDT:{maxLoss:9999,targetProfit:40}},
+    tokenSettings:{BTCUSDT:{maxLoss:9999,targetProfit:40,margin:500}},
     priceFilters:filter,
   });
-  assert.equal(plan.action,'REPAIR');
-  assert.equal(plan.maxLossUsd,400);
-  assert.ok(plan.actualMaxLossUsd<=400);
+  assert.equal(plan.action,'BLOCK');
+  assert.equal(plan.reason,'MAX_LOSS_EXCEEDS_MARGIN');
 });
 
 test('ambiguous duplicate MAX-LOSS never creates a third protection',()=>{
@@ -64,6 +63,7 @@ test('missing position or exchange tick metadata fails closed',()=>{
   const noFilter=buildMaxLossRepairPlan({
     report:report(),
     positions:[{symbol:'BTCUSDT',positionAmt:'0.2',entryPrice:'50000'}],
+    tokenSettings:{BTCUSDT:{maxLoss:40,margin:500}},
     priceFilters:{},
   });
   assert.equal(noFilter.action,'BLOCK');
@@ -104,7 +104,7 @@ test('builds repair plan from exact local missing MAX-LOSS quarantine',()=>{
   const plan=buildMaxLossRepairPlan({
     report:local,
     positions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000',updateTime:123}],
-    tokenSettings:{BTCUSDT:{maxLoss:400}},
+    tokenSettings:{BTCUSDT:{maxLoss:400,margin:500}},
     settings:{maxLoss:400},
     priceFilters:filter,
   });

@@ -28,7 +28,7 @@ test('pending MAX-LOSS reconciliation authorization is tightly fenced',()=>{
   assert.match(fn,/controllerDeviceId/);
   assert.match(fn,/expiresAt > now/);
   assert.match(fn,/requestedMaxLossUsd >= 2/);
-  assert.match(fn,/requestedMaxLossUsd <= REAL_RISK_LIMITS\.maxLossUsd/);
+  assert.doesNotMatch(fn,/REAL_RISK_LIMITS\.maxLossUsd/);
   assert.match(fn,/configuredMarginUsd\(controllerState, symbol\)/);
   assert.match(fn,/requestedMaxLossUsd > configuredMargin \+ 1e-8/);
   assert.match(fn,/matchingNew/);
@@ -47,7 +47,8 @@ test('Binance execution independently enforces requested MAX-LOSS and configured
   assert.match(fn,/PREVIOUS_MAX_LOSS_IDENTITY_MISMATCH/);
   assert.match(fn,/configuredMarginUsd\(state\.controllerState,update\.symbol\)/);
   assert.match(fn,/MAX_LOSS_EXCEEDS_CONFIGURED_MARGIN/);
-  assert.match(fn,/Math\.min\(allowedMaxLoss,REAL_RISK_LIMITS\.maxLossUsd\)/);
+  assert.match(fn,/hardMaxLossUsd:allowedMaxLoss/);
+  assert.doesNotMatch(fn,/REAL_RISK_LIMITS\.maxLossUsd/);
 });
 
 test('active MAX-LOSS cancellation requires the exact newly confirmed Zenith stop',()=>{
