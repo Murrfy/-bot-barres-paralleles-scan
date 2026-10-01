@@ -646,3 +646,25 @@ test('manual Binance partial close after missing MAX-LOSS is localized for MARKE
     remainingQuantity:0.4,since:1700000005000
   }]);
 });
+
+test('manual MAX-LOSS partial-close localization rejects unrelated or non-partial mismatches',()=>{
+  const base=()=>({
+    version:2,status:'MISMATCH',failClosed:true,
+    reasons:['BINANCE_POSITION_QUANTITY_MISMATCH','MISSING_BINANCE_MAX_LOSS_PROTECTION'],
+    differences:{
+      quantityMismatches:[{symbol:'BTCUSDT',direction:'LONG',expectedQuantity:1,actualQuantity:1.2}],
+      missingMaxLossProtections:['BTCUSDT:LONG']
+    }
+  });
+  const increased=base();
+  localizeManualMaxLossPartialClose(increased,1700000005000);
+  assert.equal(increased.failClosed,true);
+  assert.equal(increased.symbolQuarantines,undefined);
+
+  const unrelated=base();
+  unrelated.differences.quantityMismatches[0].actualQuantity=0.4;
+  unrelated.reasons.push('UNTRACKED_BINANCE_POSITION');
+  localizeManualMaxLossPartialClose(unrelated,1700000005000);
+  assert.equal(unrelated.failClosed,true);
+  assert.equal(unrelated.symbolQuarantines,undefined);
+});
