@@ -1766,12 +1766,14 @@ function certifiedSaleRemainderRecoveries(records,positions,now=Date.now()){
       row?.version===1&&field===expectedField&&
       /^[A-Z0-9]{3,30}$/.test(symbol)&&['LONG','SHORT'].includes(dir)&&
       /^[A-Za-z0-9._:-]{8,128}$/.test(commandId)&&
-      ['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER','TRIGGERED_MAX_LOSS_REMAINDER','INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'].includes(sourceReason)&&
+      ['PARTIAL_TARGET_REMAINDER','TRIGGERED_PROGRESSIVE_REMAINDER','TRIGGERED_MAX_LOSS_REMAINDER','INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER','MANUAL_MAX_LOSS_PARTIAL_CLOSE_REMAINDER'].includes(sourceReason)&&
       initialQuantity>0&&attemptQuantity>0&&attemptQuantity<=initialQuantity+Math.max(1e-12,initialQuantity*1e-10)&&
       nextAttempt>=0&&nextAttempt<=3&&
       createdAt>0&&updatedAt>=createdAt&&expiresAt>=updatedAt;
     let sourceValid=false;
-    if(sourceReason==='PARTIAL_TARGET_REMAINDER'||sourceReason==='INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'){
+    if(sourceReason==='MANUAL_MAX_LOSS_PARTIAL_CLOSE_REMAINDER'){
+      sourceValid=true;
+    }else if(sourceReason==='PARTIAL_TARGET_REMAINDER'||sourceReason==='INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'){
       const id=String(row?.previousClientOrderId||'');
       sourceValid=/^zth-EXI-[A-Za-z0-9._:-]+$/.test(id)&&id.length<=36;
     }else if(sourceReason==='TRIGGERED_PROGRESSIVE_REMAINDER'){
