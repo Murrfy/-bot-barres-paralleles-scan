@@ -1866,7 +1866,7 @@ async function saveRealActiveTokenSettings(s,position,old,protections){
   const configuredMargin=Math.max(0,n(old.margin,settings.margin));
 
   if(!(manualTarget>0))return setStatus('Objectif de gain invalide : entre un montant supérieur à 0 $.',true);
-  if(!(requestedMaxLoss>=2&&requestedMaxLoss<=400))return setStatus('Perte maximale invalide : entre 2 $ et 400 $.',true);
+  if(!(requestedMaxLoss>=2))return setStatus('Perte maximale invalide : entre un montant supérieur ou égal à 2 $.',true);
   if(!(configuredMargin>0))return setStatus('Perte maximale non modifiée : marge configurée indisponible.',true);
   if(requestedMaxLoss>configuredMargin)return setStatus('Perte maximale invalide : elle ne peut pas dépasser la marge prévue du jeton ('+configuredMargin.toFixed(2)+' $).',true);
   if(saleEnabled&&!(salePrice>0))return setStatus('Entre un prix de vente déterminé supérieur à 0.',true);
