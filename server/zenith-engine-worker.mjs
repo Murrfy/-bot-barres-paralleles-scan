@@ -43,6 +43,7 @@ import {
   pendingEntryWriteAheadRecoveryTargets,
   expiredEntryOrphanProtections,
   persistedSaleRemainderRecoveryTargets,
+  manualMaxLossPartialCloseRemainderTarget,
   triggeredProgressiveRemainderTargets,
   triggeredMaxLossRemainderTargets,
   maxLossSymbolQuarantines,
@@ -2635,6 +2636,29 @@ async function cancelPendingEntriesMissingPreparedProtection(report){
   };
 }
 
+async function recoverManualMaxLossPartialCloseRemainder(report){
+  const target=manualMaxLossPartialCloseRemainderTarget(report);
+  if(!target)return {handled:false,closed:false,reason:'NO_MANUAL_MAXLOSS_PARTIAL_REMAINDER'};
+  const commandId='manual-maxloss-'+crypto.createHash('sha256')
+    .update(target.symbol+':'+target.direction+':'+String(target.quantity))
+    .digest('hex').slice(0,24);
+  const result=await callProtectiveExecute({
+    type:'EXEC_CLOSE_POSITION',
+    commandId,
+    symbol:target.symbol,
+    direction:target.direction,
+    quantity:target.quantity,
+    exitMode:'REMAINDER_MARKET',
+    recoveryReason:'MANUAL_MAX_LOSS_PARTIAL_CLOSE_REMAINDER',
+  });
+  if(!result.response.ok||result.data?.ok!==true){
+    const reason='MANUAL_MAXLOSS_PARTIAL_REMAINDER_'+String(result.data?.code||result.data?.reason||('HTTP_'+result.response.status));
+    runtime.error=reason; stream.lastError=reason; scheduleReconcile(250);
+    return {handled:true,closed:false,reason};
+  }
+  return {handled:true,closed:result.data?.remainderMarketClosed===true||result.data?.alreadyClosed===true,reason:'MANUAL_MAXLOSS_PARTIAL_REMAINDER_CLOSED'};
+}
+
 async function repairMissingMaxLoss(report){
   const exactTarget=missingMaxLossRepairTarget(report);
   if(!exactTarget)return {handled:false,repaired:false,reason:'NO_EXACT_REPAIR_TARGET'};
@@ -2948,6 +2972,14 @@ async function reconcile(secondPass=false){
     const persistedSaleRemainder=await recoverPersistedSaleRemainder(data.report);
     if(persistedSaleRemainder.handled){
       if(!persistedSaleRemainder.closed)return false;
+      stream.reconcileBusy=false;
+      await sleep(100);
+      return reconcile(false);
+    }
+
+    const manualMaxLossPartialRemainder=await recoverManualMaxLossPartialCloseRemainder(data.report);
+    if(manualMaxLossPartialRemainder.handled){
+      if(!manualMaxLossPartialRemainder.closed)return false;
       stream.reconcileBusy=false;
       await sleep(100);
       return reconcile(false);
