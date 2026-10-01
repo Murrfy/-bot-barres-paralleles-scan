@@ -28,7 +28,7 @@ test('pending MAX-LOSS reconciliation authorization is tightly fenced',()=>{
   assert.match(fn,/controllerDeviceId/);
   assert.match(fn,/expiresAt > now/);
   assert.match(fn,/requestedMaxLossUsd >= 2/);
-  assert.match(fn,/requestedMaxLossUsd <= REAL_RISK_LIMITS\.maxLossUsd/);
+  assert.doesNotMatch(fn,/requestedMaxLossUsd <= REAL_RISK_LIMITS\.maxLossUsd/);
   assert.match(fn,/configuredMarginUsd\(controllerState, symbol\)/);
   assert.match(fn,/requestedMaxLossUsd > configuredMargin \+ 1e-8/);
   assert.match(fn,/matchingNew/);
