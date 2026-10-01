@@ -16,6 +16,7 @@ test('LONG automatic levels use exact quantity and conservative tick rounding',(
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'3',entryPrice:'100'},
     targetProfitUsd:1,
     maxLossUsd:1,
+    hardMaxLossUsd:1000,
     priceFilter:filter,
   });
   assert.equal(levels.direction,'LONG');
@@ -30,6 +31,7 @@ test('SHORT automatic levels round in the opposite market direction but remain c
     position:{symbol:'ETHUSDT',positionSide:'BOTH',positionAmt:'-3',entryPrice:'100'},
     targetProfitUsd:1,
     maxLossUsd:1,
+    hardMaxLossUsd:1000,
     priceFilter:filter,
   });
   assert.equal(levels.direction,'SHORT');
@@ -57,28 +59,28 @@ test('100 USDT margin at x10 does not multiply real PnL by leverage twice',()=>{
   assert.equal(priceForLinearPnl({entryPrice:100,quantity,direction:'LONG',pnlUsd:-40}),96);
 });
 
-test('automatic max loss can never exceed hard server limit',()=>{
+test('automatic max loss can never exceed the configured margin bound',()=>{
   assert.throws(()=>buildRealProtectionLevels({
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'},
-    targetProfitUsd:3000,maxLossUsd:401,priceFilter:filter,
+    targetProfitUsd:3000,maxLossUsd:401,hardMaxLossUsd:400,priceFilter:filter,
   }),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
 });
 
-test('server max-loss validator rejects a stop implying more than $400 loss',()=>{
+test('server max-loss validator rejects a stop beyond the supplied configured bound',()=>{
   const position={symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'};
-  const exact=validateMaxLossTrigger({position,triggerPrice:48000});
+  const exact=validateMaxLossTrigger({position,triggerPrice:48000,hardMaxLossUsd:400});
   assert.equal(exact.impliedLossUsd,400);
   assert.throws(
-    ()=>validateMaxLossTrigger({position,triggerPrice:47999.9}),
+    ()=>validateMaxLossTrigger({position,triggerPrice:47999.9,hardMaxLossUsd:400}),
     e=>e?.message==='MAX_LOSS_EXCEEDS_SERVER_LIMIT'&&e.impliedLossUsd>400
   );
 });
 
 test('server max-loss validator handles SHORT correctly',()=>{
   const position={symbol:'ETHUSDT',positionSide:'BOTH',positionAmt:'-2',entryPrice:'3000'};
-  const exact=validateMaxLossTrigger({position,triggerPrice:3200});
+  const exact=validateMaxLossTrigger({position,triggerPrice:3200,hardMaxLossUsd:400});
   assert.equal(exact.impliedLossUsd,400);
-  assert.throws(()=>validateMaxLossTrigger({position,triggerPrice:3200.1}),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
+  assert.throws(()=>validateMaxLossTrigger({position,triggerPrice:3200.1,hardMaxLossUsd:400}),/MAX_LOSS_EXCEEDS_SERVER_LIMIT/);
 });
 
 
@@ -134,6 +136,7 @@ test('requested +40 target can round to +40.02 but never below +40',()=>{
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.3',entryPrice:'100'},
     targetProfitUsd:40,
     maxLossUsd:10,
+    hardMaxLossUsd:1000,
     priceFilter:filter,
   });
   assert.equal(levels.targetPrice,233.4);
@@ -146,6 +149,7 @@ test('SHORT requested +40 target also rounds to at least +40, never below',()=>{
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'-0.3',entryPrice:'200'},
     targetProfitUsd:40,
     maxLossUsd:10,
+    hardMaxLossUsd:1000,
     priceFilter:filter,
   });
   assert.equal(levels.targetPrice,66.6);
@@ -170,6 +174,7 @@ test('MAX-LOSS tick rounding never exceeds requested loss between ticks',()=>{
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.7',entryPrice:'100'},
     targetProfitUsd:8,
     maxLossUsd:7.8,
+    hardMaxLossUsd:1000,
     priceFilter:filter,
   });
   assert.ok(levels.actualMaxLossUsd<=7.8+1e-8);
