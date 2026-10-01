@@ -38,7 +38,7 @@ test('repair refuses configured MAX-LOSS above token margin',()=>{
     priceFilters:filter,
   });
   assert.equal(plan.action,'BLOCK');
-  assert.equal(plan.reason,'REPAIR_MAX_LOSS_EXCEEDS_MARGIN');
+  assert.equal(plan.reason,'MAX_LOSS_EXCEEDS_MARGIN');
 });
 
 test('ambiguous duplicate MAX-LOSS never creates a third protection',()=>{
