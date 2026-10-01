@@ -1302,7 +1302,7 @@ function safeMaxLossOrders(position,orders,hardMaxLossUsd){
   });
 }
 
-function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd=REAL_RISK_LIMITS.maxLossUsd){
+function uniqueManagedMaxLoss(position,orders,hardMaxLossUsd){
   const amount=n(position?.positionAmt??position?.quantity,0);
   const direction=amount>=0?'LONG':'SHORT';
   const quantity=Math.abs(amount);
