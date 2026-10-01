@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "4-cycle-jeton",
-  "scopeRevision": 31,
+  "scopeRevision": 32,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "index.html",
@@ -35,6 +35,20 @@
     "scripts/test-exact-buy-sale-entry-consistency.mjs",
     "scripts/test-orphan-protection-cleanup.mjs",
     "scripts/test-real-binance-history.mjs",
-    "scripts/test-reconcile.mjs"
+    "scripts/test-reconcile.mjs",
+    "lib/maxloss-repair.mjs",
+    "lib/real-protection-levels.mjs",
+    "scripts/check-zenith.mjs",
+    "scripts/test-active-maxloss-edit-v2.mjs",
+    "scripts/test-active-maxloss-transition.mjs",
+    "scripts/test-active-target-protections-edit.mjs",
+    "scripts/test-central-emergency-cap.mjs",
+    "scripts/test-entry-protection-plan.mjs",
+    "scripts/test-maxloss-auto-repair.mjs",
+    "scripts/test-maxloss-hard-cap-wiring.mjs",
+    "scripts/test-maxloss-ui-cap.mjs",
+    "scripts/test-protective-update-conflicts.mjs",
+    "scripts/test-real-protection-level-wiring.mjs",
+    "scripts/test-real-protection-levels.mjs"
   ]
 }
