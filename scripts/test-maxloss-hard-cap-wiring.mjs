@@ -14,3 +14,10 @@ test('server auto protection accepts only one safe MAX-LOSS within the supplied 
   assert.match(worker,/const rows=safeMaxLossOrders\(position,orders,hardMaxLossUsd\)/);
   assert.match(worker,/return rows\.length===1/);
 });
+
+test('active MAX-LOSS runtime has no legacy fixed $400 ceiling',()=>{
+  assert.doesNotMatch(worker,/REAL_RISK_LIMITS\.maxLossUsd/);
+  assert.doesNotMatch(worker,/Math\.min\([^\n]*400/);
+  assert.doesNotMatch(worker,/maxLoss[^\n]{0,80}>\s*400/);
+  assert.match(worker,/maxLoss>margin\+1e-8/);
+});
