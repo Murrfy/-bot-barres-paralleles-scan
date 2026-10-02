@@ -1,27 +1,11 @@
 {
   "version": 1,
-  "activeChapter": "6-execution-binance",
-  "scopeRevision": 44,
+  "activeChapter": "7-master-admin-controller",
+  "scopeRevision": 45,
   "allowedPaths": [
-    "api/binance-entry-preflight.js",
-    "api/binance-entry-execute.js",
-    "api/binance-protective-execute.js",
-    "api/binance-protective-update-execute.js",
-    "api/binance-reconcile.js",
-    "api/binance-read.js",
-    "api/binance-order-test.js",
-    "api/binance-runtime-snapshot.js",
-    "api/binance-user-stream-session.js",
-    "lib/binance-order-writer.mjs",
-    "lib/binance-algo-writer.mjs",
-    "lib/binance-write-backoff.mjs",
-    "lib/binance-api-permissions.mjs",
-    "lib/binance-symbol-config.mjs",
-    "lib/order-intent.mjs",
-    "lib/entry-transition.mjs",
-    "lib/protective-update-intent.mjs",
-    "lib/protective-command.mjs",
-    "lib/controller-real-command.mjs",
-    "scripts/test-active-maxloss-transition.mjs"
+    "api/zenith-sync.js",
+    "lib/device-session.mjs",
+    "master-admin.html",
+    "replace-controller.html"
   ]
 }
