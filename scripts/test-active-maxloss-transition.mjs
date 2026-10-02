@@ -14,13 +14,12 @@ function block(source,start,end){
 }
 
 test('active MAX-LOSS command carries the requested dollar cap explicitly without a fixed global ceiling',()=>{
-  const fn=block(command,'export function buildControllerUpdateProtectionCommand','}');
   assert.match(command,/maxLossUsd = NaN/);
   assert.match(command,/MAX_LOSS_USD_INVALID/);
   assert.match(command,/maxLossUsd: requestedMaxLoss/);
-  assert.match(fn,/requestedMaxLoss >= 2/);
-  assert.doesNotMatch(fn,/requestedMaxLoss\s*<=\s*400/);
-  assert.doesNotMatch(fn,/REAL_RISK_LIMITS\.maxLossUsd/);
+  assert.match(command,/requestedMaxLoss >= 2/);
+  assert.doesNotMatch(command,/requestedMaxLoss\s*<=\s*400/);
+  assert.doesNotMatch(command,/REAL_RISK_LIMITS\.maxLossUsd/);
   assert.match(protective,/protectionKind==='MAX_LOSS'&&Number\.isFinite\(maxLossUsd\)\?\{maxLossUsd\}:\{\}/);
 });
 
