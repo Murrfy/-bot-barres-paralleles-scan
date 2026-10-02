@@ -136,6 +136,24 @@ function makeHarness(){
   return {context,elements,storage};
 }
 
+test('Futures draft uses the live Binance price when no explicit reference override is supplied',()=>{
+  const context={Map,Number,Math,String};
+  vm.createContext(context);
+  vm.runInContext(`
+    const n=(v,d=0)=>Number.isFinite(+v)?+v:d;
+    const lastPrices=new Map([['BTCUSDT',120000]]);
+    function tokenExactBuy(){return 0}
+    function symbolRules(){return {filters:{LOT_SIZE:{minQty:'0.001',maxQty:'1000',stepSize:'0.001'},MIN_NOTIONAL:{notional:'5'}}}}
+    function ruleNum(o,...keys){for(const k of keys){const v=n(o?.[k],NaN);if(Number.isFinite(v))return v}return 0}
+    function stepDecimals(step){const x=String(step||'');if(!x.includes('.'))return 0;return Math.min(12,x.split('.')[1].replace(/0+$/,'').length)}
+    function floorStep(v,step){v=n(v);step=n(step);if(!(step>0))return v;const q=Math.floor((v+step*1e-10)/step)*step;return Number(q.toFixed(stepDecimals(step)))}
+  `,context);
+  vm.runInContext(extractFunction('futuresDraft'),context);
+  const result=vm.runInContext("futuresDraft('BTCUSDT',125,7,'LIMIT')",context);
+  assert.equal(result.ok,true);
+  assert.ok(result.qty>0);
+});
+
 test('per-token Futures margin survives save, token switch and full reload',async()=>{
   const {context,elements}=makeHarness();
 
