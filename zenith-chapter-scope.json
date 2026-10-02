@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "6-execution-binance",
-  "scopeRevision": 43,
+  "scopeRevision": 44,
   "allowedPaths": [
     "api/binance-entry-preflight.js",
     "api/binance-entry-execute.js",
@@ -20,6 +20,8 @@
     "lib/order-intent.mjs",
     "lib/entry-transition.mjs",
     "lib/protective-update-intent.mjs",
-    "lib/protective-command.mjs"
+    "lib/protective-command.mjs",
+    "lib/controller-real-command.mjs",
+    "scripts/test-active-maxloss-transition.mjs"
   ]
 }
