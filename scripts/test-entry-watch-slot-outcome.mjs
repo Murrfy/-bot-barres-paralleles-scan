@@ -42,8 +42,15 @@ test('controller can read only sanitized server entry-watch outcome',()=>{
   assert.match(block,/status = blockedAt > 0/);
   assert.match(block,/'NOT_STARTED'/);
   assert.match(block,/'WAITING_SLOT'/);
-  assert.doesNotMatch(block,/authorizationAt/);
-  assert.doesNotMatch(block,/engineInstanceId/);
+  assert.match(block,/KEY_ENGINE_AUTHORIZED/);
+  assert.match(block,/Number\(stored\?\.authorizationAt \|\| 0\) === authorizationAt/);
+  assert.match(block,/const source = sameScope \? stored\.states : \{\}/);
+  assert.match(block,/staleScope:Boolean\(stored && !sameScope\)/);
+  const responseStart=block.indexOf('return send(res, 200');
+  assert.ok(responseStart>=0);
+  const response=block.slice(responseStart);
+  assert.doesNotMatch(response,/authorizationAt/);
+  assert.doesNotMatch(response,/engineInstanceId/);
 });
 
 test('token list shows server-confirmed not-started state and keeps it out of watched KPI',()=>{
