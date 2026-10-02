@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "8-state-sync-history",
-  "scopeRevision": 46,
+  "scopeRevision": 47,
   "allowedPaths": [
     "api/zenith-sync.js",
     "server/zenith-engine-worker.mjs",
@@ -16,6 +16,7 @@
     "scripts/test-real-binance-history.mjs",
     "scripts/test-engine-history-archive-wiring.mjs",
     "scripts/test-token-futures-runtime-roundtrip.mjs",
-    "scripts/test-state-mutation-role-fence.mjs"
+    "scripts/test-state-mutation-role-fence.mjs",
+    "scripts/test-entry-watch-slot-outcome.mjs"
   ]
 }
