@@ -162,15 +162,10 @@ test('an already stronger progressive protection is never downgraded by an edite
 
 test('engine accepts only one ACKed active token safe-field drift and verifies final hash',()=>{
   const drift=block(worker,'function activeSafeTokenConfigRefreshAllowed','async function syncControllerConfig');
-  assert.match(drift,/changed===1/);
-  assert.match(drift,/safeMutable/);
-  assert.match(drift,/targetProfit/);
-  assert.match(drift,/protectionStages/);
-  assert.match(drift,/maxLoss>margin\+1e-8/);
-  const safeMutableBlock=/const safeMutable=new Set\(\[([\s\S]*?)\]\);/.exec(drift)?.[1]||'';
-  assert.ok(safeMutableBlock,'safeMutable set missing');
-  assert.doesNotMatch(safeMutableBlock,/'margin'/);
-  assert.doesNotMatch(safeMutableBlock,/'leverage'/);
+  assert.match(drift,/activeRuntimeSymbols\(\)/);
+  assert.match(drift,/\['manualTokens','validated','tokenSettings'\]/);
+  assert.match(drift,/if\(active\.has\(String\(rawSymbol\|\|''\)\.toUpperCase\(\)\)\)return false/);
+  assert.match(drift,/stableStringify\(currentConfig\.settings\|\|\{\}\)!==stableStringify\(nextConfig\.settings\|\|\{\}\)/);
 
   const ack=block(worker,'async function safeAckActiveConfigAfterReconcile','async function runActiveConfigCommand');
   assert.match(ack,/activeConfigCommitted!==true/);
