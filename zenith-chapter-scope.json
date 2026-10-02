@@ -1,11 +1,21 @@
 {
   "version": 1,
-  "activeChapter": "7-master-admin-controller",
-  "scopeRevision": 45,
+  "activeChapter": "8-state-sync-history",
+  "scopeRevision": 46,
   "allowedPaths": [
     "api/zenith-sync.js",
-    "lib/device-session.mjs",
-    "master-admin.html",
-    "replace-controller.html"
+    "server/zenith-engine-worker.mjs",
+    "index.html",
+    "api/binance-history.js",
+    "lib/real-trade-history.mjs",
+    "scripts/test-master-sync.mjs",
+    "scripts/test-entry-watch-persistence.mjs",
+    "scripts/test-command-terminal-status.mjs",
+    "scripts/test-cloud-controller-master-sync.mjs",
+    "scripts/test-engine-worker-runtime.mjs",
+    "scripts/test-real-binance-history.mjs",
+    "scripts/test-engine-history-archive-wiring.mjs",
+    "scripts/test-token-futures-runtime-roundtrip.mjs",
+    "scripts/test-state-mutation-role-fence.mjs"
   ]
 }
