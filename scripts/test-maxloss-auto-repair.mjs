@@ -30,6 +30,19 @@ test('builds exact LONG MAX-LOSS repair from live position and controller config
   assert.equal(plan.lifecycleAt,123);
 });
 
+test('repair accepts MAX-LOSS above legacy $400 when token margin permits it',()=>{
+  const plan=buildMaxLossRepairPlan({
+    report:report(),
+    positions:[{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000',updateTime:123}],
+    tokenSettings:{BTCUSDT:{maxLoss:500,targetProfit:40,margin:600}},
+    settings:{maxLoss:40,targetProfit:40,margin:1000},
+    priceFilters:filter,
+  });
+  assert.equal(plan.action,'REPAIR');
+  assert.equal(plan.maxLossUsd,500);
+  assert.ok(plan.actualMaxLossUsd<=500+1e-8);
+});
+
 test('repair refuses configured MAX-LOSS above token margin',()=>{
   const plan=buildMaxLossRepairPlan({
     report:report(),
