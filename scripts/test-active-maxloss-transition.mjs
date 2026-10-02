@@ -13,11 +13,13 @@ function block(source,start,end){
   return source.slice(a,b);
 }
 
-test('active MAX-LOSS command carries the requested dollar cap explicitly',()=>{
-  const fn=block(command,'export function buildControllerUpdateProtectionCommand','}');
+test('active MAX-LOSS command carries the requested dollar cap explicitly without a fixed global ceiling',()=>{
   assert.match(command,/maxLossUsd = NaN/);
   assert.match(command,/MAX_LOSS_USD_INVALID/);
   assert.match(command,/maxLossUsd: requestedMaxLoss/);
+  assert.match(command,/requestedMaxLoss >= 2/);
+  assert.doesNotMatch(command,/requestedMaxLoss\s*<=\s*400/);
+  assert.doesNotMatch(command,/REAL_RISK_LIMITS\.maxLossUsd/);
   assert.match(protective,/protectionKind==='MAX_LOSS'&&Number\.isFinite\(maxLossUsd\)\?\{maxLossUsd\}:\{\}/);
 });
 
