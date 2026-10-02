@@ -59,6 +59,15 @@ test('100 USDT margin at x10 does not multiply real PnL by leverage twice',()=>{
   assert.equal(priceForLinearPnl({entryPrice:100,quantity,direction:'LONG',pnlUsd:-40}),96);
 });
 
+test('automatic max loss accepts more than $400 when configured token margin permits it',()=>{
+  const levels=buildRealProtectionLevels({
+    position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'},
+    targetProfitUsd:40,maxLossUsd:500,hardMaxLossUsd:600,priceFilter:filter,
+  });
+  assert.equal(levels.maxLossUsd,500);
+  assert.equal(levels.actualMaxLossUsd,500);
+});
+
 test('automatic max loss can never exceed configured token margin',()=>{
   assert.throws(()=>buildRealProtectionLevels({
     position:{symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'0.2',entryPrice:'50000'},
