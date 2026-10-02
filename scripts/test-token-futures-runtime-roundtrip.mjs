@@ -226,6 +226,24 @@ test('Futures save rolls back an unconfirmed central write instead of displaying
   assert.match(elements.get('status').textContent,/ancien réglage a été conservé/i);
 });
 
+test('stale central snapshot cannot erase a locally persisted per-token Futures override',()=>{
+  const {context,elements}=makeHarness();
+  vm.runInContext(`
+    selectedSymbol='BTCUSDT';
+    tokenSettings.BTCUSDT={enabled:true,margin:125,leverage:7,marginType:'ISOLATED'};
+    saveLocalOnly();
+  `,context);
+
+  context.__centralState={revision:7,data:{settings:{margin:1000,leverage:10},tokenSettings:{},manualTokens:{},validated:{}}};
+  assert.equal(vm.runInContext('applyControllerCloudStateSnapshot(__centralState)',context),true);
+  vm.runInContext('fillFutures()',context);
+
+  assert.equal(vm.runInContext('tokenSettings.BTCUSDT.margin',context),125);
+  assert.equal(vm.runInContext('tokenSettings.BTCUSDT.leverage',context),7);
+  assert.equal(Number(elements.get('fMargin').value),125);
+  assert.equal(Number(elements.get('fLev').value),7);
+});
+
 test('stale deployment guard is loaded before the inline Zenith application',()=>{
   const guard=fs.readFileSync('ui-version-guard.js','utf8');
   assert.match(html,/<script src="\/ui-version-guard\.js" defer><\/script>[\s\S]*<script>[\s\S]*"use strict";/);
