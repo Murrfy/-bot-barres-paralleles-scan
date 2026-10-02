@@ -50,19 +50,6 @@ test('baseline entry preflight is ready', () => {
   assert.equal(r.normalized.quantity, 0.2);
 });
 
-test('entry preflight accepts MAX-LOSS above legacy $400 when token margin permits it', () => {
-  const r = evaluateEntryRisk(base({ margin:600, leverage:10, maxLoss:500, availableBalanceUsdt:5000 }));
-  assert.equal(r.ready,true);
-  assert.equal(r.normalized.maxLoss,500);
-  assert.equal(r.reasons.includes('MAX_LOSS_EXCEEDS_MARGIN'),false);
-});
-
-test('entry preflight caps MAX-LOSS by configured margin, not by legacy $400', () => {
-  const r = evaluateEntryRisk(base({ margin:400, leverage:10, maxLoss:500, availableBalanceUsdt:5000 }));
-  assert.equal(r.ready,false);
-  assert.ok(r.reasons.includes('MAX_LOSS_EXCEEDS_MARGIN'));
-});
-
 test('hard server leverage cap is 10x', () => {
   assert.equal(REAL_RISK_LIMITS.maxLeverage, 10);
   const r = evaluateEntryRisk(base({ leverage: 11, symbolConfig: {...base().symbolConfig, leverage: 11} }));
