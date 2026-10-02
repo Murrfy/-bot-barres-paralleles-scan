@@ -32,6 +32,15 @@ test('prepared entry protection refuses SELL/SHORT entries',()=>{
   }),/ENTRY_BUY_ONLY/);
 });
 
+test('entry protection accepts MAX-LOSS above the legacy $400 value when token margin permits it',()=>{
+  const plan=buildEntryProtectionPlan({
+    commandId:'entry-loss-over-400',symbol:'BTCUSDT',side:'BUY',
+    quantity:0.2,limitPrice:50000,maxLoss:500,margin:600,priceFilter,
+  });
+  assert.equal(plan.maxLossUsd,500);
+  assert.equal(plan.actualMaxLossUsd,500);
+});
+
 test('entry protection never exceeds the configured token margin',()=>{
   assert.throws(()=>buildEntryProtectionPlan({
     commandId:'entry-loss-123456',symbol:'BTCUSDT',side:'BUY',
