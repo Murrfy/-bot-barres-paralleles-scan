@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { runtimeInventoryFromUserStream } from '../lib/master-runtime-inventory.mjs';
 import {
   createUserStreamState,
   markUserStreamConnected,
@@ -160,4 +162,36 @@ test('partial quantity and average-entry changes stay in the same lifecycle unti
     {s:'ETHUSDT',pa:'0.5',ep:'2005',bep:'2006',up:'0',mt:'isolated',iw:'50',ps:'BOTH'}
   ]}});
   assert.equal(r.state.positions['ETHUSDT:BOTH'].positionLifecycleAt,2699);
+});
+
+
+test('C11 closed Binance position converges to an empty published MASTER runtime state',()=>{
+  let s=readyState();
+  let r=applyUserDataEvent(s,{e:'ACCOUNT_UPDATE',E:3000,T:2999,a:{m:'ORDER',P:[
+    {s:'BTCUSDT',pa:'0.02',ep:'50000',bep:'50001',up:'2',mt:'isolated',iw:'100',ps:'BOTH'}
+  ]}});
+  assert.equal(runtimeInventoryFromUserStream(r.state).activePositions,1);
+
+  r=applyUserDataEvent(r.state,{e:'ACCOUNT_UPDATE',E:3100,T:3099,a:{m:'ORDER',P:[
+    {s:'BTCUSDT',pa:'0',ep:'0',bep:'0',up:'0',mt:'isolated',iw:'0',ps:'BOTH'}
+  ]}});
+  const projection=runtimeInventoryFromUserStream(r.state);
+  assert.equal(projection.activePositions,0);
+  assert.deepEqual(projection.binancePositions,[]);
+
+  const worker=fs.readFileSync('server/zenith-engine-worker.mjs','utf8');
+  const publishStart=worker.indexOf('async function publishRuntime()');
+  const publishEnd=worker.indexOf('async function invalidateStream',publishStart);
+  assert.ok(publishStart>=0&&publishEnd>publishStart,'MASTER runtime publisher missing');
+  const publishBlock=worker.slice(publishStart,publishEnd);
+  assert.match(publishBlock,/syncApi\('state'/);
+  assert.match(publishBlock,/data:runtimeSnapshot\(\)/);
+
+  const sync=fs.readFileSync('api/zenith-sync.js','utf8');
+  const stateStart=sync.indexOf("if (action === 'state' && req.method === 'POST')");
+  const stateEnd=sync.indexOf("if (action === 'command-status'",stateStart);
+  assert.ok(stateStart>=0&&stateEnd>stateStart,'central runtime state POST missing');
+  const stateBlock=sync.slice(stateStart,stateEnd);
+  assert.match(stateBlock,/KEY_STATE/);
+  assert.match(stateBlock,/redis\.call\('SET', KEYS\[1\], ARGV\[1\]\)/);
 });
