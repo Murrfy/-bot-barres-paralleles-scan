@@ -622,50 +622,46 @@ function validActiveProtectionStages(stages){
   return true;
 }
 
-function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig){
+function activeRuntimeSymbols(){
+  const projection=streamProjection();
+  const out=new Set();
+  for(const row of [...(Array.isArray(projection.binancePositions)?projection.binancePositions:[]),...(Array.isArray(projection.binanceOrders)?projection.binanceOrders:[])]){
+    const symbol=String(row?.symbol||'').toUpperCase();
+    if(/^[A-Z0-9]{3,30}$/.test(symbol))out.add(symbol);
+  }
+  return out;
+}
+
+function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig,activeSymbols=activeRuntimeSymbols()){
   if(!currentConfig||typeof currentConfig!=='object'||!nextConfig||typeof nextConfig!=='object')return false;
-  for(const key of ['settings','manualTokens','validated']){
-    if(stableStringify(currentConfig[key]||{})!==stableStringify(nextConfig[key]||{}))return false;
+  if(stableStringify(currentConfig.settings||{})!==stableStringify(nextConfig.settings||{}))return false;
+  const active=new Set([...activeSymbols].map(symbol=>String(symbol||'').toUpperCase()));
+  for(const key of ['manualTokens','validated','tokenSettings']){
+    const before=currentConfig[key]&&typeof currentConfig[key]==='object'?currentConfig[key]:{};
+    const after=nextConfig[key]&&typeof nextConfig[key]==='object'?nextConfig[key]:{};
+    const symbols=[...new Set([...Object.keys(before),...Object.keys(after)])];
+    for(const rawSymbol of symbols){
+      if(stableStringify(before[rawSymbol])===stableStringify(after[rawSymbol]))continue;
+      if(active.has(String(rawSymbol||'').toUpperCase()))return false;
+      if(key!=='tokenSettings')continue;
+      const nextToken=after[rawSymbol]&&typeof after[rawSymbol]==='object'?after[rawSymbol]:null;
+      if(!nextToken)continue;
+
+      const maxLoss=n(nextToken.maxLoss,NaN);
+      const margin=n(nextToken.margin,n(nextConfig?.settings?.margin,NaN));
+      if(!(maxLoss>=2))return false;
+      if(!(margin>0)||maxLoss>margin+1e-8)return false;
+      if(String(nextToken.marginType||'ISOLATED').toUpperCase()!=='ISOLATED')return false;
+
+      const target=n(nextToken.targetProfit,NaN),manual=n(nextToken.manualTargetProfit,target);
+      if(!(target>0)||!(manual>0))return false;
+      const exactEnabled=nextToken.exactSaleEnabled===true,exactPrice=n(nextToken.exactSalePrice,0);
+      if(exactEnabled&&!(exactPrice>0))return false;
+      if(!(exactPrice>=0)||String(nextToken.exactSaleSource||'settings')!=='settings')return false;
+      if(!validActiveProtectionStages(nextToken.protectionStages))return false;
+    }
   }
-
-  const currentTokens=currentConfig.tokenSettings&&typeof currentConfig.tokenSettings==='object'
-    ?currentConfig.tokenSettings:{};
-  const nextTokens=nextConfig.tokenSettings&&typeof nextConfig.tokenSettings==='object'
-    ?nextConfig.tokenSettings:{};
-  const symbols=[...new Set([...Object.keys(currentTokens),...Object.keys(nextTokens)])].sort();
-  const safeMutable=new Set([
-    'maxLoss','marginType','targetProfit','manualTargetProfit','protectionStages',
-    'exactSaleEnabled','exactSalePrice','exactSaleSource'
-  ]);
-  let changed=0;
-
-  for(const symbol of symbols){
-    const before=currentTokens[symbol]&&typeof currentTokens[symbol]==='object'?currentTokens[symbol]:null;
-    const after=nextTokens[symbol]&&typeof nextTokens[symbol]==='object'?nextTokens[symbol]:null;
-    if(!before||!after)return false;
-    if(stableStringify(before)===stableStringify(after))continue;
-
-    const beforeRest={...before};
-    const afterRest={...after};
-    for(const key of safeMutable){delete beforeRest[key];delete afterRest[key]}
-    if(stableStringify(beforeRest)!==stableStringify(afterRest))return false;
-
-    const maxLoss=n(after.maxLoss,NaN);
-    const margin=n(after.margin,n(nextConfig?.settings?.margin,NaN));
-    if(!(maxLoss>=2))return false;
-    if(!(margin>0)||maxLoss>margin+1e-8)return false;
-    if(String(after.marginType||'ISOLATED').toUpperCase()!=='ISOLATED')return false;
-
-    const target=n(after.targetProfit,NaN),manual=n(after.manualTargetProfit,target);
-    if(!(target>0)||!(manual>0)||Math.abs(target-manual)>1e-8)return false;
-    const exactEnabled=after.exactSaleEnabled===true,exactPrice=n(after.exactSalePrice,0);
-    if(exactEnabled&&!(exactPrice>0))return false;
-    if(!(exactPrice>=0)||String(after.exactSaleSource||'settings')!=='settings')return false;
-    if(!validActiveProtectionStages(after.protectionStages))return false;
-    changed+=1;
-  }
-
-  return changed===1;
+  return true;
 }
 
 async function syncControllerConfig(){
