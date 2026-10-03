@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "8-state-sync-history",
-  "scopeRevision": 48,
+  "scopeRevision": 49,
   "allowedPaths": [
     "api/zenith-sync.js",
     "server/zenith-engine-worker.mjs",
@@ -18,6 +18,7 @@
     "scripts/test-token-futures-runtime-roundtrip.mjs",
     "scripts/test-state-mutation-role-fence.mjs",
     "scripts/test-entry-watch-slot-outcome.mjs",
-    "scripts/test-active-target-protections-edit.mjs"
+    "scripts/test-active-target-protections-edit.mjs",
+    "scripts/test-active-maxloss-config-refresh.mjs"
   ]
 }
