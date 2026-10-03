@@ -1557,12 +1557,35 @@ async function ensureAutomaticTargetForPosition(position){
         return localAutoTargetFailure(symbol,reason);
       }
       const terminal=await waitForStreamOrder({kind:'STANDARD',clientId:previousClientOrderId,terminal:true},3000);
-      const terminalStatus=String(
-        terminal?.status||
-        canceled.data?.result?.order?.status||
-        ''
-      ).toUpperCase();
-      if(!['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus)){
+      const restTerminalStatus=String(canceled.data?.result?.order?.status||'').toUpperCase();
+      let terminalStatus=String(terminal?.status||restTerminalStatus||'').toUpperCase();
+      let terminalSafe=['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus);
+      if(!terminalSafe&&['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(restTerminalStatus)){
+        // Binance has already proved the old target terminal. If the corresponding
+        // User Stream event was missed, refresh the full authoritative REST inventory
+        // before replanning so the stale target cannot survive locally.
+        const connectionId=String(stream.state?.connectionId||'');
+        const connectedAt=n(stream.state?.connectedAt,0);
+        if(connectionId&&connectedAt>0&&stream.ws?.readyState===WebSocket.OPEN){
+          stream.seeding=true;
+          stream.bufferedEvents=[];
+          try{
+            await seedStream(connectionId,connectedAt);
+            const refreshed=streamStandardOrderByClientId(previousClientOrderId);
+            if(!refreshed){
+              terminalStatus=restTerminalStatus;
+              terminalSafe=true;
+            }else{
+              terminalStatus=String(refreshed?.status||'').toUpperCase();
+              terminalSafe=['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(terminalStatus);
+            }
+          }catch(error){
+            stream.seeding=false;
+            stream.lastError='AUTO_TARGET_CANCEL_RESEED_FAILED_'+String(error?.message||'UNKNOWN');
+          }
+        }
+      }
+      if(!terminalSafe){
         return failClosedAutoTarget('PREVIOUS_TARGET_CANCEL_NOT_CONFIRMED');
       }
 
