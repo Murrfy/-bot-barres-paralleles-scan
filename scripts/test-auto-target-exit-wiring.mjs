@@ -203,3 +203,22 @@ test('C8 authoritative reseed removes a canceled stale target before replacement
   assert.equal(freshPlan.action,'PLACE');
   assert.equal(freshPlan.reason,'CALCULATED_TARGET_REQUIRED');
 });
+
+
+test('C8 protective replacement must refresh authoritative inventory before post-cancel reconciliation when stream terminal is missed',()=>{
+  const start=worker.indexOf('async function runProtectiveUpdate(command,raw,dispatch)');
+  const end=worker.indexOf('async function waitForFullCloseState',start);
+  assert.ok(start>=0&&end>start,'protective update worker block missing');
+  const block=worker.slice(start,end);
+  const cancel=block.indexOf("const result=await callProtectiveUpdateExecute({...body,phase:'CANCEL_OLD'");
+  const wait=block.indexOf("waitForStreamOrder({kind,clientId:previousId,terminal:true}",cancel);
+  const restFallback=block.indexOf("result.data?.result?.order?.status",wait);
+  const reconcile=block.indexOf("const reconciled=await awaitReconciliation()",restFallback);
+  assert.ok(cancel>=0&&wait>cancel&&restFallback>wait&&reconcile>restFallback,'protective cancel/reconcile sequence missing');
+  const between=block.slice(restFallback,reconcile);
+  assert.match(
+    between,
+    /binance-runtime-snapshot|seedStream\(|refresh[A-Za-z0-9_]*Snapshot/,
+    'when Binance confirms the old C8 protective order terminal but User Stream misses it, the worker must refresh authoritative inventory before reconciliation'
+  );
+});
