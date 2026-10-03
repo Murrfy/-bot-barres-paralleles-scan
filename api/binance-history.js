@@ -18,12 +18,13 @@ import {
   deviceTokenCandidates,deviceSessionRecordActive,roleAssignmentKey,deviceRoleAssignmentActive,
   engineInstanceHeader,enginePrincipalInstanceActive
 } from '../lib/device-session.mjs';
-import { buildZenithClosedTradeHistory, mergeTradeHistory } from '../lib/real-trade-history.mjs';
+import { advanceZenithTradeHistory, mergeTradeHistory } from '../lib/real-trade-history.mjs';
 
 const BASE='https://fapi.binance.com';
 const RECV_WINDOW=5000;
 const PREFIX='zenith:v1';
 const KEY_ARCHIVE=`${PREFIX}:real-history:archive`;
+const KEY_OPEN_CYCLES=`${PREFIX}:real-history:open-cycles`;
 const KEY_CACHE=`${PREFIX}:real-history:cache`;
 const HISTORY_CACHE_MS=60000;
 const HISTORY_LOOKBACK_MS=30*24*60*60*1000;
@@ -265,9 +266,10 @@ export default async function handler(req,res){
       const e=new Error('BINANCE_TIME_INVALID');e.code='BINANCE_TIME_INVALID';throw e;
     }
     const raw=await fetchRecentHistory(apiKey,secret,serverTime);
-    const fresh=buildZenithClosedTradeHistory(raw);
     const archived=parseJson(await redis(['GET',KEY_ARCHIVE]));
-    const history=mergeTradeHistory(Array.isArray(archived)?archived:[],fresh,500);
+    const savedOpenCycles=parseJson(await redis(['GET',KEY_OPEN_CYCLES]));
+    const advanced=advanceZenithTradeHistory(raw,Array.isArray(savedOpenCycles)?savedOpenCycles:[]);
+    const history=mergeTradeHistory(Array.isArray(archived)?archived:[],advanced.closed,500);
     const totals=history.reduce((acc,row)=>{
       if(Number.isFinite(Number(row?.netUsdt))){
         const value=Number(row.netUsdt);
@@ -285,6 +287,7 @@ export default async function handler(req,res){
       history,
       totals,
     };
+    await redis(['SET',KEY_OPEN_CYCLES,JSON.stringify(advanced.openCycles)]);
     await redis(['SET',KEY_ARCHIVE,JSON.stringify(history)]);
     await redis(['SET',KEY_CACHE,JSON.stringify(payload),'EX','60']);
     return send(res,200,{...payload,cached:false});
