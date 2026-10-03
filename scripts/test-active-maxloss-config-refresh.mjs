@@ -11,17 +11,23 @@ function block(source,start,end){
   return source.slice(a,b);
 }
 
-test('engine accepts active config drift only through the narrow safe token allowlist',()=>{
+test('engine accepts config drift only for non-active tokens with safe token settings',()=>{
   const fn=block(worker,'function activeSafeTokenConfigRefreshAllowed','async function syncControllerConfig');
-  assert.match(fn,/\['settings','manualTokens','validated'\]/);
-  assert.match(fn,/safeMutable=new Set/);
-  assert.match(fn,/'maxLoss'.*'marginType'.*'targetProfit'.*'manualTargetProfit'.*'protectionStages'/s);
+  assert.match(fn,/activeRuntimeSymbols\(\)/);
+  assert.match(fn,/\['manualTokens','validated','tokenSettings'\]/);
+  assert.match(fn,/stableStringify\(currentConfig\.settings\|\|\{\}\)!==stableStringify\(nextConfig\.settings\|\|\{\}\)/);
+  assert.match(fn,/active\.has\(String\(rawSymbol\|\|''\)\.toUpperCase\(\)\)/);
+  assert.match(fn,/if\(!nextToken\)continue/);
   assert.match(fn,/maxLoss>=2/);
   assert.doesNotMatch(fn,/REAL_RISK_LIMITS\.maxLossUsd/);
   assert.match(fn,/maxLoss>margin\+1e-8/);
-  assert.match(fn,/validActiveProtectionStages\(after\.protectionStages\)/);
   assert.match(fn,/ISOLATED/);
-  assert.match(fn,/return changed===1/);
+  assert.match(fn,/target>0/);
+  assert.match(fn,/manual>0/);
+  assert.match(fn,/exactEnabled&&!\(exactPrice>0\)/);
+  assert.match(fn,/validActiveProtectionStages\(nextToken\.protectionStages\)/);
+  assert.doesNotMatch(fn,/safeMutable/);
+  assert.doesNotMatch(fn,/return changed===1/);
 });
 
 test('engine only applies that restricted drift after server already reports synchronized state',()=>{
