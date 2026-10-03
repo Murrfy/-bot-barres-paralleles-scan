@@ -642,8 +642,7 @@ function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig,activeSymb
     const symbols=[...new Set([...Object.keys(before),...Object.keys(after)])];
     for(const rawSymbol of symbols){
       if(stableStringify(before[rawSymbol])===stableStringify(after[rawSymbol]))continue;
-      const symbol=String(rawSymbol||'').toUpperCase();
-      if(active.has(symbol))return false;
+      if(active.has(String(rawSymbol||'').toUpperCase()))return false;
       if(key!=='tokenSettings')continue;
       const nextToken=after[rawSymbol]&&typeof after[rawSymbol]==='object'?after[rawSymbol]:null;
       if(!nextToken)continue;
