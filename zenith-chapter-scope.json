@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "activeChapter": "9-close-confirmation-notifications",
-  "scopeRevision": 51,
+  "activeChapter": "10-tests-validation",
+  "scopeRevision": 52,
   "allowedPaths": [
     "server/zenith-engine-worker.mjs",
     "lib/protective-command.mjs",
