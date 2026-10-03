@@ -655,7 +655,7 @@ function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig,activeSymb
       if(String(nextToken.marginType||'ISOLATED').toUpperCase()!=='ISOLATED')return false;
 
       const target=n(nextToken.targetProfit,NaN),manual=n(nextToken.manualTargetProfit,target);
-      if(!(target>0)||!(manual>0)||Math.abs(target-manual)>1e-8)return false;
+      if(!(target>0)||!(manual>0))return false;
       const exactEnabled=nextToken.exactSaleEnabled===true,exactPrice=n(nextToken.exactSalePrice,0);
       if(exactEnabled&&!(exactPrice>0))return false;
       if(!(exactPrice>=0)||String(nextToken.exactSaleSource||'settings')!=='settings')return false;
