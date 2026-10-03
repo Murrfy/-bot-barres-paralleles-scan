@@ -121,5 +121,27 @@ test('an exhausted persisted sale remainder stays local and does not abort unrel
   const reconcileBlock=worker.slice(reconcileStart,reconcileEnd);
   assert.match(reconcileBlock,/persistedSaleRemainder\.localOnly/);
   assert.match(reconcileBlock,/PERSISTED_SALE_REMAINDER_LOCAL_QUARANTINE/);
+  assert.match(reconcileBlock,/saleRemainderRecoverySymbols/);
   assert.match(reconcileBlock,/ensureAutomaticTargets/);
+
+  const targetStart=worker.indexOf('async function ensureAutomaticTargetForPosition');
+  const targetEnd=worker.indexOf('async function ensureAutomaticTargets',targetStart);
+  const targetBlock=worker.slice(targetStart,targetEnd);
+  assert.match(targetBlock,/saleRemainderRecoverySymbols\.has\(symbol\)/);
+
+  const protectionStart=worker.indexOf('async function runAutoProtection');
+  const protectionEnd=worker.indexOf('function activeProtectionSymbols',protectionStart);
+  const protectionBlock=worker.slice(protectionStart,protectionEnd);
+  assert.match(protectionBlock,/saleRemainderRecoverySymbols\.has\(wanted\)/);
+
+  const commandStart=worker.indexOf('async function commandCycle');
+  const commandEnd=worker.indexOf('async function runtimeCycle',commandStart);
+  const commandBlock=worker.slice(commandStart,commandEnd);
+  assert.match(commandBlock,/saleRemainderRecoverySymbols\.has\(dispatchSymbol\)/);
+  assert.match(commandBlock,/SYMBOL_SALE_REMAINDER_RECOVERY_ACTIVE/);
+
+  const tickStart=worker.indexOf('async function processEntryWatchPrice');
+  const tickEnd=worker.indexOf('function markStreamName',tickStart);
+  const tickBlock=worker.slice(tickStart,tickEnd);
+  assert.match(tickBlock,/saleRemainderRecoverySymbols\.has\(wanted\)/);
 });
