@@ -69,7 +69,7 @@ test('partial entry fill refresh cancels old managed target, rereads live positi
   const start=worker.indexOf("if(activePlan.action==='REPLACE')");
   const end=worker.indexOf("const live=activePlan.live;",start+10);
   assert.ok(start>=0&&end>start);
-  const block=worker.slice(start,end+3500);
+  const block=worker.slice(start,end+5000);
   const cancel=block.indexOf("phase:'CANCEL_OLD'");
   const wait=block.indexOf("waitForStreamOrder({kind:'STANDARD',clientId:previousClientOrderId,terminal:true}",cancel);
   const publish=block.indexOf("await publishRuntime()",wait);
