@@ -134,3 +134,21 @@ test('post-cancel local replan failure forces an immediate reconciliation pass',
   const block=worker.slice(start,end);
   assert.match(block,/localAutoTargetFailure\(symbol,activePlan\.reason\|\|'TARGET_REFRESH_REPLAN_BLOCKED',\{changed:true\}\)/);
 });
+
+
+test('C8 target replacement must refresh authoritative inventory if terminal stream event is missed',()=>{
+  const start=worker.indexOf("if(activePlan.action==='REPLACE')");
+  const end=worker.indexOf("const live=activePlan.live;",start+10);
+  assert.ok(start>=0&&end>start,'automatic target replacement block missing');
+  const block=worker.slice(start,end+3500);
+  const wait=block.indexOf("waitForStreamOrder({kind:'STANDARD',clientId:previousClientOrderId,terminal:true}");
+  const fallback=block.indexOf("canceled.data?.result?.order?.status",wait);
+  const replan=block.indexOf("activePlan=planAutomaticTargetExit({",fallback);
+  assert.ok(wait>=0&&fallback>wait&&replan>fallback,'target cancel fallback/replan sequence missing');
+  const between=block.slice(fallback,replan);
+  assert.match(
+    between,
+    /binance-runtime-snapshot|seedStream\(|refresh[A-Za-z0-9_]*Snapshot/,
+    'if Binance confirms the old target canceled but its terminal User Stream event is missed, C8 must refresh authoritative inventory before replanning'
+  );
+});
