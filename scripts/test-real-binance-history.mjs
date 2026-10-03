@@ -264,14 +264,16 @@ test('C12 closure does not double-count funding already persisted in the open cy
   assert.ok(Math.abs(closed.closed[0].netUsdt-9.72)<1e-12);
 });
 
-test('C12 API keeps persisted open-cycle symbols in Binance history discovery after the 30-day entry window',()=>{
+test('C12 keeps persisted open-cycle symbols in Binance discovery after the 30-day entry window',()=>{
   const source=fs.readFileSync('api/binance-history.js','utf8');
   const fetchStart=source.indexOf('async function fetchRecentHistory');
   const handlerStart=source.indexOf('export default async function handler');
   assert.ok(fetchStart>=0&&handlerStart>fetchStart);
   const fetchBlock=source.slice(fetchStart,handlerStart);
-  assert.match(fetchBlock,/openCycles|persistedSymbols|trackedSymbols/);
-  assert.match(fetchBlock,/symbols.*Set|Set.*symbols/s);
+  assert.match(fetchBlock,/serverTime,openCycles=\[\]/);
+  assert.match(fetchBlock,/persistedOpenSymbols/);
+  assert.match(fetchBlock,/\[\.\.\.discoveredSymbols,\.\.\.persistedOpenSymbols\]/);
+  assert.match(source,/fetchRecentHistory\(apiKey,secret,serverTime,Array\.isArray\(savedOpenCycles\)\?savedOpenCycles:\[\]\)/);
 });
 
 test('C12 API persists open cycles and totals still separate gains, losses and net',()=>{
