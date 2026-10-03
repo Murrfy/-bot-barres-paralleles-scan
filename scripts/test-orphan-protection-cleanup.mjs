@@ -4,6 +4,9 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { orphanZenithCleanupOrders, expiredEntryOrphanProtections, maxLossSymbolIsQuarantined } from '../lib/protective-command.mjs';
 import { executionReadiness } from '../api/binance-protective-execute.js';
+import { cancelReduceOnlyOrderIdempotent } from '../lib/binance-order-writer.mjs';
+import { cancelAlgoOrderIdempotent } from '../lib/binance-algo-writer.mjs';
+import { createUserStreamState, applyUserDataEvent } from '../lib/user-stream-state.mjs';
 
 function stableStringify(value){
   if(value===null||typeof value!=='object')return JSON.stringify(value);
@@ -170,4 +173,96 @@ test('both LIMIT and immediate MARKET entry paths pass through the same symbol-l
   assert.ok(readiness>=0&&preflight>readiness);
   assert.match(api,/const marketEntry=type==='EXEC_OPEN_MARKET_POSITION'&&phase==='SUBMIT_MARKET_ENTRY'/);
   assert.match(api,/const limitEntry=type==='EXEC_OPEN_POSITION'&&\['PREPARE_PROTECTION','SUBMIT_ENTRY'\]\.includes\(phase\)/);
+});
+
+
+function jsonResponse(body,status=200){
+  return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
+}
+
+test('certified STANDARD orphan cancellation is idempotent and reaches terminal User Stream state',async()=>{
+  const [target]=orphanZenithCleanupOrders(report([standard]));
+  assert.ok(target);
+  const existing={
+    ...standard,orderId:199,status:'NEW',origQty:'1',executedQty:'0'
+  };
+  const methods=[];
+  let gets=0;
+  const fetchImpl=async(url,init={})=>{
+    methods.push(init.method);
+    if(init.method==='GET'){
+      gets++;
+      return jsonResponse(gets===1?existing:{...existing,status:'CANCELED'});
+    }
+    if(init.method==='DELETE')return jsonResponse({...existing,status:'CANCELED'});
+    return jsonResponse({code:-1,msg:'unexpected'},500);
+  };
+
+  const canceled=await cancelReduceOnlyOrderIdempotent({
+    fetchImpl,apiKey:'k',secret:'s',
+    symbol:target.symbol,clientOrderId:target.clientOrderId,
+    expectedSide:target.side,writesEnabled:true,timestamp:1000
+  });
+  assert.equal(canceled.disposition,'CANCELED');
+  assert.deepEqual(methods,['GET','DELETE','GET']);
+
+  const applied=applyUserDataEvent(createUserStreamState(),{
+    e:'ORDER_TRADE_UPDATE',E:1700000000100,T:1700000000100,
+    o:{
+      s:target.symbol,c:target.clientOrderId,i:199,S:target.side,o:'LIMIT',f:'GTC',
+      q:'1',p:standard.price,x:'CANCELED',X:'CANCELED',R:true,cp:false,ps:'BOTH'
+    }
+  });
+  assert.equal(applied.applied,true);
+  assert.equal(applied.kind,'ORDER');
+  assert.equal(applied.terminal,true);
+  assert.equal(Object.values(applied.state.standardOrders)[0].status,'CANCELED');
+});
+
+test('certified ALGO orphan cancellation verifies identity and reaches terminal User Stream state',async()=>{
+  const [target]=orphanZenithCleanupOrders(report([maxLoss]));
+  assert.ok(target);
+  const existing={
+    algoId:7788,algoStatus:'NEW',orderType:'STOP',
+    symbol:target.symbol,clientAlgoId:target.clientAlgoId,
+    side:target.side,positionSide:'BOTH',
+    quantity:'1',reduceOnly:true,closePosition:false,
+    triggerPrice:maxLoss.triggerPrice,priceMatch:'OPPONENT',timeInForce:'IOC'
+  };
+  const expected={
+    symbol:target.symbol,clientAlgoId:target.clientAlgoId,side:target.side,
+    positionSide:'BOTH',type:target.type,reduceOnly:'true',
+    triggerPrice:target.triggerPrice
+  };
+  const methods=[];
+  let gets=0;
+  const fetchImpl=async(url,init={})=>{
+    methods.push(init.method);
+    if(init.method==='GET'){
+      gets++;
+      return jsonResponse(gets===1?existing:{...existing,algoStatus:'CANCELED'});
+    }
+    if(init.method==='DELETE')return jsonResponse({complete:true});
+    return jsonResponse({code:-1,msg:'unexpected'},500);
+  };
+
+  const canceled=await cancelAlgoOrderIdempotent({
+    fetchImpl,apiKey:'k',secret:'s',
+    symbol:target.symbol,clientAlgoId:target.clientAlgoId,
+    expected,writesEnabled:true,timestamp:1000
+  });
+  assert.equal(canceled.disposition,'CANCELED');
+  assert.deepEqual(methods,['GET','DELETE','GET']);
+
+  const applied=applyUserDataEvent(createUserStreamState(),{
+    e:'ALGO_UPDATE',E:1700000000200,T:1700000000200,
+    o:{
+      s:target.symbol,aid:7788,caid:target.clientAlgoId,X:'CANCELED',
+      o:'STOP',S:target.side,ps:'BOTH',tp:maxLoss.triggerPrice,
+      q:'1',R:true,cp:false,f:'IOC',pm:'OPPONENT'
+    }
+  });
+  assert.equal(applied.applied,true);
+  assert.equal(applied.kind,'ALGO');
+  assert.equal(Object.values(applied.state.algoOrders)[0].status,'CANCELED');
 });
