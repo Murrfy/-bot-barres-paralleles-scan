@@ -1,29 +1,12 @@
 {
   "version": 1,
-  "activeChapter": "10-tests-validation",
-  "scopeRevision": 55,
+  "activeChapter": "1-selection-du-jeton",
+  "scopeRevision": 56,
   "allowedPaths": [
-    "server/zenith-engine-worker.mjs",
-    "lib/protective-command.mjs",
-    "lib/protective-close-state.mjs",
-    "api/binance-protective-execute.js",
-    "api/binance-reconcile.js",
-    "api/zenith-sync.js",
-    "api/binance-history.js",
-    "lib/real-trade-history.mjs",
     "index.html",
-    "scripts/test-protective-close-state.mjs",
-    "scripts/test-command-terminal-status.mjs",
-    "scripts/test-sale-remainder-restart-continuity.mjs",
-    "scripts/test-triggered-progressive-remainder.mjs",
-    "scripts/test-auto-target-exit.mjs",
-    "scripts/test-auto-target-exit-wiring.mjs",
-    "scripts/test-master-auto-protection.mjs",
-    "scripts/test-controller-real-command.mjs",
-    "scripts/test-orphan-protection-cleanup.mjs",
-    "scripts/test-user-stream-state.mjs",
-    "scripts/test-reconcile.mjs",
-    "scripts/test-real-binance-history.mjs",
-    "scripts/test-engine-history-archive-wiring.mjs"
+    "scripts/test-token-selection.mjs",
+    "scripts/test-token-settings-integrity.mjs",
+    "scripts/test-token-futures-runtime-roundtrip.mjs",
+    "scripts/test-current-price-reference.mjs"
   ]
 }
