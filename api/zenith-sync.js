@@ -637,6 +637,44 @@ async function pushDeadLetter(entry) {
   }
 }
 
+async function pruneExpiredControllerStateCommands(device) {
+  const now = Date.now();
+  const [currentMaster, pendingRows, processingRows] = await Promise.all([
+    redis(['GET', KEY_MASTER]),
+    redis(['LRANGE', KEY_PENDING, '0', '-1']),
+    redis(['LRANGE', KEY_PROCESSING, '0', '-1']),
+  ]);
+  let removed = 0;
+  for (const [key, rows, requireNoMaster] of [[KEY_PENDING,pendingRows,false],[KEY_PROCESSING,processingRows,true]]) {
+    if (requireNoMaster && currentMaster) continue;
+    for (const raw of Array.isArray(rows) ? rows : []) {
+      let command=null;
+      try { command=JSON.parse(raw); } catch { continue; }
+      if (!commandExpired(command,now) || !command?.id) continue;
+      const terminal=JSON.stringify({commandId:String(command.id),clientCommandId:String(command.clientCommandId||''),type:String(command.type||'').toUpperCase(),deviceId:String(command.deviceId||''),status:'FAIL',reason:'COMMAND_EXPIRED',at:now});
+      const dead=JSON.stringify({raw,rejectedAt:now,rejectedReason:'COMMAND_EXPIRED',sourceList:key===KEY_PENDING?'pending':'processing'});
+      const script=[
+        "local controller = tostring(redis.call('GET', KEYS[4]) or '')",
+        "if controller ~= ARGV[2] then return -1 end",
+        "local epoch = tonumber(redis.call('GET', KEYS[5]) or '0') or 0",
+        "local created = tonumber(ARGV[3]) or 0",
+        "if epoch > 0 and created < epoch then return -2 end",
+        "if ARGV[4] == '1' and tostring(redis.call('GET', KEYS[6]) or '') ~= '' then return 0 end",
+        "local removed = redis.call('LREM', KEYS[1], 1, ARGV[1])",
+        "if removed ~= 1 then return 0 end",
+        "redis.call('LPUSH', KEYS[2], ARGV[5])",
+        "redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[6]) - 1)",
+        "redis.call('SET', KEYS[3], ARGV[7], 'EX', ARGV[8])",
+        "return 1"
+      ].join('\n');
+      const result=Number(await redis(['EVAL',script,'6',key,KEY_DEAD,commandTerminalResultKey(command.id),KEY_CONTROLLER_DEVICE,roleAssignmentKey(PREFIX,'controller'),KEY_MASTER,raw,String(device.deviceId||''),String(Number(device.createdAt||0)),requireNoMaster?'1':'0',dead,String(DEAD_LETTER_MAX),terminal,String(COMMAND_DEDUPE_TTL_SECONDS)]));
+      if(result===-1||result===-2)return {ok:false,code:result};
+      if(result===1)removed+=1;
+    }
+  }
+  return {ok:true,removed};
+}
+
 async function quarantineCommandsForDevice(deviceId) {
   if (!deviceId) return { pending: 0, processing: 0 };
   let pending = 0;
@@ -4245,9 +4283,15 @@ export default async function handler(req, res) {
       const device = await requireDevice(req, res, ['controller','master']);
       if (!device) return;
 
-      const raw = await redis(['GET', KEY_ENGINE_ENTRY_WATCH_STATE]);
+      const [raw, authorizationRaw] = await Promise.all([
+        redis(['GET', KEY_ENGINE_ENTRY_WATCH_STATE]),
+        redis(['GET', KEY_ENGINE_AUTHORIZED]),
+      ]);
       const stored = parseStoredJson(raw);
-      const source = stored?.version === 1 && plainJsonObject(stored?.states) ? stored.states : {};
+      const authorization = parseStoredJson(authorizationRaw);
+      const authorizationAt = Number(authorization?.authorizedAt || 0);
+      const sameScope = Boolean(authorization?.version === 1 && Number.isSafeInteger(authorizationAt) && authorizationAt > 0 && stored?.version === 1 && Number(stored?.authorizationAt || 0) === authorizationAt && plainJsonObject(stored?.states));
+      const source = sameScope ? stored.states : {};
       const states = {};
       const now = Date.now();
       for (const [rawSymbol, value] of Object.entries(source)) {
@@ -4280,7 +4324,8 @@ export default async function handler(req, res) {
       }
       return send(res, 200, {
         ok:true,
-        updatedAt:Number(stored?.updatedAt || 0),
+        updatedAt:sameScope ? Number(stored?.updatedAt || 0) : 0,
+        staleScope:Boolean(stored && !sameScope),
         states,
       });
     }
@@ -4831,6 +4876,12 @@ export default async function handler(req, res) {
           code: 'CONTROLLER_STATE_STRUCTURE_INVALID',
           reason: controllerStructure.reason,
         });
+      }
+
+      const expiredQueueCleanup = await pruneExpiredControllerStateCommands(device);
+      if (!expiredQueueCleanup.ok) {
+        clearDeviceSessionCookie(res);
+        return send(res, 409, {ok:false,code:expiredQueueCleanup.code===-2?'CONTROLLER_SESSION_REVOKED':'CONTROLLER_ROLE_CHANGED'});
       }
 
       const updatedAt = Date.now();
