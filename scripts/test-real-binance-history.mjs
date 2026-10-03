@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { buildZenithClosedTradeHistory, mergeTradeHistory } from '../lib/real-trade-history.mjs';
+import { advanceZenithTradeHistory, buildZenithClosedTradeHistory, mergeTradeHistory } from '../lib/real-trade-history.mjs';
 import { windowsFor, zenithOrder } from '../api/binance-history.js';
 
 function order(orderId,clientOrderId,symbol='BTCUSDT'){
@@ -201,20 +201,53 @@ test('history API is read-only and uses official Futures trade/order/income sour
 });
 
 
-test('C12 exposes the >30-day lifecycle gap when the Zenith opening fill is outside the fetched window',()=>{
-  const recentOnly=buildZenithClosedTradeHistory({
-    orders:[order(102,'zth-EXI-longlifecyclebbbbbbbbbb')],
-    trades:[
-      trade({id:102,orderId:102,side:'SELL',qty:1,price:120,realizedPnl:20,commission:.05,time:40*24*60*60*1000}),
-    ],
-    funding:[
-      {symbol:'BTCUSDT',incomeType:'FUNDING_FEE',income:'-0.10',asset:'USDT',time:35*24*60*60*1000},
-    ],
+test('C12 preserves a Zenith open cycle, fees and funding beyond the 30-day rolling window',()=>{
+  const day=24*60*60*1000;
+  const first=advanceZenithTradeHistory({
+    orders:[order(101,'zth-ENT-longlifecycleaaaaaaaaa')],
+    trades:[trade({id:101,orderId:101,side:'BUY',qty:1,price:100,commission:.04,time:1*day})],
+    funding:[{symbol:'BTCUSDT',incomeType:'FUNDING_FEE',tranId:1,income:'-0.20',asset:'USDT',time:5*day}],
   });
+  assert.equal(first.closed.length,0);
+  assert.equal(first.openCycles.length,1);
 
-  // Required C12 behavior: a Zenith position may remain open longer than the
-  // rolling Binance-history window and must still close into one exact trade.
-  // Current implementation has no durable open-cycle seed, so this assertion
-  // intentionally exposes the missing lifecycle continuity.
-  assert.equal(recentOnly.length,1);
+  const closed=advanceZenithTradeHistory({
+    orders:[order(102,'zth-EXI-longlifecyclebbbbbbbbbb')],
+    trades:[trade({id:102,orderId:102,side:'SELL',qty:1,price:120,realizedPnl:20,commission:.05,time:40*day})],
+    funding:[{symbol:'BTCUSDT',incomeType:'FUNDING_FEE',tranId:2,income:'-0.10',asset:'USDT',time:35*day}],
+  },first.openCycles);
+
+  assert.equal(closed.openCycles.length,0);
+  assert.equal(closed.closed.length,1);
+  const row=closed.closed[0];
+  assert.equal(row.entryPrice,100);
+  assert.equal(row.exitPrice,120);
+  assert.equal(row.grossRealizedPnl,20);
+  assert.ok(Math.abs(row.commissionUsdt-.09)<1e-12);
+  assert.ok(Math.abs(row.fundingUsdt-(-.30))<1e-12);
+  assert.ok(Math.abs(row.netUsdt-19.61)<1e-12);
+});
+
+test('C12 open-cycle refresh is idempotent and does not double-count fills or funding',()=>{
+  const day=24*60*60*1000;
+  const raw={
+    orders:[order(201,'zth-ENT-idempotentaaaaaaaaaaaa')],
+    trades:[trade({id:201,orderId:201,side:'BUY',qty:2,price:50,commission:.02,time:day})],
+    funding:[{symbol:'BTCUSDT',incomeType:'FUNDING_FEE',tranId:201,income:'-0.05',asset:'USDT',time:2*day}],
+  };
+  const once=advanceZenithTradeHistory(raw);
+  const twice=advanceZenithTradeHistory(raw,once.openCycles);
+  assert.equal(twice.openCycles.length,1);
+  assert.equal(twice.openCycles[0].entryQty,2);
+  assert.equal(twice.openCycles[0].fees.USDT,.02);
+  assert.equal(twice.openCycles[0].fundingRows.length,1);
+});
+
+test('C12 API persists open cycles and totals still separate gains, losses and net',()=>{
+  const source=fs.readFileSync('api/binance-history.js','utf8');
+  assert.match(source,/KEY_OPEN_CYCLES/);
+  assert.match(source,/advanceZenithTradeHistory/);
+  assert.match(source,/advanced\.openCycles/);
+  assert.match(source,/value>=0\)acc\.gain\+=value;else acc\.loss\+=Math\.abs\(value\)/);
+  assert.match(source,/acc\.net\+=value/);
 });
