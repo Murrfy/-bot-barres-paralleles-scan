@@ -2836,13 +2836,17 @@ async function recoverPersistedSaleRemainder(report){
     recoveryReason:'PERSISTED_SALE_REMAINDER',
   });
   if(!result.response.ok||result.data?.ok!==true||result.data?.remainderMarketClosed!==true){
-    const reason='PERSISTED_SALE_REMAINDER_'+String(
+    const rawReason=String(
       result.data?.code||result.data?.reason||result.data?.error||('HTTP_'+result.response.status)
     );
-    runtime.error=reason;
-    stream.lastError=reason;
-    scheduleReconcile(result.data?.ambiguous===true||result.data?.writeAttempted===true?100:500);
-    return {handled:true,closed:false,reason};
+    const reason='PERSISTED_SALE_REMAINDER_'+rawReason;
+    const localOnly=rawReason==='SALE_REMAINDER_MARKET_RECOVERY_EXHAUSTED';
+    runtime.error=localOnly
+      ?'PERSISTED_SALE_REMAINDER_LOCAL_QUARANTINE_'+target.symbol
+      :reason;
+    stream.lastError=runtime.error;
+    scheduleReconcile(localOnly?1500:(result.data?.ambiguous===true||result.data?.writeAttempted===true?100:500));
+    return {handled:true,closed:false,localOnly,symbol:target.symbol,reason};
   }
   log('PERSISTED_SALE_REMAINDER_CLOSED',{
     symbol:target.symbol,
@@ -2967,10 +2971,19 @@ async function reconcile(secondPass=false){
 
     const persistedSaleRemainder=await recoverPersistedSaleRemainder(data.report);
     if(persistedSaleRemainder.handled){
-      if(!persistedSaleRemainder.closed)return false;
-      stream.reconcileBusy=false;
-      await sleep(100);
-      return reconcile(false);
+      if(!persistedSaleRemainder.closed&&!persistedSaleRemainder.localOnly)return false;
+      if(persistedSaleRemainder.closed){
+        stream.reconcileBusy=false;
+        await sleep(100);
+        return reconcile(false);
+      }
+      // Four deterministic MARKET attempts are exhausted for this symbol.
+      // Keep its persisted recovery state and retry it later, but do not let
+      // this local residual position starve reconciliation for unrelated symbols.
+      log('PERSISTED_SALE_REMAINDER_LOCAL_QUARANTINE',{
+        symbol:persistedSaleRemainder.symbol,
+        reason:persistedSaleRemainder.reason,
+      });
     }
 
     const manualMaxLossPartialRemainder=await recoverManualMaxLossPartialCloseRemainder(data.report);
