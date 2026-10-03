@@ -1,12 +1,13 @@
 {
   "version": 1,
   "activeChapter": "1-selection-du-jeton",
-  "scopeRevision": 56,
+  "scopeRevision": 57,
   "allowedPaths": [
     "index.html",
     "scripts/test-token-selection.mjs",
     "scripts/test-token-settings-integrity.mjs",
     "scripts/test-token-futures-runtime-roundtrip.mjs",
-    "scripts/test-current-price-reference.mjs"
+    "scripts/test-current-price-reference.mjs",
+    "scripts/test-master-schema.mjs"
   ]
 }
