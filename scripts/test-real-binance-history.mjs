@@ -243,6 +243,39 @@ test('C12 open-cycle refresh is idempotent and does not double-count fills or fu
   assert.equal(twice.openCycles[0].fundingRows.length,1);
 });
 
+test('C12 closure does not double-count funding already persisted in the open cycle',()=>{
+  const day=24*60*60*1000;
+  const first=advanceZenithTradeHistory({
+    orders:[order(301,'zth-ENT-fundingoverlapaaaaaaaa')],
+    trades:[trade({id:301,orderId:301,side:'BUY',qty:1,price:100,commission:.04,time:day})],
+    funding:[{symbol:'BTCUSDT',incomeType:'FUNDING_FEE',tranId:301,income:'-0.20',asset:'USDT',time:5*day}],
+  });
+  assert.equal(first.openCycles.length,1);
+  assert.equal(first.openCycles[0].fundingRows.length,1);
+
+  const closed=advanceZenithTradeHistory({
+    orders:[order(302,'zth-EXI-fundingoverlapbbbbbbbb')],
+    trades:[trade({id:302,orderId:302,side:'SELL',qty:1,price:110,realizedPnl:10,commission:.04,time:10*day})],
+    funding:[{symbol:'BTCUSDT',incomeType:'FUNDING_FEE',tranId:301,income:'-0.20',asset:'USDT',time:5*day}],
+  },first.openCycles);
+
+  assert.equal(closed.closed.length,1);
+  assert.equal(closed.closed[0].fundingUsdt,-0.20);
+  assert.ok(Math.abs(closed.closed[0].netUsdt-9.72)<1e-12);
+});
+
+test('C12 keeps persisted open-cycle symbols in Binance discovery after the 30-day entry window',()=>{
+  const source=fs.readFileSync('api/binance-history.js','utf8');
+  const fetchStart=source.indexOf('async function fetchRecentHistory');
+  const handlerStart=source.indexOf('export default async function handler');
+  assert.ok(fetchStart>=0&&handlerStart>fetchStart);
+  const fetchBlock=source.slice(fetchStart,handlerStart);
+  assert.match(fetchBlock,/serverTime,openCycles=\[\]/);
+  assert.match(fetchBlock,/persistedOpenSymbols/);
+  assert.match(fetchBlock,/\[\.\.\.discoveredSymbols,\.\.\.persistedOpenSymbols\]/);
+  assert.match(source,/fetchRecentHistory\(apiKey,secret,serverTime,Array\.isArray\(savedOpenCycles\)\?savedOpenCycles:\[\]\)/);
+});
+
 test('C12 API persists open cycles and totals still separate gains, losses and net',()=>{
   const source=fs.readFileSync('api/binance-history.js','utf8');
   assert.match(source,/KEY_OPEN_CYCLES/);

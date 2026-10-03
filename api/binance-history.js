@@ -180,7 +180,7 @@ function uniqueRows(rows,keyFn){
   }
   return [...map.values()];
 }
-async function fetchRecentHistory(apiKey,secret,serverTime){
+async function fetchRecentHistory(apiKey,secret,serverTime,openCycles=[]){
   const windows=windowsFor(serverTime);
   const offset=serverTime-Date.now();
   const signedNow=()=>Date.now()+offset;
@@ -190,9 +190,9 @@ async function fetchRecentHistory(apiKey,secret,serverTime){
     return assertHistoryArray(rows,'orders');
   });
   const orders=uniqueRows(orderChunks.flat(),row=>String(row?.symbol||'')+':'+String(row?.orderId??''));
-  const symbols=[...new Set(
-    orders.filter(zenithOrder).map(row=>String(row?.symbol||'').toUpperCase()).filter(Boolean)
-  )].sort();
+  const discoveredSymbols=orders.filter(zenithOrder).map(row=>String(row?.symbol||'').toUpperCase()).filter(Boolean);
+  const persistedOpenSymbols=(Array.isArray(openCycles)?openCycles:[]).map(row=>String(row?.symbol||'').toUpperCase()).filter(Boolean);
+  const symbols=[...new Set([...discoveredSymbols,...persistedOpenSymbols])].sort();
   if(symbols.length>HISTORY_SYMBOL_LIMIT){
     const e=new Error('BINANCE_HISTORY_SYMBOL_LIMIT');e.code='BINANCE_HISTORY_SYMBOL_LIMIT';throw e;
   }
@@ -265,9 +265,9 @@ export default async function handler(req,res){
     if(!Number.isFinite(serverTime)){
       const e=new Error('BINANCE_TIME_INVALID');e.code='BINANCE_TIME_INVALID';throw e;
     }
-    const raw=await fetchRecentHistory(apiKey,secret,serverTime);
-    const archived=parseJson(await redis(['GET',KEY_ARCHIVE]));
     const savedOpenCycles=parseJson(await redis(['GET',KEY_OPEN_CYCLES]));
+    const raw=await fetchRecentHistory(apiKey,secret,serverTime,Array.isArray(savedOpenCycles)?savedOpenCycles:[]);
+    const archived=parseJson(await redis(['GET',KEY_ARCHIVE]));
     const advanced=advanceZenithTradeHistory(raw,Array.isArray(savedOpenCycles)?savedOpenCycles:[]);
     const history=mergeTradeHistory(Array.isArray(archived)?archived:[],advanced.closed,500);
     const totals=history.reduce((acc,row)=>{
