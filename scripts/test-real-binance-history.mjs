@@ -199,3 +199,22 @@ test('history API is read-only and uses official Futures trade/order/income sour
   assert.match(source,/BINANCE_HISTORY_WINDOW_TRUNCATED/);
   assert.doesNotMatch(source,/method:'POST'.*fapi\/v1\/order/s);
 });
+
+
+test('C12 exposes the >30-day lifecycle gap when the Zenith opening fill is outside the fetched window',()=>{
+  const recentOnly=buildZenithClosedTradeHistory({
+    orders:[order(102,'zth-EXI-longlifecyclebbbbbbbbbb')],
+    trades:[
+      trade({id:102,orderId:102,side:'SELL',qty:1,price:120,realizedPnl:20,commission:.05,time:40*24*60*60*1000}),
+    ],
+    funding:[
+      {symbol:'BTCUSDT',incomeType:'FUNDING_FEE',income:'-0.10',asset:'USDT',time:35*24*60*60*1000},
+    ],
+  });
+
+  // Required C12 behavior: a Zenith position may remain open longer than the
+  // rolling Binance-history window and must still close into one exact trade.
+  // Current implementation has no durable open-cycle seed, so this assertion
+  // intentionally exposes the missing lifecycle continuity.
+  assert.equal(recentOnly.length,1);
+});
