@@ -266,3 +266,21 @@ test('certified ALGO orphan cancellation verifies identity and reaches terminal 
   assert.equal(applied.kind,'ALGO');
   assert.equal(Object.values(applied.state.algoOrders)[0].status,'CANCELED');
 });
+
+
+test('C10 missed terminal stream event must recover authoritative Binance inventory before generic reconciliation',async()=>{
+  const worker=await readFile(new URL('../server/zenith-engine-worker.mjs',import.meta.url),'utf8');
+  const start=worker.indexOf('const orphanTargets=orphanZenithCleanupOrders(data.report)');
+  const end=worker.indexOf('const repairTarget=missingMaxLossRepairTarget',start);
+  assert.ok(start>=0&&end>start,'C10 cleanup worker block missing');
+  const block=worker.slice(start,end);
+  const timeout=block.indexOf('if(!safe){');
+  const failure=block.indexOf("markOrphanCleanupFailure('ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED'",timeout);
+  assert.ok(timeout>=0&&failure>timeout,'C10 terminal-stream timeout branch missing');
+  const timeoutBlock=block.slice(timeout,failure);
+  assert.match(
+    timeoutBlock,
+    /binance-runtime-snapshot|seedStream\(|refresh[A-Za-z0-9_]*Snapshot|cleaned\.data\?\.result/,
+    'after Binance has already confirmed cancellation, C10 must recover authoritative inventory before a stale-runtime reconciliation can become global MISSING_BINANCE_ORDER'
+  );
+});

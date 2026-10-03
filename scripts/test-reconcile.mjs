@@ -668,3 +668,22 @@ test('manual MAX-LOSS partial-close localization rejects unrelated or non-partia
   assert.equal(unrelated.failClosed,true);
   assert.equal(unrelated.symbolQuarantines,undefined);
 });
+
+
+test('C10 post-cleanup stale runtime reproduces global missing-order mismatch when Binance is already clean',()=>{
+  const stale=normalizeActualOrder({
+    symbol:'BTCUSDT',positionSide:'BOTH',side:'SELL',type:'LIMIT',
+    orderId:299,clientOrderId:'zth-EXI-abcdefabcdefabcdefabcdef',
+    origQty:'1',executedQty:'0',reduceOnly:true,closePosition:false,
+    price:'51000',timeInForce:'GTC',status:'NEW'
+  });
+  // C10 cancellation has already succeeded at Binance, so the authoritative open-order set is empty.
+  // The local runtime still contains the old order because its terminal User Stream event was missed.
+  const result=reconcile(runtime([], [stale]), [], []);
+  assert.deepEqual(result.reasons,['MISSING_BINANCE_ORDER']);
+  assert.equal(result.failClosed,true);
+  assert.equal(result.status,'MISMATCH');
+  localizeOrphanProtectionAnomalies(result,1700000010000);
+  assert.equal(result.failClosed,true);
+  assert.deepEqual(result.symbolQuarantines||[],[]);
+});

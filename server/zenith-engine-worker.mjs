@@ -3196,9 +3196,38 @@ async function reconcile(secondPass=false){
           terminal:true,
         },3000);
         const status=String(order?.status||'').toUpperCase();
-        const safe=target.orderClass==='ALGO'
+        let safe=target.orderClass==='ALGO'
           ?['CANCELED','EXPIRED','REJECTED'].includes(status)
           :['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(status);
+        if(!safe){
+          // Binance's idempotent cancel writer has already re-queried this exact
+          // order and returned success. If its terminal User Stream event is lost,
+          // refresh the complete authoritative REST inventory while buffering any
+          // concurrent stream events before allowing generic reconciliation to run.
+          const connectionId=String(stream.state?.connectionId||'');
+          const connectedAt=n(stream.state?.connectedAt,0);
+          if(connectionId&&connectedAt>0&&stream.ws?.readyState===WebSocket.OPEN){
+            stream.seeding=true;
+            stream.bufferedEvents=[];
+            try{
+              await seedStream(connectionId,connectedAt);
+              const refreshed=target.orderClass==='ALGO'
+                ?streamAlgoOrderByClientId(clientId)
+                :streamStandardOrderByClientId(clientId);
+              if(!refreshed){
+                safe=true;
+              }else{
+                const refreshedStatus=String(refreshed?.status||'').toUpperCase();
+                safe=target.orderClass==='ALGO'
+                  ?['CANCELED','EXPIRED','REJECTED'].includes(refreshedStatus)
+                  :['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(refreshedStatus);
+              }
+            }catch(error){
+              stream.seeding=false;
+              stream.lastError='ORPHAN_CLEANUP_RESEED_FAILED_'+String(error?.message||'UNKNOWN');
+            }
+          }
+        }
         if(!safe){
           await markOrphanCleanupFailure('ORPHAN_CLEANUP_STREAM_NOT_CONFIRMED',target.symbol);
           return false;
