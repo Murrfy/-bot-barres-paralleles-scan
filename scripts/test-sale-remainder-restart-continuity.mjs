@@ -105,3 +105,43 @@ test('four MARKET attempts stay bounded and never advance to an untracked fifth 
   assert.match(execute,/SALE_REMAINDER_MARKET_RECOVERY_EXHAUSTED/);
   assert.match(execute,/nextAttempt<0\|\|nextAttempt>3/);
 });
+
+
+test('an exhausted persisted sale remainder stays local and does not abort unrelated reconciliation',()=>{
+  const recoverStart=worker.indexOf('async function recoverPersistedSaleRemainder');
+  const recoverEnd=worker.indexOf('async function recoverTriggeredProgressiveRemainder',recoverStart);
+  assert.ok(recoverStart>=0&&recoverEnd>recoverStart);
+  const recoverBlock=worker.slice(recoverStart,recoverEnd);
+  assert.match(recoverBlock,/localOnly/);
+  assert.match(recoverBlock,/SALE_REMAINDER_MARKET_RECOVERY_EXHAUSTED/);
+
+  const reconcileStart=worker.indexOf('async function reconcile(secondPass=false)');
+  const reconcileEnd=worker.indexOf('async function awaitReconciliation',reconcileStart);
+  assert.ok(reconcileStart>=0&&reconcileEnd>reconcileStart);
+  const reconcileBlock=worker.slice(reconcileStart,reconcileEnd);
+  assert.match(reconcileBlock,/persistedSaleRemainder\.localOnly/);
+  assert.match(reconcileBlock,/PERSISTED_SALE_REMAINDER_LOCAL_QUARANTINE/);
+  assert.match(reconcileBlock,/saleRemainderRecoverySymbols/);
+  assert.match(reconcileBlock,/ensureAutomaticTargets/);
+
+  const targetStart=worker.indexOf('async function ensureAutomaticTargetForPosition');
+  const targetEnd=worker.indexOf('async function ensureAutomaticTargets',targetStart);
+  const targetBlock=worker.slice(targetStart,targetEnd);
+  assert.match(targetBlock,/saleRemainderRecoverySymbols\.has\(symbol\)/);
+
+  const protectionStart=worker.indexOf('async function runAutoProtection');
+  const protectionEnd=worker.indexOf('function activeProtectionSymbols',protectionStart);
+  const protectionBlock=worker.slice(protectionStart,protectionEnd);
+  assert.match(protectionBlock,/saleRemainderRecoverySymbols\.has\(wanted\)/);
+
+  const commandStart=worker.indexOf('async function commandCycle');
+  const commandEnd=worker.indexOf('async function runtimeCycle',commandStart);
+  const commandBlock=worker.slice(commandStart,commandEnd);
+  assert.match(commandBlock,/saleRemainderRecoverySymbols\.has\(dispatchSymbol\)/);
+  assert.match(commandBlock,/SYMBOL_SALE_REMAINDER_RECOVERY_ACTIVE/);
+
+  const tickStart=worker.indexOf('async function processEntryWatchPrice');
+  const tickEnd=worker.indexOf('function markStreamName',tickStart);
+  const tickBlock=worker.slice(tickStart,tickEnd);
+  assert.match(tickBlock,/saleRemainderRecoverySymbols\.has\(wanted\)/);
+});
