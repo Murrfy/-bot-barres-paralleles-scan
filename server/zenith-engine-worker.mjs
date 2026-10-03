@@ -642,7 +642,24 @@ function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig,activeSymb
     const symbols=[...new Set([...Object.keys(before),...Object.keys(after)])];
     for(const rawSymbol of symbols){
       if(stableStringify(before[rawSymbol])===stableStringify(after[rawSymbol]))continue;
-      if(active.has(String(rawSymbol||'').toUpperCase()))return false;
+      const symbol=String(rawSymbol||'').toUpperCase();
+      if(active.has(symbol))return false;
+      if(key!=='tokenSettings')continue;
+      const nextToken=after[rawSymbol]&&typeof after[rawSymbol]==='object'?after[rawSymbol]:null;
+      if(!nextToken)continue;
+
+      const maxLoss=n(nextToken.maxLoss,NaN);
+      const margin=n(nextToken.margin,n(nextConfig?.settings?.margin,NaN));
+      if(!(maxLoss>=2))return false;
+      if(!(margin>0)||maxLoss>margin+1e-8)return false;
+      if(String(nextToken.marginType||'ISOLATED').toUpperCase()!=='ISOLATED')return false;
+
+      const target=n(nextToken.targetProfit,NaN),manual=n(nextToken.manualTargetProfit,target);
+      if(!(target>0)||!(manual>0)||Math.abs(target-manual)>1e-8)return false;
+      const exactEnabled=nextToken.exactSaleEnabled===true,exactPrice=n(nextToken.exactSalePrice,0);
+      if(exactEnabled&&!(exactPrice>0))return false;
+      if(!(exactPrice>=0)||String(nextToken.exactSaleSource||'settings')!=='settings')return false;
+      if(!validActiveProtectionStages(nextToken.protectionStages))return false;
     }
   }
   return true;
