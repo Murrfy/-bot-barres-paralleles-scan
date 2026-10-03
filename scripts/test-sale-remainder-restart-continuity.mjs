@@ -105,3 +105,21 @@ test('four MARKET attempts stay bounded and never advance to an untracked fifth 
   assert.match(execute,/SALE_REMAINDER_MARKET_RECOVERY_EXHAUSTED/);
   assert.match(execute,/nextAttempt<0\|\|nextAttempt>3/);
 });
+
+
+test('an exhausted persisted sale remainder stays local and does not abort unrelated reconciliation',()=>{
+  const recoverStart=worker.indexOf('async function recoverPersistedSaleRemainder');
+  const recoverEnd=worker.indexOf('async function recoverTriggeredProgressiveRemainder',recoverStart);
+  assert.ok(recoverStart>=0&&recoverEnd>recoverStart);
+  const recoverBlock=worker.slice(recoverStart,recoverEnd);
+  assert.match(recoverBlock,/localOnly/);
+  assert.match(recoverBlock,/SALE_REMAINDER_MARKET_RECOVERY_EXHAUSTED/);
+
+  const reconcileStart=worker.indexOf('async function reconcile(secondPass=false)');
+  const reconcileEnd=worker.indexOf('async function awaitReconciliation',reconcileStart);
+  assert.ok(reconcileStart>=0&&reconcileEnd>reconcileStart);
+  const reconcileBlock=worker.slice(reconcileStart,reconcileEnd);
+  assert.match(reconcileBlock,/persistedSaleRemainder\.localOnly/);
+  assert.match(reconcileBlock,/PERSISTED_SALE_REMAINDER_LOCAL_QUARANTINE/);
+  assert.match(reconcileBlock,/ensureAutomaticTargets/);
+});
