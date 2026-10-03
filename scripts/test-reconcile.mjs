@@ -687,3 +687,24 @@ test('C10 post-cleanup stale runtime reproduces global missing-order mismatch wh
   assert.equal(result.failClosed,true);
   assert.deepEqual(result.symbolQuarantines||[],[]);
 });
+
+
+test('C8 placed target with missed stream event becomes a global untracked-order mismatch',()=>{
+  const target=normalizeActualOrder({
+    symbol:'BTCUSDT',positionSide:'BOTH',side:'SELL',type:'LIMIT',
+    orderId:188,clientOrderId:'zth-EXI-newtarget1234567890',
+    origQty:'1',executedQty:'0',reduceOnly:true,closePosition:false,
+    price:'51000',timeInForce:'GTC',status:'NEW'
+  });
+  // Binance already has the newly placed target, but the User Stream event was missed,
+  // so the runtime still knows only the live position and its MAX-LOSS.
+  const result=reconcile(
+    runtime([position],[emergency]),
+    [normalized],
+    [normalizedEmergency,target]
+  );
+  assert.deepEqual(result.reasons,['UNTRACKED_BINANCE_ORDER']);
+  assert.equal(result.failClosed,true);
+  assert.equal(result.status,'MISMATCH');
+  assert.deepEqual(result.differences.orphanZenithProtectiveOrders,[]);
+});
