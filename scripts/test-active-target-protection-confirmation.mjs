@@ -99,8 +99,11 @@ test('Render applies only server-ACKed active config and verifies state hash',()
   assert.match(ack,/ACTIVE_CONFIG_ACK_HASH_MISMATCH/);
 
   const refresh=block(worker,'function activeSafeTokenConfigRefreshAllowed','async function syncControllerConfig');
-  assert.match(refresh,/safeMutable=new Set/);
-  assert.match(refresh,/return changed===1/);
+  assert.match(refresh,/activeRuntimeSymbols\(\)/);
+  assert.match(refresh,/\['manualTokens','validated','tokenSettings'\]/);
+  assert.match(refresh,/active\.has\(String\(rawSymbol\|\|''\)\.toUpperCase\(\)\)/);
+  assert.doesNotMatch(refresh,/safeMutable/);
+  assert.doesNotMatch(refresh,/return changed===1/);
 });
 
 test('server command completion atomically couples ACK with controller revision and MASTER applied revision',()=>{
