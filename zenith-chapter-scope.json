@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation",
-  "scopeRevision": 54,
+  "scopeRevision": 55,
   "allowedPaths": [
     "server/zenith-engine-worker.mjs",
     "lib/protective-command.mjs",
