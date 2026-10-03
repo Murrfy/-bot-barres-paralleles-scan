@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { seedUserStreamStateFromRuntimeSnapshot } from '../lib/user-stream-seed.mjs';
+import { runtimeInventoryFromUserStream } from '../lib/master-runtime-inventory.mjs';
+import { planAutomaticTargetExit } from '../lib/auto-target-exit.mjs';
 
 const worker=fs.readFileSync('server/zenith-engine-worker.mjs','utf8');
 const api=fs.readFileSync('api/binance-protective-update-execute.js','utf8');
@@ -151,4 +154,52 @@ test('C8 target replacement must refresh authoritative inventory if terminal str
     /binance-runtime-snapshot|seedStream\(|refresh[A-Za-z0-9_]*Snapshot/,
     'if Binance confirms the old target canceled but its terminal User Stream event is missed, C8 must refresh authoritative inventory before replanning'
   );
+});
+
+
+test('C8 authoritative reseed removes a canceled stale target before replacement replanning',()=>{
+  const oldTarget={
+    orderClass:'STANDARD',symbol:'BTCUSDT',orderId:'991',
+    clientOrderId:'zth-EXI-oldtarget123456',side:'SELL',positionSide:'BOTH',
+    type:'LIMIT',status:'NEW',origQty:'1',executedQty:'0',price:'125',
+    stopPrice:'',reduceOnly:true,closePosition:false,timeInForce:'GTC',
+    workingType:'CONTRACT_PRICE',updateTime:4000,
+  };
+  const position={
+    symbol:'BTCUSDT',positionSide:'BOTH',positionAmt:'2',entryPrice:'100',
+    breakEvenPrice:'100',unrealizedProfit:'0',marginType:'isolated',
+    isAutoAddMargin:false,isolatedMargin:'100',updateTime:4000,
+  };
+  const base={
+    positions:[position],algoOrders:[],observedAt:5000,serverTime:5000,
+  };
+  const stale=seedUserStreamStateFromRuntimeSnapshot(
+    {...base,standardOrders:[oldTarget]},
+    {connectionId:'c8-test',connectedAt:4500}
+  );
+  const staleProjection=runtimeInventoryFromUserStream(stale);
+  const priceFilter={filterType:'PRICE_FILTER',tickSize:'0.1',minPrice:'0.1',maxPrice:'1000000'};
+  const stalePlan=planAutomaticTargetExit({
+    position:staleProjection.binancePositions[0],
+    currentOrders:staleProjection.binanceOrders,
+    tokenSettings:{BTCUSDT:{targetProfit:25}},settings:{targetProfit:100},
+    priceFilter,maxLossConfirmed:true,
+  });
+  assert.equal(stalePlan.action,'REPLACE');
+
+  // Binance REST is authoritative after the cancellation and no longer lists the old target.
+  const refreshed=seedUserStreamStateFromRuntimeSnapshot(
+    {...base,standardOrders:[]},
+    {connectionId:'c8-test',connectedAt:4500}
+  );
+  const freshProjection=runtimeInventoryFromUserStream(refreshed);
+  assert.deepEqual(freshProjection.binanceOrders,[]);
+  const freshPlan=planAutomaticTargetExit({
+    position:freshProjection.binancePositions[0],
+    currentOrders:freshProjection.binanceOrders,
+    tokenSettings:{BTCUSDT:{targetProfit:25}},settings:{targetProfit:100},
+    priceFilter,maxLossConfirmed:true,
+  });
+  assert.equal(freshPlan.action,'PLACE');
+  assert.equal(freshPlan.reason,'CALCULATED_TARGET_REQUIRED');
 });
