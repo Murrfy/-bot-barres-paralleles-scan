@@ -222,3 +222,20 @@ test('C8 protective replacement must refresh authoritative inventory before post
     'when Binance confirms the old C8 protective order terminal but User Stream misses it, the worker must refresh authoritative inventory before reconciliation'
   );
 });
+
+
+test('C8 new target placement must refresh authoritative inventory if the open-order stream event is missed',()=>{
+  const start=worker.indexOf("const placed=await callProtectiveUpdateExecute(body)");
+  const end=worker.indexOf("await publishRuntime();",start);
+  assert.ok(start>=0&&end>start,'automatic target placement block missing');
+  const block=worker.slice(start,end+500);
+  const wait=block.indexOf("waitForStreamOrder({kind:'STANDARD',clientId,terminal:false}");
+  const fail=block.indexOf("ORDER_NOT_STREAM_CONFIRMED",wait);
+  assert.ok(wait>=0&&fail>wait,'target placement stream confirmation branch missing');
+  const missed=block.slice(wait,fail);
+  assert.match(
+    missed,
+    /binance-runtime-snapshot|seedStream\(|refresh[A-Za-z0-9_]*Snapshot/,
+    'if Binance has placed the target but its open-order User Stream event is missed, C8 must refresh authoritative inventory before generic reconciliation'
+  );
+});
