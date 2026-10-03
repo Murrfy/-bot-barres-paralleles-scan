@@ -174,6 +174,8 @@ const markStream={
   lastError:'',
 };
 
+const saleRemainderRecoverySymbols=new Set();
+
 let heartbeatTimer=null;
 let standbyTimer=null;
 let historyArchiveTimer=null;
@@ -1100,6 +1102,7 @@ async function executeWatchedEntry(config,{limitPrice=config.buy,delayedCurrentP
 
 async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.now()}={}){
   const wanted=String(symbol||'').toUpperCase();
+  if(saleRemainderRecoverySymbols.has(wanted))return false;
   const definition=entryWatchDefinitionMap().get(wanted);
   if(!definition)return false;
   const previous=entryWatch.states.get(wanted)||null;
@@ -1492,6 +1495,7 @@ async function recoverImmediatePartialTargetRemainder(){
 async function ensureAutomaticTargetForPosition(position){
   const symbol=String(position?.symbol||'').toUpperCase();
   if(!symbol||autoTarget.busySymbols.has(symbol))return {ok:true,changed:false,reason:'BUSY_OR_INVALID'};
+  if(saleRemainderRecoverySymbols.has(symbol))return {ok:true,changed:false,reason:'SALE_REMAINDER_RECOVERY_ACTIVE'};
   if(autoTarget.suppressedSymbols.has(symbol))return {ok:true,changed:false,reason:'TARGET_UPDATE_IN_PROGRESS'};
   if(symbolMaxLossQuarantined(symbol))return {ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'};
   if(!runtime.synchronized||!runtime.heartbeatFresh)return {ok:true,changed:false,reason:'RUNTIME_NOT_READY'};
@@ -1739,6 +1743,7 @@ async function executeAutoProgressive(plan){
 
 async function runAutoProtection(symbol,mark){
   const wanted=String(symbol||'').toUpperCase();
+  if(saleRemainderRecoverySymbols.has(wanted))return false;
   if(markStream.recoveryBlockedSymbols.has(wanted))return false;
 
   const projection=streamProjection();
@@ -2968,6 +2973,12 @@ async function reconcile(secondPass=false){
     }
 
     stream.symbolQuarantines=maxLossSymbolQuarantines(data.report);
+    const persistedSaleTargets=persistedSaleRemainderRecoveryTargets(data.report);
+    saleRemainderRecoverySymbols.clear();
+    for(const target of persistedSaleTargets){
+      const symbol=String(target?.symbol||'').toUpperCase();
+      if(symbol)saleRemainderRecoverySymbols.add(symbol);
+    }
 
     const persistedSaleRemainder=await recoverPersistedSaleRemainder(data.report);
     if(persistedSaleRemainder.handled){
@@ -4186,6 +4197,10 @@ async function commandCycle(){
     }
 
     const dispatchSymbol=String(dispatch?.body?.symbol||command?.payload?.symbol||'').toUpperCase();
+    if(saleRemainderRecoverySymbols.has(dispatchSymbol)){
+      await requeueCommand(raw,'SYMBOL_SALE_REMAINDER_RECOVERY_ACTIVE',500);
+      return false;
+    }
     if(maxLossRemainderRecovery.busy&&maxLossRemainderRecovery.symbol&&
        dispatchSymbol===String(maxLossRemainderRecovery.symbol).toUpperCase()){
       await requeueCommand(raw,'SYMBOL_MAX_LOSS_RECOVERY_BUSY',500);
