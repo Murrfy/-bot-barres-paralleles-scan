@@ -143,7 +143,7 @@ test('C8 target replacement must refresh authoritative inventory if terminal str
   const start=worker.indexOf("if(activePlan.action==='REPLACE')");
   const end=worker.indexOf("const live=activePlan.live;",start+10);
   assert.ok(start>=0&&end>start,'automatic target replacement block missing');
-  const block=worker.slice(start,end+3500);
+  const block=worker.slice(start,end+5000);
   const wait=block.indexOf("waitForStreamOrder({kind:'STANDARD',clientId:previousClientOrderId,terminal:true}");
   const fallback=block.indexOf("canceled.data?.result?.order?.status",wait);
   const replan=block.indexOf("activePlan=planAutomaticTargetExit({",fallback);
