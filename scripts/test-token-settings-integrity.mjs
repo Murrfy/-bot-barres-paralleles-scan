@@ -358,3 +358,19 @@ test('full token save refuses to commit Futures overrides before central control
   assert.match(save,/réglages du jeton NON enregistrés — contrôleur\/synchronisation centrale non prêt/);
   assert.match(save,/await persistAndVerifyTokenFuturesSettings\(s,margin,leverage\)/);
 });
+
+
+test('triggered watched entry leaves the watch KPI and real Binance position is active in the token list',()=>{
+  assert.match(html,/function realEntryTriggered\(s\)[\s\S]*state\.status==='TRIGGERED'/);
+  const status=block('function rowStatus(s)','function tableRows()');
+  assert.match(status,/controllerRealPositionBySymbol\(s\)[\s\S]*return 'ACTIF'/);
+  assert.match(status,/realEntryTriggered\(s\)[\s\S]*return 'DÉCLENCHÉ'/);
+  const rows=block('function tableRows()','function distanceBuy');
+  assert.match(rows,/binanceAccount\.positions/);
+  assert.match(rows,/controllerRealPositionBySymbol\(s\)\|\|openBySymbol\(s\)\?0/);
+  const kpis=block('function renderKpis()','function pnlAt');
+  assert.match(kpis,/!controllerRealPositionBySymbol\(s\)/);
+  assert.match(kpis,/!realEntryTriggered\(s\)/);
+  const render=block('function renderTable()','function totals()');
+  assert.match(render,/controllerRealPositionBySymbol\(s\)\|\|openBySymbol\(s\)/);
+});
