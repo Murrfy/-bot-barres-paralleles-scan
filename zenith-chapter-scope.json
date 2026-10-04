@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "1-selection-du-jeton",
-  "scopeRevision": 59,
+  "scopeRevision": 61,
   "allowedPaths": [
     "index.html",
     "scripts/test-token-selection.mjs",
