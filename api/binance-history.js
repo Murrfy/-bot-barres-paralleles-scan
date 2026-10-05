@@ -173,6 +173,10 @@ function assertHistoryArray(rows,kind){
   }
   return rows;
 }
+function filterVisibleHistory(history,visibleFrom){
+  const cutoff=Math.max(0,Number(visibleFrom)||0);
+  return (Array.isArray(history)?history:[]).filter(row=>Number(row?.closedAt||0)>cutoff);
+}
 function uniqueRows(rows,keyFn){
   const map=new Map();
   for(const row of rows){
@@ -283,7 +287,7 @@ export default async function handler(req,res){
     const advanced=advanceZenithTradeHistory(raw,Array.isArray(savedOpenCycles)?savedOpenCycles:[]);
     const history=mergeTradeHistory(Array.isArray(archived)?archived:[],advanced.closed,500);
     const visibleFrom=Math.max(0,Number(await redis(['GET',KEY_VISIBLE_FROM]))||0);
-    const visibleHistory=history.filter(row=>Number(row?.closedAt||0)>visibleFrom);
+    const visibleHistory=filterVisibleHistory(history,visibleFrom);
     const payload={
       ok:true,
       source:'BINANCE_REAL',
@@ -313,4 +317,4 @@ export default async function handler(req,res){
   }
 }
 
-export { windowsFor, fetchRecentHistory, zenithOrder };
+export { windowsFor, fetchRecentHistory, zenithOrder, filterVisibleHistory };
