@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { advanceZenithTradeHistory, buildZenithClosedTradeHistory, mergeTradeHistory } from '../lib/real-trade-history.mjs';
-import { windowsFor, zenithOrder } from '../api/binance-history.js';
+import { windowsFor, zenithOrder, filterVisibleHistory } from '../api/binance-history.js';
 
 function order(orderId,clientOrderId,symbol='BTCUSDT'){
   return {symbol,orderId,clientOrderId};
@@ -27,8 +27,9 @@ test('closed Zenith LONG uses actual fills, commissions and funding for exact ne
   assert.equal(r.grossRealizedPnl,10);
   assert.ok(Math.abs(r.commissionUsdt-.084)<1e-12);
   assert.equal(r.fundingUsdt,-.2);
-  assert.ok(Math.abs(r.netUsdt-9.716)<1e-12);
-  assert.equal(r.exactNetUsdt,true);
+  assert.equal(r.grossRealizedPnl,10);
+  assert.equal('netUsdt' in r,false);
+  assert.equal('exactNetUsdt' in r,false);
 });
 
 test('negative Binance commission is preserved as rebate and increases exact net',()=>{
@@ -41,7 +42,7 @@ test('negative Binance commission is preserved as rebate and increases exact net
   });
   assert.equal(rows.length,1);
   assert.ok(Math.abs(rows[0].commissionUsdt-.01)<1e-12);
-  assert.ok(Math.abs(rows[0].netUsdt-4.99)<1e-12);
+  assert.equal(rows[0].grossRealizedPnl,5);
   assert.equal(rows[0].feesByAsset.USDT,.01);
 });
 
@@ -61,7 +62,7 @@ test('partial entry and exit fills produce weighted actual prices and summed fee
   assert.equal(r.exitPrice,(.5*105+1.5*108)/2);
   assert.equal(r.grossRealizedPnl,12);
   assert.equal(r.commissionUsdt,.08);
-  assert.equal(r.netUsdt,11.92);
+  assert.equal(r.grossRealizedPnl,12);
 });
 
 test('partial Zenith LIMIT exit plus MARKET remainder is archived as one closed trade',()=>{
@@ -83,7 +84,7 @@ test('partial Zenith LIMIT exit plus MARKET remainder is archived as one closed 
   assert.ok(Math.abs(r.exitPrice-(.4*110+.6*109.5))<1e-12);
   assert.ok(Math.abs(r.grossRealizedPnl-9.7)<1e-12);
   assert.ok(Math.abs(r.commissionUsdt-.085)<1e-12);
-  assert.ok(Math.abs(r.netUsdt-9.615)<1e-12);
+  assert.ok(Math.abs(r.grossRealizedPnl-9.7)<1e-12);
   assert.equal(r.closingOrderId,'52');
   assert.equal(r.closingClientOrderId,'zth-EXI-remaindermarketcccccc');
   assert.equal(mergeTradeHistory(rows,rows,500).length,1);
@@ -107,7 +108,7 @@ test('Zenith entry closed manually on Binance is still archived once with the re
   assert.equal(r.closingClientOrderId,'manual-market-close');
   assert.equal(r.exitPrice,112);
   assert.equal(r.grossRealizedPnl,12);
-  assert.ok(Math.abs(r.netUsdt-11.815)<1e-12);
+  assert.equal(r.grossRealizedPnl,12);
   assert.equal(mergeTradeHistory(rows,rows,500).length,1);
 });
 
@@ -131,43 +132,31 @@ test('non-USDT fee is preserved exactly and prevents invented USDT net conversio
     ],
   });
   assert.equal(rows.length,1);
-  assert.equal(rows[0].exactNetUsdt,false);
-  assert.equal(rows[0].netUsdt,null);
+  assert.equal('exactNetUsdt' in rows[0],false);
+  assert.equal('netUsdt' in rows[0],false);
   assert.equal(rows[0].feesByAsset.BNB,.001);
   assert.equal(rows[0].feesByAsset.USDT,.04);
 });
 
 test('history merge is stable and keeps newest unique cycles',()=>{
-  const a={id:'A',closedAt:100,netUsdt:1};
-  const b={id:'B',closedAt:200,netUsdt:2};
-  const newerA={id:'A',closedAt:300,netUsdt:3};
+  const a={id:'A',closedAt:100,grossRealizedPnl:1};
+  const b={id:'B',closedAt:200,grossRealizedPnl:2};
+  const newerA={id:'A',closedAt:300,grossRealizedPnl:3};
   assert.deepEqual(mergeTradeHistory([a,b],[newerA],10),[newerA,b]);
 });
 
-test('UI history is Binance-real only and never displays protection level numbers',()=>{
+test('UI history displays Binance result without deriving a Zenith net and reset button stores a cutoff',()=>{
   const html=fs.readFileSync('index.html','utf8');
-  const helpersStart=html.indexOf('function historyFeeText');
-  const start=html.indexOf('function renderHistory(){',helpersStart);
+  const start=html.indexOf('function renderHistory(){');
   const end=html.indexOf('function applyTheme()',start);
-  assert.ok(helpersStart>=0&&start>helpersStart&&end>start);
-  const helpers=html.slice(helpersStart,start);
+  assert.ok(start>=0&&end>start);
   const block=html.slice(start,end);
-  assert.match(helpers,/commissionUsdt/);
-  assert.match(helpers,/rebate/);
-  assert.match(helpers,/fundingUsdt/);
-  assert.match(block,/binanceHistory\.history/);
   assert.match(block,/grossRealizedPnl/);
-  assert.match(block,/historyFeeText\(row\)/);
-  assert.match(block,/historyFundingText\(row\)/);
-  assert.match(html,/<th>Durée<\/th>/);
-  assert.match(block,/durationHMS\(opened,closed\)/);
-  assert.match(block,/closed>=opened/);
-  assert.match(block,/netUsdt/);
-  assert.doesNotMatch(helpers+block,/Niveau|Protection|level/i);
-  assert.ok(html.includes('id="refreshHistoryBtn"'));
-  assert.equal(html.includes('id="resetClosedBtn"'),false);
+  assert.doesNotMatch(block,/netUsdt|commissionUsdt|fundingUsdt/);
+  assert.match(html,/id="refreshHistoryBtn"[^>]*>Remise à zéro historique</);
+  assert.match(html,/method:'POST'/);
+  assert.match(html,/setInterval\(refreshBinanceHistory,60000\)/);
 });
-
 test('history windows never overlap and stay within Binance seven-day range',()=>{
   const now=30*24*60*60*1000+12345;
   const windows=windowsFor(now);
@@ -225,7 +214,7 @@ test('C12 preserves a Zenith open cycle, fees and funding beyond the 30-day roll
   assert.equal(row.grossRealizedPnl,20);
   assert.ok(Math.abs(row.commissionUsdt-.09)<1e-12);
   assert.ok(Math.abs(row.fundingUsdt-(-.30))<1e-12);
-  assert.ok(Math.abs(row.netUsdt-19.61)<1e-12);
+  assert.equal(row.grossRealizedPnl,20);
 });
 
 test('C12 open-cycle refresh is idempotent and does not double-count fills or funding',()=>{
@@ -261,7 +250,7 @@ test('C12 closure does not double-count funding already persisted in the open cy
 
   assert.equal(closed.closed.length,1);
   assert.equal(closed.closed[0].fundingUsdt,-0.20);
-  assert.ok(Math.abs(closed.closed[0].netUsdt-9.72)<1e-12);
+  assert.equal(closed.closed[0].grossRealizedPnl,10);
 });
 
 test('C12 keeps persisted open-cycle symbols in Binance discovery after the 30-day entry window',()=>{
@@ -276,11 +265,21 @@ test('C12 keeps persisted open-cycle symbols in Binance discovery after the 30-d
   assert.match(source,/fetchRecentHistory\(apiKey,secret,serverTime,Array\.isArray\(savedOpenCycles\)\?savedOpenCycles:\[\]\)/);
 });
 
-test('C12 API persists open cycles and totals still separate gains, losses and net',()=>{
+test('C12 API persists open cycles, stores one visible cutoff and does not derive totals',()=>{
   const source=fs.readFileSync('api/binance-history.js','utf8');
   assert.match(source,/KEY_OPEN_CYCLES/);
-  assert.match(source,/advanceZenithTradeHistory/);
-  assert.match(source,/advanced\.openCycles/);
-  assert.match(source,/value>=0\)acc\.gain\+=value;else acc\.loss\+=Math\.abs\(value\)/);
-  assert.match(source,/acc\.net\+=value/);
+  assert.match(source,/KEY_VISIBLE_FROM/);
+  assert.match(source,/SET',KEY_VISIBLE_FROM/);
+  assert.match(source,/filterVisibleHistory\(history,visibleFrom\)/);
+  assert.doesNotMatch(source,/const totals=history\.reduce/);
+});
+
+test('C12 reset cutoff keeps a cycle opened before reset when it closes after reset',()=>{
+  const cutoff=2000;
+  const rows=[
+    {id:'old',openedAt:100,closedAt:1500},
+    {id:'crossing',openedAt:1000,closedAt:2500},
+    {id:'new',openedAt:2200,closedAt:3000},
+  ];
+  assert.deepEqual(filterVisibleHistory(rows,cutoff).map(row=>row.id),['crossing','new']);
 });
