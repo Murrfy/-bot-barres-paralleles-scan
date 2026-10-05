@@ -26,6 +26,7 @@ const PREFIX='zenith:v1';
 const KEY_ARCHIVE=`${PREFIX}:real-history:archive`;
 const KEY_OPEN_CYCLES=`${PREFIX}:real-history:open-cycles`;
 const KEY_CACHE=`${PREFIX}:real-history:cache`;
+const KEY_VISIBLE_FROM=`${PREFIX}:real-history:visible-from`;
 const HISTORY_CACHE_MS=60000;
 const HISTORY_LOOKBACK_MS=30*24*60*60*1000;
 const HISTORY_WINDOW_MS=(7*24*60*60*1000)-1;
@@ -227,7 +228,7 @@ async function fetchRecentHistory(apiKey,secret,serverTime,openCycles=[]){
 }
 
 export default async function handler(req,res){
-  if(req.method!=='GET')return send(res,405,{ok:false,code:'METHOD_NOT_ALLOWED'});
+  if(!['GET','POST'].includes(req.method))return send(res,405,{ok:false,code:'METHOD_NOT_ALLOWED'});
   let device=null;
   try{device=await requireZenithDevice(req)}
   catch(e){
@@ -237,6 +238,17 @@ export default async function handler(req,res){
     return send(res,503,{ok:false,code:e?.code||'AUTH_BACKEND_ERROR',error:'Authentification Zenith indisponible.'});
   }
   if(!device)return send(res,401,{ok:false,code:'UNAUTHORIZED_DEVICE',error:'Appareil Zenith autorisé requis.'});
+
+  if(req.method==='POST'){
+    try{
+      const visibleFrom=Date.now();
+      await redis(['SET',KEY_VISIBLE_FROM,String(visibleFrom)]);
+      await redis(['DEL',KEY_CACHE]);
+      return send(res,200,{ok:true,visibleFrom});
+    }catch(e){
+      return send(res,503,{ok:false,code:e?.code||'HISTORY_RESET_FAILED',error:'Remise à zéro de l’historique indisponible.'});
+    }
+  }
 
   try{
     const cached=parseJson(await redis(['GET',KEY_CACHE]));
@@ -270,22 +282,16 @@ export default async function handler(req,res){
     const archived=parseJson(await redis(['GET',KEY_ARCHIVE]));
     const advanced=advanceZenithTradeHistory(raw,Array.isArray(savedOpenCycles)?savedOpenCycles:[]);
     const history=mergeTradeHistory(Array.isArray(archived)?archived:[],advanced.closed,500);
-    const totals=history.reduce((acc,row)=>{
-      if(Number.isFinite(Number(row?.netUsdt))){
-        const value=Number(row.netUsdt);
-        if(value>=0)acc.gain+=value;else acc.loss+=Math.abs(value);
-        acc.net+=value;
-      }
-      return acc;
-    },{gain:0,loss:0,net:0});
+    const visibleFrom=Math.max(0,Number(await redis(['GET',KEY_VISIBLE_FROM]))||0);
+    const visibleHistory=history.filter(row=>Number(row?.closedAt||0)>visibleFrom);
     const payload={
       ok:true,
       source:'BINANCE_REAL',
       generatedAt:Date.now(),
       lookbackDays:30,
+      visibleFrom,
       symbols:raw.symbols,
-      history,
-      totals,
+      history:visibleHistory,
     };
     await redis(['SET',KEY_OPEN_CYCLES,JSON.stringify(advanced.openCycles)]);
     await redis(['SET',KEY_ARCHIVE,JSON.stringify(history)]);
