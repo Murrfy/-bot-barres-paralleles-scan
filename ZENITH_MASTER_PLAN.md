@@ -17,11 +17,13 @@
 5. Moteur Zénith 24/24
 6. Exécution Binance
 7. MASTER / ADMIN / CONTRÔLEUR
-8. État / synchronisation / historique
+8. État / synchronisation
 9. Notifications et suivi
 10. Tests et validation finale
 
 L’ordre est obligatoire. Ne pas sauter à un chapitre suivant parce qu’un problème y ressemble.
+
+Le cycle opérationnel de la Zone C comporte uniquement C1 à C11. C12 — historique Binance — est supprimé et ne fait plus partie du schéma ni de la validation cumulative B10.
 
 ## Méthode obligatoire pour chaque chapitre
 
