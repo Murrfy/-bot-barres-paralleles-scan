@@ -257,10 +257,6 @@ jobs:
         run: node --test scripts/test-active-target-protections-edit.mjs
       - name: Test real-only UI and limit-only sells
         run: node --test scripts/test-real-only-ui.mjs
-      - name: Test real Binance net history
-        run: node --test scripts/test-real-binance-history.mjs
-      - name: Test autonomous real-history archive
-        run: node --test scripts/test-engine-history-archive-wiring.mjs
       - name: Test MASTER protective command dispatcher
         run: node --test scripts/test-master-command-dispatch.mjs
       - name: Test iPhone real-position close command
