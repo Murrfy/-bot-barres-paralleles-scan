@@ -1,11 +1,12 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 63,
+  "scopeRevision": 64,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
     ".github/workflows/zenith-safety.yml",
+    "vercel.json",
     "api/binance-history.js",
     "lib/real-trade-history.mjs",
     "index.html",
