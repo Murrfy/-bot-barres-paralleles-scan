@@ -23,7 +23,7 @@
 
 L’ordre est obligatoire. Ne pas sauter à un chapitre suivant parce qu’un problème y ressemble.
 
-Le cycle opérationnel de la Zone C comporte uniquement C1 à C11. C12 — historique Binance — est supprimé et ne fait plus partie du schéma ni de la validation cumulative B10.
+Le cycle opérationnel de la Zone C se termine à C11. L’historique de trading n’est pas une étape du cycle opérationnel.
 
 ## Méthode obligatoire pour chaque chapitre
 
