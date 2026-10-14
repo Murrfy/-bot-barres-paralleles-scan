@@ -1,18 +1,14 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 65,
+  "scopeRevision": 66,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
     ".github/workflows/zenith-safety.yml",
     "scripts/check-zenith.mjs",
     "vercel.json",
-    "api/binance-history.js",
-    "lib/real-trade-history.mjs",
     "index.html",
-    "server/zenith-engine-worker.mjs",
-    "scripts/test-real-binance-history.mjs",
-    "scripts/test-engine-history-archive-wiring.mjs"
+    "server/zenith-engine-worker.mjs"
   ]
 }
