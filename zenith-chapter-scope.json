@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 66,
+  "scopeRevision": 67,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
@@ -13,9 +13,6 @@
     "index.html",
     "server/zenith-engine-worker.mjs",
     "scripts/test-real-binance-history.mjs",
-    "scripts/test-engine-history-archive-wiring.mjs",
-    "api/binance-entry-execute.js",
-    "api/zenith-sync.js",
-    "scripts/test-preentry-reduceonly-compat-gate.mjs"
+    "scripts/test-engine-history-archive-wiring.mjs"
   ]
 }
