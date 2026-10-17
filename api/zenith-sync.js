@@ -3841,9 +3841,6 @@ export default async function handler(req, res) {
       if (!LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_COMPLETE) {
         return send(res, 423, { ok:false, code:'LIMIT_ONLY_PROTECTIVE_SELLS_AUDIT_REQUIRED' });
       }
-      if (!PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED) {
-        return send(res, 423, { ok:false, code:'PREENTRY_REDUCE_ONLY_STOP_COMPAT_REQUIRED' });
-      }
       if (!REAL_TRADING_ENABLED) return send(res, 423, { ok:false, code:'REAL_TRADING_DISABLED' });
       if (!BINANCE_WRITE_ENABLED) return send(res, 423, { ok:false, code:'BINANCE_WRITE_DISABLED' });
       if (!REAL_ENTRY_WRITE_ENABLED) return send(res, 423, { ok:false, code:'REAL_ENTRY_WRITE_DISABLED' });
