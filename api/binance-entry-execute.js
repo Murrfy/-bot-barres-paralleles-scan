@@ -374,7 +374,7 @@ export default async function handler(req,res){
   if(!requestValid){
     return send(res,400,{ok:false,code:phaseProvided?'ENTRY_EXECUTION_REQUEST_INVALID':'ENTRY_PHASE_REQUIRED',writeAttempted:false});
   }
-  if(!PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED){
+  if(limitEntry&&!PREENTRY_REDUCE_ONLY_STOP_COMPAT_VERIFIED){
     return send(res,423,{
       ok:false,code:'PREENTRY_REDUCE_ONLY_STOP_COMPAT_REQUIRED',
       writeAttempted:false,
