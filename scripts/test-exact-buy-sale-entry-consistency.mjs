@@ -42,29 +42,15 @@ test('worker refuses any watched LIMIT whose effective buy is not below exact sa
   assert.match(block,/ENTRY_EXACT_SALE_NOT_ABOVE_LIMIT/);
 });
 
-test('50-second delayed slot keeps waiting when best ask has reached exact sale',()=>{
-  const start=worker.indexOf("if(result.action==='TRIGGER'&&result.signal?.delayedCurrentPrice===true)");
-  const end=worker.indexOf('entryWatch.states.set(wanted,result.state)',start);
-  assert.ok(start>=0&&end>start);
-  const block=worker.slice(start,end);
-  assert.match(block,/currentBestAsk\(wanted\)/);
-  assert.match(block,/delayedConfig\.exactSaleEnabled===true/);
-  assert.match(block,/exactSalePrice,0\)>quote\.askPrice/);
-  assert.match(block,/triggeredAt:0/);
-  assert.match(block,/pendingUntil:Math\.max\(n\(previous\?\.pendingUntil,0\)/);
-  assert.match(block,/ENTRY_WAITING_EXACT_SALE_PRICE/);
-  const incompatible=block.indexOf('ENTRY_WAITING_EXACT_SALE_PRICE');
-  const configured=block.indexOf('result.signal.limitPrice=quote.askPrice');
-  assert.ok(incompatible>=0&&configured>incompatible);
+test('no delayed purchase exists: exact sale is only checked on the normal LIMIT entry',()=>{
+  assert.doesNotMatch(worker,/ENTRY_WAITING_EXACT_SALE_PRICE/);
+  assert.doesNotMatch(worker,/currentBestAsk/);
+  assert.doesNotMatch(worker,/delayedCurrentPrice/);
 });
-
-test('controller UI distinguishes price waiting from slot waiting',()=>{
-  assert.match(html,/function realEntryWaitingExactSale\(s\)/);
-  assert.match(html,/ATTENTE PRIX/);
-  assert.match(html,/N’A PAS DÉMARRÉ — PRIX ≥ VENTE/);
+test('controller UI shows STAND-BY and the price-above-sale reason',()=>{
+  assert.match(html,/STAND-BY — PRIX ≥ VENTE/);
+  assert.doesNotMatch(html,/ATTENTE PRIX|ATTENTE PLACE/);
 });
-
-
 test('exact-price profit target drives protection normalization in runtime config',()=>{
   const cfgStart=html.indexOf('function cfg(symbol)');
   const cfgEnd=html.indexOf('function exactProfitFor',cfgStart);
