@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  entryWatchDefinition,entryWatchIdentity,evaluateEntryWatchTick,pruneEntryWatchStates,entryWatchSlotRaceOutcome,
+  entryWatchDefinition,entryWatchIdentity,evaluateEntryWatchTick,pruneEntryWatchStates,
 } from '../lib/entry-watch.mjs';
 
 const def=entryWatchDefinition('btcusdt',{buy:100,validatedAt:1000,armedAbove:true});
@@ -25,33 +25,36 @@ test('watch arms above buy then triggers once on downward crossing',()=>{
   );
 });
 
-test('crossing without a free real slot enters a persistent 50-second pending window',()=>{
+test('crossing without a free real slot goes straight to STAND-BY and never buys later',()=>{
   let r=evaluateEntryWatchTick({definition:def,price:101,eventId:10,eventTime:2000});
   r=evaluateEntryWatchTick({definition:def,state:r.state,price:99,eventId:11,eventTime:2100,allowTrigger:false});
-  assert.equal(r.action,'PENDING');
-  assert.equal(r.state.pendingUntil,52100);
+  assert.equal(r.action,'STANDBY');
+  assert.equal(r.state.pendingUntil,0);
+  assert.equal(r.state.blockedAt,2100);
   assert.equal(r.state.triggeredAt,0);
 
+  // Même si une place se libère ensuite, aucun achat n'est déclenché : il faut revalider le jeton.
   r=evaluateEntryWatchTick({definition:def,state:r.state,price:103,eventId:12,eventTime:3000,allowTrigger:true});
-  assert.equal(r.action,'TRIGGER');
-  assert.equal(r.state.pendingUntil,0);
-  assert.equal(r.state.triggeredAt,3000);
-  assert.equal(r.signal.limitPrice,103);
-  assert.equal(r.signal.observedPrice,103);
-  assert.equal(r.signal.delayedCurrentPrice,true);
+  assert.equal(r.action,'BLOCKED');
+  assert.equal(r.state.triggeredAt,0);
+  r=evaluateEntryWatchTick({definition:def,state:r.state,price:90,eventId:13,eventTime:4000,allowTrigger:true});
+  assert.equal(r.action,'BLOCKED');
+  assert.equal(r.state.triggeredAt,0);
 });
-
-test('pending window expires instead of buying late',()=>{
-  let r=evaluateEntryWatchTick({definition:def,price:101,eventId:20,eventTime:4000});
-  r=evaluateEntryWatchTick({definition:def,state:r.state,price:99,eventId:21,eventTime:4100,allowTrigger:false});
-  const expired=evaluateEntryWatchTick({
-    definition:def,state:r.state,price:99,eventId:22,eventTime:54101,allowTrigger:true
+test('legacy persisted pending window is converted to STAND-BY instead of buying late',()=>{
+  const legacy={
+    version:1,identity:entryWatchIdentity(def),symbol:'BTCUSDT',buy:100,validatedAt:1000,
+    armedAbove:false,lastPrice:99,lastAggId:21,lastAggTime:4100,
+    suppressedCrossingAt:4100,pendingUntil:54100,blockedAt:0,triggeredAt:0,
+  };
+  const r=evaluateEntryWatchTick({
+    definition:def,state:legacy,price:101,eventId:22,eventTime:5000,allowTrigger:true
   });
-  assert.equal(expired.action,'EXPIRED');
-  assert.ok(expired.state.blockedAt>0);
-  assert.equal(expired.state.triggeredAt,0);
+  assert.equal(r.action,'STANDBY');
+  assert.equal(r.state.pendingUntil,0);
+  assert.ok(r.state.blockedAt>0);
+  assert.equal(r.state.triggeredAt,0);
 });
-
 test('duplicate aggTrade ids cannot retrigger state',()=>{
   const first=evaluateEntryWatchTick({definition:def,price:101,eventId:50,eventTime:6000});
   const duplicate=evaluateEntryWatchTick({definition:def,state:first.state,price:99,eventId:50,eventTime:6100,allowTrigger:true});
@@ -81,39 +84,4 @@ test('pruning removes stale validation identities',()=>{
   const current=evaluateEntryWatchTick({definition:def,price:101,eventId:90,eventTime:10000}).state;
   const stale={...current,identity:'BTCUSDT:999:100'};
   assert.deepEqual(pruneEntryWatchStates({BTCUSDT:current,ETHUSDT:stale},[def]),{BTCUSDT:current});
-});
-
-
-test('slot race never extends the original 50-second deadline',()=>{
-  const inherited=entryWatchSlotRaceOutcome({
-    previousPendingUntil:52100,
-    crossingAt:3000,
-    now:10000,
-  });
-  assert.deepEqual(inherited,{expired:false,pendingUntil:52100,blockedAt:0,deadline:52100});
-
-  const expired=entryWatchSlotRaceOutcome({
-    previousPendingUntil:52100,
-    crossingAt:3000,
-    now:52101,
-  });
-  assert.equal(expired.expired,true);
-  assert.equal(expired.pendingUntil,0);
-  assert.equal(expired.blockedAt,52101);
-  assert.equal(expired.deadline,52100);
-});
-
-test('immediate-trigger slot race starts one 50-second window from the crossing only once',()=>{
-  const first=entryWatchSlotRaceOutcome({
-    previousPendingUntil:0,
-    crossingAt:7000,
-    now:8000,
-  });
-  assert.equal(first.pendingUntil,57000);
-  const retry=entryWatchSlotRaceOutcome({
-    previousPendingUntil:first.pendingUntil,
-    crossingAt:20000,
-    now:21000,
-  });
-  assert.equal(retry.pendingUntil,57000);
 });

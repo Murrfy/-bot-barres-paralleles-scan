@@ -32,18 +32,17 @@ test('crossing trigger is persisted before any Binance entry write',()=>{
   assert.match(block,/ENTRY_TRIGGER_NOT_PERSISTED/);
 });
 
-test('50-second window resolves best ask for delayed LIMIT and expires fail-closed',()=>{
-  assert.match(worker,/ENTRY_WAITING_FOR_POSITION_SLOT/);
-  assert.match(worker,/pendingUntil/);
+test('full slots go straight to STAND-BY without a waiting window or delayed purchase',()=>{
+  assert.match(worker,/ENTRY_STANDBY_NO_SLOT/);
+  assert.match(worker,/result\.action==='STANDBY'/);
   assert.match(worker,/ENTRY_TRIGGER_EXPIRED/);
-  assert.match(worker,/currentBestAsk\(wanted\)/);
-  assert.match(worker,/quote\.askPrice/);
+  assert.doesNotMatch(worker,/ENTRY_WAITING_FOR_POSITION_SLOT/);
+  assert.doesNotMatch(worker,/currentBestAsk/);
+  assert.doesNotMatch(worker,/delayedCurrentPrice/);
   assert.match(worker,/limitPrice:n\(result\.signal\?\.limitPrice,config\.buy\)/);
-  assert.match(worker,/delayedCurrentPrice:result\.signal\?\.delayedCurrentPrice===true/);
   assert.match(worker,/limitPrice:effectiveLimitPrice/);
   assert.match(worker,/requestedBuyPrice:config\.buy/);
 });
-
 test('phased real entry can only be driven by engine principal',()=>{
   assert.match(entryApi,/ENTRY_PHASE_REQUIRED/);
   assert.match(entryApi,/ENTRY_ENGINE_REQUIRED/);

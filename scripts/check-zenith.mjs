@@ -502,9 +502,9 @@ if (!entryProtectionPlan.includes("if(entrySide!=='BUY')throw new Error('ENTRY_B
 }
 if (!riskPolicy.includes('DEFAULT_MAX_ACTIVE_POSITIONS = 3') ||
     riskPolicy.includes('maxActivePositions: 3') ||
-    !riskPolicy.includes('maxLeverage: 10') ||
-    !riskPolicy.includes('maxMarginUsdt: 1000') ||
-    !riskPolicy.includes('maxNotionalUsdt: 10000') ||
+    !riskPolicy.includes('maxLeverage: Number.MAX_SAFE_INTEGER') ||
+    !riskPolicy.includes('maxMarginUsdt: Number.MAX_SAFE_INTEGER') ||
+    !riskPolicy.includes('maxNotionalUsdt: Number.MAX_SAFE_INTEGER') ||
     !riskPolicy.includes("if (maxLoss > margin) reasons.push('MAX_LOSS_EXCEEDS_MARGIN')") ||
     !riskPolicy.includes('POSITION_MODE_HEDGE_UNSUPPORTED') ||
     !riskPolicy.includes('MARGIN_TYPE_NOT_ISOLATED')) {
@@ -1132,13 +1132,13 @@ if (!sync.includes('KEY_EMERGENCY_STOP_EPOCH') ||
     !sync.includes('roleAssignmentKey(PREFIX, device.role)')) {
   fail('PANIC clear must atomically fence PANIC epoch, MASTER state and the privileged requester role/epoch');
 }
-if (!index.includes('panicStopBtn') || !index.includes('panicClearBtn') ||
-    !index.includes('controllerPanicStop') || !index.includes('controllerClearPanic')) {
-  fail('iPhone controller must expose PANIC STOP and protected re-arm controls');
+if (index.includes('panicStopBtn') || index.includes('controllerPanicStop') ||
+    !index.includes('panicClearBtn') || !index.includes('controllerClearPanic')) {
+  fail('iPhone controller must not expose a PANIC STOP button (removed by owner order) and must keep the protected re-arm control');
 }
-if (!masterAdmin.includes('panicBtn') || !masterAdmin.includes('clearPanicBtn') ||
-    !masterAdmin.includes('panicStop') || !masterAdmin.includes('clearPanic')) {
-  fail('MASTER admin must expose PANIC STOP and protected re-arm controls');
+if (masterAdmin.includes('panicBtn') || masterAdmin.includes('panicStop()') ||
+    !masterAdmin.includes('clearPanicBtn') || !masterAdmin.includes('clearPanic')) {
+  fail('MASTER admin must not expose a PANIC STOP button (removed by owner order) and must keep the protected re-arm control');
 }
 if (!index.includes('escapeHtml') ||
     !index.includes('escapeHtml(p.symbol)')) {

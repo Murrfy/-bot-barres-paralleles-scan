@@ -140,13 +140,13 @@ test('MAX-LOSS repair prefers per-token maxLoss before global maxLoss',()=>{
   assert.match(repair,/globalCfg\.maxLoss/);
 });
 
-test('client controls do not advertise values above server real-risk caps',()=>{
-  assert.equal(REAL_RISK_LIMITS.maxLeverage,10);
-  assert.equal(REAL_RISK_LIMITS.maxMarginUsdt,1000);
+test('client controls no longer impose Zenith margin/leverage caps (Binance decides)',()=>{
+  assert.equal(REAL_RISK_LIMITS.maxLeverage,Number.MAX_SAFE_INTEGER);
+  assert.equal(REAL_RISK_LIMITS.maxMarginUsdt,Number.MAX_SAFE_INTEGER);
   assert.equal(DEFAULT_MAX_ACTIVE_POSITIONS,3);
   assert.equal('maxActivePositions' in REAL_RISK_LIMITS,false);
-  assert.match(html,/id="fLev"[^>]*max="10"/);
-  assert.match(html,/id="fMargin"[^>]*max="1000"/);
+  assert.doesNotMatch(html,/id="fLev"[^>]*max=/);
+  assert.doesNotMatch(html,/id="fMargin"[^>]*max=/);
   assert.match(html,/id="bMaxActive"[^>]*min="1"[^>]*step="1"/);
   assert.doesNotMatch(html,/id="bMaxActive"[^>]*max=/);
   assert.doesNotMatch(html,/lev=clamp\(n\(t\.leverage,settings\.leverage\),1,125\)/);
@@ -212,8 +212,10 @@ test('global risk defaults can be updated without overwriting per-token override
 });
 
 test('BOT save persists editable global margin and leverage without touching per-token overrides',()=>{
-  assert.match(html,/id="bDefaultMargin"[^>]*min="1"[^>]*max="1000"/);
-  assert.match(html,/id="bDefaultLeverage"[^>]*min="1"[^>]*max="10"/);
+  assert.match(html,/id="bDefaultMargin"[^>]*min="1"/);
+  assert.doesNotMatch(html,/id="bDefaultMargin"[^>]*max=/);
+  assert.match(html,/id="bDefaultLeverage"[^>]*min="1"/);
+  assert.doesNotMatch(html,/id="bDefaultLeverage"[^>]*max=/);
   const fill=block('function fillBot()','function setTokenFieldsEnabled()');
   assert.match(fill,/\$\('bDefaultMargin'\)\.value=n\(settings\.margin,1000\)/);
   assert.match(fill,/\$\('bDefaultLeverage'\)\.value=Math\.round\(n\(settings\.leverage,10\)\)/);

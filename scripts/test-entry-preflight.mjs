@@ -50,11 +50,10 @@ test('baseline entry preflight is ready', () => {
   assert.equal(r.normalized.quantity, 0.2);
 });
 
-test('hard server leverage cap is 10x', () => {
-  assert.equal(REAL_RISK_LIMITS.maxLeverage, 10);
+test('Zenith no longer caps leverage: Binance decides', () => {
+  assert.equal(REAL_RISK_LIMITS.maxLeverage, Number.MAX_SAFE_INTEGER);
   const r = evaluateEntryRisk(base({ leverage: 11, symbolConfig: {...base().symbolConfig, leverage: 11} }));
-  assert.equal(r.ready, false);
-  assert.ok(r.reasons.includes('LEVERAGE_OVER_SERVER_CAP'));
+  assert.ok(!r.reasons.includes('LEVERAGE_OVER_SERVER_CAP'));
 });
 
 test('cross margin is rejected', () => {
