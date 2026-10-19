@@ -52,8 +52,9 @@ test('PANIC clear is fenced against a concurrent new PANIC assertion',()=>{
   assert.ok(clear.indexOf("if epoch ~= ARGV[1] then return -1 end") < clear.indexOf("redis.call('SET', KEYS[1], '0')"));
 });
 
-test('PANIC clear revalidates PAUSED mode and MASTER ownership atomically',()=>{
-  assert.ok(clear.includes("if mode ~= 'PAUSED' then return -3 end"));
+test('PANIC clear revalidates MASTER ownership atomically and no longer requires PAUSED mode or a flat Binance account',()=>{
+  assert.ok(!clear.includes("if mode ~= 'PAUSED' then return -3 end"));
+  assert.ok(!clear.includes('freshCleanReconciliation'));
   assert.ok(clear.includes("if lease ~= ARGV[2] or registered ~= ARGV[2] then return -4 end"));
   assert.ok(clear.includes('KEY_MASTER_MODE'));
   assert.ok(clear.includes('KEY_MASTER'));
