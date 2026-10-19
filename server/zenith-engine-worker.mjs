@@ -51,11 +51,15 @@ import {
 } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS, DEFAULT_MAX_ACTIVE_POSITIONS } from '../lib/risk-policy.mjs';
 import {
+  backfillStartTime,
+  favorableExtremeFromMarkKlines,
+  highWaterProfitFromExtreme,
+} from '../lib/auto-high-water-backfill.mjs';
+import {
   entryWatchDefinition,
   entryWatchIdentity,
   evaluateEntryWatchTick,
   pruneEntryWatchStates,
-  entryWatchSlotRaceOutcome,
 } from '../lib/entry-watch.mjs';
 
 const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
@@ -127,6 +131,9 @@ const autoProtection={
   highWaterLoadPromise:null,
   highWaterSaveTimer:null,
   highWaterSaveBusy:false,
+  backfilled:new Set(),
+  backfillTried:new Map(),
+  backfillBusy:new Set(),
   priceFilters:new Map(),
   metadataFetchAt:0,
   busySymbols:new Set(),
@@ -381,6 +388,56 @@ function observedLinearPnl(position,mark){
   const qty=Math.abs(amount),entry=n(position?.entryPrice,0),px=n(mark,0);
   if(!(qty>0)||!(entry>0)||!(px>0))return NaN;
   return (amount>=0?1:-1)*(px-entry)*qty;
+}
+async function backfillAutoHighWater(position){
+  const key=autoPositionKey(position);
+  if(autoProtection.backfilled.has(key)||autoProtection.backfillBusy.has(key))return;
+  const lastTry=n(autoProtection.backfillTried.get(key),0);
+  if(Date.now()-lastTry<30000)return;
+  autoProtection.backfillTried.set(key,Date.now());
+  autoProtection.backfillBusy.add(key);
+  try{
+    const symbol=String(position?.symbol||'').toUpperCase();
+    const amount=n(position?.positionAmt??position?.quantity,0);
+    const direction=amount>=0?'LONG':'SHORT';
+    const lifecycle=n(position?.lifecycleAt??position?.positionLifecycleAt??position?.updateTime,0);
+    let start=backfillStartTime(lifecycle,Date.now());
+    if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!(start>0)){
+      autoProtection.backfilled.add(key);
+      return;
+    }
+    let extreme=NaN;
+    for(let page=0;page<6;page++){
+      const rows=await publicBinanceJson(
+        `/fapi/v1/markPriceKlines?symbol=${encodeURIComponent(symbol)}&interval=1m&startTime=${start}&limit=1500`
+      );
+      if(!Array.isArray(rows))throw new Error('MARK_KLINES_INVALID');
+      const pageExtreme=favorableExtremeFromMarkKlines(rows,{direction,startTime:start});
+      if(Number.isFinite(pageExtreme)){
+        extreme=Number.isFinite(extreme)
+          ?(direction==='LONG'?Math.max(extreme,pageExtreme):Math.min(extreme,pageExtreme))
+          :pageExtreme;
+      }
+      if(rows.length<1500)break;
+      start=n(rows[rows.length-1]?.[0],0)+60000;
+      if(!(start>0))break;
+    }
+    const profit=highWaterProfitFromExtreme({position,extremePrice:extreme});
+    if(Number.isFinite(profit)){
+      const previous=n(autoProtection.highWater.get(key),NaN);
+      if(!Number.isFinite(previous)||profit>previous+1e-8){
+        autoProtection.highWater.set(key,profit);
+        scheduleAutoHighWaterSave();
+        log('AUTO_HIGH_WATER_BACKFILLED',{symbol,direction,highWaterProfitUsd:profit});
+      }
+    }
+    autoProtection.backfilled.add(key);
+  }catch(error){
+    autoProtection.lastError='AUTO_HIGH_WATER_BACKFILL_FAILED';
+    logError('AUTO_HIGH_WATER_BACKFILL_FAILED',error,{symbol:position?.symbol});
+  }finally{
+    autoProtection.backfillBusy.delete(key);
+  }
 }
 function observeAutoHighWater(position,mark){
   const observed=observedLinearPnl(position,mark);
@@ -976,18 +1033,7 @@ async function callEntryExecute(body){
   return binanceApi('/api/binance-entry-execute',{method:'POST',body});
 }
 
-async function currentBestAsk(symbol){
-  const wanted=String(symbol||'').toUpperCase();
-  if(!/^[A-Z0-9]{3,30}$/.test(wanted))throw new Error('ENTRY_BEST_ASK_SYMBOL_INVALID');
-  const quote=await publicBinanceJson('/fapi/v1/ticker/bookTicker?symbol='+encodeURIComponent(wanted));
-  if(String(quote?.symbol||'').toUpperCase()!==wanted)throw new Error('ENTRY_BEST_ASK_SYMBOL_MISMATCH');
-  const askPrice=n(quote?.askPrice,0);
-  const askQty=n(quote?.askQty,0);
-  if(!(askPrice>0)||!(askQty>0))throw new Error('ENTRY_BEST_ASK_UNAVAILABLE');
-  return {askPrice,askQty};
-}
-
-async function executeWatchedEntry(config,{limitPrice=config.buy,delayedCurrentPrice=false}={}){
+async function executeWatchedEntry(config,{limitPrice=config.buy}={}){
   const symbol=config.symbol;
   const effectiveLimitPrice=n(limitPrice,0);
   if(!(effectiveLimitPrice>0))return {ok:false,reason:'ENTRY_LIMIT_PRICE_INVALID'};
@@ -1058,8 +1104,7 @@ async function executeWatchedEntry(config,{limitPrice=config.buy,delayedCurrentP
     entryWatch.lastError='';
     log('AUTO_ENTRY_SUBMITTED',{
       symbol,commandId,limitPrice:effectiveLimitPrice,
-      requestedBuyPrice:config.buy,delayedCurrentPrice:delayedCurrentPrice===true,
-      delayedPriceSource:delayedCurrentPrice===true?'BEST_ASK':'CONFIGURED_LIMIT',
+      requestedBuyPrice:config.buy,
       margin:config.margin,leverage:config.leverage,maxLoss:config.maxLoss,
       entryClientOrderId:entryId,protectionClientAlgoId:protectionId,
     });
@@ -1092,63 +1137,14 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
   });
   if(result.action==='DUPLICATE')return false;
 
-  if(result.action==='TRIGGER'&&result.signal?.delayedCurrentPrice===true){
-    try{
-      const quote=await currentBestAsk(wanted);
-      const delayedConfig=watchedEntryConfig(wanted);
-      if(!delayedConfig){
-        const retryState={
-          ...result.state,
-          triggeredAt:0,
-          pendingUntil:Math.max(n(previous?.pendingUntil,0),n(eventTime,Date.now())+1),
-          blockedAt:0,
-        };
-        entryWatch.states.set(wanted,retryState);
-        entryWatch.lastError='ENTRY_CONFIG_INVALID';
-        scheduleEntryWatchSave(250);
-        return true;
-      }
-      if(delayedConfig.exactSaleEnabled===true&&!(n(delayedConfig.exactSalePrice,0)>quote.askPrice)){
-        const retryState={
-          ...result.state,
-          lastPrice:quote.askPrice,
-          triggeredAt:0,
-          pendingUntil:Math.max(n(previous?.pendingUntil,0),n(eventTime,Date.now())+1),
-          blockedAt:0,
-        };
-        entryWatch.states.set(wanted,retryState);
-        entryWatch.lastError='ENTRY_WAITING_EXACT_SALE_PRICE';
-        scheduleEntryWatchSave(250);
-        return true;
-      }
-      result.signal.limitPrice=quote.askPrice;
-      result.signal.observedBestAsk=quote.askPrice;
-      result.signal.observedBestAskQty=quote.askQty;
-    }catch(error){
-      const retryState={
-        ...result.state,
-        triggeredAt:0,
-        pendingUntil:Math.max(n(previous?.pendingUntil,0),n(eventTime,Date.now())+1),
-        blockedAt:0,
-      };
-      entryWatch.states.set(wanted,retryState);
-      entryWatch.lastError='ENTRY_BEST_ASK_'+cleanReason(error?.message||'UNAVAILABLE','UNAVAILABLE');
-      scheduleEntryWatchSave(250);
-      return true;
-    }
-  }
-
   entryWatch.states.set(wanted,result.state);
-  if(result.action==='PENDING'){
+  if(result.action==='STANDBY'){
+    // Aucune place libre (ou moteur non prêt) au moment où le prix touche l'achat :
+    // le jeton passe directement en STAND-BY. Aucun ordre n'est envoyé.
     entryWatch.lastCrossingAt=n(result.state.suppressedCrossingAt,Date.now());
-    entryWatch.lastError='ENTRY_WAITING_FOR_POSITION_SLOT';
-    scheduleEntryWatchSave(250);
-    return true;
-  }
-  if(result.action==='EXPIRED'){
-    entryWatch.lastError='ENTRY_TRIGGER_EXPIRED';
-    scheduleEntryWatchSave(250);
-    log('ENTRY_WATCH_EXPIRED',{symbol:wanted,buy:definition.buy});
+    entryWatch.lastError='ENTRY_STANDBY_NO_SLOT';
+    await persistEntryWatchStateNow().catch(()=>false);
+    log('ENTRY_WATCH_STANDBY',{symbol:wanted,buy:definition.buy});
     return true;
   }
   if(result.action!=='TRIGGER'){
@@ -1170,7 +1166,6 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
   }
   const executed=await executeWatchedEntry(config,{
     limitPrice:n(result.signal?.limitPrice,config.buy),
-    delayedCurrentPrice:result.signal?.delayedCurrentPrice===true,
   });
   if(executed.ok){
     scheduleEntryWatchSave(250);
@@ -1191,23 +1186,18 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
     return false;
   }
 
-  // A slot can disappear between the crossing decision and Binance preflight. Preserve the
-  // historical 50-second waiting rule only if no protection/order was committed yet.
+  // A slot can disappear between the crossing decision and Binance preflight.
+  // Plus d'attente : si rien n'a encore été engagé chez Binance, le jeton passe en STAND-BY.
   if(executed.slotBlocked===true&&executed.prepared!==true){
     const state=entryWatch.states.get(wanted);
     if(state){
-      const retry=entryWatchSlotRaceOutcome({
-        previousPendingUntil:n(previous?.pendingUntil,0),
-        crossingAt:n(result.signal?.eventTime,n(eventTime,Date.now())),
-        now:Date.now(),
-      });
       state.triggeredAt=0;
-      state.pendingUntil=retry.pendingUntil;
-      state.blockedAt=retry.blockedAt;
+      state.pendingUntil=0;
+      state.blockedAt=Date.now();
       entryWatch.states.set(wanted,state);
-      entryWatch.lastError=retry.expired?'ENTRY_TRIGGER_EXPIRED':'ENTRY_WAITING_FOR_POSITION_SLOT';
+      entryWatch.lastError='ENTRY_STANDBY_NO_SLOT';
       await persistEntryWatchStateNow().catch(()=>false);
-      if(retry.expired)log('ENTRY_WATCH_EXPIRED',{symbol:wanted,buy:definition.buy,reason:'SLOT_RACE'});
+      log('ENTRY_WATCH_STANDBY',{symbol:wanted,buy:definition.buy,reason:'SLOT_RACE'});
     }
   }
   log('AUTO_ENTRY_FAILED',{symbol:wanted,reason:executed.reason||'UNKNOWN'});
@@ -1767,6 +1757,7 @@ async function runAutoProtection(symbol,mark){
   }
 
   migrateLegacyAutoHighWaterKey(position);
+  await backfillAutoHighWater(position);
   const highWaterKey=autoPositionKey(position);
   const previousHighWater=n(autoProtection.highWater.get(highWaterKey),NaN);
   const highWater=observeAutoHighWater(position,mark);
