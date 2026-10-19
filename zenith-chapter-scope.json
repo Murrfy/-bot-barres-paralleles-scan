@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 67,
+  "scopeRevision": 68,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
@@ -13,6 +13,22 @@
     "index.html",
     "server/zenith-engine-worker.mjs",
     "scripts/test-real-binance-history.mjs",
-    "scripts/test-engine-history-archive-wiring.mjs"
+    "scripts/test-engine-history-archive-wiring.mjs",
+    "lib/entry-watch.mjs",
+    "master-admin.html",
+    "api/zenith-sync.js",
+    "scripts/test-entry-watch.mjs",
+    "scripts/test-entry-watch-slot-outcome.mjs",
+    "scripts/test-engine-watched-entry-wiring.mjs",
+    "scripts/test-exact-buy-sale-entry-consistency.mjs",
+    "scripts/test-panic-idempotency.mjs",
+    "lib/risk-policy.mjs",
+    "lib/order-intent.mjs",
+    "lib/binance-symbol-config.mjs",
+    "scripts/test-binance-symbol-config.mjs",
+    "scripts/test-entry-preflight.mjs",
+    "scripts/test-token-settings-integrity.mjs",
+    "lib/auto-high-water-backfill.mjs",
+    "scripts/test-auto-high-water-backfill.mjs"
   ]
 }
