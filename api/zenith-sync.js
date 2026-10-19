@@ -6142,13 +6142,8 @@ export default async function handler(req, res) {
       if (!armStatus.armed) {
         return send(res, 409, { ok:false, code:'REAL_EXECUTION_NOT_ARMED', reason:armStatus.reason });
       }
-      if (currentMode !== 'PAUSED') {
-        return send(res, 409, {
-          ok: false,
-          code: 'MASTER_MUST_BE_PAUSED',
-          masterMode: currentMode,
-        });
-      }
+      // Ordre du propriétaire : avec le code ADMIN, la reprise est possible quel que soit le mode
+      // (RUNNING, PAUSE_PENDING ou PAUSED) et même si une position ou un ordre est actif.
 
       const configSync = await readMasterConfigSync(currentMaster);
       if (!configSync.status.synchronized) {
@@ -6171,21 +6166,11 @@ export default async function handler(req, res) {
         });
       }
 
-      const reconciliation = await freshCleanReconciliation();
-      if (!reconciliation.ok) {
-        return send(res, 409, {
-          ok: false,
-          code: reconciliation.reason,
-        });
-      }
-
       const clearScript = [
         "local epoch = tostring(redis.call('GET', KEYS[2]) or '0')",
         "if epoch ~= ARGV[1] then return -1 end",
         "local panic = tostring(redis.call('GET', KEYS[1]) or '')",
         "if panic == '0' then return -2 end",
-        "local mode = tostring(redis.call('GET', KEYS[3]) or 'PAUSED')",
-        "if mode ~= 'PAUSED' then return -3 end",
         "local lease = tostring(redis.call('GET', KEYS[4]) or '')",
         "local registered = tostring(redis.call('GET', KEYS[5]) or '')",
         "if lease ~= ARGV[2] or registered ~= ARGV[2] then return -4 end",
@@ -6238,7 +6223,6 @@ export default async function handler(req, res) {
         deviceId: device.deviceId,
         role: device.role,
         masterDeviceId: currentMaster,
-        reconciliationObservedAt: Number(reconciliation.report?.observedAt || 0),
         panicEpoch: Number(panicEpoch || 0),
       })]);
       await redis(['LTRIM', KEY_AUDIT, '0', '199']);
