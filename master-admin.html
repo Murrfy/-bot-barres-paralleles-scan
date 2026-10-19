@@ -63,7 +63,6 @@ button:disabled{opacity:.5}
     <button id="resumeBtn" disabled>Reprendre le MASTER</button>
     <button id="engineReenableBtn" disabled hidden>Autoriser le serveur Render</button>
     <button id="armRealBtn" disabled hidden>Armer l’exécution réelle</button>
-    <button id="panicBtn" disabled>PANIC STOP</button>
     <button id="clearPanicBtn" disabled hidden>Réarmer la sécurité réelle</button>
     <button id="revokeBtn" disabled hidden>Révoquer MASTER</button>
 
@@ -85,10 +84,8 @@ function renderActions(){
   $('engineReenableBtn').disabled=!valid||$('engineReenableBtn').hidden||mode!=='PAUSED'||verifiedState?.emergencyStopActive!==true||verifiedState.masterLeaseActive===true||verifiedState.masterRegistered===true||Number(verifiedState.pendingCommands||0)>0||Number(verifiedState.processingCommands||0)>0;
   $('armRealBtn').hidden=!(verifiedState?.realTradingEnabled===true&&verifiedState?.realExecutionArmed!==true);
   $('armRealBtn').disabled=!valid||$('armRealBtn').hidden||mode!=='PAUSED'||verifiedState?.emergencyStopActive!==true||verifiedState.masterLeaseActive!==true||verifiedState.masterSyncFailClosed||verifiedState.masterHeartbeatFresh!==true;
-  $('panicBtn').disabled=!valid||verifiedState?.emergencyStopActive===true;
-  $('panicBtn').textContent=verifiedState?.emergencyStopActive===true?'PANIC STOP ACTIF':'PANIC STOP';
   $('clearPanicBtn').hidden=!(verifiedState?.emergencyStopActive===true&&verifiedState?.realTradingEnabled===true);
-  $('clearPanicBtn').disabled=!valid||$('clearPanicBtn').hidden||mode!=='PAUSED'||verifiedState.masterLeaseActive!==true||verifiedState.masterSyncFailClosed||verifiedState.masterHeartbeatFresh!==true;
+  $('clearPanicBtn').disabled=!valid||$('clearPanicBtn').hidden||verifiedState.masterLeaseActive!==true||verifiedState.masterSyncFailClosed||verifiedState.masterHeartbeatFresh!==true;
   $('revokeBtn').hidden=adminRole!=='controller';
   $('revokeBtn').disabled=!valid||adminRole!=='controller';
 }
@@ -190,26 +187,6 @@ async function armRealExecution(){
     setBox('status','Exécution réelle armée côté serveur. Le PANIC STOP reste actif jusqu’au réarmement sécurité explicite.','ok');
   }catch(e){
     setBox('status','Armement réel refusé : '+String(e?.message||'erreur')+'.','err');
-  }finally{
-    await verifyMaster();
-    busy=false;renderActions();
-  }
-}
-
-async function panicStop(){
-  if(busy||checking||!adminRole||!verifiedState)return;
-  busy=true;renderActions();
-  setBox('status','Activation du PANIC STOP…','warn');
-  try{
-    const r=await fetch('/api/zenith-sync?action=emergency-stop',{
-      method:'POST',cache:'no-store',
-      headers:{Accept:'application/json'}
-    });
-    const q=await r.json().catch(()=>({}));
-    if(!r.ok||q?.ok!==true)throw new Error(q?.code||q?.error||('HTTP '+r.status));
-    setBox('status','PANIC STOP activé : nouvelles entrées bloquées ; sorties/protections conservées.','ok');
-  }catch(e){
-    setBox('status','PANIC STOP non confirmé : '+String(e?.message||'erreur')+'.','err');
   }finally{
     await verifyMaster();
     busy=false;renderActions();
@@ -322,7 +299,6 @@ $('cancelPauseBtn').addEventListener('click',()=>setMasterMode('master-pause-can
 $('resumeBtn').addEventListener('click',()=>setMasterMode('master-resume'));
 $('engineReenableBtn').addEventListener('click',reenableEngine);
 $('armRealBtn').addEventListener('click',armRealExecution);
-$('panicBtn').addEventListener('click',panicStop);
 $('clearPanicBtn').addEventListener('click',clearPanic);
 $('revokeBtn').addEventListener('click',revokeMaster);
 // Enter never triggers an unrelated critical operation.
