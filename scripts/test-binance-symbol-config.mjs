@@ -73,9 +73,9 @@ test('ambiguous leverage response fails closed when Binance does not confirm the
   );
 });
 
-test('Zenith hard cap prevents symbol-config leverage above 10x',async()=>{
+test('symbol-config rejects leverage below 1 but no longer caps it at 10x (Binance decides)',async()=>{
   await assert.rejects(
-    ensureBinanceEntrySymbolConfig({apiKey:'k',secret:'s',symbol:'BTCUSDT',leverage:11,requestImpl:async()=>{throw new Error('must not call')}}),
+    ensureBinanceEntrySymbolConfig({apiKey:'k',secret:'s',symbol:'BTCUSDT',leverage:0,requestImpl:async()=>{throw new Error('must not call')}}),
     /BINANCE_SYMBOL_CONFIG_REQUEST_INVALID/
   );
 });
