@@ -353,7 +353,7 @@ if (!index.includes('Positions réelles Binance') ||
     !index.includes('queueRealEntryCancel') ||
     !index.includes('ANNULER ENTRÉE RÉELLE') ||
     !index.includes("fetch('/api/zenith-sync?action=command'") ||
-    !index.includes('FERMER RÉEL · LIMIT IOC') ||
+    !index.includes('data-real-close=') ||
     !index.includes('attend la confirmation Binance')) {
   fail('iPhone controller must show real Binance positions and queue close-only commands without locally faking a fill');
 }
@@ -625,9 +625,10 @@ if (!engineWorker.includes('async function placeNew({deferReconcile=false}={})')
   fail('MAX-LOSS replacement must publish the stream-confirmed new stop and defer full reconciliation until the old stop is canceled');
 }
 if (!index.includes("import('/lib/real-protection-levels.mjs')") ||
-    !index.includes('OBJECTIF AUTO') ||
-    !index.includes('PERTE MAX AUTO')) {
-  fail('iPhone controller must expose automatic real objective and max-loss levels from the shared calculator');
+    !index.includes('data-real-close=') ||
+    index.includes('data-real-auto-exit') ||
+    index.includes('data-real-auto-maxloss')) {
+  fail('iPhone active position card must stay compact (close only) while token settings keep the shared real-protection calculator');
 }
 
 const binanceReconcile = fs.readFileSync('api/binance-reconcile.js', 'utf8');
