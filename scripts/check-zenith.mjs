@@ -1684,4 +1684,19 @@ for (const file of [
 }
 
 if (failed) process.exit(1);
+{
+  const start = sync.indexOf("if (action === 'observer' && req.method === 'GET')");
+  const end = start >= 0 ? sync.indexOf("if (action === 'engine-reenable' && req.method === 'POST')", start) : -1;
+  if (start < 0 || end <= start) fail('read-only observer block missing');
+  const observer = sync.slice(start, end);
+  if (!observer.includes("timingSafeEqualText(sha256(supplied), OBSERVER_TOKEN_SHA256)") ||
+      !observer.includes("OBSERVER_UNAUTHORIZED") ||
+      !observer.includes("OBSERVER_RATE_LIMITED") ||
+      !/const OBSERVER_TOKEN_SHA256 = '[0-9a-f]{64}';/.test(sync)) {
+    fail('observer must require the hashed observer token and stay rate limited');
+  }
+  for (const forbidden of ['/fapi/v1/order', '/fapi/v1/algoOrder', '/fapi/v1/batchOrders', '/fapi/v1/leverage', '/fapi/v1/marginType', "method: 'POST'", 'BINANCE_TRADING_API', "'LPUSH'", "'RPUSH'", 'requireDevice', 'deviceId', 'clientOrderId', 'commandId']) {
+    if (observer.includes(forbidden)) fail('read-only observer must not contain ' + forbidden);
+  }
+}
 console.log('Zenith safety checks passed.');

@@ -100,6 +100,12 @@ const KEY_ENGINE_AUTHORIZED = `${PREFIX}:engine-authorized`;
 const KEY_ENGINE_DISABLED = `${PREFIX}:engine-disabled`;
 const KEY_ENGINE_PROTECTION_HIGH_WATER = `${PREFIX}:engine-protection-high-water`;
 const KEY_ENGINE_ENTRY_WATCH_STATE = `${PREFIX}:engine-entry-watch-state`;
+// Observateur en lecture seule (Claude) : aucune commande, aucune écriture Binance.
+// Seul le hash SHA-256 du jeton est stocké dans le code ; le jeton lui-même n'est jamais publié.
+const OBSERVER_TOKEN_SHA256 = 'ad3a1f0b9b186baf3bccdd9b47d0b192a781585a2493346f42b69663463a0e41';
+const OBSERVER_RATE_LIMIT_PER_MINUTE = 6;
+const KEY_OBSERVER_LAST_POSITIONS = `${PREFIX}:observer:last-positions`;
+const OBSERVER_AUDIT_FIELDS = ['at','kind','symbol','entryPrice','quantity','direction','reason','status','code'];
 const MASTER_TTL_SECONDS = 20;
 const ENGINE_INSTANCE_TTL_SECONDS = 45;
 const MASTER_HEARTBEAT_TTL_SECONDS = 60;
@@ -2575,6 +2581,104 @@ export default async function handler(req, res) {
   }
 
   try {
+
+    if (action === 'observer' && req.method === 'GET') {
+      const supplied = String(req.headers?.['x-zenith-observer'] || '');
+      if (supplied.length < 20 || supplied.length > 200 || !timingSafeEqualText(sha256(supplied), OBSERVER_TOKEN_SHA256)) {
+        return send(res, 401, { ok:false, code:'OBSERVER_UNAUTHORIZED' });
+      }
+      const bucket = Math.floor(Date.now() / 60000);
+      if (await incrementWithExpiry(`${PREFIX}:observer-rate:${bucket}`, 120) > OBSERVER_RATE_LIMIT_PER_MINUTE) {
+        return send(res, 429, { ok:false, code:'OBSERVER_RATE_LIMITED' });
+      }
+      const [modeRaw, heartbeatRaw, engineDisabledRaw, emergencyStop, pending, processing, watchRaw, authorizationRaw, auditRows, lastPositionsRaw] = await Promise.all([
+        masterMode(),
+        redis(['GET', KEY_MASTER_HEARTBEAT]),
+        redis(['GET', KEY_ENGINE_DISABLED]),
+        emergencyStopActive(),
+        redis(['LLEN', KEY_PENDING]),
+        redis(['LLEN', KEY_PROCESSING]),
+        redis(['GET', KEY_ENGINE_ENTRY_WATCH_STATE]),
+        redis(['GET', KEY_ENGINE_AUTHORIZED]),
+        redis(['LRANGE', KEY_AUDIT, '0', '29']),
+        redis(['GET', KEY_OBSERVER_LAST_POSITIONS]),
+      ]);
+      const now = Date.now();
+      const heartbeat = parseStoredJson(heartbeatRaw);
+      const heartbeatAt = Number(heartbeat?.at || heartbeat?.updatedAt || heartbeat?.heartbeatAt || 0);
+      const watch = parseStoredJson(watchRaw);
+      const authorization = parseStoredJson(authorizationRaw);
+      const authorizationAt = Number(authorization?.authorizedAt || 0);
+      const sameScope = Boolean(authorization?.version === 1 && authorizationAt > 0 && watch?.version === 1 && Number(watch?.authorizationAt || 0) === authorizationAt && plainJsonObject(watch?.states));
+      const watched = [];
+      for (const [rawSymbol, value] of Object.entries(sameScope ? watch.states : {})) {
+        const symbol = String(rawSymbol || '').toUpperCase();
+        if (!/^[A-Z0-9]{3,30}$/.test(symbol) || !plainJsonObject(value)) continue;
+        const pendingUntil = Number(value.pendingUntil || 0), blockedAt = Number(value.blockedAt || 0), triggeredAt = Number(value.triggeredAt || 0);
+        const status = blockedAt > 0 || (pendingUntil > 0 && now >= pendingUntil && triggeredAt <= 0) ? 'NOT_STARTED'
+          : pendingUntil > now && triggeredAt <= 0 ? 'WAITING_SLOT'
+          : triggeredAt > 0 ? 'TRIGGERED' : 'WATCHING';
+        watched.push({ symbol, buy:Number(value.buy) || 0, status, validatedAt:Number(value.validatedAt || 0), triggeredAt:Math.max(0, triggeredAt) });
+      }
+      const events = [];
+      for (const raw of Array.isArray(auditRows) ? auditRows : []) {
+        const row = parseStoredJson(raw);
+        if (!plainJsonObject(row)) continue;
+        const clean = {};
+        for (const field of OBSERVER_AUDIT_FIELDS) {
+          const value = row[field];
+          if (typeof value === 'number' || typeof value === 'boolean' || (typeof value === 'string' && value.length <= 80)) clean[field] = value;
+        }
+        if (clean.kind) events.push(clean);
+      }
+      let positions = [], openOrders = null, binanceError = '';
+      try {
+        const apiKey = process.env.BINANCE_API_KEY || '', secret = process.env.BINANCE_API_SECRET || '';
+        if (!apiKey || !secret) throw new Error('BINANCE_API_CREDENTIALS_MISSING');
+        const time = await binanceJson(`${BINANCE_FUTURES_BASE}${BINANCE_FUTURES_TIME_PATH}`);
+        const serverTime = Number(time?.serverTime);
+        if (!Number.isFinite(serverTime)) throw new Error('BINANCE_TIME_INVALID');
+        const [rawPositions, standard, algo] = await Promise.all([
+          signedFuturesGet('/fapi/v3/positionRisk', apiKey, secret, serverTime),
+          signedFuturesGet('/fapi/v1/openOrders', apiKey, secret, serverTime),
+          signedFuturesGet('/fapi/v1/openAlgoOrders', apiKey, secret, serverTime, { algoType: 'CONDITIONAL' }),
+        ]);
+        positions = (Array.isArray(rawPositions) ? rawPositions : [])
+          .filter(p => Math.abs(Number(p?.positionAmt || 0)) > 0)
+          .map(p => ({ symbol:String(p.symbol || ''), entryPrice:Number(p.entryPrice) || 0, markPrice:Number(p.markPrice) || 0, unrealizedProfit:Number(p.unRealizedProfit ?? p.unrealizedProfit) || 0, updateTime:Number(p.updateTime) || 0 }));
+        openOrders = (Array.isArray(standard) ? standard.length : 0) + (Array.isArray(algo) ? algo.length : 0);
+      } catch (error) {
+        binanceError = String(error?.code || error?.message || 'BINANCE_READ_FAILED').slice(0, 80);
+      }
+      const lastPositions = parseStoredJson(lastPositionsRaw);
+      const previous = plainJsonObject(lastPositions?.positions) ? lastPositions.positions : {};
+      const current = {};
+      for (const p of positions) if (/^[A-Z0-9]{3,30}$/.test(p.symbol)) current[p.symbol] = { unrealizedProfit:p.unrealizedProfit, seenAt:now };
+      const opened = binanceError ? [] : Object.keys(current).filter(symbol => !previous[symbol]);
+      const closed = binanceError ? [] : Object.keys(previous).filter(symbol => !current[symbol])
+        .map(symbol => ({ symbol, lastUnrealizedProfit:Number(previous[symbol]?.unrealizedProfit) || 0, lastSeenAt:Number(previous[symbol]?.seenAt) || 0 }));
+      if (!binanceError) await redis(['SET', KEY_OBSERVER_LAST_POSITIONS, JSON.stringify({ version:1, at:now, positions:current }), 'EX', String(30 * 24 * 3600)]);
+      return send(res, 200, {
+        ok:true,
+        readOnly:true,
+        at:now,
+        master:{
+          mode:modeRaw,
+          heartbeatAt,
+          heartbeatAgeSeconds:heartbeatAt > 0 ? Math.max(0, Math.round((now - heartbeatAt) / 1000)) : null,
+          engineDisabled:Boolean(engineDisabledRaw),
+          emergencyStop:Boolean(emergencyStop),
+          commandsPending:Number(pending) || 0,
+          commandsProcessing:Number(processing) || 0,
+        },
+        watched,
+        positions,
+        openOrders,
+        sinceLastCheck:{ previousCheckAt:Number(lastPositions?.at) || 0, opened, closed },
+        events,
+        binanceError,
+      });
+    }
 
     if (action === 'engine-reenable' && req.method === 'POST') {
       const device = await requireDevice(req, res, ['controller']);
