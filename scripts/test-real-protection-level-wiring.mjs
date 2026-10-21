@@ -15,12 +15,10 @@ test('real protective update server enforces configured max-loss validation befo
   assert.ok(validationIndex>=0&&writerIndex>validationIndex);
 });
 
-test('iPhone exposes auto objective and auto max-loss through shared calculator',()=>{
+test('iPhone keeps the shared calculator for token-settings edits and a compact active card',()=>{
   assert.match(html,/import\('\/lib\/real-protection-levels\.mjs'\)/);
   assert.match(html,/buildRealProtectionLevels\(\{/);
-  assert.match(html,/data-real-auto-exit/);
-  assert.match(html,/OBJECTIF AUTO/);
-  assert.match(html,/data-real-auto-maxloss/);
-  assert.match(html,/PERTE MAX AUTO/);
   assert.match(html,/grossNote/);
+  assert.match(html,/data-real-close=/);
+  assert.doesNotMatch(html,/data-real-auto-exit|data-real-auto-maxloss|data-real-exit=|data-real-progressive=|data-real-maxloss=/);
 });
