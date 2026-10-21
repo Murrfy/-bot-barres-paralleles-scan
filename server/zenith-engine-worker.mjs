@@ -66,6 +66,12 @@ const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
 const BINANCE_PUBLIC_BASE='https://fapi.binance.com';
 const BOOTSTRAP_SECRET=String(process.env.ZENITH_ENGINE_BOOTSTRAP_SECRET||'');
 const WORKER_ENABLED=process.env.ZENITH_ENGINE_WORKER_ENABLED==='1';
+// Notifications Telegram : envoi seul, jamais attendu, jamais bloquant, aucune commande reçue.
+const TELEGRAM_BOT_TOKEN=String(process.env.ZENITH_TELEGRAM_BOT_TOKEN||'').trim();
+const TELEGRAM_CHAT_ID=String(process.env.ZENITH_TELEGRAM_CHAT_ID||'').trim();
+const TELEGRAM_ENABLED=/^\d{5,15}:[A-Za-z0-9_-]{20,80}$/.test(TELEGRAM_BOT_TOKEN)&&/^-?\d{3,20}$/.test(TELEGRAM_CHAT_ID);
+const telegramLastMarks=new Map();
+const telegramPositions={ready:false,rows:new Map()};
 const HEARTBEAT_MS=8000;
 const COMMAND_POLL_MS=750;
 const RECONCILE_MS=15000;
@@ -458,6 +464,55 @@ function log(kind,details={}){
   delete safe.cookie;
   delete safe.sessionCookie;
   console.log(JSON.stringify(safe));
+  try{const format=TELEGRAM_EVENT_MESSAGES[kind];if(format)notifyTelegram(format(safe))}catch(_){}
+}
+function telegramSymbol(v){const s=String(v||'').toUpperCase();return /^[A-Z0-9]{2,40}$/.test(s)?s:'?'}
+function telegramReason(v){return String(v||'').replace(/[^A-Za-z0-9_ .:-]/g,'').slice(0,60)}
+function telegramMoney(v){const x=Number(v);if(!Number.isFinite(x))return '—';return (x>=0?'+':'-')+'$'+Math.abs(x).toFixed(2)}
+function telegramDuration(ms){const t=Math.max(0,Math.floor(Number(ms||0)/1000)),h=Math.floor(t/3600),m=Math.floor((t%3600)/60);return h+' h '+String(m).padStart(2,'0')+' min'}
+const TELEGRAM_EVENT_MESSAGES={
+  RUNNING:()=>'✅ Zenith : MASTER démarré.',
+  BOOTSTRAP_BLOCKED:d=>'⚠️ Zenith : MASTER bloqué au démarrage ('+telegramReason(d.code)+').',
+  AUTO_ENTRY_SUBMITTED:d=>'🚀 Zenith : achat lancé — '+telegramSymbol(d.symbol)+(Number(d.limitPrice)>0?' (limite '+Number(d.limitPrice)+')':'')+'.',
+  INSTANT_MARKET_ENTRY_CONFIRMED:d=>'🚀 Zenith : achat immédiat confirmé — '+telegramSymbol(d.symbol)+'.',
+  ENTRY_WATCH_STANDBY:d=>'⏸️ Zenith : '+telegramSymbol(d.symbol)+' mis en STAND-BY (places pleines).',
+  ENTRY_WATCH_BLOCKED:d=>'⛔ Zenith : '+telegramSymbol(d.symbol)+' bloqué ('+telegramReason(d.reason)+').',
+  AUTO_ENTRY_FAILED:d=>'❌ Zenith : achat raté — '+telegramSymbol(d.symbol)+' ('+telegramReason(d.reason)+').',
+  AUTO_MAX_LOSS_REPAIRED:d=>'🛡️ Zenith : perte MAX reposée — '+telegramSymbol(d.symbol)+'.',
+  AUTO_PROTECTION_LOCAL_FAILURE:d=>'⚠️ Zenith : problème de protection — '+telegramSymbol(d.symbol)+' ('+telegramReason(d.reason)+').',
+};
+function notifyTelegram(text){
+  if(!TELEGRAM_ENABLED)return;
+  try{
+    fetch('https://api.telegram.org/bot'+TELEGRAM_BOT_TOKEN+'/sendMessage',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({chat_id:TELEGRAM_CHAT_ID,text:String(text||'').slice(0,500),disable_web_page_preview:true}),
+      signal:AbortSignal.timeout(5000),
+    }).catch(()=>{});
+  }catch(_){}
+}
+function trackTelegramPositions(rows){
+  if(!TELEGRAM_ENABLED)return;
+  try{
+    const now=Date.now(),current=new Map();
+    for(const p of Array.isArray(rows)?rows:[]){
+      const symbol=String(p?.symbol||'').toUpperCase();
+      if(!/^[A-Z0-9]{2,40}$/.test(symbol)||!(Math.abs(n(p?.positionAmt??p?.quantity,0))>0))continue;
+      const previous=telegramPositions.rows.get(symbol);
+      current.set(symbol,{position:p,openedAt:previous?.openedAt||now});
+      if(telegramPositions.ready&&!previous)notifyTelegram('📈 Zenith : position ouverte — '+symbol+'.');
+    }
+    if(telegramPositions.ready){
+      for(const [symbol,previous] of telegramPositions.rows){
+        if(current.has(symbol))continue;
+        const pnl=observedLinearPnl(previous.position,telegramLastMarks.get(symbol));
+        notifyTelegram('🏁 Zenith : position fermée — '+symbol+' · ≈ '+telegramMoney(pnl)+' brut · durée '+telegramDuration(now-previous.openedAt)+'.');
+        telegramLastMarks.delete(symbol);
+      }
+    }
+    telegramPositions.rows=current;telegramPositions.ready=true;
+  }catch(_){}
 }
 function logError(kind,error,details={}){
   log(kind,{...details,error:String(error?.message||error||'UNKNOWN')});
@@ -1731,6 +1786,7 @@ async function executeAutoProgressive(plan){
 
 async function runAutoProtection(symbol,mark){
   const wanted=String(symbol||'').toUpperCase();
+  if(n(mark,0)>0)telegramLastMarks.set(wanted,n(mark,0));
   if(saleRemainderRecoverySymbols.has(wanted))return false;
   if(markStream.recoveryBlockedSymbols.has(wanted))return false;
 
@@ -2247,6 +2303,7 @@ async function publishRuntime(){
   });
   if(!response.ok||data?.ok!==true)throw new Error(data?.code||('HTTP_'+response.status));
   syncMarkSubscriptions();
+  trackTelegramPositions(streamProjection().binancePositions);
   return true;
 }
 
