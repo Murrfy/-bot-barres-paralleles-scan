@@ -1699,4 +1699,19 @@ if (failed) process.exit(1);
     if (observer.includes(forbidden)) fail('read-only observer must not contain ' + forbidden);
   }
 }
+{
+  const engineSource = fs.readFileSync('server/zenith-engine-worker.mjs', 'utf8');
+  const tgStart = engineSource.indexOf('function notifyTelegram(text){');
+  const tgEnd = tgStart >= 0 ? engineSource.indexOf('function trackTelegramPositions(rows){', tgStart) : -1;
+  if (tgStart < 0 || tgEnd <= tgStart) fail('Telegram notifier missing');
+  const notifier = engineSource.slice(tgStart, tgEnd);
+  if (!notifier.includes('/sendMessage') || !notifier.includes('.catch(()=>{})') || !notifier.includes('AbortSignal.timeout(5000)')) {
+    fail('Telegram notifier must be fire-and-forget with a short timeout');
+  }
+  if (/await\s+notifyTelegram|await\s+fetch\('https:\/\/api\.telegram\.org/.test(engineSource)) fail('Telegram must never be awaited in the engine');
+  for (const forbidden of ['getUpdates', 'setWebhook', 'callback_query']) {
+    if (engineSource.includes(forbidden)) fail('Telegram integration must be send-only: ' + forbidden);
+  }
+  if (/log\([^)]*TELEGRAM_BOT_TOKEN/.test(engineSource)) fail('Telegram token must never be logged');
+}
 console.log('Zenith safety checks passed.');
