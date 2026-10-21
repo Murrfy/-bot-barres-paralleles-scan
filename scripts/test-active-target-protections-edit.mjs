@@ -31,14 +31,10 @@ test('active target and protection settings remain unchanged locally and central
   assert.ok(status.indexOf('tokenSettings=nextTokenSettings')>status.indexOf('const ackValid='));
 });
 
-test('pending active edit blocks parallel setting buttons but never blocks full close',()=>{
+test('pending active edit blocks parallel setting changes but never blocks full close',()=>{
   const render=block(html,'function renderRealPositions()','async function refreshBinanceAccount');
-  assert.match(render,/activeConfigPending/);
-  assert.match(render,/anySettingPending=exitPending\|\|progressivePending\|\|maxLossPending\|\|activeConfigPending/);
-  assert.match(render,/const closeAllowed=baseAllowed/);
-  assert.match(render,/exitAllowed=baseAllowed&&emergencyReady&&!inv\.exitConflict&&!anySettingPending/);
-  assert.match(render,/progressiveAllowed=baseAllowed&&emergencyReady&&!inv\.progressiveConflict&&!anySettingPending/);
-  assert.match(render,/maxLossAllowed=baseAllowed&&!inv\.maxLossConflict&&!anySettingPending/);
+  assert.match(render,/const closeAllowed=controller&&side==='BOTH'&&qty>0&&!closePending/);
+  assert.doesNotMatch(render,/anySettingPending/);
 
   const queue=block(html,'async function queueRealProtectiveUpdate','async function queueRealActiveConfigUpdate');
   assert.match(queue,/blockingKinds=\['EXIT','PROGRESSIVE','MAX_LOSS','ACTIVE_CONFIG'\]/);
