@@ -71,7 +71,7 @@ const TELEGRAM_BOT_TOKEN=String(process.env.ZENITH_TELEGRAM_BOT_TOKEN||'').trim(
 const TELEGRAM_CHAT_ID=String(process.env.ZENITH_TELEGRAM_CHAT_ID||'').trim();
 const TELEGRAM_ENABLED=/^\d{5,15}:[A-Za-z0-9_-]{20,80}$/.test(TELEGRAM_BOT_TOKEN)&&/^-?\d{3,20}$/.test(TELEGRAM_CHAT_ID);
 const telegramLastMarks=new Map();
-const telegramPositions={ready:false,rows:new Map()};
+const telegramPositions={ready:false,rows:new Map(),seeded:false};
 const HEARTBEAT_MS=8000;
 const COMMAND_POLL_MS=750;
 const RECONCILE_MS=15000;
@@ -493,14 +493,15 @@ function notifyTelegram(text){
   }catch(_){}
 }
 function trackTelegramPositions(rows){
-  if(!TELEGRAM_ENABLED)return;
+  if(!TELEGRAM_ENABLED||!telegramPositions.seeded||stream.seeding)return;
   try{
     const now=Date.now(),current=new Map();
     for(const p of Array.isArray(rows)?rows:[]){
       const symbol=String(p?.symbol||'').toUpperCase();
       if(!/^[A-Z0-9]{2,40}$/.test(symbol)||!(Math.abs(n(p?.positionAmt??p?.quantity,0))>0))continue;
       const previous=telegramPositions.rows.get(symbol);
-      current.set(symbol,{position:p,openedAt:previous?.openedAt||now});
+      const knownOpenedAt=n(p?.openedAt,n(p?.lifecycleAt,n(p?.positionLifecycleAt,0)));
+      current.set(symbol,{position:p,openedAt:previous?.openedAt||(knownOpenedAt>0&&knownOpenedAt<=now?knownOpenedAt:now)});
       if(telegramPositions.ready&&!previous)notifyTelegram('📈 Zenith : position ouverte — '+symbol+'.');
     }
     if(telegramPositions.ready){
@@ -3431,6 +3432,7 @@ async function seedStream(connectionId,connectedAt){
     await processStreamPayload(payload);
   }
   stream.seeding=false;
+  telegramPositions.seeded=true;
   await publishRuntime();
 }
 
