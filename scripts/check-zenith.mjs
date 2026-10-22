@@ -1714,4 +1714,5 @@ if (failed) process.exit(1);
   }
   if (/log\([^)]*TELEGRAM_BOT_TOKEN/.test(engineSource)) fail('Telegram token must never be logged');
 }
+if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
