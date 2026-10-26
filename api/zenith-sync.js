@@ -53,7 +53,8 @@ const PAIRING_CODE = process.env.ZENITH_PAIRING_CODE || '';
 const MASTER_ADMIN_CODE = process.env.ZENITH_MASTER_ADMIN_CODE || '';
 const ENGINE_BOOTSTRAP_SECRET = process.env.ZENITH_ENGINE_BOOTSTRAP_SECRET || '';
 const ENGINE_MASTER_DEVICE_ID = 'zenith-server-engine-v1';
-const PAIRING_DISABLED = process.env.ZENITH_PAIRING_DISABLED === '1';
+// Appairage fermé par défaut : il ne s'ouvre que si ZENITH_PAIRING_ENABLED=1.
+const PAIRING_DISABLED = process.env.ZENITH_PAIRING_ENABLED !== '1';
 const REAL_TRADING_ENABLED = process.env.ZENITH_REAL_TRADING_ENABLED === '1';
 const BINANCE_WRITE_ENABLED = process.env.ZENITH_BINANCE_WRITE_ENABLED === '1';
 const REAL_ENTRY_WRITE_ENABLED = process.env.ZENITH_REAL_ENTRY_WRITE_ENABLED === '1';

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 process.env.ZENITH_REAL_TRADING_ENABLED = '0';
-process.env.ZENITH_PAIRING_DISABLED = '0';
+process.env.ZENITH_PAIRING_ENABLED = '1';
 
 const source = fs.readFileSync('api/zenith-sync.js', 'utf8')
   .replace(

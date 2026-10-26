@@ -407,7 +407,7 @@ const protectiveExecute = fs.readFileSync('api/binance-protective-execute.js','u
 for (const required of [
   "ZENITH_REAL_TRADING_ENABLED",
   "ZENITH_BINANCE_WRITE_ENABLED",
-  "ZENITH_PAIRING_DISABLED",
+  "ZENITH_PAIRING_ENABLED",
   "'EXEC_CLOSE_POSITION'",
   "'EXEC_CANCEL_ENTRY'",
   "'BINANCE_WRITE_LOCKED'",
