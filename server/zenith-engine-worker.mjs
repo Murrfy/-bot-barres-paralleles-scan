@@ -754,6 +754,12 @@ function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig,activeSymb
   return true;
 }
 
+// Ventes (objectif, paliers) : elles utilisent la dernière configuration déjà appliquée par le MASTER.
+// Une désynchronisation (même passagère) bloque les NOUVEAUX achats, jamais la protection d'une position ouverte.
+function exitConfigReady(){
+  return Boolean(runtime.config&&typeof runtime.config==='object'&&runtime.appliedRevision>0);
+}
+
 async function syncControllerConfig(){
   if(!runtime.leaseActive)return false;
   const {response,data}=await syncApi('master-config-status');
@@ -1519,7 +1525,7 @@ async function ensureAutomaticTargetForPosition(position){
   if(saleRemainderRecoverySymbols.has(symbol))return {ok:true,changed:false,reason:'SALE_REMAINDER_RECOVERY_ACTIVE'};
   if(autoTarget.suppressedSymbols.has(symbol))return {ok:true,changed:false,reason:'TARGET_UPDATE_IN_PROGRESS'};
   if(symbolMaxLossQuarantined(symbol))return {ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'};
-  if(!runtime.synchronized||!runtime.heartbeatFresh)return {ok:true,changed:false,reason:'RUNTIME_NOT_READY'};
+  if(!(runtime.synchronized||exitConfigReady())||!runtime.heartbeatFresh)return {ok:true,changed:false,reason:'RUNTIME_NOT_READY'};
   if(!masterExecutionEligible({
     role:'master',hidden:false,leaseActive:runtime.leaseActive,
     realExecutionArmed:runtime.realExecutionArmed,
@@ -1849,7 +1855,7 @@ async function runAutoProtection(symbol,mark){
 
   if(autoProtection.busySymbols.has(wanted))return false;
 
-  if(!runtime.synchronized||!runtime.heartbeatFresh)return false;
+  if(!(runtime.synchronized||exitConfigReady())||!runtime.heartbeatFresh)return false;
   if(!masterExecutionEligible({
     role:'master',
     hidden:false,
@@ -4318,7 +4324,14 @@ async function runtimeCycle(){
   try{
     const alive=await heartbeat();
     if(!alive)return false;
-    await syncControllerConfig();
+    try{await syncControllerConfig()}
+    catch(error){
+      const code=String(error?.code||error?.message||'MASTER_CONFIG_SYNC_FAILED');
+      if(fatalAuthorityCode(code))throw error;
+      runtime.synchronized=false;
+      runtime.error=code;
+      logError('CONFIG_SYNC_DEFERRED',error,{code});
+    }
     await publishRuntime().catch(error=>logError('RUNTIME_PUBLISH_FAILED',error));
     await ensureUserStream();
     await loadAutoHighWater().catch(error=>logError('AUTO_HIGH_WATER_LOAD_FAILED',error));
