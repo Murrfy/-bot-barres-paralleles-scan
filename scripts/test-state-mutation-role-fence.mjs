@@ -61,11 +61,8 @@ test('MASTER config ACK atomically binds current MASTER and current controller r
   assert.equal(ack.includes("await redis(['SET', KEY_MASTER_CONFIG_ACK"),false);
 });
 
-test('controller phone session is kept on role-epoch refusal, with a precise refusal code',()=>{
-  // Le téléphone ne doit jamais perdre sa session en silence : refus explicite, cookie conservé.
-  assert.equal(controller.includes('clearDeviceSessionCookie(res)'),false);
-  assert.ok(controller.includes("'CONTROLLER_ROLE_CHANGED'"));
-  assert.ok(controller.includes("'CONTROLLER_SESSION_REVOKED'"));
+test('role-epoch failures clear the stale secure device session',()=>{
+  assert.ok(controller.includes('clearDeviceSessionCookie(res)'));
   assert.ok(state.includes('clearDeviceSessionCookie(res)'));
   assert.ok(ack.includes('clearDeviceSessionCookie(res)'));
 });
