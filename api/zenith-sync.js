@@ -137,10 +137,10 @@ const ENGINE_HIGH_WATER_STATE_MAX_BYTES = 250000;
 const DEAD_LETTER_MAX = 500;
 
 function send(res, status, body) {
-  if (status === 400) {
+  if (status >= 400) {
     console.warn(JSON.stringify({
       component: 'zenith-sync',
-      kind: 'API_REJECT_400',
+      kind: status === 400 ? 'API_REJECT_400' : 'API_REJECT_' + status,
       action: String(res.__zenithAction || ''),
       code: String(body?.code || ''),
       field: String(body?.field || ''),
@@ -851,7 +851,9 @@ async function requireDevice(req, res, roles, { allowBearer = false, rotateBeare
     return null;
   }
   if (!(await verifyRoleDevice(device.role, device))) {
-    clearDeviceSessionCookie(res);
+    // Téléphone contrôleur : ne jamais effacer sa session en silence.
+    // Le serveur continue de refuser, mais avec la raison exacte (visible à l'écran et dans les logs).
+    if (String(device?.principal || '') === 'engine') clearDeviceSessionCookie(res);
     send(res, 409, { ok: false, code: 'ROLE_DEVICE_CONFLICT' });
     return null;
   }
@@ -4984,7 +4986,7 @@ export default async function handler(req, res) {
 
       const expiredQueueCleanup = await pruneExpiredControllerStateCommands(device);
       if (!expiredQueueCleanup.ok) {
-        clearDeviceSessionCookie(res);
+        // Session du téléphone conservée : la raison exacte reste visible.
         return send(res, 409, {ok:false,code:expiredQueueCleanup.code===-2?'CONTROLLER_SESSION_REVOKED':'CONTROLLER_ROLE_CHANGED'});
       }
 
@@ -5063,7 +5065,7 @@ export default async function handler(req, res) {
       const rawState = String(Array.isArray(result) ? result[2] || '' : '');
 
       if (resultCode === -2 || resultCode === -3) {
-        clearDeviceSessionCookie(res);
+        // Session du téléphone conservée : la raison exacte reste visible.
         return send(res, 409, {
           ok: false,
           code: resultCode === -2 ? 'CONTROLLER_ROLE_CHANGED' : 'CONTROLLER_SESSION_REVOKED',
