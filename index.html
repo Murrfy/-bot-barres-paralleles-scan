@@ -1213,7 +1213,7 @@ function applyControllerCloudStateSnapshot(state){
   manualTokens=normalizeRecordBlock(data.manualTokens);
   validated=normalizeRecordBlock(data.validated);
   localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(revision));
-  rememberControllerSyncBase(data);
+  if(typeof rememberControllerSyncBase==='function')rememberControllerSyncBase(data);
   saveLocalOnly();
   controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
   return true;
