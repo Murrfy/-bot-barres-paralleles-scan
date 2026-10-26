@@ -4011,6 +4011,11 @@ export default async function handler(req, res) {
           blockers.push(...binanceApiPermissionBlockers(apiPermissions, { signingMode: tradingSigningMode }));
         } catch (e) {
           blockers.push(e?.code || 'BINANCE_API_PERMISSION_CHECK_FAILED');
+          // Détail de la réponse Binance (statut HTTP et code d'erreur Binance), sans aucun secret.
+          if (Number.isFinite(Number(e?.status))) blockers.push('BINANCE_HTTP_' + Number(e.status));
+          if (e?.binanceCode !== null && e?.binanceCode !== undefined && Number.isFinite(Number(e.binanceCode))) {
+            blockers.push('BINANCE_CODE_' + Number(e.binanceCode));
+          }
         }
       }
 
