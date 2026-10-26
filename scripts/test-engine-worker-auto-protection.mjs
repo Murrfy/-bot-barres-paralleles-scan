@@ -72,9 +72,10 @@ test('high-water is persisted before autonomous protective mutation',()=>{
   assert.ok(execute.indexOf('persistAutoHighWaterNow') < execute.indexOf("phase:'PLACE_NEW'"));
 });
 
-test('auto-protection requires synchronized armed current MASTER, ready stream and one safe MAX-LOSS',()=>{
+test('auto-protection requires applied config, armed current MASTER, ready stream and one safe MAX-LOSS',()=>{
   const block=between('async function runAutoProtection','function scheduleMarkReconnect');
-  assert.ok(block.includes('runtime.synchronized'));
+  assert.ok(block.includes('exitConfigReady()'));
+  assert.ok(worker.includes('runtime.appliedRevision>0'));
   assert.ok(block.includes('runtime.heartbeatFresh'));
   assert.ok(block.includes('masterExecutionEligible({'));
   assert.ok(block.includes('realExecutionArmed:runtime.realExecutionArmed'));
