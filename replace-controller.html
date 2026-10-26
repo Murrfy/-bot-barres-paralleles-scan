@@ -40,7 +40,7 @@ button:disabled{opacity:.5}
 
     <button id="replaceBtn">Reprendre le contrôle sur cet appareil</button>
 
-    <div id="status" class="status">Prêt.</div>
+    <div id="status" class="status">Tape ton code ci-dessus, puis touche le bouton bleu.</div>
     <a id="openBot" class="link" href="/" hidden>Ouvrir Zenith</a>
     <div class="small">Après validation, l’ancien appareil contrôleur est automatiquement refusé par le serveur. Le code administrateur n’est ni stocké ni renvoyé. Les réglages centraux sont récupérés avant l’ouverture du bot.</div>
   </div>
@@ -134,6 +134,7 @@ async function replaceController(){
       'ok'
     );
     $('openBot').hidden=false;
+    $('openBot').style.display='block';
   }catch(e){
     setStatus('Remplacement refusé : '+String(e?.message||'erreur inconnue')+'.','err');
   }finally{
@@ -141,6 +142,8 @@ async function replaceController(){
   }
 }
 
+// « Ouvrir Zenith » reste caché tant que la reprise n'a pas réussi.
+$('openBot').style.display='none';
 $('replaceBtn').addEventListener('click',replaceController);
 $('adminCode').addEventListener('keydown',e=>{if(e.key==='Enter')replaceController()});
 </script>
