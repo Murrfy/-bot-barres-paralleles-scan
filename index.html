@@ -1213,6 +1213,7 @@ function applyControllerCloudStateSnapshot(state){
   manualTokens=normalizeRecordBlock(data.manualTokens);
   validated=normalizeRecordBlock(data.validated);
   localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(revision));
+  if(typeof rememberControllerSyncBase==='function')rememberControllerSyncBase(data);
   saveLocalOnly();
   controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
   return true;
@@ -1308,10 +1309,71 @@ function controllerCloudStatePayload(tokenSettingsSource=tokenSettings){
     validated:clone(normalizeRecordBlock(validated))
   };
 }
+const ZENITH_CONTROLLER_SYNC_BASE_KEY='zenith_controller_sync_base_v1';
+function rememberControllerSyncBase(data){
+  try{localStorage.setItem(ZENITH_CONTROLLER_SYNC_BASE_KEY,stableStringify(data||{}))}catch(_){}
+}
+function readControllerSyncBase(){
+  try{const raw=localStorage.getItem(ZENITH_CONTROLLER_SYNC_BASE_KEY);if(!raw)return null;const v=JSON.parse(raw);return v&&typeof v==='object'&&!Array.isArray(v)?v:null}catch(_){return null}
+}
+// Fusion à trois voies : base = dernier état confirmé par le serveur, local = écran, remote = serveur actuel.
+// Un champ modifié d'un seul côté garde cette modification ; modifié des deux côtés, l'écran l'emporte.
+function mergeControllerValue(base,local,remote){
+  const same=(x,y)=>stableStringify(x===undefined?null:x)===stableStringify(y===undefined?null:y);
+  if(same(local,base))return remote;
+  if(same(remote,base)||same(local,remote))return local;
+  const isObj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+  if(isObj(local)&&isObj(remote)){
+    const b=isObj(base)?base:{},out={};
+    for(const k of new Set([...Object.keys(b),...Object.keys(local),...Object.keys(remote)])){
+      const v=mergeControllerValue(b[k],local[k],remote[k]);
+      if(v!==undefined)out[k]=v;
+    }
+    return out;
+  }
+  return local;
+}
+async function recoverControllerRevisionConflict(){
+  try{
+    const r=await fetch('/api/zenith-sync?action=controller-state',{cache:'no-store',headers:{Accept:'application/json'}});
+    const q=await r.json().catch(()=>({}));
+    const state=q?.state||null;
+    if(!r.ok||q?.ok!==true||!state)return false;
+    const data=state?.data&&typeof state.data==='object'&&!Array.isArray(state.data)?state.data:null;
+    const revision=Math.max(0,n(state?.revision,0));
+    if(!data||!(revision>0))return false;
+    if(String(state?.stateHash||'')!==await sha256Hex(stableStringify(data)))return false;
+    const base=readControllerSyncBase();
+    if(!base)return false;
+    const merged=mergeControllerValue(base,controllerCloudStatePayload(),data)||{};
+    settings={...settings,...(merged.settings&&typeof merged.settings==='object'?merged.settings:{})};
+    tokenSettings=normalizeRecordBlock(merged.tokenSettings);
+    manualTokens=normalizeRecordBlock(merged.manualTokens);
+    validated=normalizeRecordBlock(merged.validated);
+    localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(revision));
+    rememberControllerSyncBase(data);
+    saveLocalOnly();
+    return true;
+  }catch(_){return false}
+}
 async function syncControllerCloudStateNow(){
   if(!controllerIdentity.paired||controllerIdentity.role!=='controller')return false;
   while(controllerStateSyncBusy)await new Promise(resolve=>setTimeout(resolve,25));
   controllerStateSyncBusy=true;
+  try{
+    for(let attempt=0;attempt<3;attempt++){
+      const result=await syncControllerCloudStateAttempt();
+      if(result!=='CONFLICT')return result;
+      if(!(await recoverControllerRevisionConflict()))break;
+    }
+    controllerSyncState={conflict:true,lastOk:0,error:'REVISION_CONFLICT'};
+    renderControllerIdentity();
+    return false;
+  }finally{
+    controllerStateSyncBusy=false;
+  }
+}
+async function syncControllerCloudStateAttempt(){
   try{
     const payload=controllerCloudStatePayload();
 
@@ -1344,7 +1406,7 @@ async function syncControllerCloudStateNow(){
       if(repair.status===409&&repaired?.code==='REVISION_CONFLICT'){
         controllerSyncState={conflict:true,lastOk:0,error:'REVISION_CONFLICT'};
         renderControllerIdentity();
-        return false;
+        return 'CONFLICT';
       }
       if(!repair.ok||repaired?.ok!==true||!repaired?.state){
         controllerSyncState={...controllerSyncState,error:repaired?.code||repaired?.error||('HTTP '+repair.status)};
@@ -1354,6 +1416,7 @@ async function syncControllerCloudStateNow(){
       localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(Math.max(0,n(repaired.state.revision,remoteRevision))));
       controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
       renderControllerIdentity();
+      rememberControllerSyncBase(payload);
       return true;
     }
 
@@ -1372,6 +1435,7 @@ async function syncControllerCloudStateNow(){
         localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(remoteRevision));
         controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
         renderControllerIdentity();
+        rememberControllerSyncBase(payload);
         return true;
       }
       localRevision=0;
@@ -1380,13 +1444,14 @@ async function syncControllerCloudStateNow(){
     if(remoteRevision!==localRevision){
       controllerSyncState={conflict:true,lastOk:0,error:'REVISION_CONFLICT'};
       renderControllerIdentity();
-      return false;
+      return 'CONFLICT';
     }
 
     const payloadHash=await sha256Hex(stableStringify(payload));
     if(remoteState&&stableStringify(remoteState?.data||{})===stableStringify(payload)&&String(remoteState?.stateHash||'')===payloadHash){
       controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
       renderControllerIdentity();
+      rememberControllerSyncBase(payload);
       return true;
     }
 
@@ -1405,7 +1470,7 @@ async function syncControllerCloudStateNow(){
     if(r.status===409&&q?.code==='REVISION_CONFLICT'){
       controllerSyncState={conflict:true,lastOk:0,error:'REVISION_CONFLICT'};
       renderControllerIdentity();
-      return false;
+      return 'CONFLICT';
     }
 
     if(!r.ok||q?.ok!==true||!q?.state){
@@ -1417,15 +1482,14 @@ async function syncControllerCloudStateNow(){
     localStorage.setItem(ZENITH_CONTROLLER_REV_KEY,String(Math.max(0,n(q.state.revision,localRevision))));
     controllerSyncState={conflict:false,lastOk:Date.now(),error:''};
     renderControllerIdentity();
+    rememberControllerSyncBase(payload);
     return true;
     }catch(e){
       controllerSyncState={...controllerSyncState,error:e?.message||'Connexion impossible'};
       renderControllerIdentity();
       return false;
     }
-  }finally{
-    controllerStateSyncBusy=false;
-  }
+  }finally{}
 }
 function scheduleControllerCloudStateSync(){
   if(controllerStateSyncTimer)clearTimeout(controllerStateSyncTimer);
