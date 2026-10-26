@@ -3998,7 +3998,8 @@ export default async function handler(req, res) {
 
       let reconciliation = null;
       if (!blockers.length) {
-        reconciliation = await freshCleanReconciliation(10000);
+        // Le MASTER refait le point Binance toutes les 15 s : on accepte un point de moins de 20 s.
+        reconciliation = await freshCleanReconciliation(20000);
         if (!reconciliation.ok) blockers.push(reconciliation.reason);
       }
 
@@ -4015,6 +4016,15 @@ export default async function handler(req, res) {
           if (Number.isFinite(Number(e?.status))) blockers.push('BINANCE_HTTP_' + Number(e.status));
           if (e?.binanceCode !== null && e?.binanceCode !== undefined && Number.isFinite(Number(e.binanceCode))) {
             blockers.push('BINANCE_CODE_' + Number(e.binanceCode));
+          }
+          // Cause technique sans réponse HTTP (réseau, délai, signature) : nom et code seulement, jamais de secret.
+          const causeCode = String(e?.cause?.code || e?.cause?.name || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 40);
+          const errorName = String(e?.name || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 40);
+          if (!Number.isFinite(Number(e?.status))) {
+            if (errorName) blockers.push('ERR_' + errorName);
+            if (causeCode) blockers.push('CAUSE_' + causeCode);
+            const msgCode = String(e?.message || '');
+            if (/^[A-Z0-9_]{3,60}$/.test(msgCode)) blockers.push('MSG_' + msgCode);
           }
         }
       }
