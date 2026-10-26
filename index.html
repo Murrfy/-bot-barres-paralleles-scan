@@ -2134,11 +2134,13 @@ function tickValidated(s,mark){
   const v=validated[s],buy=n(v?.buy);
   if(!v||!(buy>0)||!(mark>0))return false;
   v.lastSeen=mark;
-  if(mark>buy)v.armedAbove=true;
+  if(mark>buy&&v.armedAbove!==true){v.armedAbove=true;save();return false}
   scheduleCursorSave();
   return false;
 }
-function scheduleCursorSave(){if(cursorSaveTimer)return;cursorSaveTimer=setTimeout(()=>{cursorSaveTimer=null;save()},1500)}
+// Curseurs de prix (lastSeen, lastAggId…) : sauvegarde locale uniquement. Les envoyer au serveur toutes les 1,5 s
+// changeait la révision en continu et empêchait le MASTER d'appliquer la configuration (MASTER_CONFIG_REVISION_CHANGED).
+function scheduleCursorSave(){if(cursorSaveTimer)return;cursorSaveTimer=setTimeout(()=>{cursorSaveTimer=null;saveLocalOnly()},1500)}
 function trackingStartTime(s){
   const p=openBySymbol(s),v=validated[s],real=controllerRealPositionBySymbol(s);
   return Math.max(0,n(
