@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 70,
+  "scopeRevision": 71,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
@@ -33,6 +33,10 @@
     "scripts/test-real-protection-level-wiring.mjs",
     "scripts/test-active-target-protections-edit.mjs",
     "replace-controller.html",
-    "scripts/test-state-mutation-role-fence.mjs"
+    "scripts/test-state-mutation-role-fence.mjs",
+    "api/binance-entry-execute.js",
+    "api/binance-protective-execute.js",
+    "api/binance-protective-update-execute.js",
+    "scripts/test-command-safety.mjs"
   ]
 }
