@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 69,
+  "scopeRevision": 70,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
@@ -31,6 +31,8 @@
     "lib/auto-high-water-backfill.mjs",
     "scripts/test-auto-high-water-backfill.mjs",
     "scripts/test-real-protection-level-wiring.mjs",
-    "scripts/test-active-target-protections-edit.mjs"
+    "scripts/test-active-target-protections-edit.mjs",
+    "replace-controller.html",
+    "scripts/test-state-mutation-role-fence.mjs"
   ]
 }
