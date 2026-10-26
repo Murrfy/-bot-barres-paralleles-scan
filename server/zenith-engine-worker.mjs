@@ -1525,7 +1525,7 @@ async function ensureAutomaticTargetForPosition(position){
   if(saleRemainderRecoverySymbols.has(symbol))return {ok:true,changed:false,reason:'SALE_REMAINDER_RECOVERY_ACTIVE'};
   if(autoTarget.suppressedSymbols.has(symbol))return {ok:true,changed:false,reason:'TARGET_UPDATE_IN_PROGRESS'};
   if(symbolMaxLossQuarantined(symbol))return {ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'};
-  if(!exitConfigReady()||!runtime.heartbeatFresh)return {ok:true,changed:false,reason:'RUNTIME_NOT_READY'};
+  if(!(runtime.synchronized||exitConfigReady())||!runtime.heartbeatFresh)return {ok:true,changed:false,reason:'RUNTIME_NOT_READY'};
   if(!masterExecutionEligible({
     role:'master',hidden:false,leaseActive:runtime.leaseActive,
     realExecutionArmed:runtime.realExecutionArmed,
@@ -1855,7 +1855,7 @@ async function runAutoProtection(symbol,mark){
 
   if(autoProtection.busySymbols.has(wanted))return false;
 
-  if(!exitConfigReady()||!runtime.heartbeatFresh)return false;
+  if(!(runtime.synchronized||exitConfigReady())||!runtime.heartbeatFresh)return false;
   if(!masterExecutionEligible({
     role:'master',
     hidden:false,
