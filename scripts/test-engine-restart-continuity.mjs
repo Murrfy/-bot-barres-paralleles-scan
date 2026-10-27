@@ -40,7 +40,9 @@ test('restart rotates epoch and carries real arm only for the same logical engin
   assert.ok(bootstrap.includes("local oldRoleEpoch = tostring(redis.call('GET', KEYS[2]) or '')"));
   assert.ok(bootstrap.includes("tostring(arm['masterDeviceId'] or '') == ARGV[1]"));
   assert.ok(bootstrap.includes("tostring(arm['masterRoleEpoch'] or '') == oldRoleEpoch"));
-  assert.ok(bootstrap.includes("tostring(arm['deploymentSha'] or '') == ARGV[9]"));
+  // Une mise à jour du code ne désarme plus : la version n'est plus exigée, elle est mise à jour.
+  assert.equal(bootstrap.includes("tostring(arm['deploymentSha'] or '') == ARGV[9]"),false);
+  assert.ok(bootstrap.includes("arm['deploymentSha'] = ARGV[9]"));
   assert.ok(bootstrap.includes("arm['masterRoleEpoch'] = tonumber(ARGV[2])"));
   assert.ok(bootstrap.includes("redis.call('SET', KEYS[10], cjson.encode(arm))"));
   assert.ok(bootstrap.includes('DEPLOYMENT_SHA'));

@@ -1156,9 +1156,8 @@ async function realExecutionArmStatus(expectedMasterDeviceId = '') {
   if (expectedMasterDeviceId && String(record.masterDeviceId || '') !== String(expectedMasterDeviceId)) {
     return { armed:false, reason:'REAL_EXECUTION_ARM_MASTER_CHANGED', record };
   }
-  if (DEPLOYMENT_SHA && String(record.deploymentSha || '') !== DEPLOYMENT_SHA) {
-    return { armed:false, reason:'REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED', record };
-  }
+  // Une nouvelle version du code ne désarme plus le réel : l'armement reste lié au MASTER
+  // (appareil + époque de rôle), pas à la version déployée.
   return { armed:true, reason:'REAL_EXECUTION_ARMED', record };
 }
 
@@ -2819,8 +2818,9 @@ export default async function handler(req, res) {
         "  local armRaw = redis.call('GET', KEYS[10])",
         "  if armRaw and ARGV[9] ~= '' and oldRoleEpoch ~= '' then",
         "    local armOk, arm = pcall(cjson.decode, armRaw)",
-        "    if armOk and tonumber(arm['version'] or 0) == 1 and tostring(arm['masterDeviceId'] or '') == ARGV[1] and tostring(arm['masterRoleEpoch'] or '') == oldRoleEpoch and tostring(arm['deploymentSha'] or '') == ARGV[9] then",
+        "    if armOk and tonumber(arm['version'] or 0) == 1 and tostring(arm['masterDeviceId'] or '') == ARGV[1] and tostring(arm['masterRoleEpoch'] or '') == oldRoleEpoch then",
         "      arm['masterRoleEpoch'] = tonumber(ARGV[2])",
+        "      arm['deploymentSha'] = ARGV[9]",
         "      redis.call('SET', KEYS[10], cjson.encode(arm))",
         "      armCarried = 1",
         "    end",
