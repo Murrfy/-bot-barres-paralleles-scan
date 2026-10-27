@@ -108,7 +108,7 @@ async function verifyMaster(){
     });
     const q=await r.json().catch(()=>({}));
     const role=String(q?.device?.role||'');
-    if(!r.ok||q?.ok!==true||role!=='controller')throw new Error(q?.code||'Appareil contrôleur requis');
+    if(!r.ok||q?.ok!==true||role!=='controller')throw new Error((q?.code||'Appareil contrôleur requis')+(q?.reason?' — '+q.reason:''));
     localStorage.removeItem(TOKEN_KEY);
     adminRole='controller';
     $('backLink').href='/';

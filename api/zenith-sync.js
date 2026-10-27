@@ -843,8 +843,10 @@ async function rotateLegacyBearerSession(device) {
 async function requireDevice(req, res, roles, { allowBearer = false, rotateBearer = false } = {}) {
   const device = await authDevice(req, allowBearer);
   if (!device) {
+    // Cause exacte (sans secret) : le navigateur n'a envoyé aucune session, ou le serveur ne la retrouve plus.
+    const sessionCause = cookieToken(req) ? 'SESSION_INCONNUE_DU_SERVEUR' : 'NAVIGATEUR_SANS_SESSION';
     clearDeviceSessionCookie(res);
-    send(res, 401, { ok: false, code: 'UNAUTHORIZED_DEVICE' });
+    send(res, 401, { ok: false, code: 'UNAUTHORIZED_DEVICE', reason: sessionCause });
     return null;
   }
   if (roles && !roles.includes(device.role)) {
