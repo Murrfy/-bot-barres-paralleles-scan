@@ -277,6 +277,7 @@ let controllerRealCommandModule=null,controllerRealProtectionModule=null,realClo
 const ZENITH_DEVICE_TOKEN_KEY='zenith_device_token_v1',ZENITH_DEVICE_ROLE_KEY='zenith_device_role_v1',ZENITH_CONTROLLER_REV_KEY='zenith_controller_revision_v1',ZENITH_REAL_PROTECTIVE_PENDING_KEY='zenith_real_protective_pending_v1';
 let controllerIdentity={paired:false,role:'',lastOk:0,error:''},controllerIdentityTimer=null,controllerStateSyncTimer=null,controllerStateSyncBusy=false,controllerStateHydrated=false;
 let controllerSyncState={conflict:false,lastOk:0,error:''};
+const MASTER_DESYNC_GRACE_MS=45000;let masterDesyncSince=0;
 let masterControlState={mode:'',masterRegistered:false,masterLeaseActive:false,controllerRevision:0,masterAppliedRevision:0,masterSyncFailClosed:true,masterHeartbeatFresh:false,emergencyStopActive:true,realTradingEnabled:false,realExecutionArmed:false,error:''};
 let serverEntryWatch={states:{},updatedAt:0,lastOk:0,error:''},serverEntryWatchTimer=null;
 // Rafraîchissement des prix limité à une fois par seconde : redessiner la liste à chaque transaction
@@ -989,6 +990,10 @@ function renderMasterControls(){
   if(masterControlState.error){
     badge.textContent='MASTER NON VÉRIFIÉ';
     badge.classList.remove('on');
+  }else if(masterControlState.masterSyncFailClosed&&masterDesyncSince&&Date.now()-masterDesyncSince<MASTER_DESYNC_GRACE_MS){
+    // Le MASTER applique un nouveau réglage (quelques secondes) : ce n'est pas une panne.
+    badge.textContent='MASTER · SYNCHRONISATION… · '+rev;
+    badge.classList.add('on');
   }else if(masterControlState.masterSyncFailClosed){
     badge.textContent='MASTER DÉSYNCHRONISÉ · '+rev;
     badge.classList.remove('on');
@@ -1035,6 +1040,7 @@ async function refreshMasterControls(){
       realExecutionArmed:q.realExecutionArmed===true,
       error:''
     };
+    if(masterControlState.masterSyncFailClosed){if(!masterDesyncSince)masterDesyncSince=Date.now()}else masterDesyncSince=0;
     renderMasterControls();
     return true;
   }catch(e){
