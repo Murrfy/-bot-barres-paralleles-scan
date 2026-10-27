@@ -421,7 +421,6 @@ for (const required of [
   "KEY_REAL_EXECUTION_ARMED",
   "REAL_EXECUTION_DEPLOYMENT_SHA_MISSING",
   "REAL_EXECUTION_ARM_MASTER_CHANGED",
-  "REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED",
   "protectiveModeReason"
 ]) {
   if (!protectiveExecute.includes(required)) fail(`protective execution gate missing: ${required}`);
@@ -1233,8 +1232,8 @@ if (!sync.includes('KEY_REAL_EXECUTION_ARMED') ||
     !sync.includes("'REAL_EXECUTION_ARM_BLOCKED'") ||
     !sync.includes('DEPLOYMENT_SHA') ||
     !sync.includes("'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING'") ||
-    !sync.includes("'REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED'")) {
-  fail('real execution must require an explicit admin arm bound to the current MASTER and deployment');
+    sync.includes("'REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED'")) {
+  fail('real execution must require an explicit admin arm bound to the current MASTER; a code update must not disarm it');
 }
 if (!sync.includes('const armCommitScript = [') ||
     !sync.includes("if registered ~= ARGV[1] then return -1 end") ||
@@ -1716,3 +1715,11 @@ if (failed) process.exit(1);
 }
 if (failed) process.exit(1);
 console.log('Zenith safety checks passed.');
+
+{
+  const workerSrc = fs.readFileSync('server/zenith-engine-worker.mjs','utf8');
+  if (!workerSrc.includes('function entryWatchEngineReady(') ||
+      !workerSrc.includes('!entryWatchEngineReady(wanted))return false;')) {
+    fail('an entry crossing while the engine is not ready must keep the token watched (STAND-BY only when no slot is free)');
+  }
+}

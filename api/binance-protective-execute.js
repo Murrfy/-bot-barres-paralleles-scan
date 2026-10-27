@@ -460,7 +460,7 @@ function validateExecutionArmRecord(record,masterDeviceId,deploymentSha=DEPLOYME
   if(!deploymentSha)return 'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING';
   if(!record||record.version!==1)return 'REAL_EXECUTION_NOT_ARMED';
   if(String(record.masterDeviceId||'')!==String(masterDeviceId||''))return 'REAL_EXECUTION_ARM_MASTER_CHANGED';
-  if(String(record.deploymentSha||'')!==String(deploymentSha))return 'REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED';
+  // Version du code non exigée : une mise à jour ne désarme plus les protections.
   return '';
 }
 function protectiveModeReason(mode){

@@ -1069,6 +1069,22 @@ function occupiedRealEntrySlots(){
   return occupied;
 }
 
+function entryWatchEngineReady(symbol){
+  // Moteur capable de lancer un achat (hors places disponibles).
+  const config=watchedEntryConfig(symbol);
+  if(!config||!entryWatch.loaded)return false;
+  if(symbolMaxLossQuarantined(config.symbol))return false;
+  if(!runtime.synchronized||!runtime.heartbeatFresh||runtime.mode!=='RUNNING')return false;
+  return masterExecutionEligible({
+    role:'master',
+    hidden:false,
+    leaseActive:runtime.leaseActive,
+    realExecutionArmed:runtime.realExecutionArmed,
+    userStreamReady:userStreamReady(stream.state),
+    mode:runtime.mode,
+  });
+}
+
 function entryWatchMayDispatch(symbol){
   const config=watchedEntryConfig(symbol);
   if(!config||!entryWatch.loaded)return false;
@@ -1188,6 +1204,11 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
   const definition=entryWatchDefinitionMap().get(wanted);
   if(!definition)return false;
   const previous=entryWatch.states.get(wanted)||null;
+  // Si le moteur n'est pas prêt (réel désarmé, pause, flux non prêt) au moment où le prix
+  // touche l'achat, on ne consomme pas le croisement : le jeton reste SURVEILLÉ et l'achat
+  // part dès que le moteur est prêt (ordre LIMIT au prix d'achat, jamais plus cher).
+  // Seul le manque de places met le jeton en STAND-BY.
+  if(n(price,0)>0&&n(price,0)<=n(definition.buy,0)&&!entryWatchEngineReady(wanted))return false;
   const result=evaluateEntryWatchTick({
     definition,
     state:previous,

@@ -11,7 +11,7 @@ test('protective writer requires deployment-bound arm for current MASTER',()=>{
   assert.equal(validateExecutionArmRecord(arm,'master-1','sha-prod'),'');
   assert.equal(validateExecutionArmRecord(null,'master-1','sha-prod'),'REAL_EXECUTION_NOT_ARMED');
   assert.equal(validateExecutionArmRecord(arm,'master-2','sha-prod'),'REAL_EXECUTION_ARM_MASTER_CHANGED');
-  assert.equal(validateExecutionArmRecord(arm,'master-1','sha-new'),'REAL_EXECUTION_ARM_DEPLOYMENT_CHANGED');
+  assert.equal(validateExecutionArmRecord(arm,'master-1','sha-new'),'');
   assert.equal(validateExecutionArmRecord(arm,'master-1',''),'REAL_EXECUTION_DEPLOYMENT_SHA_MISSING');
 });
 
