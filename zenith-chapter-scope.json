@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 72,
+  "scopeRevision": 73,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
@@ -39,6 +39,8 @@
     "api/binance-protective-update-execute.js",
     "scripts/test-command-safety.mjs",
     "lib/binance-order-writer.mjs",
-    "scripts/test-binance-pem-normalization.mjs"
+    "scripts/test-binance-pem-normalization.mjs",
+    "scripts/test-engine-restart-continuity.mjs",
+    "scripts/test-protective-arm-gate.mjs"
   ]
 }
