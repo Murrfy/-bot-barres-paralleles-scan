@@ -464,6 +464,8 @@ function log(kind,details={}){
   delete safe.cookie;
   delete safe.sessionCookie;
   console.log(JSON.stringify(safe));
+  // Passage de relais normal entre deux MASTER (mise à jour) : pas une panne, aucun message Telegram.
+  if(kind==='BOOTSTRAP_BLOCKED'&&String(safe.code||'')==='ENGINE_INSTANCE_ACTIVE')return;
   try{const format=TELEGRAM_EVENT_MESSAGES[kind];if(format)notifyTelegram(format(safe))}catch(_){}
 }
 function telegramSymbol(v){const s=String(v||'').toUpperCase();return /^[A-Z0-9]{2,40}$/.test(s)?s:'?'}
