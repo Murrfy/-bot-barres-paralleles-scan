@@ -165,6 +165,7 @@ function normalizeStandardOrder(o){
     timeInForce:String(o.timeInForce||''),
     workingType:String(o.workingType||''),
     priceProtect:bool(o.priceProtect),
+    priceMatch:String(o.priceMatch||''),
     updateTime:n(o.updateTime??o.time),
   };
 }
@@ -189,6 +190,8 @@ function normalizeAlgoOrder(o){
     timeInForce:String(o.timeInForce||''),
     workingType:String(o.workingType||''),
     priceProtect:bool(o.priceProtect),
+    priceMatch:String(o.priceMatch||''),
+    quantity:String(o.quantity??''),
     updateTime:n(o.updateTime??o.createTime),
   };
 }
