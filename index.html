@@ -308,6 +308,7 @@ async function realAutomaticProtectionLevels(position){
     position,
     targetProfitUsd:n(c.targetProfit,settings.targetProfit),
     maxLossUsd:n(c.maxLoss,settings.maxLoss),
+    hardMaxLossUsd:n(c.margin,settings.margin),
     priceFilter,
   });
 }
@@ -1919,6 +1920,7 @@ async function saveRealActiveTokenSettings(s,position,old,protections){
       position,
       targetProfitUsd:manualTarget,
       maxLossUsd:requestedMaxLoss,
+      hardMaxLossUsd:configuredMargin,
       priceFilter
     });
     if(!wantedExit)wantedExit=n(levels.targetPrice,0);
