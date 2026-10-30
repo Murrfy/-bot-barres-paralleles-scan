@@ -759,7 +759,7 @@ function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig,activeSymb
 // Ventes (objectif, paliers) : elles utilisent la dernière configuration déjà appliquée par le MASTER.
 // Une désynchronisation (même passagère) bloque les NOUVEAUX achats, jamais la protection d'une position ouverte.
 function exitConfigReady(){
-  return Boolean(runtime.config&&typeof runtime.config==='object'&&runtime.appliedRevision>0);
+  return Boolean(runtime.config&&typeof runtime.config==='object'&&(runtime.appliedRevision>0||runtime.configLoadedAtStart===true));
 }
 
 async function syncControllerConfig(){
@@ -814,6 +814,7 @@ async function syncControllerConfig(){
   if(engineHasNoConfig&&data.applyAllowed!==true&&data.synchronized!==true){
     const loaded=await applyControllerState(controllerState);
     runtime.controllerRevision=loaded.revision;
+    runtime.configLoadedAtStart=true;
     runtime.synchronized=false;
     runtime.error=String(data.reason||'MASTER_CONFIG_APPLY_DEFERRED');
     log('ENGINE_CONFIG_LOADED_AT_START',{revision:loaded.revision,reason:String(data.reason||'')});
