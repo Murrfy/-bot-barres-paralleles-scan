@@ -238,12 +238,12 @@ test('BOT exposes and persists the important MAX-LOSS red notification setting',
   assert.doesNotMatch(cloud,/\['theme','sound','vibrate','showProtections','maxLossAlert'\]/);
 });
 
-test('BOT trading defaults cannot change while a position or watched entry is active',()=>{
+test('BOT default margin/leverage cannot change while a position or watched entry is active; max positions can (Walter)',()=>{
   const saveBot=block('function readBotSettings()','async function saveSelectedAsDefaults()');
   assert.match(saveBot,/tradingChanged=/);
   assert.match(saveBot,/next\.margin/);
   assert.match(saveBot,/next\.leverage/);
-  assert.match(saveBot,/next\.maxActive/);
+  assert.doesNotMatch(saveBot,/tradingChanged=[^;]*next\.maxActive/);
   assert.match(saveBot,/openPositions\.length\|\|n\(binanceAccount\.realPositions\)>0\|\|Object\.keys\(validated\)\.length/);
   assert.match(saveBot,/Réglages BOT de trading verrouillés/);
 });
