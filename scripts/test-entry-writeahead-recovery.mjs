@@ -89,8 +89,10 @@ test('entry API opens fail-closed gate only for exact write-ahead recovery proof
   const start=api.indexOf('function entryReadinessReason');
   const end=api.indexOf('function near',start);
   const block=api.slice(start,end);
-  assert.match(block,/pendingEntryRecovery===true,false,/);
-  assert.match(block,/executionTarget,false/);
+  // Décision de Walter : l'achat ne dépend plus du point de synchro interne (rapport de rapprochement).
+  assert.doesNotMatch(block,/state\.report/);
+  assert.match(block,/validateExecutionArmRecord\(state\.armRecord,masterDeviceId\)/);
+  assert.match(block,/USER_STREAM_NOT_READY/);
 });
 
 test('worker replays the same deterministic LIMIT and never substitutes a new price',()=>{

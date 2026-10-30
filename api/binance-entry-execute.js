@@ -18,7 +18,7 @@ import { buildEmergencyMaxLossLevel } from '../lib/real-protection-levels.mjs';
 import { buildProtectiveAlgoPlan } from '../lib/protective-update-intent.mjs';
 import { ensureBinanceEntrySymbolConfig } from '../lib/binance-symbol-config.mjs';
 import { placeStandardOrderIdempotent } from '../lib/binance-order-writer.mjs';
-import { placeAlgoOrderIdempotent } from '../lib/binance-algo-writer.mjs';
+import { placeAlgoOrderIdempotent, queryAlgoByClientId } from '../lib/binance-algo-writer.mjs';
 import { normalizeEntryTransition, transitionProtectionMatches } from '../lib/entry-transition.mjs';
 import { runLiveEntryPreflight, readConfiguredMaxActivePositions } from './binance-entry-preflight.js';
 import { validateExecutionArmRecord, executionReadiness } from './binance-protective-execute.js';
@@ -300,19 +300,44 @@ async function finalEntryDispatchGate(masterDeviceId,masterRoleEpoch,expectedArm
   };
 }
 
+// Décision de Walter : les droits de la clé API ne sont plus redemandés à Binance à chaque achat.
+// Résultat gardé 10 min ; si Binance tarde ou ne répond pas, le dernier résultat valable (24 h) suffit.
+// Seul un refus explicite de Binance (droits retirés) bloque l'achat.
+async function cachedTradingApiPermissions(revalidate){
+  const okKey=`${PREFIX}:cache:trading-api-permissions-ok`;
+  const lastOkKey=`${PREFIX}:cache:trading-api-permissions-last-ok`;
+  try{ if(String(await redis(['GET',okKey])||'')==='1')return {ok:true,code:'',blockers:[],cached:true}; }catch{}
+  const status=await revalidate();
+  if(status?.ok===true){
+    try{ await redis(['SET',okKey,'1','EX','600']); await redis(['SET',lastOkKey,'1','EX','86400']); }catch{}
+    return status;
+  }
+  if(status?.code==='BINANCE_API_PERMISSION_REVALIDATION_BLOCKED'){
+    try{ await redis(['DEL',okKey]); await redis(['DEL',lastOkKey]); }catch{}
+    return status;
+  }
+  try{ if(String(await redis(['GET',lastOkKey])||'')==='1')return {ok:true,code:'',blockers:[],staleAccepted:true}; }catch{}
+  return status;
+}
+
 function entryReadinessReason(state,masterDeviceId,symbol='',side='',pendingEntryRecovery=false){
   if(state.masterMode!=='RUNNING')return state.masterMode==='PAUSE_PENDING'?'MASTER_PAUSE_PENDING':'MASTER_PAUSED';
   if(state.emergencyStopActive)return 'EMERGENCY_STOP_ACTIVE';
   const armReason=validateExecutionArmRecord(state.armRecord,masterDeviceId);
   if(armReason)return armReason;
-  const wanted=String(symbol||'').toUpperCase();
-  const normalizedSide=String(side||'').toUpperCase();
-  const direction=normalizedSide==='BUY'?'LONG':'';
-  const executionTarget=wanted&&direction?wanted+':'+direction:wanted;
-  return executionReadiness(
-    state.runtimeState,state.report,masterDeviceId,'',pendingEntryRecovery===true,false,
-    executionTarget,false
-  );
+  // Décision de Walter : un achat ne dépend plus de la synchro interne du bot (point Binance
+  // de moins de 10 s, empreinte identique de l'état). Juste après, le contrôle préalable interroge
+  // Binance en direct (positions, ordres, solde, règles du jeton) : c'est lui qui fait foi.
+  // On garde seulement : moteur vivant, en réel, et connecté au flux privé Binance
+  // (indispensable pour voir l'achat se remplir et suivre le stop).
+  const runtimeState=state.runtimeState;
+  if(!runtimeState?.data||String(runtimeState?.masterDeviceId||'')!==String(masterDeviceId))return 'MASTER_RUNTIME_WRONG_DEVICE';
+  const age=Date.now()-Number(runtimeState?.updatedAt||0);
+  if(!Number.isFinite(age)||age<0||age>30000)return 'MASTER_RUNTIME_STALE';
+  const data=runtimeState.data;
+  if(String(data.executionMode||data.mode||'').toUpperCase()!=='REAL')return 'MASTER_RUNTIME_NOT_REAL';
+  if(!data.userStream||data.userStream.connected!==true)return 'USER_STREAM_NOT_READY';
+  return '';
 }
 
 function near(a,b){
@@ -436,7 +461,7 @@ export default async function handler(req,res){
     const beforeReason=entryReadinessReason(before,master.deviceId,symbol,side,pendingEntryRecovery);
     if(beforeReason)return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:beforeReason,writeAttempted:false});
 
-    const permissionStatus=await revalidateBinanceTradingApiPermissions(apiKey,secret);
+    const permissionStatus=await cachedTradingApiPermissions(()=>revalidateBinanceTradingApiPermissions(apiKey,secret));
     if(!permissionStatus.ok){
       return send(
         res,
@@ -728,8 +753,28 @@ export default async function handler(req,res){
     })){
       return send(res,409,{ok:false,code:'ENTRY_TRANSITION_REQUEST_MISMATCH',writeAttempted:false,plan});
     }
-    const exactOrder=(Array.isArray(latest.runtimeState?.data?.binanceOrders)?latest.runtimeState.data.binanceOrders:[])
+    let exactOrder=(Array.isArray(latest.runtimeState?.data?.binanceOrders)?latest.runtimeState.data.binanceOrders:[])
       .find(order=>transitionProtectionMatches(order,storedTransition));
+    if(!exactOrder){
+      // Décision de Walter : un retard de confirmation du stop ne doit jamais faire annuler l'achat.
+      // Si le moteur ne l'a pas encore vu passer, on le vérifie directement chez Binance.
+      try{
+        const live=await queryAlgoByClientId({
+          apiKey,secret,symbol,clientAlgoId:storedTransition.protectionClientAlgoId,
+        });
+        const normalizedLive={
+          orderClass:'ALGO',
+          symbol:live?.symbol,side:live?.side,positionSide:live?.positionSide||'BOTH',
+          type:live?.orderType||live?.type,timeInForce:live?.timeInForce,
+          reduceOnly:live?.reduceOnly,closePosition:live?.closePosition,
+          quantity:live?.quantity,origQty:live?.quantity,priceMatch:live?.priceMatch,
+          clientAlgoId:live?.clientAlgoId,triggerPrice:live?.triggerPrice,
+        };
+        if(String(live?.algoStatus||'').toUpperCase()==='NEW'&&transitionProtectionMatches(normalizedLive,storedTransition)){
+          exactOrder=normalizedLive;
+        }
+      }catch{}
+    }
     if(!exactOrder){
       return send(res,423,{
         ok:false,code:'ENTRY_PROTECTION_NOT_STREAM_CONFIRMED',

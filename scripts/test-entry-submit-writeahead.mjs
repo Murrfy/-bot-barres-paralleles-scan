@@ -34,6 +34,9 @@ test('real entry readiness is scoped to the requested symbol during a local MAX-
   const start=api.indexOf('function entryReadinessReason');
   const end=api.indexOf('function near',start);
   const block=api.slice(start,end);
-  assert.match(block,/const executionTarget=wanted&&direction\?wanted\+'\:'\+direction:wanted/);
-  assert.match(block,/executionTarget,false/);
+  // La quarantaine MAX-LOSS d'un jeton est gardée côté moteur avant tout envoi d'achat.
+  assert.doesNotMatch(block,/state\.report/);
+  const workerSrc=fs.readFileSync('server/zenith-engine-worker.mjs','utf8');
+  const may=workerSrc.slice(workerSrc.indexOf('function entryWatchMayDispatch'),workerSrc.indexOf('function entryWatchMayDispatch')+600);
+  assert.match(may,/symbolMaxLossQuarantined\(config\.symbol\)/);
 });
