@@ -2592,8 +2592,13 @@ export default async function handler(req, res) {
     const routes = {
       'exchange-info': { path: '/fapi/v1/exchangeInfo', cacheSeconds: 0, perMinute: 30 },
       'ticker-price': { path: '/fapi/v1/ticker/price', cacheSeconds: 2, perMinute: 60 },
+      'book-ticker': { path: '/fapi/v1/ticker/bookTicker', cacheSeconds: 0, perMinute: 60, perSymbol: true },
     };
     const route = routes[kind];
+    const publicSymbol = String(req.query?.symbol || '').toUpperCase();
+    if (route?.perSymbol && !/^[A-Z0-9]{3,30}$/.test(publicSymbol)) {
+      return send(res, 400, { ok:false, code:'BINANCE_PUBLIC_SYMBOL_INVALID' });
+    }
     if (!route) return send(res, 400, { ok:false, code:'BINANCE_PUBLIC_KIND_INVALID' });
     const cacheKey = `${PREFIX}:cache:binance-public:${kind}`;
     if (route.cacheSeconds > 0) {
@@ -2609,7 +2614,7 @@ export default async function handler(req, res) {
       }
     } catch {}
     try {
-      const data = await binanceJson(BINANCE_FUTURES_BASE + route.path);
+      const data = await binanceJson(BINANCE_FUTURES_BASE + route.path + (route.perSymbol ? '?symbol=' + encodeURIComponent(publicSymbol) : ''));
       if (route.cacheSeconds > 0) {
         try { await redis(['SET', cacheKey, JSON.stringify(data), 'EX', String(route.cacheSeconds)]); } catch {}
       }
