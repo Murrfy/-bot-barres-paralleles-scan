@@ -1138,13 +1138,30 @@ async function executeWatchedEntry(config,{limitPrice=config.buy}={}){
   };
   let preparedCommitted=false;
   try{
-    const prepared=await callEntryExecute({...common,phase:'PREPARE_PROTECTION'});
+    // Le point Binance (rapprochement) n'est refait que toutes les 15 s alors que l'achat exige un point de moins de 10 s :
+    // on le refait juste avant l'achat, comme pour les protections. Une seule nouvelle tentative si le point a encore vieilli.
+    const ENTRY_TRANSIENT_NOT_READY=new Set([
+      'BINANCE_RECONCILIATION_STALE','BINANCE_RECONCILIATION_RUNTIME_CHANGED','MASTER_RUNTIME_STALE',
+    ]);
+    let prepared=null;
+    for(let attempt=0;attempt<2;attempt++){
+      await publishRuntime();
+      if(await awaitReconciliation()!==true){
+        entryWatch.lastError='ENTRY_PRE_RECONCILIATION_FAILED';
+        return {ok:false,reason:entryWatch.lastError,detail:String(stream.lastError||''),prepared:false};
+      }
+      prepared=await callEntryExecute({...common,phase:'PREPARE_PROTECTION'});
+      const transient=prepared.data?.code==='ENTRY_EXECUTION_NOT_READY'&&
+        ENTRY_TRANSIENT_NOT_READY.has(String(prepared.data?.reason||''));
+      if(!transient)break;
+    }
     if(!prepared.response.ok||prepared.data?.ok!==true){
       const reasons=Array.isArray(prepared.data?.reasons)?prepared.data.reasons:[];
       const reason='ENTRY_PREPARE_'+String(prepared.data?.code||prepared.data?.reason||('HTTP_'+prepared.response.status));
       entryWatch.lastError=reason;
       return {
         ok:false,reason,
+        detail:String(prepared.data?.reason||(reasons.length?reasons.join(','):'')),
         slotBlocked:reasons.includes('MAX_ACTIVE_POSITIONS_REACHED'),
         prepared:false,
       };
@@ -1164,13 +1181,18 @@ async function executeWatchedEntry(config,{limitPrice=config.buy}={}){
     }
 
     await publishRuntime();
+    if(await awaitReconciliation()!==true){
+      entryWatch.lastError='ENTRY_SUBMIT_PRE_RECONCILIATION_FAILED';
+      scheduleReconcile(250);
+      return {ok:false,reason:entryWatch.lastError,detail:String(stream.lastError||''),prepared:true};
+    }
     const submitted=await callEntryExecute({...common,phase:'SUBMIT_ENTRY'});
     if(!submitted.response.ok||submitted.data?.ok!==true){
       entryWatch.lastError='ENTRY_SUBMIT_'+String(
         submitted.data?.code||submitted.data?.reason||('HTTP_'+submitted.response.status)
       );
       scheduleReconcile(250);
-      return {ok:false,reason:entryWatch.lastError,prepared:true};
+      return {ok:false,reason:entryWatch.lastError,detail:String(submitted.data?.reason||''),prepared:true};
     }
 
     const entryId=String(submitted.data?.plan?.params?.newClientOrderId||'');
@@ -1285,7 +1307,7 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
       log('ENTRY_WATCH_STANDBY',{symbol:wanted,buy:definition.buy,reason:'SLOT_RACE'});
     }
   }
-  log('AUTO_ENTRY_FAILED',{symbol:wanted,reason:executed.reason||'UNKNOWN'});
+  log('AUTO_ENTRY_FAILED',{symbol:wanted,reason:executed.reason||'UNKNOWN',detail:executed.detail||''});
   return false;
 }
 
