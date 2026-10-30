@@ -127,14 +127,18 @@ async function entryExecutionRateAllowed(deviceId){
 function retryAfterSeconds(){return Math.max(1,60-(Math.floor(Date.now()/1000)%60));}
 
 async function readExecutionState(){
-  const [runtimeRaw,reportRaw,armRaw,modeRaw,panicRaw]=await Promise.all([
+  const [runtimeRaw,reportRaw,armRaw,modeRaw,panicRaw,controllerRaw]=await Promise.all([
     redis(['GET',KEY_STATE]),
     redis(['GET',KEY_RECONCILE_LAST]),
     redis(['GET',KEY_REAL_EXECUTION_ARMED]),
     redis(['GET',KEY_MASTER_MODE]),
     redis(['GET',KEY_EMERGENCY_STOP]),
+    redis(['GET',KEY_CONTROLLER_STATE]),
   ]);
   return {
+    // Révision de config au début de CET achat : le verrou final refuse seulement un changement PENDANT l'achat,
+    // pas les changements de jetons faits depuis l'armement.
+    controllerRevision:Number(parseJson(controllerRaw)?.revision||0),
     runtimeState:parseJson(runtimeRaw),
     report:parseJson(reportRaw),
     armRecord:parseJson(armRaw),
@@ -421,6 +425,10 @@ export default async function handler(req,res){
 
   try{
     const before=await readExecutionState();
+    const entryControllerRevision=Number(before.controllerRevision||0);
+    if(!(entryControllerRevision>0)){
+      return send(res,423,{ok:false,code:'ENTRY_EXECUTION_NOT_READY',reason:'CONTROLLER_STATE_UNAVAILABLE',writeAttempted:false});
+    }
     const pendingEntryRecovery=Boolean(
       phase==='SUBMIT_ENTRY'&&
       pendingEntryWriteAheadRecoveryAllowed(before.report,{commandId,symbol,side,limitPrice,maxLoss})
@@ -484,7 +492,7 @@ export default async function handler(req,res){
       }
       const configDispatchGate=await finalEntryDispatchGate(
         master.deviceId,master.roleIssuedAt,configGateState.armRaw,
-        configGateState.armRecord?.controllerRevision
+        entryControllerRevision
       );
       if(!configDispatchGate.ok){
         return send(res,423,{
@@ -572,7 +580,7 @@ export default async function handler(req,res){
         return send(res,409,{ok:false,code:e?.message||'ENTRY_PLAN_INVALID',writeAttempted:false});
       }
       const dispatchGate=await finalEntryDispatchGate(
-        master.deviceId,master.roleIssuedAt,latest.armRaw,latest.armRecord?.controllerRevision
+        master.deviceId,master.roleIssuedAt,latest.armRaw,entryControllerRevision
       );
       if(!dispatchGate.ok){
         await releaseEntrySlotReservation(commandId,symbol).catch(()=>false);
@@ -647,7 +655,7 @@ export default async function handler(req,res){
         protectionClientAlgoId:protectionPlan.algoPlan.params.clientAlgoId,
         entryClientOrderId:String(existing?.entryClientOrderId||''),
         createdAt,expiresAt:Number(existing?.expiresAt||createdAt+120000),validatedAt:at,
-        controllerRevision:Number(latest.armRecord?.controllerRevision||0),
+        controllerRevision:entryControllerRevision,
         masterDeviceId:String(master.deviceId||''),
         masterRoleEpoch:String(master.roleIssuedAt||''),
         engineInstanceId,
@@ -678,7 +686,7 @@ export default async function handler(req,res){
       }
       preflight=slotGate.preflight;
       const dispatchGate=await finalEntryDispatchGate(
-        master.deviceId,master.roleIssuedAt,latest.armRaw,latest.armRecord?.controllerRevision
+        master.deviceId,master.roleIssuedAt,latest.armRaw,entryControllerRevision
       );
       if(!dispatchGate.ok){
         await releaseEntrySlotReservation(commandId,symbol).catch(()=>false);
