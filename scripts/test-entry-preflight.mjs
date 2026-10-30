@@ -204,12 +204,11 @@ test('Binance auto-add margin is rejected even in ISOLATED mode', () => {
   assert.equal(r.normalized.autoAddMargin,true);
 });
 
-test('unknown Binance auto-add margin state fails closed', () => {
+test('unknown Binance auto-add margin state no longer blocks the buy (decision Walter)', () => {
   const symbolConfig={...base().symbolConfig};
   delete symbolConfig.isAutoAddMargin;
   const r=evaluateEntryRisk(base({symbolConfig}));
-  assert.equal(r.ready,false);
-  assert.ok(r.reasons.includes('AUTO_ADD_MARGIN_UNKNOWN'));
+  assert.ok(!r.reasons.includes('AUTO_ADD_MARGIN_UNKNOWN'));
   assert.equal(r.normalized.autoAddMargin,null);
 });
 

@@ -477,7 +477,7 @@ const TELEGRAM_EVENT_MESSAGES={
   BOOTSTRAP_BLOCKED:d=>'⚠️ Zenith : MASTER bloqué au démarrage ('+telegramReason(d.code)+').',
   AUTO_ENTRY_SUBMITTED:d=>'🚀 Zenith : achat lancé — '+telegramSymbol(d.symbol)+(Number(d.limitPrice)>0?' (limite '+Number(d.limitPrice)+')':'')+'.',
   INSTANT_MARKET_ENTRY_CONFIRMED:d=>'🚀 Zenith : achat immédiat confirmé — '+telegramSymbol(d.symbol)+'.',
-  ENTRY_WATCH_STANDBY:d=>'⏸️ Zenith : '+telegramSymbol(d.symbol)+' mis en STAND-BY (places pleines).',
+  ENTRY_WATCH_STANDBY:d=>'⏸️ Zenith : '+telegramSymbol(d.symbol)+' mis en STAND-BY ('+(String(d.reason||'')==='ENTRY_FAILED'?'achat raté':'places pleines')+').',
   ENTRY_WATCH_BLOCKED:d=>'⛔ Zenith : '+telegramSymbol(d.symbol)+' bloqué ('+telegramReason(d.reason)+').',
   AUTO_ENTRY_FAILED:d=>'❌ Zenith : achat raté — '+telegramSymbol(d.symbol)+' ('+telegramReason(d.reason)+').',
   AUTO_MAX_LOSS_REPAIRED:d=>'🛡️ Zenith : perte MAX reposée — '+telegramSymbol(d.symbol)+'.',
@@ -1138,23 +1138,10 @@ async function executeWatchedEntry(config,{limitPrice=config.buy}={}){
   };
   let preparedCommitted=false;
   try{
-    // Le point Binance (rapprochement) n'est refait que toutes les 15 s alors que l'achat exige un point de moins de 10 s :
-    // on le refait juste avant l'achat, comme pour les protections. Une seule nouvelle tentative si le point a encore vieilli.
-    const ENTRY_TRANSIENT_NOT_READY=new Set([
-      'BINANCE_RECONCILIATION_STALE','BINANCE_RECONCILIATION_RUNTIME_CHANGED','MASTER_RUNTIME_STALE',
-    ]);
-    let prepared=null;
-    for(let attempt=0;attempt<2;attempt++){
-      await publishRuntime();
-      if(await awaitReconciliation()!==true){
-        entryWatch.lastError='ENTRY_PRE_RECONCILIATION_FAILED';
-        return {ok:false,reason:entryWatch.lastError,detail:String(stream.lastError||''),prepared:false};
-      }
-      prepared=await callEntryExecute({...common,phase:'PREPARE_PROTECTION'});
-      const transient=prepared.data?.code==='ENTRY_EXECUTION_NOT_READY'&&
-        ENTRY_TRANSIENT_NOT_READY.has(String(prepared.data?.reason||''));
-      if(!transient)break;
-    }
+    // L'achat ne dépend plus d'un point de synchro interne : le serveur vérifie directement chez Binance.
+    // On publie seulement l'état à jour du moteur (moteur vivant) avant d'appeler.
+    await publishRuntime();
+    const prepared=await callEntryExecute({...common,phase:'PREPARE_PROTECTION'});
     if(!prepared.response.ok||prepared.data?.ok!==true){
       const reasons=Array.isArray(prepared.data?.reasons)?prepared.data.reasons:[];
       const reason='ENTRY_PREPARE_'+String(prepared.data?.code||prepared.data?.reason||('HTTP_'+prepared.response.status));
@@ -1173,19 +1160,11 @@ async function executeWatchedEntry(config,{limitPrice=config.buy}={}){
       return {ok:false,reason:entryWatch.lastError,prepared:true};
     }
 
-    const protection=await waitForStreamOrder({kind:'ALGO',clientId:protectionId,terminal:false},3500);
-    if(!protection){
-      entryWatch.lastError='ENTRY_PREPARE_NOT_STREAM_CONFIRMED';
-      scheduleReconcile(250);
-      return {ok:false,reason:entryWatch.lastError,prepared:true};
-    }
+    // Décision de Walter : le stop ne fait jamais annuler l'achat. Si sa confirmation par le flux
+    // tarde, on continue : le serveur vérifie le stop directement chez Binance avant d'acheter.
+    await waitForStreamOrder({kind:'ALGO',clientId:protectionId,terminal:false},3500);
 
     await publishRuntime();
-    if(await awaitReconciliation()!==true){
-      entryWatch.lastError='ENTRY_SUBMIT_PRE_RECONCILIATION_FAILED';
-      scheduleReconcile(250);
-      return {ok:false,reason:entryWatch.lastError,detail:String(stream.lastError||''),prepared:true};
-    }
     const submitted=await callEntryExecute({...common,phase:'SUBMIT_ENTRY'});
     if(!submitted.response.ok||submitted.data?.ok!==true){
       entryWatch.lastError='ENTRY_SUBMIT_'+String(
@@ -1293,18 +1272,23 @@ async function processEntryWatchPrice(symbol,price,{eventId=-1,eventTime=Date.no
     return false;
   }
 
-  // A slot can disappear between the crossing decision and Binance preflight.
-  // Plus d'attente : si rien n'a encore été engagé chez Binance, le jeton passe en STAND-BY.
-  if(executed.slotBlocked===true&&executed.prepared!==true){
+  // Règle de Walter : tout achat raté (place prise ou autre raison) met le jeton en STAND-BY,
+  // il reste dans la liste et le bot ne réessaie pas tant que Walter ne le revalide pas.
+  // Si un stop a déjà été posé chez Binance (prepared), le déclenchement est conservé pour que
+  // le nettoyage existant de ce stop reste rattaché à cet achat.
+  {
     const state=entryWatch.states.get(wanted);
     if(state){
-      state.triggeredAt=0;
+      if(executed.prepared!==true)state.triggeredAt=0;
       state.pendingUntil=0;
       state.blockedAt=Date.now();
       entryWatch.states.set(wanted,state);
-      entryWatch.lastError='ENTRY_STANDBY_NO_SLOT';
+      entryWatch.lastError=executed.slotBlocked===true?'ENTRY_STANDBY_NO_SLOT':(executed.reason||'ENTRY_STANDBY_FAILED');
       await persistEntryWatchStateNow().catch(()=>false);
-      log('ENTRY_WATCH_STANDBY',{symbol:wanted,buy:definition.buy,reason:'SLOT_RACE'});
+      log('ENTRY_WATCH_STANDBY',{
+        symbol:wanted,buy:definition.buy,
+        reason:executed.slotBlocked===true?'SLOT_RACE':'ENTRY_FAILED',
+      });
     }
   }
   log('AUTO_ENTRY_FAILED',{symbol:wanted,reason:executed.reason||'UNKNOWN',detail:executed.detail||''});

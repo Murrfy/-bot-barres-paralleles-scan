@@ -53,7 +53,11 @@ test('every real matching-engine write API revalidates permissions before write 
   for(const file of files){
     const src=fs.readFileSync(file,'utf8');
     assert.match(src,/revalidateBinanceTradingApiPermissions/);
-    const check=src.indexOf('await revalidateBinanceTradingApiPermissions(apiKey,secret)');
+    // Achat : vérification mise en cache (décision de Walter), toujours avant toute écriture Binance.
+    const check=Math.max(
+      src.indexOf('await revalidateBinanceTradingApiPermissions(apiKey,secret)'),
+      src.indexOf('await cachedTradingApiPermissions(()=>revalidateBinanceTradingApiPermissions(apiKey,secret))')
+    );
     assert.ok(check>=0,file+' missing permission check');
 
     const writeNeedles=file.includes('entry-execute')
