@@ -482,9 +482,14 @@ function executionReadiness(
   if(String(data.executionMode||data.mode||'').toUpperCase()!=='REAL')return 'MASTER_RUNTIME_NOT_REAL';
   const stream=data.userStream;
   if(!stream||stream.connected!==true)return 'USER_STREAM_NOT_READY';
+  // Réparation d'une protection manquante : le flux ne peut pas être « propre » tant que la protection
+  // manque (cercle). On l'autorise si le rapport ne signale QUE cette protection manquante (vérifié plus bas).
+  const protectionRepairOnly=Boolean(
+    String(repairTarget||'')&&protectionOnlyMismatchTarget(report)===String(repairTarget||'').toUpperCase()
+  );
   if(pendingEntryCancelRecovery!==true&&maxLossRemainderRecovery!==true&&
      partialTargetRemainderRecovery!==true&&progressiveRemainderRecovery!==true&&
-     persistedSaleRemainderRecovery!==true&&
+     persistedSaleRemainderRecovery!==true&&!protectionRepairOnly&&
      (stream.ready!==true||stream.failClosed!==false||stream.needsReconciliation!==false)){
     return 'USER_STREAM_NOT_READY';
   }
