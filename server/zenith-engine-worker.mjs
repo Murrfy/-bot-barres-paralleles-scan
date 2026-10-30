@@ -806,6 +806,23 @@ async function syncControllerConfig(){
     }
   }
 
+  // Moteur qui vient de démarrer sans AUCUNE configuration (redémarrage pendant une position ouverte
+  // avec des réglages en attente) : rester sans configuration le rend aveugle (aucun jeton, aucune
+  // position reconnue, aucune protection). On charge la configuration actuelle, puis on reprend la
+  // photo Binance pour que les positions soient de nouveau reconnues.
+  const engineHasNoConfig=!runtime.config||typeof runtime.config!=='object';
+  if(engineHasNoConfig&&data.applyAllowed!==true&&data.synchronized!==true){
+    const loaded=await applyControllerState(controllerState);
+    runtime.controllerRevision=loaded.revision;
+    runtime.synchronized=false;
+    runtime.error=String(data.reason||'MASTER_CONFIG_APPLY_DEFERRED');
+    log('ENGINE_CONFIG_LOADED_AT_START',{revision:loaded.revision,reason:String(data.reason||'')});
+    if(stream.ws||stream.state?.connected===true){
+      await closeLocalStream('ENGINE_CONFIG_LOADED_AT_START',true).catch(()=>{});
+    }
+    return false;
+  }
+
   if(data.applyAllowed!==true&&data.synchronized!==true){
     runtime.synchronized=false;
     runtime.error=String(data.reason||'MASTER_CONFIG_APPLY_DEFERRED');
