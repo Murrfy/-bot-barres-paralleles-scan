@@ -3377,6 +3377,12 @@ async function reconcile(secondPass=false){
           missingMaxLossProtections:pick(diff.missingMaxLossProtections),
           ambiguousMaxLossProtections:pick(diff.ambiguousMaxLossProtections),
           unsafeMaxLossProtections:pick(diff.unsafeMaxLossProtections),
+          enginePositions:(streamProjection().binancePositions||[]).map(p=>String(p?.symbol||'')+':'+String(p?.positionAmt||'')),
+          engineOrders:(streamProjection().binanceOrders||[]).slice(0,10).map(o=>String(o?.symbol||'')+':'+String(o?.type||'')+':'+String(o?.clientAlgoId||o?.clientOrderId||'')),
+          streamConnected:stream.state?.connected===true,
+          streamReady:stream.state?.ready===true,
+          streamFailReasons:Array.isArray(stream.state?.failReasons)?stream.state.failReasons.slice(0,5):[],
+          streamLastEventAt:Number(stream.state?.lastEventAt||0),
         };
         const signature=JSON.stringify(summary);
         if(signature!==stream.lastMismatchSignature){
