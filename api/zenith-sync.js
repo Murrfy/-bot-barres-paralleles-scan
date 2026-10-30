@@ -2584,6 +2584,41 @@ export default async function handler(req, res) {
     });
   }
 
+  // Données Binance PUBLIQUES pour la page iPhone (règles des jetons, prix).
+  // Décision de Walter : la page ne parle plus directement à Binance, pour qu'une limite
+  // de Binance sur l'adresse du téléphone (418/429) ne bloque plus jamais la page.
+  if (action === 'binance-public' && req.method === 'GET') {
+    const kind = String(req.query?.kind || '');
+    const routes = {
+      'exchange-info': { path: '/fapi/v1/exchangeInfo', cacheSeconds: 0, perMinute: 30 },
+      'ticker-price': { path: '/fapi/v1/ticker/price', cacheSeconds: 2, perMinute: 60 },
+    };
+    const route = routes[kind];
+    if (!route) return send(res, 400, { ok:false, code:'BINANCE_PUBLIC_KIND_INVALID' });
+    const cacheKey = `${PREFIX}:cache:binance-public:${kind}`;
+    if (route.cacheSeconds > 0) {
+      try {
+        const cached = await redis(['GET', cacheKey]);
+        if (cached) return send(res, 200, JSON.parse(cached));
+      } catch {}
+    }
+    try {
+      const bucket = Math.floor(Date.now() / 60000);
+      if (await incrementWithExpiry(`${PREFIX}:rate:binance-public:${kind}:${bucket}`, 120) > route.perMinute) {
+        return send(res, 429, { ok:false, code:'BINANCE_PUBLIC_RATE_LIMITED' });
+      }
+    } catch {}
+    try {
+      const data = await binanceJson(BINANCE_FUTURES_BASE + route.path);
+      if (route.cacheSeconds > 0) {
+        try { await redis(['SET', cacheKey, JSON.stringify(data), 'EX', String(route.cacheSeconds)]); } catch {}
+      }
+      return send(res, 200, data);
+    } catch (error) {
+      return send(res, 502, { ok:false, code:'BINANCE_PUBLIC_UNAVAILABLE', status:Number(error?.status) || 0 });
+    }
+  }
+
   try {
 
     if (action === 'observer' && req.method === 'GET') {
