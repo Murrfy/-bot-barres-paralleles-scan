@@ -3360,6 +3360,30 @@ async function reconcile(secondPass=false){
     const acceptable=data.report.failClosed===false||Boolean(repairTarget);
     if(!acceptable){
       const reason=String(data.report?.reasons?.[0]||'BINANCE_RECONCILIATION_MISMATCH');
+      // Diagnostic (lecture seule) : écrit une fois chaque nouvelle liste d'anomalies Binance,
+      // pour savoir pourquoi le moteur refuse (ex. repose de la perte max non faite).
+      try{
+        const diff=data.report?.differences||{};
+        const pick=v=>(Array.isArray(v)?v:[]).slice(0,10).map(x=>typeof x==='string'?x:{
+          key:x?.key,symbol:x?.symbol,direction:x?.direction,type:x?.type||x?.orderType,
+          clientOrderId:x?.clientOrderId,clientAlgoId:x?.clientAlgoId,reason:x?.reason,
+        });
+        const summary={
+          reasons:Array.isArray(data.report?.reasons)?data.report.reasons:[],
+          untrackedPositions:pick(diff.untrackedPositions),
+          missingPositions:pick(diff.missingPositions),
+          untrackedOrders:pick(diff.untrackedOrders),
+          missingOrders:pick(diff.missingOrders),
+          missingMaxLossProtections:pick(diff.missingMaxLossProtections),
+          ambiguousMaxLossProtections:pick(diff.ambiguousMaxLossProtections),
+          unsafeMaxLossProtections:pick(diff.unsafeMaxLossProtections),
+        };
+        const signature=JSON.stringify(summary);
+        if(signature!==stream.lastMismatchSignature){
+          stream.lastMismatchSignature=signature;
+          log('RECONCILIATION_MISMATCH_DETAIL',summary);
+        }
+      }catch(_){}
       await invalidateStream('BINANCE_RECONCILIATION_'+reason);
       return false;
     }
