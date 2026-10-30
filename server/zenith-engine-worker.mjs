@@ -2463,6 +2463,14 @@ function repairPriceFilters(){
 async function markMaxLossRepairFailure(reason,symbol=''){
   const code=String(reason||'AUTO_MAX_LOSS_REPAIR_FAIL_CLOSED');
   const wanted=String(symbol||'').toUpperCase();
+  // Diagnostic : la réparation de perte max refusait sans laisser de trace.
+  try{
+    const signature=code+'|'+wanted;
+    if(signature!==stream.lastMaxLossRepairFailure){
+      stream.lastMaxLossRepairFailure=signature;
+      log('AUTO_MAX_LOSS_REPAIR_REFUSED',{symbol:wanted,reason:code});
+    }
+  }catch(_){}
   const localQuarantine=Boolean(wanted&&symbolMaxLossQuarantined(wanted));
   runtime.error=localQuarantine?'SYMBOL_QUARANTINE_'+wanted+'_'+code:code;
   stream.lastError=runtime.error;
@@ -2778,7 +2786,16 @@ async function repairMissingMaxLoss(report){
     priceFilters:repairPriceFilters(),
   });
 
-  if(plan.action==='NONE')return {handled:false,repaired:false,reason:plan.reason};
+  if(plan.action==='NONE'){
+    try{
+      const signature='NONE|'+String(plan.reason||'');
+      if(signature!==stream.lastMaxLossRepairFailure){
+        stream.lastMaxLossRepairFailure=signature;
+        log('AUTO_MAX_LOSS_REPAIR_REFUSED',{symbol,reason:'NONE_'+String(plan.reason||'')});
+      }
+    }catch(_){}
+    return {handled:false,repaired:false,reason:plan.reason};
+  }
 
   if(plan.action!=='REPAIR'){
     const reason=await markMaxLossRepairFailure(
@@ -3505,6 +3522,7 @@ async function seedStream(connectionId,connectedAt){
   const snapshot=filterRuntimeSnapshotToZenith(data.snapshot);
   rememberPriceFilters(snapshot);
   stream.state=seedUserStreamStateFromRuntimeSnapshot(snapshot,{connectionId,connectedAt});
+  log('STREAM_SEEDED',{positions:(snapshot.positions||[]).map(p=>String(p?.symbol||'')),algoOrders:(snapshot.algoOrders||[]).length,scope:configuredZenithSymbols().size});
   const cutoff=n(snapshot.serverTime,0);
   const buffered=stream.bufferedEvents.splice(0)
     .sort((a,b)=>n(a?.E,n(a?.T,0))-n(b?.E,n(b?.T,0)));
