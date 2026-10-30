@@ -5270,7 +5270,8 @@ export default async function handler(req, res) {
       }
       const activeMaster = await masterDeviceId();
       const configSync = await readMasterConfigSync(activeMaster);
-      if (!configSync.status.synchronized && !allowedWhilePending) {
+      // Config en attente mais applicable (aucune position ni ordre) : on laisse passer, le worker l'applique avant l'exécution.
+      if (!configSync.status.synchronized && !configSync.status.applyAllowed && !allowedWhilePending) {
         return send(res, 423, {
           ok: false,
           code: 'MASTER_CONFIG_OUT_OF_SYNC',
@@ -5530,6 +5531,17 @@ export default async function handler(req, res) {
 
       const configSync = await readMasterConfigSync(device.deviceId);
       if (!configSync.status.synchronized && !commandAllowedDuringPausePending(command.type)) {
+        if (configSync.status.applyAllowed === true) {
+          // Le worker applique la config en attente à son prochain cycle ; la commande est reprise ensuite.
+          const deferred = await deferClaimedCommand(raw, command, 'MASTER_CONFIG_APPLY_PENDING', device, 1500);
+          return send(res, 200, {
+            ok: true,
+            command: null,
+            configApplyDeferred: deferred,
+            retryAfterMs: 1500,
+            recovery,
+          });
+        }
         await rejectClaimedCommand(raw, 'MASTER_CONFIG_OUT_OF_SYNC', {
           controllerRevision: configSync.status.controllerRevision,
           appliedRevision: configSync.status.appliedRevision,
