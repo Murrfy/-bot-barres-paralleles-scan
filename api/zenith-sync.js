@@ -1612,11 +1612,10 @@ function masterConfigSyncStatus(controllerState, appliedState, runtimeState, exp
 
   const synchronized = configMatched && !runtimeFailClosed;
   const needsApply = controllerPresent && !configMatched;
-  const applyDeferred = needsApply && (
-    activity.activePositions > 0 ||
-    activity.openOrders > 0 ||
-    runtimeFailClosed
-  );
+  // Décision de Walter : les réglages modifiables (vente, paliers, perte max) s'appliquent même
+  // pendant une position ouverte. Le moteur refuse lui-même tout changement verrouillé
+  // (achat, marge, levier) sur un jeton actif avant d'appliquer.
+  const applyDeferred = needsApply && runtimeFailClosed;
   const reason = !controllerPresent
     ? 'NO_CONTROLLER_STATE'
     : runtimeFailClosed
