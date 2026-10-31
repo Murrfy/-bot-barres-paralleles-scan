@@ -756,6 +756,51 @@ function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig,activeSymb
   return true;
 }
 
+// Réglages qu'on peut changer sur un jeton dont la position est ouverte.
+const ACTIVE_EDITABLE_TOKEN_KEYS=new Set([
+  'targetProfit','manualTargetProfit','exactSaleEnabled','exactSalePrice','exactSaleSource',
+  'protectionStages','maxLoss',
+]);
+const LOCKED_GLOBAL_SETTING_KEYS=['margin','leverage'];
+
+function activeEditableConfigAllowed(currentConfig,nextConfig,activeSymbols=activeRuntimeSymbols()){
+  if(!currentConfig||typeof currentConfig!=='object'||!nextConfig||typeof nextConfig!=='object')return false;
+  const beforeSettings=currentConfig.settings||{},afterSettings=nextConfig.settings||{};
+  for(const key of LOCKED_GLOBAL_SETTING_KEYS){
+    if(stableStringify(beforeSettings[key])!==stableStringify(afterSettings[key]))return false;
+  }
+  const active=new Set([...activeSymbols].map(symbol=>String(symbol||'').toUpperCase()));
+  for(const key of ['manualTokens','validated']){
+    const before=currentConfig[key]&&typeof currentConfig[key]==='object'?currentConfig[key]:{};
+    const after=nextConfig[key]&&typeof nextConfig[key]==='object'?nextConfig[key]:{};
+    for(const symbol of active){
+      if(stableStringify(before[symbol])!==stableStringify(after[symbol]))return false;
+    }
+  }
+  const beforeTokens=currentConfig.tokenSettings&&typeof currentConfig.tokenSettings==='object'?currentConfig.tokenSettings:{};
+  const afterTokens=nextConfig.tokenSettings&&typeof nextConfig.tokenSettings==='object'?nextConfig.tokenSettings:{};
+  for(const symbol of active){
+    const before=beforeTokens[symbol]&&typeof beforeTokens[symbol]==='object'?beforeTokens[symbol]:{};
+    const after=afterTokens[symbol]&&typeof afterTokens[symbol]==='object'?afterTokens[symbol]:null;
+    if(!after){if(Object.keys(before).length)return false;continue;}
+    const keys=new Set([...Object.keys(before),...Object.keys(after)]);
+    for(const key of keys){
+      if(ACTIVE_EDITABLE_TOKEN_KEYS.has(key))continue;
+      if(stableStringify(before[key])!==stableStringify(after[key]))return false;
+    }
+    const maxLoss=n(after.maxLoss,NaN);
+    const margin=n(after.margin,n(afterSettings.margin,NaN));
+    if(!(maxLoss>=2)||!(margin>0)||maxLoss>margin+1e-8)return false;
+    const target=n(after.targetProfit,NaN),manual=n(after.manualTargetProfit,target);
+    if(!(target>0)||!(manual>0))return false;
+    const exactEnabled=after.exactSaleEnabled===true,exactPrice=n(after.exactSalePrice,0);
+    if(exactEnabled&&!(exactPrice>0))return false;
+    if(!(exactPrice>=0)||String(after.exactSaleSource||'settings')!=='settings')return false;
+    if(after.protectionStages!==undefined&&!validActiveProtectionStages(after.protectionStages))return false;
+  }
+  return true;
+}
+
 // Ventes (objectif, paliers) : elles utilisent la dernière configuration déjà appliquée par le MASTER.
 // Une désynchronisation (même passagère) bloque les NOUVEAUX achats, jamais la protection d'une position ouverte.
 function exitConfigReady(){
@@ -827,6 +872,15 @@ async function syncControllerConfig(){
   if(data.applyAllowed!==true&&data.synchronized!==true){
     runtime.synchronized=false;
     runtime.error=String(data.reason||'MASTER_CONFIG_APPLY_DEFERRED');
+    return false;
+  }
+
+  // Position ouverte : on applique les réglages modifiables (vente, paliers, perte max),
+  // jamais un changement d'achat, de marge ou de levier sur un jeton actif.
+  if(runtime.config&&activeRuntimeSymbols().size>0&&
+     !activeEditableConfigAllowed(runtime.config,controllerState.data)){
+    runtime.synchronized=false;
+    runtime.error='ACTIVE_LOCKED_SETTING_CHANGED';
     return false;
   }
 
