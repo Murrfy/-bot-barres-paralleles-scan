@@ -62,7 +62,7 @@ test('a newer controller revision fails closed until MASTER applies it', () => {
   assert.equal(s.reason, 'MASTER_CONFIG_OUT_OF_SYNC');
 });
 
-test('full configuration apply is deferred while a position is active', () => {
+test('configuration apply is allowed while a position is active (engine guards locked fields)', () => {
   const s = masterConfigSyncStatus(
     controller(4, 'hash-4'),
     applied(3, 'hash-3'),
@@ -70,20 +70,20 @@ test('full configuration apply is deferred while a position is active', () => {
     'master-1'
   );
   assert.equal(s.synchronized, false);
-  assert.equal(s.applyAllowed, false);
-  assert.equal(s.applyDeferred, true);
-  assert.equal(s.reason, 'MASTER_CONFIG_APPLY_DEFERRED');
+  assert.equal(s.applyAllowed, true);
+  assert.equal(s.applyDeferred, false);
+  assert.equal(s.reason, 'MASTER_CONFIG_OUT_OF_SYNC');
 });
 
-test('open orders also defer a full configuration apply', () => {
+test('open orders no longer block a configuration apply', () => {
   const s = masterConfigSyncStatus(
     controller(4, 'hash-4'),
     applied(3, 'hash-3'),
     runtime([], [{ symbol: 'BTCUSDT' }]),
     'master-1'
   );
-  assert.equal(s.applyAllowed, false);
-  assert.equal(s.applyDeferred, true);
+  assert.equal(s.applyAllowed, true);
+  assert.equal(s.applyDeferred, false);
 });
 
 test('an acknowledgement from a replaced MASTER is never accepted as synchronized', () => {
