@@ -54,6 +54,16 @@ function sha256(v){return crypto.createHash('sha256').update(String(v)).digest('
 function parseJson(raw){try{return raw?JSON.parse(raw):null}catch{return null}}
 function n(v,fallback=NaN){const x=Number(v);return Number.isFinite(x)?x:fallback}
 function bool(v){return v===true||v==='true'}
+
+function exitPlaceReadiness(runtimeState,masterDeviceId){
+  const age=Date.now()-Number(runtimeState?.updatedAt||0);
+  if(!runtimeState?.data||String(runtimeState?.masterDeviceId||'')!==String(masterDeviceId))return 'MASTER_RUNTIME_WRONG_DEVICE';
+  if(!Number.isFinite(age)||age<0||age>30000)return 'MASTER_RUNTIME_STALE';
+  const data=runtimeState.data;
+  if(String(data.executionMode||data.mode||'').toUpperCase()!=='REAL')return 'MASTER_RUNTIME_NOT_REAL';
+  if(data.userStream?.connected!==true)return 'USER_STREAM_NOT_READY';
+  return '';
+}
 function terminalStandard(status){
   return ['FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(String(status||'').toUpperCase());
 }
@@ -618,10 +628,16 @@ export default async function handler(req,res){
       (phase==='CANCEL_OLD'&&update.protectionKind==='MAX_LOSS'&&String(req.body?.newClientAlgoId||''))
     )?protectiveRepairTarget(type,update):'';
     const executionTarget=update.symbol+':'+update.direction;
-    const readyReason=executionReadiness(
-      state.runtimeState,state.report,master.deviceId,repairTarget,false,false,
-      executionTarget,false
-    );
+    // Décision de Walter : modifier la vente d'une position ouverte ne doit plus être bloqué.
+    // Poser la nouvelle vente (ordre « réduire uniquement », qui ne peut que fermer) se fait dès que
+    // le moteur est vivant, en réel et connecté à Binance ; la position est revérifiée juste après.
+    const exitPlaceOnly=type==='EXEC_UPDATE_EXIT'&&phase==='PLACE_NEW';
+    const readyReason=exitPlaceOnly
+      ?exitPlaceReadiness(state.runtimeState,master.deviceId)
+      :executionReadiness(
+        state.runtimeState,state.report,master.deviceId,repairTarget,false,false,
+        executionTarget,false
+      );
     if(readyReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readyReason,writeAttempted:false});
 
     const position=runtimePosition(state.runtimeState,update.symbol,update.direction);
