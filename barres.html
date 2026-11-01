@@ -87,49 +87,31 @@ const bt=x=>Math.max(x[1],x[4]),bb=x=>Math.min(x[1],x[4]);
 function stopPoints(c,k){const s=swings(c,k),p=[];for(const i of s.hi){p.push({i,p:c[i][2],w:.8});p.push({i,p:bt(c[i]),w:1});}for(const i of s.lo){p.push({i,p:c[i][3],w:.8});p.push({i,p:bb(c[i]),w:1});}return p;}
 function touches(pts,from,to,lvl,tol){const m=new Map();for(const q of pts){if(q.i<from||q.i>=to)continue;const d=Math.abs(q.p-lvl);if(d<=tol){const v=q.w*(1-d/(tol*2));m.set(q.i,Math.max(m.get(q.i)||0,v));}}let s=0;for(const v of m.values())s+=v;return s;}
 function analyse(c){const n=c.length;if(n<30)return[];
- // Règle de Walter : la médiane se pose sur une cassure (grosse bougie rouge qui casse) ou sur une bougie en croix,
- // validée seulement si des murs (corps ou mèches) l'arrêtent à gauche ET à droite. Sinon on passe à la cassure suivante.
- const rng=c.map(x=>x[2]-x[3]).sort((a,b)=>a-b),tol=rng[Math.floor(n/2)]*0.25;
- const bodies=c.map(x=>Math.abs(x[4]-x[1])).sort((a,b)=>a-b),bodyMed=bodies[Math.floor(n/2)]||1e-12;
- const wall=(lvl,from,to)=>{let k=0;for(let i=Math.max(0,from);i<Math.min(n,to);i++){const x=c[i];
-   if([bt(x),bb(x),x[2],x[3]].some(p=>Math.abs(p-lvl)<=tol))k++;}return k;};
- const sw=swings(c,2);const tops=sw.hi.filter(i=>i>=3&&i<=n-2).sort((a,b)=>c[b][2]-c[a][2]).slice(0,4);
- const out=[];
- for(const ti of tops){const T=c[ti][2];
-  const cands=[];
-  for(let i=ti+1;i<n;i++){const x=c[i],body=Math.abs(x[4]-x[1]),range=x[2]-x[3];
-   if(x[4]<x[1]&&body>=bodyMed*1.8)cands.push({i,M:x[1],kind:'cassure'});
-   else if(range>0&&body<=range*0.15&&range>=rng[Math.floor(n/2)]*0.8)cands.push({i,M:(x[1]+x[4])/2,kind:'croix'});}
-   // Mur juste après la cassure : au moins deux bougies (rouge ou verte) qui s'arrêtent au même prix (mèche ou corps).
-   // C'est ce mur qui fixe la médiane. Sinon, niveau du corps de la cassure avec des murs. Cascade si la chute est cassée.
-   const tight=rng[Math.floor(n/2)]*0.12;
-   for(const k of cands){const x=c[k.i],top=k.kind==='cassure'?x[1]:k.M,bot=k.kind==='cassure'?Math.min(x[4],x[3]):k.M;const levels=[];
-    const near=c.slice(k.i+1,Math.min(n,k.i+8));
-    for(const y of near)for(const p of [y[2],bt(y)]){if(p>top+tol||p<bot-tol)continue;
-     const cnt=near.filter(z=>[z[2],bt(z),bb(z),z[3]].some(q=>Math.abs(q-p)<=tight)).length;if(cnt>=2)levels.push(p);}
-    levels.sort((a,b)=>b-a);
-    if(k.kind==='croix')levels.push(k.M);
-    let hit=null;
-    for(const M of levels){if(!(T-M>=rng[Math.floor(n/2)]*3))continue;const B=2*M-T;if(!(B>0))continue;
-     if(Math.min(...c.slice(k.i).map(y=>y[3]))<B-tol*2)continue;hit={M,B};break;}
-    if(hit){const lowAfter=Math.min(...c.slice(ti).map(y=>y[3]));
-     out.push({T,M:hit.M,B:hit.B,ti,mi:k.i,kind:k.kind,touched:lowAfter<=hit.B+tol});break;}}
-  if(out.length)break;}
- // Cohérence (méthode de Walter) : si la chute est terminée (plus bas suivi d'un rebond), on essaie les autres sommets
- // comme barre haute et on garde celui dont le reflet tombe pile sur le plus bas réel.
- if(out.length){const r=out[0];const after=c.slice(r.mi);let li=r.mi;for(let i=r.mi;i<n;i++)if(c[i][3]<c[li][3])li=i;
-  const low=c[li][3],done=li<n-3&&c[n-1][4]>low+rng[Math.floor(n/2)]*2;
-  if(done&&Math.abs(r.B-low)>rng[Math.floor(n/2)]*0.12){let best=null;
-   for(let i=0;i<r.mi;i++){for(const T of [c[i][2],bt(c[i])]){if(!(T-r.M>=rng[Math.floor(n/2)]*3))continue;const B=2*r.M-T,e=Math.abs(B-low);
-     if(e<=tol&&(!best||e<best.e))best={T,B,e,ti:i};}}
-   if(best)out[0]={...r,T:best.T,B:best.B,ti:best.ti,touched:true};}}
-  // Chute pas encore terminée : on essaie les sommets en avant et en arrière pour que la chute tombe sur un mur existant.
-  else if(!done){const tight2=rng[Math.floor(n/2)]*0.12;const wallAt=B=>c.filter(x=>[x[2],x[3],bt(x),bb(x)].some(q=>Math.abs(q-B)<=tight2)).length;
-   let best={T:r.T,B:r.B,ti:r.ti,w:wallAt(r.B)};
-   for(let i=0;i<r.mi;i++){for(const T of [c[i][2],bt(c[i])]){if(!(T-r.M>=rng[Math.floor(n/2)]*3))continue;const B=2*r.M-T;if(!(B>0))continue;
-     if(Math.min(...c.slice(r.mi).map(y=>y[3]))<B-tol*2)continue;const w=wallAt(B);if(w>best.w)best={T,B,ti:i,w};}}
-   if(best.w>=2&&best.T!==r.T){const lowAfter=Math.min(...c.slice(best.ti).map(y=>y[3]));out[0]={...r,T:best.T,B:best.B,ti:best.ti,touched:lowAfter<=best.B+tol};}}
- return out;}
+ const R=c.map(x=>x[2]-x[3]).sort((a,b)=>a-b)[n>>1],tight=R*0.15,tol=R*0.25;
+ const stops=x=>[x[2],x[3],bt(x),bb(x)];
+ const cnt=(p,a,b)=>{let k=0;for(let i=Math.max(0,a);i<Math.min(n,b);i++)if(stops(c[i]).some(q=>Math.abs(q-p)<=tight))k++;return k;};
+ // 1. versants : sommets (mèche et corps) des hauts locaux + hauts des grosses bougies rouges
+ const Ts=[];// 1. versants, 2. murs (centre du range), 3. la chute où le plus de versants se rejoignent
+ for(const i of swings(c,3).hi)if(i<n-2)Ts.push({i,T:c[i][2]},{i,T:bt(c[i])});
+ // 2. murs : niveaux où des bougies s'arrêtent des deux côtés de la cassure
+ const lv=[...new Set(c.flatMap(stops))];
+ let li=0;for(let i=0;i<n;i++)if(c[i][3]<c[li][3])li=i;const low=c[li][3],done=li<n-3&&c[n-1][4]>low+R*2;
+
+ const pairs=[];
+ for(const t of Ts){const after=c.slice(t.i);const lowAfter=Math.min(...after.map(x=>x[3]));
+  for(const M of lv){if(!(M<t.T-3*R))continue;const ci=c.findIndex((x,k)=>k>t.i&&x[4]<M);if(ci<0)continue;
+   const L=cnt(M,0,ci),Rr=cnt(M,ci+1,n);if(Rr<2||L<(done?0:2))continue;
+   const B=2*M-t.T;if(!(B>0))continue;if(lowAfter<B-tol*2)continue; // déjà cassée
+   pairs.push({T:t.T,ti:t.i,M,B,w:Math.min(L,Rr)});}}
+ // chute terminée (plus bas puis rebond) : seules les constructions qui tombent sur le vrai plus bas comptent
+ const P=done?pairs.filter(p=>p.ti<li&&Math.abs(p.B-low)<=tol*2):pairs.filter(p=>p.B<c[n-1][4]);
+ pairs.length=0;pairs.push(...P);
+ if(!pairs.length)return[];
+ // 3. la chute retenue est celle où le plus de versants se rejoignent
+ let best=null;for(const p of pairs){let s=0;const tis=new Set();for(const q of pairs)if(Math.abs(q.B-p.B)<=tight){tis.add(q.ti);}s=tis.size;
+  if(!best||s>best.s||(s===best.s&&p.w>best.p.w))best={s,p};}
+ const r=best.p;const lowAfter=Math.min(...c.slice(r.ti).map(x=>x[3]));
+ return[{T:r.T,M:r.M,B:r.B,ti:r.ti,touched:lowAfter<=r.B+tol,agree:best.s}];}
 return{analyse};})();
 
 /* ===== Données Binance (depuis le téléphone) ===== */
