@@ -104,7 +104,7 @@ function analyse(c){const n=c.length;if(n<30)return[];
    // Cascade : si la chute de ce niveau est déjà cassée en clôture, on descend.
    for(const k of cands){const x=c[k.i],top=k.kind==='cassure'?x[1]:k.M,bot=k.kind==='cassure'?x[4]:k.M;let hit=null;
     for(let M=top;M>=bot-1e-12;M-=tol/2){if(!(T-M>=rng[Math.floor(n/2)]*3))continue;const B=2*M-T;if(!(B>0))break;
-     if(c.slice(k.i).filter(y=>y[4]<B-tol*2).length>2)continue;
+     if(Math.min(...c.slice(k.i).map(y=>y[3]))<B-tol*2)continue;
      const left=wall(M,0,k.i-1),right=wall(M,k.i+2,n);
      if(right>=1&&left+right>=2){hit={M,B};break;}}
     if(hit){const lowAfter=Math.min(...c.slice(ti).map(y=>y[3]));
@@ -149,7 +149,7 @@ async function run(){
   const sym=$('sym').value.trim().toUpperCase().replace(/USDT$/,'').replace(/[^A-Z0-9]/g,'');
   if(!sym||busy)return;busy=true;$('go').disabled=true;$('status').textContent=`Calcul de ${sym}…`;
   try{
-    const tf=$('tf').value,c=await klines(sym,tf,120),list=Barres.analyse(c);
+    const tf=$('tf').value,c=await klines(sym,tf,200),list=Barres.analyse(c);
     if(!list.length){cur=null;$('res').hidden=true;$('status').textContent=`${sym} : pas de structure nette sur ${$('tf').selectedOptions[0].text}. Essaie une autre unité de temps.`;return}
     const s=list[0];cur={c,s};
     $('rSym').textContent=`${sym} · ${$('tf').selectedOptions[0].text}`;$('rPx').textContent=fmt(c[c.length-1][4]);
