@@ -7,6 +7,7 @@ const pages = [
   'pair-controller.html',
   'controller-status.html',
   'replace-controller.html',
+  'barres.html',
 ];
 
 const tokens = [];

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Barres Parallèles</title>
+<style>
+/* Layout : en-tête collant, liste de jetons en cartes, graphique du jeton choisi. */
+:root{
+  --bg:#f3f4f6; --panel:#ffffff; --line:#d9dce3; --fg:#141821; --muted:#5d6475;
+  --accent:#e0791c; --up:#11875d; --down:#c8323c; --grid:#e7e9ee;
+  --sans:system-ui,-apple-system,sans-serif;
+  --mono:ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#12151c; --panel:#1b1f29; --line:#2c3240; --fg:#e8eaf0; --muted:#9097a8;
+  --accent:#f0912f; --up:#2ebd85; --down:#f6465d; --grid:#252a36; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 var(--sans)}
+body{padding:env(safe-area-inset-top,0px) max(16px,env(safe-area-inset-right,0px)) max(24px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding-block:12px 10px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+h1{font-size:18px;margin:0;flex:1 1 auto;letter-spacing:.01em}
+h1 span{color:var(--accent)}
+select,button,textarea{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+button{cursor:pointer;font-weight:600}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{display:grid;gap:14px;padding-block:14px;max-width:960px;margin:0 auto}
+.status{font-size:13px;color:var(--muted)}
+details{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+summary{cursor:pointer;font-weight:600}
+textarea{width:100%;min-height:90px;margin-top:8px;font-family:var(--mono);font-size:13px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+#list{display:grid;gap:8px}
+.tok{display:grid;grid-template-columns:1fr auto;gap:2px 10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;text-align:left;width:100%;font-weight:400}
+.tok.sel{border-color:var(--accent)}
+.tok b{font-size:15px}
+.tok .px{font-family:var(--mono);text-align:right}
+.lv{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px 14px;font-family:var(--mono);font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.lv em{font-style:normal;color:var(--fg)}
+.pill{font-size:12px;font-family:var(--sans);font-weight:600;padding:1px 8px;border-radius:99px;border:1px solid currentColor;justify-self:end}
+.pill.hit{color:var(--up)} .pill.near{color:var(--accent)} .pill.far{color:var(--muted)} .pill.err{color:var(--down)}
+#chartBox{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
+#chartBox h2{font-size:16px;margin:0 0 6px}
+canvas{width:100%;height:62vh;min-height:320px;max-height:560px;display:block;margin-top:10px}
+.alts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.alts button{font-family:var(--mono);font-size:12px;font-weight:400;padding:6px 8px}
+.alts button.on{border-color:var(--accent);color:var(--accent)}
+.note{font-size:12px;color:var(--muted)}
+.ask{display:flex;gap:8px}
+.ask input{flex:1 1 auto;min-width:0;font:600 17px var(--mono);color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;text-transform:uppercase}
+#res{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+#res .head{display:flex;justify-content:space-between;align-items:baseline;font-size:17px}
+#res .px{font-family:var(--mono)}
+.big{display:flex;justify-content:space-between;align-items:baseline;margin-top:8px;padding:10px 12px;border-radius:8px;background:var(--bg)}
+.big strong{font:700 26px var(--mono);color:var(--up)}
+#res .lv{margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Barres <span>Parallèles</span></h1>
+  <select id="tf" aria-label="Unité de temps">
+    <option value="30m">30 min</option><option value="1h">1 h</option><option value="4h" selected>4 h</option><option value="1d">1 jour</option><option value="1w">1 semaine</option>
+  </select>
+</header>
+<main>
+  <form id="f" class="ask" autocomplete="off">
+    <input id="sym" placeholder="Jeton (ex. SUN)" aria-label="Jeton" autocapitalize="characters" spellcheck="false">
+    <button id="go" class="primary" type="submit">Calculer</button>
+  </form>
+  <div class="status" id="status">Écris un jeton puis Calculer.</div>
+  <section id="res" hidden>
+    <div class="head"><b id="rSym"></b><span id="rPx" class="px"></span></div>
+    <div class="big"><span>Chute finale</span><strong id="rB"></strong></div>
+    <div class="lv"><span>Barre haute <em id="rT"></em></span><span>Médiane <em id="rM"></em></span></div>
+    <canvas id="cv"></canvas>
+    <p class="note">Rouge : barre haute · Orange pointillé : médiane · Vert : chute finale.</p>
+  </section>
+</main>
+<script>
+/* ===== Calcul des barres (mêmes règles que le test sur BTC, ETH, DASH, SUN, INJ) ===== */
+const Barres=(function(){
+function swings(c,k){const hi=[],lo=[];for(let i=0;i<c.length;i++){let H=true,L=true;for(let j=Math.max(0,i-k);j<=Math.min(c.length-1,i+k);j++){if(j===i)continue;if(c[j][2]>c[i][2])H=false;if(c[j][3]<c[i][3])L=false;}if(H)hi.push(i);if(L)lo.push(i);}return{hi,lo};}
+const bt=x=>Math.max(x[1],x[4]),bb=x=>Math.min(x[1],x[4]);
+function stopPoints(c,k){const s=swings(c,k),p=[];for(const i of s.hi){p.push({i,p:c[i][2],w:.8});p.push({i,p:bt(c[i]),w:1});}for(const i of s.lo){p.push({i,p:c[i][3],w:.8});p.push({i,p:bb(c[i]),w:1});}return p;}
+function touches(pts,from,to,lvl,tol){const m=new Map();for(const q of pts){if(q.i<from||q.i>=to)continue;const d=Math.abs(q.p-lvl);if(d<=tol){const v=q.w*(1-d/(tol*2));m.set(q.i,Math.max(m.get(q.i)||0,v));}}let s=0;for(const v of m.values())s+=v;return s;}
+function analyse(c){const n=c.length;if(n<30)return[];
+ const rng=c.map(x=>x[2]-x[3]).sort((a,b)=>a-b);const tol=rng[Math.floor(n/2)]*0.5;
+ const pts=stopPoints(c,2);const sw=swings(c,3);
+ const tops=sw.hi.slice().sort((a,b)=>c[b][2]-c[a][2]).slice(0,6);const res=[];
+ for(const ti of tops){if(ti<5||ti>n-3)continue;
+  const nb=c.slice(Math.max(0,ti-2),ti+3);const T0=c[ti][2];const Ts=[T0,Math.max(...nb.map(bt))];
+  const lo=Math.min(...c.map(x=>x[3]));const Bc=pts.filter(q=>q.i<ti).map(q=>q.p);
+  for(let g=0;g<=120;g++)Bc.push(lo-(T0-lo)*0.6+(T0-lo)*1.6*g/120);
+  for(const T of Ts)for(const B of Bc){if(!(B>0&&B<T))continue;if(T-B<tol*8)continue;const M=(T+B)/2;
+   const L=touches(pts,0,ti,M,tol),R=touches(pts,ti+1,n,M,tol);if(L<.5||R<.5)continue;
+   const baseL=touches(pts,0,ti,B,tol);
+   let score=Math.sqrt(L*R)*(1+Math.min(baseL,4)*.3)*Math.pow((T-B)/T,.5);
+   const after=c.slice(ti);if(after.filter(x=>x[4]<B-tol*2).length>2)score*=.3;
+   const lowAfter=Math.min(...after.map(x=>x[3]));
+   res.push({T,M,B,score,ti,touched:lowAfter<=B+tol});}}
+ res.sort((a,b)=>b.score-a.score);const out=[];
+ for(const r of res){if(out.every(x=>Math.abs(x.B-r.B)>tol*3))out.push(r);if(out.length>=5)break;}
+ return out;}
+return{analyse};})();
+
+/* ===== Données Binance (depuis le téléphone) ===== */
+const $=id=>document.getElementById(id);
+function load(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
+function store(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+async function klines(sym,tf,len){
+  const q=`symbol=${sym}USDT&interval=${tf}&limit=${len}`;
+  const urls=[`https://fapi.binance.com/fapi/v1/klines?${q}`];
+  let lastErr;
+  for(const u of urls){try{const r=await fetch(u,{cache:'no-store'});if(r.status===418||r.status===429)throw new Error('Binance limite les requêtes, réessaie dans quelques minutes');if(!r.ok){lastErr=new Error('Jeton introuvable sur Binance Futures');continue}const j=await r.json();if(!Array.isArray(j)||!j.length){lastErr=new Error('Jeton introuvable sur Binance Futures');continue}return j.map(x=>[x[0],+x[1],+x[2],+x[3],+x[4]]);}catch(e){lastErr=e;if(/limite/.test(e.message))throw e}}
+  throw lastErr||new Error('Jeton introuvable sur Binance Futures');
+}
+const fmt=v=>{if(!isFinite(v))return'–';const a=Math.abs(v);const d=a>=1000?0:a>=100?1:a>=1?3:a>=0.1?4:a>=0.01?5:7;return v.toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d})};
+
+let cur=null,busy=false;
+function draw(){
+  if(!cur)return;const {c,s}=cur;
+  const cv=$('cv'),dpr=window.devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;
+  cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);
+  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);
+  const css=getComputedStyle(document.documentElement),col=n=>css.getPropertyValue(n).trim();
+  // Fenêtre lisible : un peu avant la barre haute jusqu'à maintenant, 100 bougies au plus.
+  const from=Math.max(0,s.ti-15,c.length-100),v=c.slice(from);
+  let hi=Math.max(s.T,...v.map(x=>x[2])),lo=Math.min(s.B,...v.map(x=>x[3]));
+  const pad=(hi-lo)*0.05;hi+=pad;lo-=pad;const padR=78,cw=(W-padR)/v.length;
+  const y=p=>Math.round((hi-p)/(hi-lo)*(H-20)+10)+.5;
+  v.forEach((x,i)=>{const up=x[4]>=x[1];g.strokeStyle=g.fillStyle=up?col('--up'):col('--down');const cx=Math.round(i*cw+cw/2)+.5;
+    g.lineWidth=1;g.beginPath();g.moveTo(cx,y(x[2]));g.lineTo(cx,y(x[3]));g.stroke();
+    const t=y(Math.max(x[1],x[4])),bo=y(Math.min(x[1],x[4])),w=Math.max(Math.floor(cw*0.7),2);g.fillRect(Math.round(cx-w/2),t,w,Math.max(bo-t,1))});
+  const lines=[[s.T,col('--down'),[],'haute'],[s.M,col('--accent'),[7,6],'médiane'],[s.B,col('--up'),[],'chute']];
+  g.font='600 12px ui-monospace, Menlo, monospace';
+  for(const [p,cl,dash,lab] of lines){g.strokeStyle=cl;g.lineWidth=2;g.setLineDash(dash);g.beginPath();g.moveTo(0,y(p));g.lineTo(W-padR,y(p));g.stroke();g.setLineDash([]);
+    g.fillStyle=cl;g.fillText(fmt(p),W-padR+6,y(p)+4);g.fillText(lab,6,y(p)-6)}
+}
+async function run(){
+  const sym=$('sym').value.trim().toUpperCase().replace(/USDT$/,'').replace(/[^A-Z0-9]/g,'');
+  if(!sym||busy)return;busy=true;$('go').disabled=true;$('status').textContent=`Calcul de ${sym}…`;
+  try{
+    const tf=$('tf').value,c=await klines(sym,tf,500),list=Barres.analyse(c);
+    if(!list.length){cur=null;$('res').hidden=true;$('status').textContent=`${sym} : pas de structure nette sur ${$('tf').selectedOptions[0].text}. Essaie une autre unité de temps.`;return}
+    const s=list[0];cur={c,s};
+    $('rSym').textContent=`${sym} · ${$('tf').selectedOptions[0].text}`;$('rPx').textContent=fmt(c[c.length-1][4]);
+    $('rB').textContent=fmt(s.B);$('rT').textContent=fmt(s.T);$('rM').textContent=fmt(s.M);
+    $('res').hidden=false;draw();
+    $('status').textContent=s.touched?'La chute finale a déjà été touchée.':'Calcul fait sur les bougies Binance.';
+  }catch(e){cur=null;$('res').hidden=true;$('status').textContent=`${sym} : ${e.message||'erreur'}`}
+  finally{busy=false;$('go').disabled=false}
+}
+$('tf').value=load('tf','4h');
+$('tf').onchange=()=>{store('tf',$('tf').value);run()};
+$('f').onsubmit=e=>{e.preventDefault();$('sym').blur();run()};
+addEventListener('resize',()=>draw());
+</script>
+</body>
+</html>
