@@ -126,8 +126,7 @@ function draw(){
   cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);
   const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);
   const css=getComputedStyle(document.documentElement),col=n=>css.getPropertyValue(n).trim();
-  // Fenêtre lisible : un peu avant la barre haute jusqu'à maintenant, 100 bougies au plus.
-  const from=Math.max(0,s.ti-15,c.length-100),v=c.slice(from);
+  const v=c;
   let hi=Math.max(s.T,...v.map(x=>x[2])),lo=Math.min(s.B,...v.map(x=>x[3]));
   const pad=(hi-lo)*0.05;hi+=pad;lo-=pad;const padR=78,cw=(W-padR)/v.length;
   const y=p=>Math.round((hi-p)/(hi-lo)*(H-20)+10)+.5;
@@ -143,7 +142,7 @@ async function run(){
   const sym=$('sym').value.trim().toUpperCase().replace(/USDT$/,'').replace(/[^A-Z0-9]/g,'');
   if(!sym||busy)return;busy=true;$('go').disabled=true;$('status').textContent=`Calcul de ${sym}…`;
   try{
-    const tf=$('tf').value,c=await klines(sym,tf,500),list=Barres.analyse(c);
+    const tf=$('tf').value,c=await klines(sym,tf,120),list=Barres.analyse(c);
     if(!list.length){cur=null;$('res').hidden=true;$('status').textContent=`${sym} : pas de structure nette sur ${$('tf').selectedOptions[0].text}. Essaie une autre unité de temps.`;return}
     const s=list[0];cur={c,s};
     $('rSym').textContent=`${sym} · ${$('tf').selectedOptions[0].text}`;$('rPx').textContent=fmt(c[c.length-1][4]);
