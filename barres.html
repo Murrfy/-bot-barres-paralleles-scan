@@ -115,6 +115,14 @@ function analyse(c){const n=c.length;if(n<30)return[];
     if(hit){const lowAfter=Math.min(...c.slice(ti).map(y=>y[3]));
      out.push({T,M:hit.M,B:hit.B,ti,mi:k.i,kind:k.kind,touched:lowAfter<=hit.B+tol});break;}}
   if(out.length)break;}
+ // Cohérence (méthode de Walter) : si la chute est terminée (plus bas suivi d'un rebond), on essaie les autres sommets
+ // comme barre haute et on garde celui dont le reflet tombe pile sur le plus bas réel.
+ if(out.length){const r=out[0];const after=c.slice(r.mi);let li=r.mi;for(let i=r.mi;i<n;i++)if(c[i][3]<c[li][3])li=i;
+  const low=c[li][3],done=li<n-3&&c[n-1][4]>low+rng[Math.floor(n/2)]*2;
+  if(done&&Math.abs(r.B-low)>rng[Math.floor(n/2)]*0.12){let best=null;
+   for(let i=0;i<r.mi;i++){for(const T of [c[i][2],bt(c[i])]){if(!(T-r.M>=rng[Math.floor(n/2)]*3))continue;const B=2*r.M-T,e=Math.abs(B-low);
+     if(e<=tol&&(!best||e<best.e))best={T,B,e,ti:i};}}
+   if(best)out[0]={...r,T:best.T,B:best.B,ti:best.ti,touched:true};}}
  return out;}
 return{analyse};})();
 
