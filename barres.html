@@ -87,21 +87,26 @@ const bt=x=>Math.max(x[1],x[4]),bb=x=>Math.min(x[1],x[4]);
 function stopPoints(c,k){const s=swings(c,k),p=[];for(const i of s.hi){p.push({i,p:c[i][2],w:.8});p.push({i,p:bt(c[i]),w:1});}for(const i of s.lo){p.push({i,p:c[i][3],w:.8});p.push({i,p:bb(c[i]),w:1});}return p;}
 function touches(pts,from,to,lvl,tol){const m=new Map();for(const q of pts){if(q.i<from||q.i>=to)continue;const d=Math.abs(q.p-lvl);if(d<=tol){const v=q.w*(1-d/(tol*2));m.set(q.i,Math.max(m.get(q.i)||0,v));}}let s=0;for(const v of m.values())s+=v;return s;}
 function analyse(c){const n=c.length;if(n<30)return[];
- const rng=c.map(x=>x[2]-x[3]).sort((a,b)=>a-b);const tol=rng[Math.floor(n/2)]*0.35;
- const pts=stopPoints(c,2);const sw=swings(c,3);
- const tops=sw.hi.slice().sort((a,b)=>c[b][2]-c[a][2]).slice(0,6);const res=[];
- for(const ti of tops){if(ti<5||ti>n-3)continue;
-  const nb=c.slice(Math.max(0,ti-2),ti+3);const T0=c[ti][2];const Ts=[T0,Math.max(...nb.map(bt))];
-  const Mc=[...new Set(c.flatMap(x=>[bt(x),bb(x)]))];
-  for(const T of Ts)for(const M of Mc){if(!(M<T))continue;const B=2*M-T;if(!(B>0))continue;if(T-B<tol*8)continue;
-   const L=touches(pts,0,ti,M,tol),R=touches(pts,ti+1,n,M,tol);if(L<.5||R<.5)continue;
-   const baseL=touches(pts,0,ti,B,tol);
-   let score=Math.sqrt(L*R)*(1+Math.min(baseL,4)*.3)*Math.pow((T-B)/T,.5);
-   const after=c.slice(ti);if(after.filter(x=>x[4]<B-tol*2).length>2)score*=.3;
-   const lowAfter=Math.min(...after.map(x=>x[3]));
-   res.push({T,M,B,score,ti,touched:lowAfter<=B+tol});}}
- res.sort((a,b)=>b.score-a.score);const out=[];
- for(const r of res){if(out.every(x=>Math.abs(x.B-r.B)>tol*3))out.push(r);if(out.length>=5)break;}
+ // Règle de Walter : la médiane se pose sur une cassure (grosse bougie rouge qui casse) ou sur une bougie en croix,
+ // validée seulement si des murs (corps ou mèches) l'arrêtent à gauche ET à droite. Sinon on passe à la cassure suivante.
+ const rng=c.map(x=>x[2]-x[3]).sort((a,b)=>a-b),tol=rng[Math.floor(n/2)]*0.25;
+ const bodies=c.map(x=>Math.abs(x[4]-x[1])).sort((a,b)=>a-b),bodyMed=bodies[Math.floor(n/2)]||1e-12;
+ const wall=(lvl,from,to)=>{let k=0;for(let i=Math.max(0,from);i<Math.min(n,to);i++){const x=c[i];
+   if([bt(x),bb(x),x[2],x[3]].some(p=>Math.abs(p-lvl)<=tol))k++;}return k;};
+ const sw=swings(c,2);const tops=sw.hi.filter(i=>i>=3&&i<=n-2).sort((a,b)=>c[b][2]-c[a][2]).slice(0,4);
+ const out=[];
+ for(const ti of tops){const T=c[ti][2];
+  const cands=[];
+  for(let i=ti+1;i<n;i++){const x=c[i],body=Math.abs(x[4]-x[1]),range=x[2]-x[3];
+   if(x[4]<x[1]&&body>=bodyMed*1.8)cands.push({i,M:x[1],kind:'cassure'});
+   else if(range>0&&body<=range*0.15&&range>=rng[Math.floor(n/2)]*0.8)cands.push({i,M:(x[1]+x[4])/2,kind:'croix'});}
+  for(const k of cands){if(!(T-k.M>=rng[Math.floor(n/2)]*3))continue;const B=2*k.M-T;if(!(B>0))continue;
+   // Cascade : si la chute est déjà cassée nettement (clôtures dessous), on descend à la cassure suivante.
+   if(c.slice(k.i).filter(x=>x[4]<B-tol*2).length>2)continue;
+   const left=wall(k.M,0,k.i-1),right=wall(k.M,k.i+2,n);
+   if(left>=1&&right>=1){const lowAfter=Math.min(...c.slice(ti).map(x=>x[3]));
+    out.push({T,M:k.M,B,ti,mi:k.i,kind:k.kind,touched:lowAfter<=B+tol});break;}}
+  if(out.length)break;}
  return out;}
 return{analyse};})();
 
