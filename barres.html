@@ -123,6 +123,12 @@ function analyse(c){const n=c.length;if(n<30)return[];
    for(let i=0;i<r.mi;i++){for(const T of [c[i][2],bt(c[i])]){if(!(T-r.M>=rng[Math.floor(n/2)]*3))continue;const B=2*r.M-T,e=Math.abs(B-low);
      if(e<=tol&&(!best||e<best.e))best={T,B,e,ti:i};}}
    if(best)out[0]={...r,T:best.T,B:best.B,ti:best.ti,touched:true};}}
+  // Chute pas encore terminée : on essaie les sommets en avant et en arrière pour que la chute tombe sur un mur existant.
+  else if(!done){const tight2=rng[Math.floor(n/2)]*0.12;const wallAt=B=>c.filter(x=>[x[2],x[3],bt(x),bb(x)].some(q=>Math.abs(q-B)<=tight2)).length;
+   let best={T:r.T,B:r.B,ti:r.ti,w:wallAt(r.B)};
+   for(let i=0;i<r.mi;i++){for(const T of [c[i][2],bt(c[i])]){if(!(T-r.M>=rng[Math.floor(n/2)]*3))continue;const B=2*r.M-T;if(!(B>0))continue;
+     if(Math.min(...c.slice(r.mi).map(y=>y[3]))<B-tol*2)continue;const w=wallAt(B);if(w>best.w)best={T,B,ti:i,w};}}
+   if(best.w>=2&&best.T!==r.T){const lowAfter=Math.min(...c.slice(best.ti).map(y=>y[3]));out[0]={...r,T:best.T,B:best.B,ti:best.ti,touched:lowAfter<=best.B+tol};}}
  return out;}
 return{analyse};})();
 
