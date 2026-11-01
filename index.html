@@ -555,6 +555,14 @@ async function checkRealTrackedCommandStatus(key,pending){
       const ackValid=q.activeConfigCommitted===true&&String(q.symbol||'').toUpperCase()===symbol&&
         returnedConfig&&wantedConfig&&stableStringify(returnedConfig)===stableStringify(wantedConfig)&&
         revision>0&&serverStateHash&&localStateHash===serverStateHash;
+      const committedAsWanted=q.activeConfigCommitted===true&&String(q.symbol||'').toUpperCase()===symbol&&
+        returnedConfig&&wantedConfig&&stableStringify(returnedConfig)===stableStringify(wantedConfig)&&revision>0;
+      if(!ackValid&&committedAsWanted&&await adoptServerStateAfterActiveAck(symbol,returnedConfig,revision)){
+        realProtectiveUpdatePending.delete(key);persistRealProtectiveUpdatePending();
+        if(selectedSymbol===symbol)fillToken();renderAll();refreshMasterControls();
+        setStatus(symbol+' réel : objectif/protections confirmés par le serveur et enregistrés.');
+        return;
+      }
       if(!ackValid){
         pending.lastError='ACTIVE_CONFIG_ACK_INVALID';
         setStatus(symbol+' : ACK réglages actifs incohérent avec l’état central — réglage local NON modifié.',true);
@@ -1229,6 +1237,24 @@ function applyControllerCloudStateSnapshot(state){
   return true;
 }
 
+// ACK serveur confirmé mais copie locale différente : on reprend l'état central vérifié s'il contient bien le réglage confirmé.
+async function adoptServerStateAfterActiveAck(symbol,confirmedConfig,ackRevision){
+  try{
+    const r=await fetch('/api/zenith-sync?action=controller-state',{cache:'no-store',headers:{Accept:'application/json'}});
+    const q=await r.json().catch(()=>({}));
+    const state=q?.state||null;
+    const data=state?.data&&typeof state.data==='object'&&!Array.isArray(state.data)?state.data:null;
+    if(!r.ok||q?.ok!==true||!data)return false;
+    if(!(Math.max(0,n(state.revision,0))>=ackRevision))return false;
+    if(String(state.stateHash||'')!==await sha256Hex(stableStringify(data)))return false;
+    const token=data.tokenSettings&&typeof data.tokenSettings==='object'?data.tokenSettings[symbol]:null;
+    if(!token||typeof token!=='object')return false;
+    for(const [k,v] of Object.entries(confirmedConfig||{})){
+      if(stableStringify(token[k]===undefined?null:token[k])!==stableStringify(v===undefined?null:v))return false;
+    }
+    return applyControllerCloudStateSnapshot(state);
+  }catch(_){return false}
+}
 async function hydrateControllerCloudStateFromServer(){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller')){
     return {ok:false,remoteFound:false,reason:'CONTROLLER_NOT_VERIFIED'};
