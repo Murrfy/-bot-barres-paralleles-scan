@@ -136,17 +136,20 @@ function draw(){
   cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);
   const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);
   const css=getComputedStyle(document.documentElement),col=n=>css.getPropertyValue(n).trim();
-  const v=c;
+  // Comme sur ton graphe : on part un peu avant la barre haute, et la boîte commence sur sa bougie.
+  const off=Math.max(0,s.ti-20),v=c.slice(off);
   let hi=Math.max(s.T,...v.map(x=>x[2])),lo=Math.min(s.B,...v.map(x=>x[3]));
   const pad=(hi-lo)*0.05;hi+=pad;lo-=pad;const padR=78,cw=(W-padR)/v.length;
   const y=p=>Math.round((hi-p)/(hi-lo)*(H-20)+10)+.5;
   v.forEach((x,i)=>{const up=x[4]>=x[1];g.strokeStyle=g.fillStyle=up?col('--up'):col('--down');const cx=Math.round(i*cw+cw/2)+.5;
     g.lineWidth=1;g.beginPath();g.moveTo(cx,y(x[2]));g.lineTo(cx,y(x[3]));g.stroke();
     const t=y(Math.max(x[1],x[4])),bo=y(Math.min(x[1],x[4])),w=Math.max(Math.floor(cw*0.7),2);g.fillRect(Math.round(cx-w/2),t,w,Math.max(bo-t,1))});
+  const x0=Math.round((s.ti-off)*cw);
+  g.fillStyle=col('--accent')+'1f';g.fillRect(x0,y(s.T),W-padR-x0,y(s.B)-y(s.T));
   const lines=[[s.T,col('--down'),[],'haute'],[s.M,col('--accent'),[7,6],'médiane'],[s.B,col('--up'),[],'chute']];
   g.font='600 12px ui-monospace, Menlo, monospace';
-  for(const [p,cl,dash,lab] of lines){g.strokeStyle=cl;g.lineWidth=2;g.setLineDash(dash);g.beginPath();g.moveTo(0,y(p));g.lineTo(W-padR,y(p));g.stroke();g.setLineDash([]);
-    g.fillStyle=cl;g.fillText(fmt(p),W-padR+6,y(p)+4);g.fillText(lab,6,y(p)-6)}
+  for(const [p,cl,dash,lab] of lines){g.strokeStyle=cl;g.lineWidth=2;g.setLineDash(dash);g.beginPath();g.moveTo(x0,y(p));g.lineTo(W-padR,y(p));g.stroke();g.setLineDash([]);
+    g.fillStyle=cl;g.fillText(fmt(p),W-padR+6,y(p)+4);g.fillText(lab,x0+4,y(p)-6)}
 }
 async function run(){
   const sym=$('sym').value.trim().toUpperCase().replace(/USDT$/,'').replace(/[^A-Z0-9]/g,'');
