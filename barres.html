@@ -100,13 +100,18 @@ function analyse(c){const n=c.length;if(n<30)return[];
   for(let i=ti+1;i<n;i++){const x=c[i],body=Math.abs(x[4]-x[1]),range=x[2]-x[3];
    if(x[4]<x[1]&&body>=bodyMed*1.8)cands.push({i,M:x[1],kind:'cassure'});
    else if(range>0&&body<=range*0.15&&range>=rng[Math.floor(n/2)]*0.8)cands.push({i,M:(x[1]+x[4])/2,kind:'croix'});}
-   // Sur chaque cassure, on cherche dans son corps le niveau le plus haut qui a des murs (au moins deux, dont un à droite).
-   // Cascade : si la chute de ce niveau est déjà cassée en clôture, on descend.
-   for(const k of cands){const x=c[k.i],top=k.kind==='cassure'?x[1]:k.M,bot=k.kind==='cassure'?x[4]:k.M;let hit=null;
-    for(let M=top;M>=bot-1e-12;M-=tol/2){if(!(T-M>=rng[Math.floor(n/2)]*3))continue;const B=2*M-T;if(!(B>0))break;
-     if(Math.min(...c.slice(k.i).map(y=>y[3]))<B-tol*2)continue;
-     const left=wall(M,0,k.i-1),right=wall(M,k.i+2,n);
-     if(right>=1&&left+right>=2){hit={M,B};break;}}
+   // Mur juste après la cassure : au moins deux bougies (rouge ou verte) qui s'arrêtent au même prix (mèche ou corps).
+   // C'est ce mur qui fixe la médiane. Sinon, niveau du corps de la cassure avec des murs. Cascade si la chute est cassée.
+   const tight=rng[Math.floor(n/2)]*0.12;
+   for(const k of cands){const x=c[k.i],top=k.kind==='cassure'?x[1]:k.M,bot=k.kind==='cassure'?Math.min(x[4],x[3]):k.M;const levels=[];
+    const near=c.slice(k.i+1,Math.min(n,k.i+8));
+    for(const y of near)for(const p of [y[2],bt(y)]){if(p>top+tol||p<bot-tol)continue;
+     const cnt=near.filter(z=>[z[2],bt(z),bb(z),z[3]].some(q=>Math.abs(q-p)<=tight)).length;if(cnt>=2)levels.push(p);}
+    levels.sort((a,b)=>b-a);
+    if(k.kind==='croix')levels.push(k.M);
+    let hit=null;
+    for(const M of levels){if(!(T-M>=rng[Math.floor(n/2)]*3))continue;const B=2*M-T;if(!(B>0))continue;
+     if(Math.min(...c.slice(k.i).map(y=>y[3]))<B-tol*2)continue;hit={M,B};break;}
     if(hit){const lowAfter=Math.min(...c.slice(ti).map(y=>y[3]));
      out.push({T,M:hit.M,B:hit.B,ti,mi:k.i,kind:k.kind,touched:lowAfter<=hit.B+tol});break;}}
   if(out.length)break;}
