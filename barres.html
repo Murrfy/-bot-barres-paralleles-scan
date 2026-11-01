@@ -110,7 +110,9 @@ function analyse(c){const n=c.length;if(n<30)return[];
  // 3. la chute retenue est celle où le plus de versants se rejoignent
  let best=null;for(const p of pairs){let s=0;const tis=new Set();for(const q of pairs)if(Math.abs(q.B-p.B)<=tight){tis.add(q.ti);}s=tis.size;
   if(!best||s>best.s||(s===best.s&&p.w>best.p.w))best={s,p};}
- const r=best.p;const lowAfter=Math.min(...c.slice(r.ti).map(x=>x[3]));
+ // Pour l'affichage : parmi les versants qui se rejoignent, le plus récent (le début de la chute en cours), puis le plus haut.
+ const group=pairs.filter(q=>Math.abs(q.B-best.p.B)<=tight).sort((a,b)=>b.ti-a.ti||b.T-a.T);
+ const r=group[0]||best.p;const lowAfter=Math.min(...c.slice(r.ti).map(x=>x[3]));
  return[{T:r.T,M:r.M,B:r.B,ti:r.ti,touched:lowAfter<=r.B+tol,agree:best.s}];}
 return{analyse};})();
 
