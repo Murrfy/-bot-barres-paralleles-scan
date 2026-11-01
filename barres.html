@@ -48,7 +48,7 @@ canvas{width:100%;height:62vh;min-height:320px;max-height:560px;display:block;ma
 .alts button{font-family:var(--mono);font-size:12px;font-weight:400;padding:6px 8px}
 .alts button.on{border-color:var(--accent);color:var(--accent)}
 .note{font-size:12px;color:var(--muted)}
-.ask{display:flex;gap:8px}
+.ask{display:flex;gap:8px;flex:1 1 100%}
 .ask input{flex:1 1 auto;min-width:0;font:600 17px var(--mono);color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;text-transform:uppercase}
 #res{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
 #res .head{display:flex;justify-content:space-between;align-items:baseline;font-size:17px}
@@ -64,12 +64,12 @@ canvas{width:100%;height:62vh;min-height:320px;max-height:560px;display:block;ma
   <select id="tf" aria-label="Unité de temps">
     <option value="30m">30 min</option><option value="1h">1 h</option><option value="4h" selected>4 h</option><option value="1d">1 jour</option><option value="1w">1 semaine</option>
   </select>
-</header>
-<main>
   <form id="f" class="ask" autocomplete="off">
     <input id="sym" placeholder="Jeton (ex. SUN)" aria-label="Jeton" autocapitalize="characters" spellcheck="false">
     <button id="go" class="primary" type="submit">Calculer</button>
   </form>
+</header>
+<main>
   <div class="status" id="status">Écris un jeton puis Calculer.</div>
   <section id="res" hidden>
     <div class="head"><b id="rSym"></b><span id="rPx" class="px"></span></div>
@@ -87,14 +87,13 @@ const bt=x=>Math.max(x[1],x[4]),bb=x=>Math.min(x[1],x[4]);
 function stopPoints(c,k){const s=swings(c,k),p=[];for(const i of s.hi){p.push({i,p:c[i][2],w:.8});p.push({i,p:bt(c[i]),w:1});}for(const i of s.lo){p.push({i,p:c[i][3],w:.8});p.push({i,p:bb(c[i]),w:1});}return p;}
 function touches(pts,from,to,lvl,tol){const m=new Map();for(const q of pts){if(q.i<from||q.i>=to)continue;const d=Math.abs(q.p-lvl);if(d<=tol){const v=q.w*(1-d/(tol*2));m.set(q.i,Math.max(m.get(q.i)||0,v));}}let s=0;for(const v of m.values())s+=v;return s;}
 function analyse(c){const n=c.length;if(n<30)return[];
- const rng=c.map(x=>x[2]-x[3]).sort((a,b)=>a-b);const tol=rng[Math.floor(n/2)]*0.5;
+ const rng=c.map(x=>x[2]-x[3]).sort((a,b)=>a-b);const tol=rng[Math.floor(n/2)]*0.35;
  const pts=stopPoints(c,2);const sw=swings(c,3);
  const tops=sw.hi.slice().sort((a,b)=>c[b][2]-c[a][2]).slice(0,6);const res=[];
  for(const ti of tops){if(ti<5||ti>n-3)continue;
   const nb=c.slice(Math.max(0,ti-2),ti+3);const T0=c[ti][2];const Ts=[T0,Math.max(...nb.map(bt))];
-  const lo=Math.min(...c.map(x=>x[3]));const Bc=pts.filter(q=>q.i<ti).map(q=>q.p);
-  for(let g=0;g<=120;g++)Bc.push(lo-(T0-lo)*0.6+(T0-lo)*1.6*g/120);
-  for(const T of Ts)for(const B of Bc){if(!(B>0&&B<T))continue;if(T-B<tol*8)continue;const M=(T+B)/2;
+  const Mc=[...new Set(c.flatMap(x=>[bt(x),bb(x)]))];
+  for(const T of Ts)for(const M of Mc){if(!(M<T))continue;const B=2*M-T;if(!(B>0))continue;if(T-B<tol*8)continue;
    const L=touches(pts,0,ti,M,tol),R=touches(pts,ti+1,n,M,tol);if(L<.5||R<.5)continue;
    const baseL=touches(pts,0,ti,B,tol);
    let score=Math.sqrt(L*R)*(1+Math.min(baseL,4)*.3)*Math.pow((T-B)/T,.5);
