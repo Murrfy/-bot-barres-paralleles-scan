@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 76,
+  "scopeRevision": 77,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
@@ -48,6 +48,9 @@
     "api/binance-runtime-snapshot.js",
     "lib/user-stream-seed.mjs",
     "lib/master-runtime-inventory.mjs",
-    "scripts/test-master-sync.mjs"
+    "scripts/test-master-sync.mjs",
+    "barres.html",
+    "scripts/test-csp-inline-script-hashes.mjs",
+    "scripts/test-csp-style-hashes.mjs"
   ]
 }
