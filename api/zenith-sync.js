@@ -1388,6 +1388,11 @@ function runtimeProgressiveProtectionConflict(runtimeState, symbol, direction) {
     if (String(order?.positionSide || 'BOTH').toUpperCase() !== 'BOTH') return false;
     if (String(order?.type || '').toUpperCase() !== 'STOP') return false;
     if (!(order?.reduceOnly === true || order?.reduceOnly === 'true')) return false;
+    const emergencyStopShape =
+      String(order?.timeInForce || '').toUpperCase() === 'IOC' &&
+      !(order?.closePosition === true || order?.closePosition === 'true') &&
+      String(order?.priceMatch || '').toUpperCase() === 'OPPONENT';
+    if (emergencyStopShape) return false;
     return true;
   });
   if (rows.length > 1) return true;
