@@ -520,7 +520,7 @@ async function checkRealTrackedCommandStatus(key,pending){
       persistRealProtectiveUpdatePending();
       if(selectedSymbol===symbol)fillToken();
       renderRealPositions();
-      setStatus(symbol+' : commande active non enregistrée par le serveur — ancien réglage conservé.',true);
+      setStatus(symbol+' : commande active non enregistrée par le serveur'+(pending.lastError?' (motif : '+String(pending.lastError)+')':'')+' — ancien réglage conservé.',true);
       return;
     }
     if(status==='ACK'){
@@ -744,8 +744,8 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
       (normalizedKind==='MAX_LOSS'&&Number.isFinite(n(pending.maxLossUsd,NaN)))||pending.activeConfig
     ));
     if(trackedPending&&/^[A-Za-z0-9._:-]{8,128}$/.test(String(pending.clientCommandId||''))){
-      persistRealProtectiveUpdatePending();
       pending.lastError=String(e?.message||'ENVOI_INDETERMINE');
+      persistRealProtectiveUpdatePending();
       setStatus(`${position.symbol} : réponse d’envoi indéterminée — Zenith vérifie la commande serveur existante, sans la renvoyer.`,true);
       setTimeout(()=>void checkRealTrackedCommandStatus(key,pending),750);
       return false;
