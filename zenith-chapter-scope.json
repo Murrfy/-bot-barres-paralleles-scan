@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 79,
+  "scopeRevision": 80,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
@@ -9,6 +9,7 @@
     "scripts/check-zenith.mjs",
     "vercel.json",
     "api/binance-history.js",
+    "api/market-klines.js",
     "lib/real-trade-history.mjs",
     "index.html",
     "server/zenith-engine-worker.mjs",
