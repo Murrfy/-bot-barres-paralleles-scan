@@ -887,7 +887,9 @@ function trackClosedRealPositions(rows,readAt){
     const prev=tradeHistory.tracked[sym];
     if(prev&&n(prev.seenAt)>=at)continue;
     const openedAt=Math.max(0,n(p.openedAt,n(p.lifecycleAt,n(p.positionLifecycleAt,n(p.updateTime,0)))));
-    tradeHistory.tracked[sym]={symbol:sym,openedAt:openedAt>0?openedAt:(n(prev?.openedAt)>0?n(prev.openedAt):at),seenAt:at,pnl:n(p.unrealizedProfit,0),absentReads:0,firstAbsentAt:0,lastAbsentRead:0};
+    // Binance remet updateTime à jour à chaque modification : on garde la plus ancienne heure vue pour la position.
+    const keptOpenedAt=n(prev?.openedAt)>0?(openedAt>0?Math.min(n(prev.openedAt),openedAt):n(prev.openedAt)):(openedAt>0?openedAt:at);
+    tradeHistory.tracked[sym]={symbol:sym,openedAt:keptOpenedAt,seenAt:at,pnl:n(p.unrealizedProfit,0),absentReads:0,firstAbsentAt:0,lastAbsentRead:0};
   }
   for(const sym of Object.keys(tradeHistory.tracked)){
     if(present.has(sym))continue;
@@ -938,7 +940,9 @@ function renderRealPositions(){
   wrap.innerHTML=rows.map((p,i)=>{
     const qty=Math.abs(n(p.positionAmt,0));
     const pnl=n(p.unrealizedProfit,0),side=String(p.positionSide||'BOTH').toUpperCase();
-    const openedAt=Math.max(0,n(p.openedAt,n(p.lifecycleAt,n(p.positionLifecycleAt,n(p.updateTime,0)))));
+    const rawOpenedAt=Math.max(0,n(p.openedAt,n(p.lifecycleAt,n(p.positionLifecycleAt,n(p.updateTime,0)))));
+    const trackedOpenedAt=n(tradeHistory.tracked[String(p?.symbol||'').toUpperCase()]?.openedAt,0);
+    const openedAt=trackedOpenedAt>0&&(!(rawOpenedAt>0)||trackedOpenedAt<rawOpenedAt)?trackedOpenedAt:rawOpenedAt;
     const key=controllerRealCommandModule?controllerRealCommandModule.realPositionKey(p):'';
     const closePending=key&&realClosePending.has(key);
     const inv=realProtectionInventory(p);
