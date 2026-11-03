@@ -27,14 +27,14 @@ test('active target replacement suppresses recreation before cancel and restores
   const unsuppress=run.indexOf('autoTarget.suppressedSymbols.delete(suppressedTargetSymbol)',place);
   const reconcile=run.indexOf('scheduleReconcile(100)',unsuppress);
   assert.ok(suppress>=0&&cancel>suppress&&place>cancel&&unsuppress>place&&reconcile>unsuppress);
-  assert.match(run,/const suppressedTargetSymbol=type==='EXEC_UPDATE_EXIT'&&previousId/);
+  assert.match(run,/const suppressedTargetSymbol=type==='EXEC_UPDATE_EXIT'\n/);
   assert.match(run,/try\{/);
   assert.match(run,/\}finally\{/);
 });
 
 test('MAX-LOSS and progressive replacement paths are not suppressed by the target-only fence',()=>{
   const run=block('async function runProtectiveUpdate','async function waitForFullCloseState');
-  assert.match(run,/const suppressedTargetSymbol=type==='EXEC_UPDATE_EXIT'&&previousId/);
+  assert.match(run,/const suppressedTargetSymbol=type==='EXEC_UPDATE_EXIT'\n/);
   assert.match(run,/if\(maxLoss\|\|progressive\)/);
   assert.match(run,/placeNew\(\{deferReconcile:maxLoss\}\)/);
 });

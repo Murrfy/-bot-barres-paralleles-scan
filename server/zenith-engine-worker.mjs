@@ -4185,7 +4185,14 @@ async function runProtectiveUpdate(command,raw,dispatch){
     if(deferReconcile)return clientId;
     const reconciled=await awaitReconciliation();
     if(reconciled!==true||userStreamReady(stream.state)!==true){
-      await failCommand(raw,'POST_PLACE_RECONCILIATION_FAILED');
+      const why=reconciled!==true
+        ?String(stream.lastError||'RECONCILE_FALSE')
+        :'STREAM_'+String((stream.state?.failReasons||[])[0]||'NOT_READY');
+      log('PROTECTIVE_POST_PLACE_RECONCILE_FAILED',{
+        symbol:String(body.symbol||''),type,clientId,reason:why,
+        streamFailReasons:Array.isArray(stream.state?.failReasons)?stream.state.failReasons.slice(0,6):[],
+      });
+      await failCommand(raw,'POST_PLACE_RECON_'+cleanReason(why,'UNKNOWN').slice(0,70));
       return '';
     }
     return clientId;
@@ -4195,7 +4202,9 @@ async function runProtectiveUpdate(command,raw,dispatch){
     if(!(await applyPendingProtectionTableBeforeConfigCommit(raw,body)))return false;
   }
 
-  const suppressedTargetSymbol=type==='EXEC_UPDATE_EXIT'&&previousId
+  // Toute modification de la vente suspend l'objectif automatique du symbole, même sans ancienne
+  // vente : sinon l'objectif auto (encore à l'ancien prix) se bat avec la nouvelle vente.
+  const suppressedTargetSymbol=type==='EXEC_UPDATE_EXIT'
     ?String(body.symbol||'').toUpperCase()
     :'';
   if(suppressedTargetSymbol)autoTarget.suppressedSymbols.add(suppressedTargetSymbol);
