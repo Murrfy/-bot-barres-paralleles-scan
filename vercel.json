@@ -1,5 +1,8 @@
 {
   "functions": {
+    "api/market-klines.js": {
+      "maxDuration": 10
+    },
     "api/binance-read.js": {
       "maxDuration": 10
     },
