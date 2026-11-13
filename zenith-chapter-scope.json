@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 80,
+  "scopeRevision": 81,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
@@ -54,6 +54,8 @@
     "scripts/test-csp-inline-script-hashes.mjs",
     "scripts/test-csp-style-hashes.mjs",
     "scripts/test-active-target-auto-recreate-race.mjs",
-    "scripts/test-maxloss-status-ui.mjs"
+    "scripts/test-maxloss-status-ui.mjs",
+    "lib/user-stream-state.mjs",
+    "scripts/test-user-stream-state.mjs"
   ]
 }
