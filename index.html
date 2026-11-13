@@ -1967,14 +1967,15 @@ async function saveRealActiveTokenSettings(s,position,old,protections){
   }catch(e){
     return setStatus(s+' : recalcul réel refusé — '+String(e?.message||'calcul impossible')+'.',true);
   }
-  if(!(wantedMaxLoss>0))return setStatus(s+' : seuil MAX-LOSS Binance invalide.',true);
+  if(MAX_LOSS_ENFORCED&&!(wantedMaxLoss>0))return setStatus(s+' : seuil MAX-LOSS Binance invalide.',true);
 
   const previousTarget=n(old.manualTargetProfit,n(old.targetProfit,settings.targetProfit));
   const targetChanged=Math.abs(previousTarget-manualTarget)>1e-8||Boolean(old.exactSaleEnabled)!==saleEnabled||(saleEnabled&&!realNumberMatches(n(old.exactSalePrice,0),salePrice));
   const oldProtections=normalizeProtections(old.protectionStages||settings.protectionStages,null);
   const nextProtections=normalizeProtections(protections,null);
   const protectionsChanged=stableStringify(oldProtections)!==stableStringify(nextProtections);
-  const maxLossChanged=Math.abs(currentMaxLoss-requestedMaxLoss)>1e-8;
+  // MAX-LOSS débranchée : modifier la perte max ne bloque jamais paliers ni objectif.
+  const maxLossChanged=MAX_LOSS_ENFORCED&&Math.abs(currentMaxLoss-requestedMaxLoss)>1e-8;
 
   if(!targetChanged&&!protectionsChanged&&!maxLossChanged)return setStatus(s+' réel : aucune modification à appliquer.');
 
