@@ -7,6 +7,9 @@ process.env.UPSTASH_REDIS_REST_URL = 'https://redis.test';
 process.env.UPSTASH_REDIS_REST_TOKEN = 'test-only';
 process.env.BINANCE_API_KEY = 'test-only';
 process.env.BINANCE_API_SECRET = 'test-only';
+// Ce fichier vérifie l'ancien comportement bloquant de la MAX-LOSS (réactivable pour test seulement).
+process.env.ZENITH_MAX_LOSS_ENFORCED = '1';
+const maxLossPolicyUrl = new URL('../lib/max-loss-policy.mjs', import.meta.url).href;
 const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
   .replace(
     /^import \{[^\n]*deviceTokenCandidates[^\n]*\} from '\.\.\/lib\/device-session\.mjs';\n/m,
@@ -15,6 +18,10 @@ const source = fs.readFileSync('api/binance-reconcile.js', 'utf8')
   .replace(
     /^import \{ REAL_RISK_LIMITS \} from '\.\.\/lib\/risk-policy\.mjs';\n/m,
     "const REAL_RISK_LIMITS = Object.freeze({ maxLossUsd: 400 });\n"
+  )
+  .replace(
+    /^import \{ neutralizeMaxLossRequirements \} from '\.\.\/lib\/max-loss-policy\.mjs';\n/m,
+    "import { neutralizeMaxLossRequirements } from '" + maxLossPolicyUrl + "';\n"
   )
   .replace(
     /^import \{ requestBodyStatus \} from '\.\.\/lib\/request-body-limit\.mjs';\n/m,

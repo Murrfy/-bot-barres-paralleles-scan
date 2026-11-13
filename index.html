@@ -226,6 +226,8 @@ function percentProtectionStep(symbol){const t=tokenSettings[symbol]||{},c={...s
 function percentProtections(symbol,count=4){const step=percentProtectionStep(symbol);if(!(step>0))return null;return Array.from({length:count},(_,i)=>({enabled:true,arm:Math.round(step*(i+1)*100)/100,floor:null}))}
 function defaultProtection(i){if(i===0)return{enabled:true,arm:30,floor:20};const j=i-1;return{enabled:true,arm:105+j*100,floor:100+j*100}}
 function legacyDefaultProtectionProfile(stages){const rows=Array.isArray(stages)?stages:[];return rows.length===29&&rows.every((st,i)=>st?.enabled!==false&&Math.abs(n(st?.arm,NaN)-(105+i*100))<=1e-8&&Math.abs(n(st?.floor,NaN)-(100+i*100))<=1e-8)}
+// Décision Walter 13/11/2026 : la MAX-LOSS ne bloque plus rien (paliers, vente, fermeture).
+const MAX_LOSS_ENFORCED=false;
 const DEFAULTS={margin:1000,leverage:10,marginType:'ISOLATED',maxActive:3,targetProfit:40,maxLoss:40,protectionStages:DEFAULT_PROTECTIONS,exitExecutionPolicy:{normalExit:'LIMIT_EXACT_GTC',protectiveExit:'LIMIT_IOC_ADAPTIVE',primaryPriceMatch:'OPPONENT',fallback:'LIMIT_ONLY'},theme:'dark',sound:true,vibrate:true,maxLossAlert:true,showProtections:true};
 const $=id=>document.getElementById(id),n=(v,d=0)=>Number.isFinite(+v)?+v:d;
 const escapeHtml=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -636,7 +638,7 @@ async function queueRealProtectiveUpdate(position,kind,options={}){
   if(normalizedKind==='MAX_LOSS'&&inv.maxLossConflict){
     return setStatus(`${position.symbol} : perte max non modifiée — plusieurs protections ou protection externe détectée.`,true);
   }
-  if((normalizedKind==='EXIT'||normalizedKind==='PROGRESSIVE')&&
+  if(MAX_LOSS_ENFORCED&&(normalizedKind==='EXIT'||normalizedKind==='PROGRESSIVE')&&
      (!inv.managedMaxLoss||inv.maxLossConflict)){
     return setStatus(`${position.symbol} : modification refusée — aucune protection MAX-LOSS unique et confirmée sur Binance.`,true);
   }
@@ -764,7 +766,7 @@ async function queueRealActiveConfigUpdate(position,activeConfig){
     return setStatus('Modification réelle refusée : iPhone contrôleur non vérifié.',true);
   }
   const inv=realProtectionInventory(position);
-  if(!inv.managedMaxLoss||inv.maxLossConflict){
+  if(MAX_LOSS_ENFORCED&&(!inv.managedMaxLoss||inv.maxLossConflict)){
     return setStatus(`${position.symbol} : protections non modifiées — aucune MAX-LOSS unique et confirmée sur Binance.`,true);
   }
   if(inv.progressiveConflict){
@@ -948,13 +950,13 @@ function renderRealPositions(){
     const key=controllerRealCommandModule?controllerRealCommandModule.realPositionKey(p):'';
     const closePending=key&&realClosePending.has(key);
     const inv=realProtectionInventory(p);
-    const emergencyReady=Boolean(inv.managedMaxLoss)&&inv.maxLossConflict!==true;
+    const emergencyReady=!MAX_LOSS_ENFORCED||(Boolean(inv.managedMaxLoss)&&inv.maxLossConflict!==true);
     const closeAllowed=controller&&side==='BOTH'&&qty>0&&!closePending;
     const armedStage=realArmedProtectionStage(p,inv);
     const protectionText=inv.progressiveConflict?'à vérifier'
       :armedStage?(armedStage.number+' activée')
       :inv.managedProgressive?'activée':'aucune';
-    const maxLossLabel=emergencyReady?'🟢 MAX-LOSS : ACTIVE':inv.maxLossConflict?'🔴 MAX-LOSS : À VÉRIFIER':'🔴 MAX-LOSS ABSENTE — RÉPARATION EN COURS';
+    const maxLossLabel=!MAX_LOSS_ENFORCED?'🟢 MAX-LOSS désactivée — marge isolée':emergencyReady?'🟢 MAX-LOSS : ACTIVE':inv.maxLossConflict?'🔴 MAX-LOSS : À VÉRIFIER':'🔴 MAX-LOSS ABSENTE — RÉPARATION EN COURS';
     return `<div class="posCard">
       <div class="posTop">
         <span class="posSym">${escapeHtml(p.symbol)}</span>
@@ -1930,7 +1932,7 @@ async function saveSelectedAsDefaults(){
 async function saveRealActiveTokenSettings(s,position,old,protections){
   if(!(controllerIdentity.paired&&controllerIdentity.role==='controller'))return setStatus('Modification réelle refusée : iPhone contrôleur non vérifié.',true);
   const inv=realProtectionInventory(position);
-  if(!inv.managedMaxLoss||inv.maxLossConflict)return setStatus(s+' : modification refusée — aucune MAX-LOSS unique et confirmée sur Binance.',true);
+  if(MAX_LOSS_ENFORCED&&(!inv.managedMaxLoss||inv.maxLossConflict))return setStatus(s+' : modification refusée — aucune MAX-LOSS unique et confirmée sur Binance.',true);
   if(inv.progressiveConflict)return setStatus(s+' : protections non modifiées — protection gain concurrente ou externe détectée.',true);
 
   const saleEnabled=$('tExactSale').checked,salePrice=Math.max(0,parsePrice($('tExactSalePrice').value));
@@ -1965,14 +1967,15 @@ async function saveRealActiveTokenSettings(s,position,old,protections){
   }catch(e){
     return setStatus(s+' : recalcul réel refusé — '+String(e?.message||'calcul impossible')+'.',true);
   }
-  if(!(wantedMaxLoss>0))return setStatus(s+' : seuil MAX-LOSS Binance invalide.',true);
+  if(MAX_LOSS_ENFORCED&&!(wantedMaxLoss>0))return setStatus(s+' : seuil MAX-LOSS Binance invalide.',true);
 
   const previousTarget=n(old.manualTargetProfit,n(old.targetProfit,settings.targetProfit));
   const targetChanged=Math.abs(previousTarget-manualTarget)>1e-8||Boolean(old.exactSaleEnabled)!==saleEnabled||(saleEnabled&&!realNumberMatches(n(old.exactSalePrice,0),salePrice));
   const oldProtections=normalizeProtections(old.protectionStages||settings.protectionStages,null);
   const nextProtections=normalizeProtections(protections,null);
   const protectionsChanged=stableStringify(oldProtections)!==stableStringify(nextProtections);
-  const maxLossChanged=Math.abs(currentMaxLoss-requestedMaxLoss)>1e-8;
+  // MAX-LOSS débranchée : modifier la perte max ne bloque jamais paliers ni objectif.
+  const maxLossChanged=MAX_LOSS_ENFORCED&&Math.abs(currentMaxLoss-requestedMaxLoss)>1e-8;
 
   if(!targetChanged&&!protectionsChanged&&!maxLossChanged)return setStatus(s+' réel : aucune modification à appliquer.');
 

@@ -50,6 +50,7 @@ import {
   maxLossSymbolIsQuarantined,
 } from '../lib/protective-command.mjs';
 import { REAL_RISK_LIMITS, DEFAULT_MAX_ACTIVE_POSITIONS } from '../lib/risk-policy.mjs';
+import { maxLossEnforced } from '../lib/max-loss-policy.mjs';
 import {
   backfillStartTime,
   favorableExtremeFromMarkKlines,
@@ -1155,7 +1156,7 @@ function entryWatchEngineReady(symbol){
   // Moteur capable de lancer un achat (hors places disponibles).
   const config=watchedEntryConfig(symbol);
   if(!config||!entryWatch.loaded)return false;
-  if(symbolMaxLossQuarantined(config.symbol))return false;
+  if(maxLossEnforced()&&symbolMaxLossQuarantined(config.symbol))return false;
   if(!runtime.synchronized||!runtime.heartbeatFresh||runtime.mode!=='RUNNING')return false;
   return masterExecutionEligible({
     role:'master',
@@ -1170,7 +1171,7 @@ function entryWatchEngineReady(symbol){
 function entryWatchMayDispatch(symbol){
   const config=watchedEntryConfig(symbol);
   if(!config||!entryWatch.loaded)return false;
-  if(symbolMaxLossQuarantined(config.symbol))return false;
+  if(maxLossEnforced()&&symbolMaxLossQuarantined(config.symbol))return false;
   if(!runtime.synchronized||!runtime.heartbeatFresh||runtime.mode!=='RUNNING')return false;
   if(!masterExecutionEligible({
     role:'master',
@@ -1633,7 +1634,7 @@ async function ensureAutomaticTargetForPosition(position){
   if(!symbol||autoTarget.busySymbols.has(symbol))return {ok:true,changed:false,reason:'BUSY_OR_INVALID'};
   if(saleRemainderRecoverySymbols.has(symbol))return {ok:true,changed:false,reason:'SALE_REMAINDER_RECOVERY_ACTIVE'};
   if(autoTarget.suppressedSymbols.has(symbol))return {ok:true,changed:false,reason:'TARGET_UPDATE_IN_PROGRESS'};
-  if(symbolMaxLossQuarantined(symbol))return {ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'};
+  if(maxLossEnforced()&&symbolMaxLossQuarantined(symbol))return {ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'};
   if(!(runtime.synchronized||exitConfigReady())||!runtime.heartbeatFresh)return {ok:true,changed:false,reason:'RUNTIME_NOT_READY'};
   if(!masterExecutionEligible({
     role:'master',hidden:false,leaseActive:runtime.leaseActive,
@@ -1645,7 +1646,7 @@ async function ensureAutomaticTargetForPosition(position){
   const orders=Array.isArray(projection.binanceOrders)?projection.binanceOrders:[];
   const configuredMaxLoss=configuredMaxLossForSymbol(symbol);
   if(!(configuredMaxLoss>0))return localAutoTargetFailure(symbol,'MAX_LOSS_CONFIG_UNAVAILABLE');
-  const maxLossConfirmed=uniqueManagedMaxLoss(position,orders,configuredMaxLoss);
+  const maxLossConfirmed=!maxLossEnforced()||uniqueManagedMaxLoss(position,orders,configuredMaxLoss);
   const priceFilter=await ensurePriceFilter(symbol);
   if(!priceFilter)return localAutoTargetFailure(symbol,'PRICE_FILTER_UNAVAILABLE');
 
@@ -1736,7 +1737,7 @@ async function ensureAutomaticTargetForPosition(position){
         return (amount>0?'LONG':'SHORT')===live.direction&&Math.abs(amount)>0;
       });
       if(!latestPosition)return {ok:true,changed:true,reason:'POSITION_CLOSED_DURING_TARGET_REFRESH'};
-      const refreshedMaxLoss=uniqueManagedMaxLoss(latestPosition,latestOrders,configuredMaxLoss);
+      const refreshedMaxLoss=!maxLossEnforced()||uniqueManagedMaxLoss(latestPosition,latestOrders,configuredMaxLoss);
       activePlan=planAutomaticTargetExit({
         position:latestPosition,currentOrders:latestOrders,tokenSettings,settings:globalSettings,
         priceFilter,maxLossConfirmed:refreshedMaxLoss,
@@ -1937,7 +1938,7 @@ async function runAutoProtection(symbol,mark){
   const highWaterAdvanced=!Number.isFinite(previousHighWater)||highWater>previousHighWater+1e-8;
 
   const orders=Array.isArray(projection.binanceOrders)?projection.binanceOrders:[];
-  const maxLossRed=symbolMaxLossQuarantined(wanted)||!uniqueManagedMaxLoss(position,orders);
+  const maxLossRed=maxLossEnforced()&&(symbolMaxLossQuarantined(wanted)||!uniqueManagedMaxLoss(position,orders));
 
   if(maxLossRed){
     const reached=highestReachedProtectionStage(protectionStages,highWater);
@@ -3440,7 +3441,7 @@ async function reconcile(secondPass=false){
       return reconcile(true);
     }
 
-    const repairTarget=missingMaxLossRepairTarget(data.report);
+    const repairTarget=maxLossEnforced()?missingMaxLossRepairTarget(data.report):null;
     if(repairTarget){
       if(secondPass){
         await markMaxLossRepairFailure('AUTO_MAX_LOSS_REPAIR_RECONCILIATION_FAILED');
@@ -4111,8 +4112,8 @@ async function runMarketEntry(command,raw,dispatch){
   const projection=streamProjection();
   const configuredMaxLoss=configuredMaxLossForSymbol(symbol);
   const maxLossConfirmed=Boolean(
-    confirmedPosition&&configuredMaxLoss>0&&
-    uniqueManagedMaxLoss(confirmedPosition,projection.binanceOrders||[],configuredMaxLoss)
+    confirmedPosition&&(!maxLossEnforced()||(configuredMaxLoss>0&&
+    uniqueManagedMaxLoss(confirmedPosition,projection.binanceOrders||[],configuredMaxLoss)))
   );
   if(!maxLossConfirmed){
     await requeueCommand(raw,'MARKET_MAX_LOSS_NOT_CONFIRMED',750);

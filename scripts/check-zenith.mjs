@@ -763,7 +763,7 @@ if (!index.includes("String(o?.timeInForce||'').toUpperCase()==='GTC'") ||
 if (!protectiveUpdateExecute.includes("if(!clientAlgoId||clientAlgoId.length>36)return false") ||
     binanceReconcile.includes('if (!zenithManagedOrderId(order)) continue;') ||
     index.includes('if(!zenithManagedRealId(o?.clientAlgoId))return false;') ||
-    !index.includes('const emergencyReady=Boolean(inv.managedMaxLoss)&&inv.maxLossConflict!==true') ||
+    !index.includes('const emergencyReady=!MAX_LOSS_ENFORCED||(Boolean(inv.managedMaxLoss)&&inv.maxLossConflict!==true)') ||
     !index.includes('aucune protection MAX-LOSS unique et confirmée sur Binance')) {
   fail('protective execution, reconciliation, MASTER and controller must accept one uniquely safe Binance MAX-LOSS without weakening order-shape checks');
 }

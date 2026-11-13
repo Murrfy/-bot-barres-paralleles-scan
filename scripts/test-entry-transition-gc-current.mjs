@@ -103,7 +103,7 @@ test('reconcile prunes only clean inert transitions through atomic compare-and-d
 
 test('worker marks not-started only if current watch still has same auto-entry command id',()=>{
   const start=worker.indexOf('const orphanTargets=orphanZenithCleanupOrders');
-  const end=worker.indexOf('const repairTarget=missingMaxLossRepairTarget',start);
+  const end=worker.indexOf('const repairTarget=maxLossEnforced()?missingMaxLossRepairTarget',start);
   assert.ok(start>=0&&end>start);
   const block=worker.slice(start,end);
   assert.match(block,/expiredEntryOrphanProtections\(data\.report\)/);

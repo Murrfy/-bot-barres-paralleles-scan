@@ -62,7 +62,7 @@ test('triggered MAX-LOSS remainder is routed through persisted MARKET recovery b
   assert.doesNotMatch(block,/exitMode:'PROTECTIVE_IOC'/);
   const reconcileStart=worker.indexOf('async function reconcile');
   const remainderAt=worker.indexOf('const triggeredRemainders=',reconcileStart);
-  const genericRepairAt=worker.indexOf('const repairTarget=missingMaxLossRepairTarget',reconcileStart);
+  const genericRepairAt=worker.indexOf('const repairTarget=maxLossEnforced()?missingMaxLossRepairTarget',reconcileStart);
   assert.ok(remainderAt>reconcileStart&&genericRepairAt>remainderAt,'remainder recovery must run before generic MAX-LOSS repair');
 });
 
@@ -93,12 +93,12 @@ test('unresolved MAX-LOSS remainder states quarantine only the affected symbol',
 });
 
 test('entry watch and target logic skip a quarantined symbol while gain logic records red high-water without writing',()=>{
-  assert.match(worker,/if\(symbolMaxLossQuarantined\(config\.symbol\)\)return false/);
-  assert.match(worker,/if\(symbolMaxLossQuarantined\(symbol\)\)return \{ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'\}/);
+  assert.match(worker,/if\(maxLossEnforced\(\)&&symbolMaxLossQuarantined\(config\.symbol\)\)return false/);
+  assert.match(worker,/if\(maxLossEnforced\(\)&&symbolMaxLossQuarantined\(symbol\)\)return \{ok:true,changed:false,reason:'SYMBOL_MAX_LOSS_QUARANTINED'\}/);
   const start=worker.indexOf('async function runAutoProtection');
   const end=worker.indexOf('function activeProtectionSymbols',start);
   const block=worker.slice(start,end);
-  assert.match(block,/const maxLossRed=symbolMaxLossQuarantined\(wanted\)\|\|!uniqueManagedMaxLoss/);
+  assert.match(block,/const maxLossRed=maxLossEnforced\(\)&&\(symbolMaxLossQuarantined\(wanted\)\|\|!uniqueManagedMaxLoss/);
   const redStart=block.indexOf('if(maxLossRed)');
   const redEnd=block.indexOf('if(autoProtection.busySymbols',redStart);
   const redBlock=block.slice(redStart,redEnd);

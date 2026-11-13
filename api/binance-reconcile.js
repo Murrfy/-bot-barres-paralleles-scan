@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { deviceTokenCandidates, deviceSessionRecordActive, roleAssignmentKey, deviceRoleAssignmentActive, sameOriginMutation, engineInstanceHeader, enginePrincipalInstanceActive } from '../lib/device-session.mjs';
 import { REAL_RISK_LIMITS } from '../lib/risk-policy.mjs';
 import { requestBodyStatus } from '../lib/request-body-limit.mjs';
+import { neutralizeMaxLossRequirements } from '../lib/max-loss-policy.mjs';
 import { evaluateEntryTransitionReconciliation, entryTransitionOrderIdentity, transitionEntryMatches, transitionProtectionMatches, partialEntryTransitionProtectionCoversPosition } from '../lib/entry-transition.mjs';
 
 const BASE = 'https://fapi.binance.com';
@@ -2173,6 +2174,8 @@ export default async function handler(req, res) {
       device.deviceId,
       entryTransitions
     );
+    // Décision Walter : l'absence, le doublon ou la forme de la MAX-LOSS ne bloque plus rien.
+    neutralizeMaxLossRequirements(result);
     result.differences.activeSaleRemainderRecoveries=saleRemainderState.active;
     result.differences.invalidSaleRemainderRecoveries=saleRemainderState.invalid;
     if(saleRemainderState.invalid.length){
