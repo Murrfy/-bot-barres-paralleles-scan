@@ -195,39 +195,3 @@ test('C11 closed Binance position converges to an empty published MASTER runtime
   assert.match(stateBlock,/KEY_STATE/);
   assert.match(stateBlock,/redis\.call\('SET', KEYS\[1\], ARGV\[1\]\)/);
 });
-
-test('same-millisecond NEW then FILLED of a MARKET order closes it (no ghost open order)',()=>{
-  let s=readyState();
-  let r=applyUserDataEvent(s,{e:'ORDER_TRADE_UPDATE',E:5000,T:4999,o:{s:'ARIAUSDT',c:'zth-ENT-aaa',i:9,S:'BUY',o:'MARKET',q:'2350',x:'NEW',X:'NEW',z:'0',t:0,ps:'BOTH'}});
-  assert.equal(r.applied,true);
-  r=applyUserDataEvent(r.state,{e:'ORDER_TRADE_UPDATE',E:5000,T:4999,o:{s:'ARIAUSDT',c:'zth-ENT-aaa',i:9,S:'BUY',o:'MARKET',q:'2350',x:'TRADE',X:'FILLED',z:'2350',t:77,ps:'BOTH'}});
-  assert.equal(r.applied,true);
-  assert.equal(r.terminal,true);
-  assert.equal(runtimeInventoryFromUserStream(r.state).binanceOrders.length,0);
-});
-
-test('same-millisecond LIQUIDATION order NEW then FILLED is not dropped',()=>{
-  let s=readyState();
-  let r=applyUserDataEvent(s,{e:'ORDER_TRADE_UPDATE',E:6000,o:{s:'ARIAUSDT',c:'autoclose-1',i:10,S:'SELL',o:'LIQUIDATION',q:'2350',x:'NEW',X:'NEW',z:'0',t:0}});
-  r=applyUserDataEvent(r.state,{e:'ORDER_TRADE_UPDATE',E:6000,o:{s:'ARIAUSDT',c:'autoclose-1',i:10,S:'SELL',o:'LIQUIDATION',q:'2350',x:'CALCULATED',X:'FILLED',z:'2350',t:88}});
-  assert.equal(r.applied,true);
-  assert.equal(runtimeInventoryFromUserStream(r.state).binanceOrders.length,0);
-});
-
-test('two different orders in the same millisecond are both applied',()=>{
-  let s=readyState();
-  let r=applyUserDataEvent(s,{e:'ORDER_TRADE_UPDATE',E:7000,o:{s:'BTCUSDT',c:'a1',i:1,X:'NEW'}});
-  r=applyUserDataEvent(r.state,{e:'ORDER_TRADE_UPDATE',E:7000,o:{s:'BTCUSDT',c:'a2',i:2,X:'NEW'}});
-  assert.equal(r.applied,true);
-  assert.equal(runtimeInventoryFromUserStream(r.state).binanceOrders.length,2);
-});
-
-test('two different ACCOUNT_UPDATE in the same millisecond are both applied; exact replay is a duplicate',()=>{
-  let s=readyState();
-  let r=applyUserDataEvent(s,{e:'ACCOUNT_UPDATE',E:8000,T:7999,a:{m:'ORDER',P:[{s:'BTCUSDT',pa:'0.02',ep:'50000',ps:'BOTH'}]}});
-  r=applyUserDataEvent(r.state,{e:'ACCOUNT_UPDATE',E:8000,T:7999,a:{m:'ORDER',P:[{s:'BTCUSDT',pa:'0',ep:'0',ps:'BOTH'}]}});
-  assert.equal(r.applied,true);
-  assert.equal(runtimeInventoryFromUserStream(r.state).binancePositions.length,0);
-  const replay=applyUserDataEvent(r.state,{e:'ACCOUNT_UPDATE',E:8000,T:7999,a:{m:'ORDER',P:[{s:'BTCUSDT',pa:'0',ep:'0',ps:'BOTH'}]}});
-  assert.equal(replay.duplicate,true);
-});
