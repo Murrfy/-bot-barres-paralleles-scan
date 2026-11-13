@@ -137,7 +137,7 @@ test('server worker keeps localized orphan cleanup failures local but legacy mis
   assert.match(helper,/scheduleReconcile\(1500\)/);
 
   const reconcileStart=worker.indexOf('const orphanTargets=orphanZenithCleanupOrders(data.report)');
-  const reconcileEnd=worker.indexOf('const repairTarget=missingMaxLossRepairTarget',reconcileStart);
+  const reconcileEnd=worker.indexOf('const repairTarget=maxLossEnforced()?missingMaxLossRepairTarget',reconcileStart);
   const block=worker.slice(reconcileStart,reconcileEnd);
   assert.match(block,/markOrphanCleanupFailure\([\s\S]*ORPHAN_CLEANUP_RECONCILIATION_FAILED/);
   assert.match(block,/markOrphanCleanupFailure\(reason,target\.symbol\)/);
@@ -271,7 +271,7 @@ test('certified ALGO orphan cancellation verifies identity and reaches terminal 
 test('C10 missed terminal stream event must recover authoritative Binance inventory before generic reconciliation',async()=>{
   const worker=await readFile(new URL('../server/zenith-engine-worker.mjs',import.meta.url),'utf8');
   const start=worker.indexOf('const orphanTargets=orphanZenithCleanupOrders(data.report)');
-  const end=worker.indexOf('const repairTarget=missingMaxLossRepairTarget',start);
+  const end=worker.indexOf('const repairTarget=maxLossEnforced()?missingMaxLossRepairTarget',start);
   assert.ok(start>=0&&end>start,'C10 cleanup worker block missing');
   const block=worker.slice(start,end);
   const timeout=block.indexOf('if(!safe){');
