@@ -222,6 +222,8 @@ const LEGACY_KEY='';
 const API='https://fapi.binance.com';
 const DEFAULT_PROTECTIONS=[{enabled:true,arm:30,floor:20}];
 function protectionCountForTarget(target){const t=Math.max(0,n(target,40));if(t<=30)return 0;const legacyExtra=Math.max(0,Math.floor((t-106)/100)+1);return 1+legacyExtra}
+function percentProtectionStep(symbol){const t=tokenSettings[symbol]||{},c={...settings,...t},notional=Math.max(0,n(c.margin,0))*Math.max(1,n(c.leverage,1));return Math.round(notional*0.05*100)/100}
+function percentProtections(symbol,count=4){const step=percentProtectionStep(symbol);if(!(step>0))return null;return Array.from({length:count},(_,i)=>({enabled:true,arm:Math.round(step*(i+1)*100)/100,floor:null}))}
 function defaultProtection(i){if(i===0)return{enabled:true,arm:30,floor:20};const j=i-1;return{enabled:true,arm:105+j*100,floor:100+j*100}}
 function legacyDefaultProtectionProfile(stages){const rows=Array.isArray(stages)?stages:[];return rows.length===29&&rows.every((st,i)=>st?.enabled!==false&&Math.abs(n(st?.arm,NaN)-(105+i*100))<=1e-8&&Math.abs(n(st?.floor,NaN)-(100+i*100))<=1e-8)}
 const DEFAULTS={margin:1000,leverage:10,marginType:'ISOLATED',maxActive:3,targetProfit:40,maxLoss:40,protectionStages:DEFAULT_PROTECTIONS,exitExecutionPolicy:{normalExit:'LIMIT_EXACT_GTC',protectiveExit:'LIMIT_IOC_ADAPTIVE',primaryPriceMatch:'OPPONENT',fallback:'LIMIT_ONLY'},theme:'dark',sound:true,vibrate:true,maxLossAlert:true,showProtections:true};
@@ -1771,11 +1773,13 @@ function updateTokenPreview(){
   if(!active&&both&&profit!=null){targetEl.value=profit.toFixed(2);targetEl.dataset.exactAuto='1'}else if(!active){if(targetEl.dataset.exactAuto==='1')targetEl.value=manual;targetEl.dataset.exactAuto='0'}else{targetEl.dataset.exactAuto='0'}
   const target=active?manual:(both&&profit!=null?profit:n(targetEl.value,settings.targetProfit)),goal=sale||(realActive?realPositionPriceForPnl(realActive,target):(entry?priceForPnl(entry,notional(base),target):0));$('tTargetPreview').value=goal?price(goal):'—';$('tExactProfit').textContent=profit==null?'Bénéfice prévu : —':`Bénéfice prévu : ${money(profit)} · calculé avec ${active?'le prix d’achat réel':'les deux prix déterminés'}`;setTokenFieldsEnabled()
 }
-function protectionDraft(){const els=[...($('protectionEditor')?.querySelectorAll('.protectionItem')||[])];return els.map((_,i)=>{const d=defaultProtection(i);return{enabled:$(`tProtect${i+1}`)?.checked!==false,arm:Math.max(0,n($(`tProtect${i+1}Arm`)?.value,d.arm)),floor:Math.max(0,n($(`tProtect${i+1}Floor`)?.value,d.floor))}})}
+function protectionDraft(){const els=[...($('protectionEditor')?.querySelectorAll('.protectionItem')||[])];return els.map((_,i)=>{const d=defaultProtection(i);return{enabled:$(`tProtect${i+1}`)?.checked!==false,arm:Math.max(0,n($(`tProtect${i+1}Arm`)?.value,d.arm)),floor:String($(`tProtect${i+1}Floor`)?.value??'').trim()===''?null:Math.max(0,n($(`tProtect${i+1}Floor`)?.value,d.floor))}})}
+function protectionsForSave(stages){return(Array.isArray(stages)?stages:[]).map(st=>st&&st.floor===null?{...st,floor:0}:st)}
 function protectionValidationError(stages){
   let previousArm=-Infinity,previousFloor=-Infinity;
   for(let i=0;i<(Array.isArray(stages)?stages.length:0);i++){
     const st=stages[i];if(!st?.enabled)continue;
+    if(st.floor===null||st.floor===undefined||String(st.floor).trim()==='')return `Protection ${i+1} : remplis le gain PROTÉGÉ.`;
     const arm=n(st.arm,NaN),floor=n(st.floor,NaN);
     if(!Number.isFinite(arm)||!Number.isFinite(floor)||arm<0||floor<0)return `Protection ${i+1} : montant invalide.`;
     if(!(floor<arm))return `Protection ${i+1} : le gain protégé doit être inférieur au gain atteint.`;
@@ -1785,24 +1789,27 @@ function protectionValidationError(stages){
   }
   return '';
 }
-function protectionsForTarget(stages,target,minCount=0){const src=Array.isArray(stages)?stages:[],count=Math.max(protectionCountForTarget(target),src.length,Math.max(0,Math.floor(n(minCount,0))));return Array.from({length:count},(_,i)=>{const d=defaultProtection(i),x=src[i]||d;return{enabled:x.enabled!==false,arm:Math.max(0,n(x.arm,d.arm)),floor:Math.max(0,n(x.floor,d.floor))}})}
+function protectionsForTarget(stages,target,minCount=0){const src=Array.isArray(stages)?stages:[],count=Math.max(protectionCountForTarget(target),src.length,Math.max(0,Math.floor(n(minCount,0))));return Array.from({length:count},(_,i)=>{const d=defaultProtection(i),x=src[i]||d;return{enabled:x.enabled!==false,arm:Math.max(0,n(x.arm,d.arm)),floor:x.floor===null?null:Math.max(0,n(x.floor,d.floor))}})}
 function reachedProtectionCount(stages,maxProfit){let count=0;for(let i=0;i<(Array.isArray(stages)?stages.length:0);i++){const st=stages[i];if(st?.enabled&&n(maxProfit)>=n(st.arm,Infinity))count=i+1}return count}
 function addManualProtectionStage(){
   if(!selectedSymbol)return;
   const current=protectionDraft();
   const last=current[current.length-1]||null;
-  const next=last
-    ?{enabled:true,arm:Math.max(0,n(last.arm,0))+100,floor:Math.max(0,n(last.floor,0))+100}
-    :defaultProtection(0);
+  const step=percentProtectionStep(selectedSymbol);
+  const next=step>0
+    ?{enabled:true,arm:Math.round((Math.max(0,n(last?.arm,0))+step)*100)/100,floor:null}
+    :last
+      ?{enabled:true,arm:Math.max(0,n(last.arm,0))+100,floor:Math.max(0,n(last.floor,0))+100}
+      :defaultProtection(0);
   const target=Math.max(0,n($('tTarget')?.dataset?.manualTarget,n($('tTarget')?.value,settings.targetProfit)));
   renderProtectionEditor([...current,next],target,current.length+1);
   setTokenFieldsEnabled();
   setStatus(`${selectedSymbol} : protection ${current.length+1} ajoutée. Modifie ATTEINT/PROTÉGÉ si besoin puis appuie sur « Enregistrer le jeton ».`);
 }
-function renderProtectionEditor(stages,target=40,minCount=0){const arr=protectionsForTarget(stages,target,minCount),head=`<div class="protectionHead"><span class="armHead">ATTEINT</span><span class="floorHead">PROTÉGÉ</span></div>`,item=(st,i)=>`<div class="protectionItem" title="Protection ${i+1} : +${st.arm} → +${st.floor}"><input id="tProtect${i+1}" type="checkbox" ${st.enabled?'checked':''} aria-label="Activer protection ${i+1}"><span class="protectionNum">${i+1}</span><input id="tProtect${i+1}Arm" type="number" min="0" step="0.1" inputmode="decimal" value="${st.arm}" aria-label="Gain atteint protection ${i+1}"><span class="protectionArrow">→</span><input id="tProtect${i+1}Floor" type="number" min="0" step="0.1" inputmode="decimal" value="${st.floor}" aria-label="Gain protégé protection ${i+1}"></div>`;const mid=Math.ceil(arr.length/2);$('protectionEditor').innerHTML=`<div class="protectionGrid"><div class="protectionColumn">${head}${arr.slice(0,mid).map((st,j)=>item(st,j)).join('')}</div><div class="protectionColumn">${head}${arr.slice(mid).map((st,j)=>item(st,mid+j)).join('')}</div></div><div class="protectionAddRow"><button id="addProtectionStageBtn" type="button" class="btn protectionAddBtn" aria-label="Ajouter une protection">+</button></div>`;const add=$('addProtectionStageBtn');if(add)add.onclick=addManualProtectionStage}
+function renderProtectionEditor(stages,target=40,minCount=0){const arr=protectionsForTarget(stages,target,minCount),head=`<div class="protectionHead"><span class="armHead">ATTEINT</span><span class="floorHead">PROTÉGÉ</span></div>`,item=(st,i)=>`<div class="protectionItem" title="Protection ${i+1} : +${st.arm} → +${st.floor==null?'?':st.floor}"><input id="tProtect${i+1}" type="checkbox" ${st.enabled?'checked':''} aria-label="Activer protection ${i+1}"><span class="protectionNum">${i+1}</span><input id="tProtect${i+1}Arm" type="number" min="0" step="0.1" inputmode="decimal" value="${st.arm}" aria-label="Gain atteint protection ${i+1}"><span class="protectionArrow">→</span><input id="tProtect${i+1}Floor" type="number" min="0" step="0.1" inputmode="decimal" value="${st.floor==null?'':st.floor}" placeholder="à remplir" aria-label="Gain protégé protection ${i+1}"></div>`;const mid=Math.ceil(arr.length/2);$('protectionEditor').innerHTML=`<div class="protectionGrid"><div class="protectionColumn">${head}${arr.slice(0,mid).map((st,j)=>item(st,j)).join('')}</div><div class="protectionColumn">${head}${arr.slice(mid).map((st,j)=>item(st,mid+j)).join('')}</div></div><div class="protectionAddRow"><button id="addProtectionStageBtn" type="button" class="btn protectionAddBtn" aria-label="Ajouter une protection">+</button></div>`;const add=$('addProtectionStageBtn');if(add)add.onclick=addManualProtectionStage}
 function applyProtectionVisibility(){const cb=$('showProtectionsToggle'),details=$('protectionDetails');if(!cb||!details)return;cb.checked=settings.showProtections!==false;details.hidden=!cb.checked}
 function syncProtectionsToTarget(target){if(!selectedSymbol)return;const localActive=openBySymbol(selectedSymbol),realActive=controllerRealPositionBySymbol(selectedSymbol),active=localActive||realActive;if(validated[selectedSymbol]&&!active)return;const current=protectionDraft(),saved=localActive?.protectionStages||tokenSettings[selectedSymbol]?.protectionStages||settings.protectionStages,merged=current.length?current:saved,minCount=localActive?reachedProtectionCount(merged,localActive.maxProfit):realActive?(Array.isArray(saved)?saved.length:0):0;renderProtectionEditor(merged,target,minCount);setTokenFieldsEnabled()}
-function fillToken(){const s=selectedSymbol,has=!!s;$('tokenNoSelection').hidden=has;$('tokenSettingsWrap').hidden=!has;applyProtectionVisibility();$('settingsSymbol').textContent=s||'—';$('selectedSymbolLabel').textContent=s||'—';$('selectedPriceLabel').textContent=`Prix : ${s?price(lastPrices.get(s)):'—'}`;renderSelectedCurrentPrice();if(!has){fillFutures();return}const localActive=openBySymbol(s),realActive=controllerRealPositionBySymbol(s),active=localActive||realActive,t=tokenSettings[s]||{},c={...settings,...t},manual=localActive?n(localActive.baseTargetProfit,n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit))):n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit));$('tTarget').value=manual;$('tTarget').dataset.manualTarget=manual;$('tTarget').dataset.exactAuto='0';const shownProtections=localActive?.protectionStages||t.protectionStages||settings.protectionStages,minCount=localActive?reachedProtectionCount(shownProtections,localActive.maxProfit):realActive?(Array.isArray(shownProtections)?shownProtections.length:0):0;renderProtectionEditor(shownProtections,manual,minCount);const pendingMaxLoss=realActive?realProtectiveUpdatePending.get(realUpdatePendingKey(realActive,'MAX_LOSS')):null;$('tMaxLoss').value=Number.isFinite(n(pendingMaxLoss?.maxLossUsd,NaN))?n(pendingMaxLoss.maxLossUsd):n(localActive?.maxLoss,n(t.maxLoss,settings.maxLoss));$('tExactBuy').checked=!!t.exactBuyEnabled;$('tExactBuyPrice').value=n(t.exactBuyPrice)||'';$('tExactSale').checked=!!t.exactSaleEnabled;$('tExactSalePrice').value=n(t.exactSalePrice)||'';$('devalidateBtn').disabled=!validated[s];$('instantBuyBtn').disabled=!!active||n(binanceAccount.realPositions,0)>=n(settings.maxActive,3);fillFutures();updateTokenPreview()}
+function fillToken(){const s=selectedSymbol,has=!!s;$('tokenNoSelection').hidden=has;$('tokenSettingsWrap').hidden=!has;applyProtectionVisibility();$('settingsSymbol').textContent=s||'—';$('selectedSymbolLabel').textContent=s||'—';$('selectedPriceLabel').textContent=`Prix : ${s?price(lastPrices.get(s)):'—'}`;renderSelectedCurrentPrice();if(!has){fillFutures();return}const localActive=openBySymbol(s),realActive=controllerRealPositionBySymbol(s),active=localActive||realActive,t=tokenSettings[s]||{},c={...settings,...t},manual=localActive?n(localActive.baseTargetProfit,n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit))):n(t.manualTargetProfit,n(t.targetProfit,c.targetProfit));$('tTarget').value=manual;$('tTarget').dataset.manualTarget=manual;$('tTarget').dataset.exactAuto='0';const shownProtections=localActive?.protectionStages||t.protectionStages||(!active&&percentProtections(s))||settings.protectionStages,minCount=localActive?reachedProtectionCount(shownProtections,localActive.maxProfit):realActive?(Array.isArray(shownProtections)?shownProtections.length:0):0;renderProtectionEditor(shownProtections,manual,minCount);const pendingMaxLoss=realActive?realProtectiveUpdatePending.get(realUpdatePendingKey(realActive,'MAX_LOSS')):null;$('tMaxLoss').value=Number.isFinite(n(pendingMaxLoss?.maxLossUsd,NaN))?n(pendingMaxLoss.maxLossUsd):n(localActive?.maxLoss,n(t.maxLoss,settings.maxLoss));$('tExactBuy').checked=!!t.exactBuyEnabled;$('tExactBuyPrice').value=n(t.exactBuyPrice)||'';$('tExactSale').checked=!!t.exactSaleEnabled;$('tExactSalePrice').value=n(t.exactSalePrice)||'';$('devalidateBtn').disabled=!validated[s];$('instantBuyBtn').disabled=!!active||n(binanceAccount.realPositions,0)>=n(settings.maxActive,3);fillFutures();updateTokenPreview()}
 async function persistAndVerifyTokenFuturesSettings(symbol,margin,leverage){
   const s=String(symbol||'').toUpperCase();
   saveLocalOnly();
@@ -2043,7 +2050,7 @@ async function saveToken(){
   const snapshotRecord=(record,key)=>Object.prototype.hasOwnProperty.call(record,key)?{exists:true,value:clone(record[key])}:{exists:false,value:null};
   const restoreRecord=(record,key,snapshot)=>{if(snapshot.exists)record[key]=snapshot.value;else delete record[key]};
   const oldManualToken=snapshotRecord(manualTokens,s),oldValidated=snapshotRecord(validated,s),oldRevalidateBlock=snapshotRecord(revalidateBlock,s),oldMissedSignal=snapshotRecord(missedSignals,s);
-  const protections=protectionDraft(),protectionError=protectionValidationError(protections);
+  const protectionsRaw=protectionDraft(),protectionError=protectionValidationError(protectionsRaw),protections=protectionsForSave(protectionsRaw);
   const margin=Math.max(1,n($('fMargin').value,n(old.margin,settings.margin)));
   const leverage=Math.round(n($('fLev').value,n(old.leverage,settings.leverage)));
   if(!(margin>=1))return setStatus('La marge du jeton doit être d’au moins 1 $.',true);
@@ -2110,6 +2117,19 @@ async function instantBuySelected(){
   if(realMarketEntryPending.has(s))return setStatus(`${s} : achat immédiat déjà en cours de confirmation Binance.`,true);
   if(n(binanceAccount.realPositions,0)>=n(settings.maxActive,3)){
     return setStatus(`Impossible : la limite de ${settings.maxActive} positions réelles est déjà atteinte.`,true);
+  }
+
+  // Paliers affichés à l'écran : validés, enregistrés et synchronisés AVANT l'achat,
+  // pour que la position achetée en immédiat reçoive ces protections de gain.
+  const instantProtections=protectionDraft();
+  if(instantProtections.length){
+    const instantProtectionError=protectionValidationError(instantProtections);
+    if(instantProtectionError)return setStatus(`${s} : achat immédiat refusé — ${instantProtectionError}`,true);
+    tokenSettings[s]={...(tokenSettings[s]||{}),protectionStages:protectionsForSave(instantProtections)};
+    saveLocalOnly();
+    if(controllerStateSyncTimer){clearTimeout(controllerStateSyncTimer);controllerStateSyncTimer=null}
+    const protectionsSynced=await syncControllerCloudStateNow();
+    if(!protectionsSynced)return setStatus(`${s} : achat immédiat refusé — paliers non enregistrés (${controllerSyncState.error||'synchronisation impossible'}).`,true);
   }
 
   const c=cfg(s);
