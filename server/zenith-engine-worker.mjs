@@ -75,6 +75,12 @@ const telegramPositions={ready:false,rows:new Map(),seeded:false};
 const HEARTBEAT_MS=8000;
 const COMMAND_POLL_MS=750;
 const RECONCILE_MS=15000;
+// A reconciliation mismatch that persists means the engine's in-memory
+// inventory (built from the user stream) has drifted from Binance (e.g. a
+// missed FILLED/LIQUIDATION event). Rebuild it from a fresh Binance REST
+// snapshot by reconnecting the stream, instead of staying blocked forever.
+const RECONCILE_RESEED_AFTER_MS=60000;
+const RECONCILE_RESEED_MIN_INTERVAL_MS=5*60000;
 const KEEPALIVE_MS=45*60*1000;
 const STREAM_RESTART_MS=23*60*60*1000;
 const MARK_FALLBACK_MS=6000;
@@ -112,6 +118,8 @@ const stream={
   reconnectTimer:null,
   lastError:'',
   symbolQuarantines:[],
+  mismatchSince:0,
+  lastReseedAt:0,
 };
 
 const execution={
@@ -3480,8 +3488,19 @@ async function reconcile(secondPass=false){
         }
       }catch(_){}
       await invalidateStream('BINANCE_RECONCILIATION_'+reason);
+      const now=Date.now();
+      if(!stream.mismatchSince)stream.mismatchSince=now;
+      if(now-stream.mismatchSince>=RECONCILE_RESEED_AFTER_MS&&now-n(stream.lastReseedAt,0)>=RECONCILE_RESEED_MIN_INTERVAL_MS){
+        stream.lastReseedAt=now;
+        stream.mismatchSince=0;
+        log('RECONCILIATION_RESEED_FROM_BINANCE',{reason});
+        setTimeout(()=>{
+          closeLocalStream('RECONCILIATION_RESEED',true).catch(error=>logError('RECONCILIATION_RESEED_FAILED',error));
+        },0);
+      }
       return false;
     }
+    stream.mismatchSince=0;
 
     if(stream.state?.needsReconciliation===true){
       stream.state=markUserStreamReconciled(stream.state,{
