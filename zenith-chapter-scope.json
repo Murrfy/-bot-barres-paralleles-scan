@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 81,
+  "scopeRevision": 82,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
@@ -56,6 +56,13 @@
     "scripts/test-active-target-auto-recreate-race.mjs",
     "scripts/test-maxloss-status-ui.mjs",
     "lib/user-stream-state.mjs",
-    "scripts/test-user-stream-state.mjs"
+    "scripts/test-user-stream-state.mjs",
+    "lib/max-loss-policy.mjs",
+    "scripts/test-max-loss-disabled.mjs",
+    "api/binance-reconcile.js",
+    "scripts/test-reconcile.mjs",
+    "scripts/test-engine-maxloss-auto-repair-wiring.mjs",
+    "scripts/test-entry-transition-gc-current.mjs",
+    "scripts/test-orphan-protection-cleanup.mjs"
   ]
 }
