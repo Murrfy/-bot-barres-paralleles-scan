@@ -1774,6 +1774,7 @@ function updateTokenPreview(){
   const target=active?manual:(both&&profit!=null?profit:n(targetEl.value,settings.targetProfit)),goal=sale||(realActive?realPositionPriceForPnl(realActive,target):(entry?priceForPnl(entry,notional(base),target):0));$('tTargetPreview').value=goal?price(goal):'—';$('tExactProfit').textContent=profit==null?'Bénéfice prévu : —':`Bénéfice prévu : ${money(profit)} · calculé avec ${active?'le prix d’achat réel':'les deux prix déterminés'}`;setTokenFieldsEnabled()
 }
 function protectionDraft(){const els=[...($('protectionEditor')?.querySelectorAll('.protectionItem')||[])];return els.map((_,i)=>{const d=defaultProtection(i);return{enabled:$(`tProtect${i+1}`)?.checked!==false,arm:Math.max(0,n($(`tProtect${i+1}Arm`)?.value,d.arm)),floor:String($(`tProtect${i+1}Floor`)?.value??'').trim()===''?null:Math.max(0,n($(`tProtect${i+1}Floor`)?.value,d.floor))}})}
+function protectionsForSave(stages){return(Array.isArray(stages)?stages:[]).map(st=>st&&st.floor===null?{...st,floor:0}:st)}
 function protectionValidationError(stages){
   let previousArm=-Infinity,previousFloor=-Infinity;
   for(let i=0;i<(Array.isArray(stages)?stages.length:0);i++){
@@ -2049,7 +2050,7 @@ async function saveToken(){
   const snapshotRecord=(record,key)=>Object.prototype.hasOwnProperty.call(record,key)?{exists:true,value:clone(record[key])}:{exists:false,value:null};
   const restoreRecord=(record,key,snapshot)=>{if(snapshot.exists)record[key]=snapshot.value;else delete record[key]};
   const oldManualToken=snapshotRecord(manualTokens,s),oldValidated=snapshotRecord(validated,s),oldRevalidateBlock=snapshotRecord(revalidateBlock,s),oldMissedSignal=snapshotRecord(missedSignals,s);
-  const protections=protectionDraft(),protectionError=protectionValidationError(protections);
+  const protectionsRaw=protectionDraft(),protectionError=protectionValidationError(protectionsRaw),protections=protectionsForSave(protectionsRaw);
   const margin=Math.max(1,n($('fMargin').value,n(old.margin,settings.margin)));
   const leverage=Math.round(n($('fLev').value,n(old.leverage,settings.leverage)));
   if(!(margin>=1))return setStatus('La marge du jeton doit être d’au moins 1 $.',true);
@@ -2116,6 +2117,19 @@ async function instantBuySelected(){
   if(realMarketEntryPending.has(s))return setStatus(`${s} : achat immédiat déjà en cours de confirmation Binance.`,true);
   if(n(binanceAccount.realPositions,0)>=n(settings.maxActive,3)){
     return setStatus(`Impossible : la limite de ${settings.maxActive} positions réelles est déjà atteinte.`,true);
+  }
+
+  // Paliers affichés à l'écran : validés, enregistrés et synchronisés AVANT l'achat,
+  // pour que la position achetée en immédiat reçoive ces protections de gain.
+  const instantProtections=protectionDraft();
+  if(instantProtections.length){
+    const instantProtectionError=protectionValidationError(instantProtections);
+    if(instantProtectionError)return setStatus(`${s} : achat immédiat refusé — ${instantProtectionError}`,true);
+    tokenSettings[s]={...(tokenSettings[s]||{}),protectionStages:protectionsForSave(instantProtections)};
+    saveLocalOnly();
+    if(controllerStateSyncTimer){clearTimeout(controllerStateSyncTimer);controllerStateSyncTimer=null}
+    const protectionsSynced=await syncControllerCloudStateNow();
+    if(!protectionsSynced)return setStatus(`${s} : achat immédiat refusé — paliers non enregistrés (${controllerSyncState.error||'synchronisation impossible'}).`,true);
   }
 
   const c=cfg(s);
