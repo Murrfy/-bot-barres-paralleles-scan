@@ -55,6 +55,8 @@ import {
   backfillStartTime,
   favorableExtremeFromMarkKlines,
   highWaterProfitFromExtreme,
+  binancePublicPauseUntil,
+  markRecoveryRetryDelay,
 } from '../lib/auto-high-water-backfill.mjs';
 import {
   entryWatchDefinition,
@@ -192,6 +194,7 @@ const markStream={
   recoveryBlockedSymbols:new Map(),
   recoveryAttemptFailures:new Set(),
   recoveryRetryTimers:new Map(),
+  recoveryBlockAttempts:new Map(),
   lastError:'',
 };
 
@@ -584,7 +587,17 @@ async function binanceApi(path,{method='GET',body}={}){
   return http(path,{method,body});
 }
 
+// Pause globale des requêtes publiques Binance (blocage d'IP 418/429 ou quota presque épuisé).
+// Pendant la pause, aucune requête ne part : réessayer prolongerait le blocage.
+const binancePublicRest={pauseUntil:0};
+
 async function publicBinanceJson(path){
+  if(binancePublicRest.pauseUntil>Date.now()){
+    const error=new Error('BINANCE_PUBLIC_PAUSED_UNTIL_'+binancePublicRest.pauseUntil);
+    error.code='BINANCE_PUBLIC_PAUSED';
+    error.pauseUntil=binancePublicRest.pauseUntil;
+    throw error;
+  }
   const response=await fetch(BINANCE_PUBLIC_BASE+path,{
     cache:'no-store',
     signal:AbortSignal.timeout(8000),
@@ -592,9 +605,26 @@ async function publicBinanceJson(path){
   const text=await response.text();
   let data={};
   try{data=text?JSON.parse(text):{}}catch{data={}}
+  const usedWeight=n(response.headers?.get?.('x-mbx-used-weight-1m'),0);
+  if(usedWeight>=1800){
+    const t=Date.now();
+    binancePublicRest.pauseUntil=Math.max(binancePublicRest.pauseUntil,t+(60000-t%60000)+1000);
+  }
   if(!response.ok){
-    const error=new Error(data?.msg||('BINANCE_PUBLIC_HTTP_'+response.status));
+    const message=data?.msg||('BINANCE_PUBLIC_HTTP_'+response.status);
+    const pauseUntil=binancePublicPauseUntil({
+      status:response.status,
+      message,
+      retryAfter:response.headers?.get?.('retry-after'),
+      now:Date.now(),
+    });
+    if(pauseUntil>binancePublicRest.pauseUntil){
+      binancePublicRest.pauseUntil=pauseUntil;
+      log('BINANCE_PUBLIC_REST_PAUSED',{status:response.status,pauseUntil});
+    }
+    const error=new Error(message);
     error.code='BINANCE_PUBLIC_HTTP_'+response.status;
+    error.pauseUntil=binancePublicRest.pauseUntil;
     throw error;
   }
   return data;
@@ -2081,11 +2111,17 @@ function scheduleMarkRecoveryRetry(symbol,delay=3000){
     return false;
   }
   clearMarkRecoveryRetry(wanted);
+  // Jamais pendant un blocage Binance ; espacement croissant après des échecs répétés.
+  const wait=Math.max(n(delay,3000),markRecoveryRetryDelay({
+    attempt:Math.max(0,n(markStream.recoveryBlockAttempts.get(wanted),1)-1),
+    pauseUntil:binancePublicRest.pauseUntil,
+    now:Date.now(),
+  }));
   const timer=setTimeout(()=>{
     markStream.recoveryRetryTimers.delete(wanted);
     if(stopping||!runtime.leaseActive||!trackedMarkSymbols().has(wanted))return;
     void recoverMissedAggTrades(wanted).catch(error=>logError('MARK_RECOVERY_RETRY_FAILED',error,{symbol:wanted}));
-  },Math.max(500,delay));
+  },Math.max(500,wait));
   markStream.recoveryRetryTimers.set(wanted,timer);
   return true;
 }
@@ -2097,7 +2133,9 @@ function blockMarkRecovery(symbol,reason){
   markStream.recoveryBlockedSymbols.set(wanted,code);
   markStream.lastError=code;
   autoProtection.lastError=code;
-  log('AUTO_PROTECTION_MARK_RECOVERY_LOCAL_BLOCK',{symbol:wanted,reason:code});
+  const attempt=n(markStream.recoveryBlockAttempts.get(wanted),0);
+  markStream.recoveryBlockAttempts.set(wanted,attempt+1);
+  if(attempt<3||attempt%10===0)log('AUTO_PROTECTION_MARK_RECOVERY_LOCAL_BLOCK',{symbol:wanted,reason:code,attempt:attempt+1});
   scheduleMarkRecoveryRetry(wanted,3000);
   return true;
 }
@@ -2176,6 +2214,7 @@ async function recoverMissedAggTrades(symbol){
     }
     recoveryComplete=true;
     markStream.recoveryBlockedSymbols.delete(wanted);
+    markStream.recoveryBlockAttempts.delete(wanted);
     clearMarkRecoveryRetry(wanted);
     return true;
   }catch(error){
@@ -2226,6 +2265,7 @@ function syncMarkSubscriptions(){
   for(const symbol of [...markStream.recoveryBlockedSymbols.keys()]){
     if(!symbols.has(symbol)){
       markStream.recoveryBlockedSymbols.delete(symbol);
+      markStream.recoveryBlockAttempts.delete(symbol);
       clearMarkRecoveryRetry(symbol);
     }
   }

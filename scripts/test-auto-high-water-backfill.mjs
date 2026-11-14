@@ -5,6 +5,8 @@ import {
   backfillStartTime,
   favorableExtremeFromMarkKlines,
   highWaterProfitFromExtreme,
+  binancePublicPauseUntil,
+  markRecoveryRetryDelay,
 } from '../lib/auto-high-water-backfill.mjs';
 import { evaluateMasterAutoProgressiveProtection } from '../lib/master-auto-protection.mjs';
 
@@ -60,4 +62,32 @@ test('worker back-fills the high-water before observing it, read-only and withou
   const block = worker.slice(start, end);
   assert.match(block, /markPriceKlines/);
   assert.doesNotMatch(block, /callProtective|binanceApi|EXEC_|signedBinance/);
+});
+
+test('Binance IP ban: pause until the ban ends plus margin (incident 74.220.51.147)', () => {
+  const now = 1794698000000;
+  const msg = 'Way too many requests; IP(74.220.51.147) banned until 1794698751657. Please use the websocket';
+  assert.equal(binancePublicPauseUntil({ status: 418, message: msg, now }), 1794698751657 + 5000);
+  assert.equal(binancePublicPauseUntil({ status: 429, message: 'Too many requests', retryAfter: '30', now }), now + 32000);
+  assert.equal(binancePublicPauseUntil({ status: 429, message: 'Too many requests', now }), now + 62000);
+  assert.equal(binancePublicPauseUntil({ status: 400, message: 'Invalid symbol', now }), 0);
+});
+
+test('mark recovery retries back off and never fire during a Binance pause', () => {
+  const now = 1000000;
+  assert.equal(markRecoveryRetryDelay({ attempt: 0, now }), 3000);
+  assert.equal(markRecoveryRetryDelay({ attempt: 2, now }), 12000);
+  assert.equal(markRecoveryRetryDelay({ attempt: 30, now }), 60000);
+  assert.equal(markRecoveryRetryDelay({ attempt: 0, pauseUntil: now + 300000, now }), 301000);
+});
+
+test('worker honours the Binance pause before any public REST call', () => {
+  const start = worker.indexOf('async function publicBinanceJson');
+  const block = worker.slice(start, worker.indexOf('function fatalAuthorityCode', start));
+  assert.ok(block.indexOf('binancePublicRest.pauseUntil>Date.now()') < block.indexOf('fetch('));
+  assert.match(block, /binancePublicPauseUntil\(/);
+  assert.match(block, /x-mbx-used-weight-1m/);
+  const sched = worker.slice(worker.indexOf('function scheduleMarkRecoveryRetry'), worker.indexOf('function blockMarkRecovery'));
+  assert.match(sched, /markRecoveryRetryDelay\(\{[\s\S]*pauseUntil:binancePublicRest\.pauseUntil/);
+  assert.match(sched, /Math\.max\(500,wait\)/);
 });
