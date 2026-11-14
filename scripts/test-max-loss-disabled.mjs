@@ -11,6 +11,7 @@ delete process.env.ZENITH_MAX_LOSS_ENFORCED;
 
 const worker=fs.readFileSync('server/zenith-engine-worker.mjs','utf8');
 const reconcile=fs.readFileSync('api/binance-reconcile.js','utf8');
+const protectiveUpdate=fs.readFileSync('api/binance-protective-update-execute.js','utf8');
 const html=fs.readFileSync('index.html','utf8');
 
 const filter={filterType:'PRICE_FILTER',minPrice:'0.000001',maxPrice:'1000',tickSize:'0.000001'};
@@ -99,4 +100,9 @@ test('iPhone never refuses palier or objective edits because of MAX-LOSS',()=>{
   assert.match(html,/const MAX_LOSS_ENFORCED=false;/);
   assert.doesNotMatch(html,/\n\s*if\(!inv\.managedMaxLoss\|\|inv\.maxLossConflict\)/);
   assert.match(html,/MAX-LOSS désactivée — marge isolée/);
+});
+
+test('target exit and paliers are never refused for a missing MAX-LOSS stop (EDGE/ERA incident)',()=>{
+  assert.match(protectiveUpdate,/if\(!emergency&&maxLossEnforced\(\)\)return send\(res,423,\{ok:false,code:'EMERGENCY_MAX_LOSS_PROTECTION_REQUIRED'/);
+  assert.match(protectiveUpdate,/import \{ maxLossEnforced \} from '\.\.\/lib\/max-loss-policy\.mjs';/);
 });

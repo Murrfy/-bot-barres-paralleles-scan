@@ -18,6 +18,7 @@ import {
 import { validateExecutionArmRecord, protectiveModeReason, executionReadiness } from './binance-protective-execute.js';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
 import { revalidateBinanceTradingApiPermissions } from '../lib/binance-api-permissions.mjs';
+import { maxLossEnforced } from '../lib/max-loss-policy.mjs';
 
 const BASE='https://fapi.binance.com';
 const PREFIX='zenith:v1';
@@ -717,7 +718,7 @@ export default async function handler(req,res){
     );
 
     if(type==='EXEC_UPDATE_EXIT'||(type==='EXEC_UPDATE_PROTECTION'&&update.protectionKind==='PROGRESSIVE')){
-      if(!emergency)return send(res,423,{ok:false,code:'EMERGENCY_MAX_LOSS_PROTECTION_REQUIRED',writeAttempted:false});
+      if(!emergency&&maxLossEnforced())return send(res,423,{ok:false,code:'EMERGENCY_MAX_LOSS_PROTECTION_REQUIRED',writeAttempted:false});
     }
 
     const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED);
