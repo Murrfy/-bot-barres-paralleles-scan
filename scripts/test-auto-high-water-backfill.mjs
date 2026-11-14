@@ -91,3 +91,11 @@ test('worker honours the Binance pause before any public REST call', () => {
   assert.match(sched, /markRecoveryRetryDelay\(\{[\s\S]*pauseUntil:binancePublicRest\.pauseUntil/);
   assert.match(sched, /Math\.max\(500,wait\)/);
 });
+
+test('engine diagnostics are read-only logs', () => {
+  const start = worker.indexOf("let lastEngineDiag=''");
+  const block = worker.slice(start, worker.indexOf("log('RUNNING',{", start));
+  assert.match(block, /log\('ENGINE_DIAG',diag\)/);
+  assert.doesNotMatch(block, /syncApi|binanceApi|callProtective|EXEC_|publicBinanceJson/);
+  assert.match(worker, /log\('STREAM_INVALIDATED',\{reason:stream\.lastInvalidateReason\}\)/);
+});

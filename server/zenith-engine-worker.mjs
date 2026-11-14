@@ -2465,6 +2465,11 @@ async function publishRuntime(){
 }
 
 async function invalidateStream(reason='RECONCILIATION_REQUIRED'){
+  // Diagnostic (lecture seule) : écrit la raison une fois à chaque changement.
+  if(String(reason||'')!==stream.lastInvalidateReason){
+    stream.lastInvalidateReason=String(reason||'');
+    log('STREAM_INVALIDATED',{reason:stream.lastInvalidateReason});
+  }
   stream.state=markUserStreamNeedsReconciliation(stream.state,reason);
   stream.lastError=String(reason||'RECONCILIATION_REQUIRED');
   await publishRuntime().catch(()=>{});
@@ -4623,6 +4628,32 @@ async function main(){
     ()=>fallbackMarkPrices().catch(error=>logError('MARK_FALLBACK_FAILED',error)),
     MARK_FALLBACK_MS
   );
+
+  // Diagnostic (lecture seule) : état des verrous du moteur, écrit seulement quand il change.
+  let lastEngineDiag='';
+  setInterval(()=>{
+    try{
+      const diag={
+        leaseActive:runtime.leaseActive===true,
+        heartbeatFresh:runtime.heartbeatFresh===true,
+        synchronized:runtime.synchronized===true,
+        exitConfigReady:exitConfigReady(),
+        realExecutionArmed:runtime.realExecutionArmed===true,
+        mode:String(runtime.mode||''),
+        runtimeError:String(runtime.error||''),
+        controllerRevision:n(runtime.controllerRevision,0),
+        appliedRevision:n(runtime.appliedRevision,0),
+        wsOpen:Boolean(stream.ws&&stream.ws.readyState===WebSocket.OPEN),
+        userStreamReady:userStreamReady(stream.state),
+        reconcileBusy:stream.reconcileBusy===true,
+        streamError:String(stream.lastError||''),
+        autoTargetError:String(autoTarget.lastError||''),
+        autoProtectionError:String(autoProtection.lastError||''),
+      };
+      const sig=JSON.stringify(diag);
+      if(sig!==lastEngineDiag){lastEngineDiag=sig;log('ENGINE_DIAG',diag);}
+    }catch(_){}
+  },15000);
 
   log('RUNNING',{
     baseOrigin:new URL(BASE_URL).origin,
