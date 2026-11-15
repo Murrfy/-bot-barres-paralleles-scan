@@ -1,7 +1,7 @@
 {
   "version": 1,
   "activeChapter": "10-tests-validation-finale",
-  "scopeRevision": 82,
+  "scopeRevision": 83,
   "allowedPaths": [
     "ZENITH_MASTER_PLAN.md",
     "zenith-chapter-scope.json",
@@ -59,6 +59,9 @@
     "scripts/test-user-stream-state.mjs",
     "lib/max-loss-policy.mjs",
     "scripts/test-max-loss-disabled.mjs",
+    "scripts/test-api-error-sanitization.mjs",
+    "scripts/test-protective-final-master-gate.mjs",
+    "scripts/test-limit-only-protective-sells.mjs",
     "api/binance-reconcile.js",
     "scripts/test-reconcile.mjs",
     "scripts/test-engine-maxloss-auto-repair-wiring.mjs",
