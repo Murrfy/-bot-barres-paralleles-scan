@@ -1854,81 +1854,6 @@ async function ensureAutomaticTargets(){
   return {ok:true,changed:false,reason:'ALL_TARGETS_READY'};
 }
 
-function protectedLevelAlreadyCrossed(plan,mark){
-  const trigger=n(plan?.level?.triggerPrice,0),price=n(mark,0);
-  if(!(trigger>0)||!(price>0))return false;
-  const direction=String(plan?.live?.direction||'').toUpperCase();
-  if(direction==='LONG')return price<=trigger;
-  if(direction==='SHORT')return price>=trigger;
-  return false;
-}
-
-async function closeCrossedProtectedLevel(plan,mark){
-  const live=plan.live||{};
-  const symbol=String(live.symbol||'').toUpperCase();
-  const direction=String(live.direction||'').toUpperCase();
-  const quantity=n(live.quantity,0);
-  if(!symbol||!['LONG','SHORT'].includes(direction)||!(quantity>0)){
-    autoProtection.lastError='AUTO_CROSSED_CLOSE_POSITION_INVALID';
-    return false;
-  }
-  if(!(await persistAutoHighWaterNow())){
-    autoProtection.lastError='AUTO_HIGH_WATER_NOT_PERSISTED';
-    return false;
-  }
-  const commandId=`auto-crossed-${symbol}-${direction}-${Math.round(n(plan.stage?.protectedProfitUsd,0)*10)}-${live.lifecycleAt||live.updateTime||0}`;
-  log('AUTO_PROTECTION_LEVEL_CROSSED_CLOSE',{
-    symbol,direction,price:n(mark,0),protectedLevel:n(plan.level?.triggerPrice,0),
-    protectedProfitUsd:n(plan.stage?.protectedProfitUsd,0),observedProfitUsd:n(plan.observedProfitUsd,0),
-  });
-  const policy=PROTECTIVE_CLOSE_ATTEMPTS[0];
-  const first=await callProtectiveExecute({
-    type:'EXEC_CLOSE_POSITION',commandId,symbol,direction,quantity,closeAll:true,
-    exitMode:policy.exitMode,attempt:policy.attempt,priceMatch:policy.priceMatch,
-  });
-  if(!first.response.ok||first.data?.ok!==true){
-    const reason='AUTO_CROSSED_CLOSE_'+String(first.data?.code||first.data?.reason||first.data?.error||('HTTP_'+first.response.status));
-    if(first.data?.writeAttempted===true||first.data?.ambiguous===true||first.data?.result?.ambiguous===true){
-      await failClosedAutoProtection(reason+'_AMBIGUOUS');
-    }else{
-      autoProtection.lastError=reason;
-    }
-    return false;
-  }
-  const firstClientOrderId=String(first.data?.plan?.params?.newClientOrderId||'');
-  if(!firstClientOrderId){
-    await failClosedAutoProtection('AUTO_CROSSED_CLOSE_ID_MISSING');
-    return false;
-  }
-  const outcome=await waitForFullCloseState({symbol,direction,beforeQuantity:quantity,clientOrderId:firstClientOrderId},2500);
-  if(outcome.confirmed){
-    log('AUTO_PROTECTION_LEVEL_CROSSED_CLOSED',{symbol,direction});
-    scheduleReconcile(250);
-    return true;
-  }
-  if(!outcome.safeToRetry){
-    await failClosedAutoProtection('AUTO_CROSSED_CLOSE_UNCONFIRMED');
-    return false;
-  }
-  const remaining=n(outcome.afterQuantity,0);
-  if(!(remaining>0)||remaining>quantity+1e-12){
-    await failClosedAutoProtection('AUTO_CROSSED_REMAINDER_QUANTITY_INVALID');
-    return false;
-  }
-  const remainder=await callProtectiveExecute({
-    type:'EXEC_CLOSE_POSITION',commandId,symbol,direction,quantity:remaining,closeAll:true,
-    exitMode:'REMAINDER_MARKET',recoveryReason:'INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER',
-    previousClientOrderId:firstClientOrderId,
-  });
-  if(!remainder.response.ok||remainder.data?.ok!==true||remainder.data?.remainderMarketClosed!==true){
-    await failClosedAutoProtection('AUTO_CROSSED_REMAINDER_'+String(remainder.data?.code||remainder.data?.reason||('HTTP_'+remainder.response.status)));
-    return false;
-  }
-  log('AUTO_PROTECTION_LEVEL_CROSSED_CLOSED',{symbol,direction,remainderMarket:true});
-  scheduleReconcile(250);
-  return true;
-}
-
 async function executeAutoProgressive(plan){
   const live=plan.live,level=plan.level;
   const body={
@@ -2118,21 +2043,6 @@ async function runAutoProtection(symbol,mark){
   if(plan.action==='BLOCK'){
     autoProtection.lastError=String(plan.reason||'AUTO_PROTECTION_BLOCKED');
     return false;
-  }
-  // Décision Walter (mèches) : un palier atteint par une mèche dont le niveau « Protégé » est
-  // déjà dépassé à la baisse ne peut plus être posé (Binance le refuse). On vend tout de suite
-  // tant que la position est encore en gain ; en perte, le stop perte maximale garde la main.
-  if(plan.action==='REPLACE'&&protectedLevelAlreadyCrossed(plan,mark)){
-    if(!(n(plan.observedProfitUsd,0)>0)){
-      autoProtection.lastError='AUTO_PROTECTED_LEVEL_CROSSED_IN_LOSS';
-      return false;
-    }
-    autoProtection.busySymbols.add(wanted);
-    try{
-      return await closeCrossedProtectedLevel(plan,mark);
-    }finally{
-      autoProtection.busySymbols.delete(wanted);
-    }
   }
   if(plan.action!=='REPLACE'){
     if(plan.redRecoverySatisfied===true&&autoProtection.redHighWater.delete(highWaterKey)){
