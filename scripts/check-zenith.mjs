@@ -563,7 +563,7 @@ if (!protectiveUpdateIntent.includes("workingType:'CONTRACT_PRICE'") ||
 const protectiveUpdateExecute = fs.readFileSync('api/binance-protective-update-execute.js','utf8');
 for (const [label, source, expectedCalls] of [
   ['protective execute', protectiveExecute, 3],
-  ['protective update', protectiveUpdateExecute, 7],
+  ['protective update', protectiveUpdateExecute, 8],
 ]) {
   for (const required of [
     "return {...device,roleIssuedAt:String(issuedAt||'0')}",

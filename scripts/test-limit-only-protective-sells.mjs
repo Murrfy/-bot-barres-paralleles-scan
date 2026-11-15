@@ -40,12 +40,14 @@ test('operational MAX-LOSS identity paths contain no STOP_MARKET writer contract
     ['entry protection plan',entryProtectionPlan],
     ['protective command',protectiveCommand],
   ]){
-    assert.doesNotMatch(source,/STOP_MARKET/,name+' still contains STOP_MARKET');
+    // Décision Walter (15/11/2026) : seul le trailing stop natif de Zenith (TRAILING_STOP_MARKET) vend au marché.
+    assert.doesNotMatch(source.replace(/TRAILING_STOP_MARKET/g,''),/STOP_MARKET/,name+' still contains STOP_MARKET');
   }
 });
 
 test('reconciliation rejects legacy or external MARKET protective orders fail-closed',()=>{
   assert.match(reconcile,/FORBIDDEN_MARKET_PROTECTIVE_ORDER/);
+  assert.match(reconcile,/type === 'TRAILING_STOP_MARKET' && \/\^zth-TRL-/);
   assert.match(reconcile,/\['MARKET','STOP_MARKET','TAKE_PROFIT_MARKET','TRAILING_STOP_MARKET'\]/);
   const maxLossScan=block(reconcile,'const maxLossProtectionCounts','const transitionMissingProtectionPendingEntries');
   assert.doesNotMatch(maxLossScan,/STOP_MARKET|TAKE_PROFIT_MARKET|TRAILING_STOP_MARKET/);

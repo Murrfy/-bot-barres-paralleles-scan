@@ -11,7 +11,8 @@ test('real protective update server enforces configured max-loss validation befo
   assert.doesNotMatch(api,/hardMaxLossUsd:REAL_RISK_LIMITS\.maxLossUsd/);
   assert.match(api,/MAX_LOSS_EXCEEDS_SERVER_LIMIT|MAX_LOSS_TRIGGER_INVALID/);
   const validationIndex=api.indexOf('validateMaxLossTrigger({');
-  const writerIndex=api.indexOf('placeAlgoOrderIdempotent({');
+  // Le trailing stop natif (EXEC_PLACE_TRAILING) ne porte pas de perte max : seul le chemin de mise à jour compte.
+  const writerIndex=api.indexOf('placeAlgoOrderIdempotent({',api.indexOf('let update;'));
   assert.ok(validationIndex>=0&&writerIndex>validationIndex);
 });
 

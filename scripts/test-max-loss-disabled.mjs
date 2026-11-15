@@ -138,3 +138,40 @@ test('a token with a real open position shows ACTIF, not SURVEILLÉ, and is not 
   assert.match(ui, /if\(anyActivePositionBySymbol\(s\)\)return 'ACTIF';/);
   assert.match(ui, /filter\(s=>!anyActivePositionBySymbol\(s\)&&/);
 });
+
+test('native Binance trailing stop: plan, params and reconcile acceptance (wick protection)', async () => {
+  const mod = await import('../api/binance-protective-update-execute.js');
+  const plan = mod.trailingPlanFromBody({symbol:'EDGEUSDT',direction:'LONG',commandId:'trail-EDGEUSDT-LONG-200-140-1',quantity:1427,callbackRate:1.4,activatePrice:0.2931});
+  assert.equal(plan.ok, true);
+  const params = mod.trailingAlgoParams(plan, 0);
+  assert.equal(params.type, 'TRAILING_STOP_MARKET');
+  assert.equal(params.side, 'SELL');
+  assert.equal(params.reduceOnly, 'true');
+  assert.equal(params.callbackRate, '1.4');
+  assert.equal(params.activatePrice, '0.2931');
+  assert.match(params.clientAlgoId, /^zth-TRL-[0-9a-f]{24}$/);
+  assert.notEqual(mod.trailingAlgoParams(plan, 1).clientAlgoId, params.clientAlgoId);
+  assert.equal(mod.trailingPlanFromBody({...plan,callbackRate:5.1}).ok, false);
+  assert.equal(mod.trailingPlanFromBody({...plan,callbackRate:0.05}).ok, false);
+  assert.equal(mod.trailingPlanFromBody({...plan,callbackRate:1.25}).ok, false);
+  const reconcile = fs.readFileSync('api/binance-reconcile.js','utf8');
+  assert.match(reconcile, /type === 'TRAILING_STOP_MARKET' && \/\^zth-TRL-/);
+  assert.match(protectiveUpdate, /String\(master\?\.principal\|\|''\)!=='engine'\)\{\s*return send\(res,423,\{ok:false,code:'TRAILING_ENGINE_REQUIRED'/);
+});
+
+test('engine trailing plan: first complete palier, rate rounded down, activation skipped when already reached', () => {
+  const start = worker.indexOf('function trailingPlanForPosition');
+  const src = worker.slice(start, worker.indexOf('async function ensureTrailingProtection', start));
+  const plan = new Function('n', src + '; return trailingPlanForPosition;')((v,f=0)=>{const x=Number(v);return Number.isFinite(x)?x:f});
+  const stages=[{arm:40,floor:34},{arm:20,floor:14},{arm:500,floor:''}];
+  const edge = plan({position:{symbol:'EDGEUSDT',positionAmt:'1427',entryPrice:'0.2790581'},mark:0.2873,protectionStages:stages,tickSize:'0.0001'});
+  assert.equal(edge.ok, true);
+  assert.equal(edge.armProfitUsd, 20);
+  assert.equal(edge.callbackRate, 1.4);
+  assert.equal(edge.activatePrice, 0.2931);
+  const armed = plan({position:{symbol:'EDGEUSDT',positionAmt:'1427',entryPrice:'0.2790581'},mark:0.2940,protectionStages:stages,tickSize:'0.0001'});
+  assert.equal(armed.activatePrice, 0);
+  const none = plan({position:{symbol:'ETHFIUSDT',positionAmt:'800',entryPrice:'0.4788'},mark:0.48,protectionStages:[{arm:500,floor:''}],tickSize:'0.0001'});
+  assert.equal(none.ok, false);
+  assert.match(worker, /try\{await ensureTrailingProtection\(\{position,mark,protectionStages,orders,priceFilter\}\)\}\s*catch/);
+});
