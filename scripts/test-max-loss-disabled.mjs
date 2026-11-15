@@ -132,3 +132,9 @@ test('bought token is no longer watched, and disappears from the list after the 
   assert.doesNotMatch(block, /delete tokenSettings/);
   assert.match(ui, /try\{removeSoldWatchedTokens\(positions,standardOrders\)\}catch/);
 });
+
+test('a token with a real open position shows ACTIF, not SURVEILLÉ, and is not counted as watched', () => {
+  const ui = fs.readFileSync('index.html','utf8');
+  assert.match(ui, /if\(anyActivePositionBySymbol\(s\)\)return 'ACTIF';/);
+  assert.match(ui, /filter\(s=>!anyActivePositionBySymbol\(s\)&&/);
+});
