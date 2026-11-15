@@ -2120,13 +2120,10 @@ async function runAutoProtection(symbol,mark){
     return false;
   }
   // Décision Walter (mèches) : un palier atteint par une mèche dont le niveau « Protégé » est
-  // déjà dépassé à la baisse ne peut plus être posé (Binance le refuse). On vend tout de suite
-  // tant que la position est encore en gain ; en perte, le stop perte maximale garde la main.
+  // déjà dépassé à la baisse ne peut plus être posé (Binance le refuse). Une position qui a
+  // atteint un palier ne doit jamais repartir dans le rouge : on vend tout de suite, en gain
+  // comme en légère perte, plutôt que de laisser la position s'enfoncer.
   if(plan.action==='REPLACE'&&protectedLevelAlreadyCrossed(plan,mark)){
-    if(!(n(plan.observedProfitUsd,0)>0)){
-      autoProtection.lastError='AUTO_PROTECTED_LEVEL_CROSSED_IN_LOSS';
-      return false;
-    }
     autoProtection.busySymbols.add(wanted);
     try{
       return await closeCrossedProtectedLevel(plan,mark);
