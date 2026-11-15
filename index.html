@@ -1547,6 +1547,28 @@ function startControllerIdentityCheck(){
   refreshControllerIdentity();
   controllerIdentityTimer=setInterval(refreshControllerIdentity,300000);
 }
+// Décision Walter : après l'achat le jeton reste dans la liste (infos) sans être resurveillé ;
+// après la vente il disparaît de la liste. Exige deux lectures Binance réussies sans position.
+const ZENITH_BOUGHT_WATCH_KEY='zenith-bought-watch-v1';
+const soldFlatReads={};
+function removeSoldWatchedTokens(positions,standardOrders){
+  let bought={};try{bought=JSON.parse(localStorage.getItem(ZENITH_BOUGHT_WATCH_KEY)||'{}')||{}}catch(_){bought={}}
+  const open=new Set((positions||[]).filter(p=>Math.abs(n(p?.positionAmt??p?.quantity,0))>0).map(p=>String(p?.symbol||'').toUpperCase()));
+  const pendingEntry=new Set((standardOrders||[]).filter(o=>!(o?.reduceOnly===true||o?.reduceOnly==='true')).map(o=>String(o?.symbol||'').toUpperCase()));
+  let removed=[],dirty=false;
+  for(const s of Object.keys(validated)){
+    const at=n(validated[s]?.validatedAt,0);
+    if(open.has(s)){if(bought[s]!==at){bought[s]=at;dirty=true}soldFlatReads[s]=0;continue}
+    if(bought[s]!==at||!(at>0)||pendingEntry.has(s)){soldFlatReads[s]=0;continue}
+    soldFlatReads[s]=n(soldFlatReads[s],0)+1;
+    if(soldFlatReads[s]<2)continue;
+    delete validated[s];delete missedSignals[s];delete revalidateBlock[s];delete manualTokens[s];
+    delete bought[s];delete soldFlatReads[s];dirty=true;removed.push(s);
+  }
+  for(const s of Object.keys(bought)){if(!validated[s]){delete bought[s];dirty=true}}
+  if(dirty){try{localStorage.setItem(ZENITH_BOUGHT_WATCH_KEY,JSON.stringify(bought))}catch(_){}}
+  if(removed.length){save();syncRealtime();renderAll();setStatus(`${removed.join(', ')} vendu : retiré de la liste.`)}
+}
 async function refreshBinanceAccount(){
   try{
     const r=await fetch('/api/binance-read',{
@@ -1583,6 +1605,7 @@ async function refreshBinanceAccount(){
     };
     reconcileRealProtectiveUpdatePending();
     renderBinanceAccount();
+    try{removeSoldWatchedTokens(positions,standardOrders)}catch(_){}
     if(selectedSymbol)setTokenFieldsEnabled();
     return true;
   }catch(e){

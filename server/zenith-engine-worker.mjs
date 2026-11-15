@@ -63,6 +63,7 @@ import {
   entryWatchIdentity,
   evaluateEntryWatchTick,
   pruneEntryWatchStates,
+  normalizeEntryWatchState,
 } from '../lib/entry-watch.mjs';
 
 const BASE_URL=String(process.env.ZENITH_BASE_URL||'').replace(/\/$/,'');
@@ -1126,6 +1127,18 @@ function watchedEntrySymbols(){
   if(!entryWatch.loaded)return out;
   const active=activeProtectionSymbols();
   for(const definition of entryWatchDefinitions()){
+    // Décision Walter : après l'achat, le jeton n'est plus surveillé pour un nouvel achat.
+    // L'achat consomme la surveillance : après la vente, aucun rachat tant qu'il n'est pas revalidé.
+    if(active.has(definition.symbol)){
+      const current=entryWatch.states.get(definition.symbol);
+      if(!(n(current?.triggeredAt,0)>0)){
+        const consumed=normalizeEntryWatchState(current,definition);
+        consumed.triggeredAt=Date.now();
+        entryWatch.states.set(definition.symbol,consumed);
+        log('ENTRY_WATCH_CONSUMED_BY_POSITION',{symbol:definition.symbol});
+        scheduleEntryWatchSave(250);
+      }
+    }
     const state=entryWatch.states.get(definition.symbol);
     if(!active.has(definition.symbol)&&!(n(state?.triggeredAt,0)>0)&&!(n(state?.blockedAt,0)>0))out.add(definition.symbol);
   }
