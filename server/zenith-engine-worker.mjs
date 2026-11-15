@@ -502,7 +502,9 @@ const TELEGRAM_EVENT_MESSAGES={
     const list=(Array.isArray(d.symbols)?d.symbols:[]).map(s=>s==='*'?'marge/levier général':telegramSymbol(s)).join(', ')||'?';
     return '⛔ Zenith : modification refusée — achat/marge/levier changé sur un jeton actif ('+list+'). Remets l\'ancien réglage.';
   },
-  ENGINE_OUT_OF_SERVICE:d=>'🚨 Zenith ne marche plus : il ne fait plus son travail (pas d\'achat, pas de nouvel ordre) — '+(ENGINE_SERVICE_LABELS[d.label]||'panne')+(d.reason?' ('+telegramReason(d.reason)+')':'')+'.',
+  ENGINE_OUT_OF_SERVICE:d=>d.label==='ORPHAN'
+    ?'🚨 Zenith bloqué : un ancien ordre reste sur '+telegramSymbol(d.symbol)+' (jeton déjà vendu). Annule-le sur Binance, onglet Conditionnel.'
+    :'🚨 Zenith ne marche plus : il ne fait plus son travail (pas d\'achat, pas de nouvel ordre) — '+(ENGINE_SERVICE_LABELS[d.label]||'panne')+(d.reason?' ('+telegramReason(d.reason)+')':'')+'.',
   ENGINE_BACK_IN_SERVICE:()=>'✅ Zenith remarche normalement.',
 };
 // Zenith hors jeu : prévenir Walter quand le moteur ne fait plus son travail depuis 3 minutes
@@ -511,6 +513,8 @@ const ENGINE_OUT_AFTER_MS=3*60*1000,ENGINE_BACK_AFTER_MS=60*1000;
 const engineService={badSince:0,goodSince:0,alerted:false};
 const ENGINE_SERVICE_LABELS={LEASE:'MASTER inactif',MODE:'MASTER arrêté',DESYNC:'MASTER désynchronisé',STREAM:'flux Binance coupé'};
 function engineServiceReason(diag){
+  const orphan=/^SYMBOL_QUARANTINE_([A-Z0-9]{2,30})_ORPHAN/.exec(String(diag.streamError||'')+'|'+String(diag.runtimeError||''));
+  if(orphan)return {label:'ORPHAN',code:'',symbol:orphan[1]};
   if(diag.leaseActive!==true)return {label:'LEASE',code:''};
   if(String(diag.mode||'')!=='RUNNING')return {label:'MODE',code:String(diag.mode||'')};
   if(diag.synchronized!==true)return {label:'DESYNC',code:String(diag.runtimeError||'')};
@@ -524,7 +528,7 @@ function engineServiceWatch(diag,now=Date.now()){
     if(!engineService.badSince)engineService.badSince=now;
     if(!engineService.alerted&&now-engineService.badSince>=ENGINE_OUT_AFTER_MS){
       engineService.alerted=true;
-      log('ENGINE_OUT_OF_SERVICE',{label:reason.label,reason:reason.code,sinceMs:now-engineService.badSince});
+      log('ENGINE_OUT_OF_SERVICE',{label:reason.label,reason:reason.code,symbol:reason.symbol||'',sinceMs:now-engineService.badSince});
     }
     return;
   }
@@ -536,16 +540,22 @@ function engineServiceWatch(diag,now=Date.now()){
   }
 }
 
-// Alertes de panne : une seule fois par jeton et par raison toutes les 30 minutes (pas de spam).
+// Alertes de panne par jeton : seulement si le problème dure (encore là 2 minutes après la première fois),
+// puis au plus une fois toutes les 30 minutes. Un raté passager qui se répare seul n'envoie rien.
 const TELEGRAM_ALERT_DEDUPE_KINDS=new Set(['AUTO_PROTECTION_LOCAL_FAILURE','AUTO_TARGET_LOCAL_FAILURE','TRAILING_PROTECTION_FAILED','AUTO_MAX_LOSS_REPAIR_REFUSED']);
-const telegramAlertSentAt=new Map();
+const TELEGRAM_ALERT_PERSIST_MS=2*60*1000,TELEGRAM_ALERT_REPEAT_MS=30*60*1000,TELEGRAM_ALERT_FORGET_MS=10*60*1000;
+const telegramAlertState=new Map();
 function telegramAlertAllowed(kind,d,now=Date.now()){
   if(!TELEGRAM_ALERT_DEDUPE_KINDS.has(kind))return true;
-  const key=kind+':'+String(d?.symbol||'')+':'+String(d?.reason||'');
-  const last=n(telegramAlertSentAt.get(key),0);
-  if(last>0&&now-last<30*60*1000)return false;
-  if(telegramAlertSentAt.size>500)telegramAlertSentAt.clear();
-  telegramAlertSentAt.set(key,now);
+  const key=kind+':'+String(d?.symbol||'');
+  let row=telegramAlertState.get(key);
+  if(!row||now-row.lastSeen>TELEGRAM_ALERT_FORGET_MS)row={firstSeen:now,lastSeen:now,sentAt:0};
+  row.lastSeen=now;
+  if(telegramAlertState.size>500&&!telegramAlertState.has(key))telegramAlertState.clear();
+  telegramAlertState.set(key,row);
+  if(now-row.firstSeen<TELEGRAM_ALERT_PERSIST_MS)return false;
+  if(row.sentAt>0&&now-row.sentAt<TELEGRAM_ALERT_REPEAT_MS)return false;
+  row.sentAt=now;
   return true;
 }
 function notifyTelegram(text){
@@ -3661,6 +3671,11 @@ async function reconcile(secondPass=false){
         const cleaned=await callProtectiveUpdateExecute(body);
         if(!cleaned.response.ok||cleaned.data?.ok!==true){
           const reason='ORPHAN_CLEANUP_'+String(cleaned.data?.code||('HTTP_'+cleaned.response.status));
+          log('ORPHAN_CLEANUP_FAILED_DETAIL',{
+            symbol:target.symbol,orderClass:target.orderClass,type:String(target.type||''),
+            clientId:target.orderClass==='ALGO'?target.clientAlgoId:target.clientOrderId,
+            reason,binanceCode:cleaned.data?.binanceCode??null,httpStatus:cleaned.response.status,
+          });
           await markOrphanCleanupFailure(reason,target.symbol);
           return false;
         }

@@ -239,8 +239,17 @@ test('Telegram: outage alert after 3 minutes, recovery after 1 minute, failure a
   const dSrc = worker.slice(dStart, worker.indexOf('function notifyTelegram', dStart));
   const allowed = new Function('n', dSrc + '; return telegramAlertAllowed;')((v,f=0)=>{const x=Number(v);return Number.isFinite(x)?x:f});
   const d = {symbol:'CLOUSDT',reason:'X'};
-  assert.equal(allowed('TRAILING_PROTECTION_FAILED', d, 1000), true);
-  assert.equal(allowed('TRAILING_PROTECTION_FAILED', d, 60000), false);
-  assert.equal(allowed('TRAILING_PROTECTION_FAILED', d, 1000 + 30*60*1000), true);
+  // Raté passager (une seule fois) : aucun message.
+  assert.equal(allowed('AUTO_TARGET_LOCAL_FAILURE', {symbol:'MSTUUSDT',reason:'NOT_STREAM_CONFIRMED'}, 1000), false);
+  assert.equal(allowed('AUTO_TARGET_LOCAL_FAILURE', {symbol:'MSTUUSDT',reason:'NOT_STREAM_CONFIRMED'}, 1000 + 11*60*1000), false);
+  // Problème qui dure (répété toutes les 15 s) : un message après 2 minutes, puis pas avant 30 minutes.
+  let sent=0;
+  for (let t=0; t<=40*60*1000; t+=15000) if (allowed('TRAILING_PROTECTION_FAILED', {...d,reason:'R'+t}, t)) sent++;
+  assert.equal(sent, 2);
   assert.equal(allowed('RUNNING', {}, 1000), true);
+  // Ancien ordre bloqué après une vente : message clair avec le jeton.
+  const orphan = {leaseActive:true,mode:'RUNNING',synchronized:true,userStreamReady:false,streamError:'SYMBOL_QUARANTINE_ERAUSDT_ORPHAN_CLEANUP_BINANCE_ORPHAN_CLEANUP_FAILED'};
+  logs.length=0; watch(orphan, 1e7); watch(orphan, 1e7+181000);
+  assert.equal(logs[0][1].label, 'ORPHAN');
+  assert.equal(logs[0][1].symbol, 'ERAUSDT');
 });
