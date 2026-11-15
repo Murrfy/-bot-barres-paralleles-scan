@@ -479,7 +479,7 @@ function log(kind,details={}){
   console.log(JSON.stringify(safe));
   // Passage de relais normal entre deux MASTER (mise à jour) : pas une panne, aucun message Telegram.
   if(kind==='BOOTSTRAP_BLOCKED'&&String(safe.code||'')==='ENGINE_INSTANCE_ACTIVE')return;
-  try{const format=TELEGRAM_EVENT_MESSAGES[kind];if(format)notifyTelegram(format(safe))}catch(_){}
+  try{const format=TELEGRAM_EVENT_MESSAGES[kind];if(format&&telegramAlertAllowed(kind,safe))notifyTelegram(format(safe))}catch(_){}
 }
 function telegramSymbol(v){const s=String(v||'').toUpperCase();return /^[A-Z0-9]{2,40}$/.test(s)?s:'?'}
 function telegramReason(v){return String(v||'').replace(/[^A-Za-z0-9_ .:-]/g,'').slice(0,60)}
@@ -495,7 +495,59 @@ const TELEGRAM_EVENT_MESSAGES={
   AUTO_ENTRY_FAILED:d=>'❌ Zenith : achat raté — '+telegramSymbol(d.symbol)+' ('+telegramReason(d.reason)+').',
   AUTO_MAX_LOSS_REPAIRED:d=>'🛡️ Zenith : perte MAX reposée — '+telegramSymbol(d.symbol)+'.',
   AUTO_PROTECTION_LOCAL_FAILURE:d=>'⚠️ Zenith : problème de protection — '+telegramSymbol(d.symbol)+' ('+telegramReason(d.reason)+').',
+  AUTO_TARGET_LOCAL_FAILURE:d=>'⚠️ Zenith : vente à l\'objectif non posée — '+telegramSymbol(d.symbol)+' ('+telegramReason(d.reason)+').',
+  TRAILING_PROTECTION_FAILED:d=>'⚠️ Zenith : trailing stop refusé par Binance — '+telegramSymbol(d.symbol)+' ('+telegramReason(d.reason)+').',
+  AUTO_MAX_LOSS_REPAIR_REFUSED:d=>'⚠️ Zenith : stop perte max non posé — '+telegramSymbol(d.symbol)+' ('+telegramReason(d.reason)+').',
+  ACTIVE_LOCKED_SETTING_BLOCKED:d=>{
+    const list=(Array.isArray(d.symbols)?d.symbols:[]).map(s=>s==='*'?'marge/levier général':telegramSymbol(s)).join(', ')||'?';
+    return '⛔ Zenith : modification refusée — achat/marge/levier changé sur un jeton actif ('+list+'). Remets l\'ancien réglage.';
+  },
+  ENGINE_OUT_OF_SERVICE:d=>'🚨 Zenith ne marche plus : il ne fait plus son travail (pas d\'achat, pas de nouvel ordre) — '+(ENGINE_SERVICE_LABELS[d.label]||'panne')+(d.reason?' ('+telegramReason(d.reason)+')':'')+'.',
+  ENGINE_BACK_IN_SERVICE:()=>'✅ Zenith remarche normalement.',
 };
+// Zenith hors jeu : prévenir Walter quand le moteur ne fait plus son travail depuis 3 minutes
+// (désynchronisé, flux Binance coupé, pas en marche), puis quand il remarche depuis 1 minute.
+const ENGINE_OUT_AFTER_MS=3*60*1000,ENGINE_BACK_AFTER_MS=60*1000;
+const engineService={badSince:0,goodSince:0,alerted:false};
+const ENGINE_SERVICE_LABELS={LEASE:'MASTER inactif',MODE:'MASTER arrêté',DESYNC:'MASTER désynchronisé',STREAM:'flux Binance coupé'};
+function engineServiceReason(diag){
+  if(diag.leaseActive!==true)return {label:'LEASE',code:''};
+  if(String(diag.mode||'')!=='RUNNING')return {label:'MODE',code:String(diag.mode||'')};
+  if(diag.synchronized!==true)return {label:'DESYNC',code:String(diag.runtimeError||'')};
+  if(diag.userStreamReady!==true)return {label:'STREAM',code:String(diag.streamError||'')};
+  return null;
+}
+function engineServiceWatch(diag,now=Date.now()){
+  const reason=engineServiceReason(diag);
+  if(reason){
+    engineService.goodSince=0;
+    if(!engineService.badSince)engineService.badSince=now;
+    if(!engineService.alerted&&now-engineService.badSince>=ENGINE_OUT_AFTER_MS){
+      engineService.alerted=true;
+      log('ENGINE_OUT_OF_SERVICE',{label:reason.label,reason:reason.code,sinceMs:now-engineService.badSince});
+    }
+    return;
+  }
+  engineService.badSince=0;
+  if(!engineService.goodSince)engineService.goodSince=now;
+  if(engineService.alerted&&now-engineService.goodSince>=ENGINE_BACK_AFTER_MS){
+    engineService.alerted=false;
+    log('ENGINE_BACK_IN_SERVICE',{});
+  }
+}
+
+// Alertes de panne : une seule fois par jeton et par raison toutes les 30 minutes (pas de spam).
+const TELEGRAM_ALERT_DEDUPE_KINDS=new Set(['AUTO_PROTECTION_LOCAL_FAILURE','AUTO_TARGET_LOCAL_FAILURE','TRAILING_PROTECTION_FAILED','AUTO_MAX_LOSS_REPAIR_REFUSED']);
+const telegramAlertSentAt=new Map();
+function telegramAlertAllowed(kind,d,now=Date.now()){
+  if(!TELEGRAM_ALERT_DEDUPE_KINDS.has(kind))return true;
+  const key=kind+':'+String(d?.symbol||'')+':'+String(d?.reason||'');
+  const last=n(telegramAlertSentAt.get(key),0);
+  if(last>0&&now-last<30*60*1000)return false;
+  if(telegramAlertSentAt.size>500)telegramAlertSentAt.clear();
+  telegramAlertSentAt.set(key,now);
+  return true;
+}
 function notifyTelegram(text){
   if(!TELEGRAM_ENABLED)return;
   try{
@@ -758,11 +810,26 @@ function activeRuntimeSymbols(){
   const projection=streamProjection();
   const out=new Set();
   for(const row of [...(Array.isArray(projection.binancePositions)?projection.binancePositions:[]),...(Array.isArray(projection.binanceOrders)?projection.binanceOrders:[])]){
+    // Un ordre de sortie (reduce-only / closePosition) resté sur un jeton déjà vendu ne le rend pas actif :
+    // sinon retirer ce jeton de la liste figeait tout le MASTER (ACTIVE_LOCKED_SETTING_CHANGED).
+    if(row&&(row.reduceOnly===true||row.reduceOnly==='true'||row.closePosition===true||row.closePosition==='true'))continue;
     const symbol=String(row?.symbol||'').toUpperCase();
     if(/^[A-Z0-9]{3,30}$/.test(symbol))out.add(symbol);
   }
   return out;
 }
+
+// Jetons actifs dont un réglage verrouillé (achat, marge, levier) a changé : '*' pour un réglage général.
+function activeLockedChangeSymbols(currentConfig,nextConfig,activeSymbols=activeRuntimeSymbols()){
+  const before=currentConfig?.settings||{},after=nextConfig?.settings||{};
+  const out=[];
+  if(LOCKED_GLOBAL_SETTING_KEYS.some(key=>stableStringify(before[key])!==stableStringify(after[key])))out.push('*');
+  for(const symbol of activeSymbols){
+    if(!activeEditableConfigAllowed(currentConfig,nextConfig,new Set([symbol])))out.push(String(symbol).toUpperCase());
+  }
+  return [...new Set(out)];
+}
+const activeLockedAlert={revision:0};
 
 function activeSafeTokenConfigRefreshAllowed(currentConfig,nextConfig,activeSymbols=activeRuntimeSymbols()){
   if(!currentConfig||typeof currentConfig!=='object'||!nextConfig||typeof nextConfig!=='object')return false;
@@ -921,6 +988,12 @@ async function syncControllerConfig(){
      !activeEditableConfigAllowed(runtime.config,controllerState.data)){
     runtime.synchronized=false;
     runtime.error='ACTIVE_LOCKED_SETTING_CHANGED';
+    const blockedRevision=n(controllerState.revision,0);
+    if(blockedRevision!==activeLockedAlert.revision){
+      activeLockedAlert.revision=blockedRevision;
+      let symbols=[];try{symbols=activeLockedChangeSymbols(runtime.config,controllerState.data)}catch(_){}
+      log('ACTIVE_LOCKED_SETTING_BLOCKED',{revision:blockedRevision,symbols});
+    }
     return false;
   }
 
@@ -4758,6 +4831,7 @@ async function main(){
       };
       const sig=JSON.stringify(diag);
       if(sig!==lastEngineDiag){lastEngineDiag=sig;log('ENGINE_DIAG',diag);}
+      engineServiceWatch(diag);
     }catch(_){}
   },15000);
 

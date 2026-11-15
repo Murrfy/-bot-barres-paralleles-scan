@@ -175,3 +175,50 @@ test('engine trailing plan: first complete palier, rate rounded down, activation
   assert.equal(none.ok, false);
   assert.match(worker, /try\{await ensureTrailingProtection\(\{position,mark,protectionStages,orders,priceFilter\}\)\}\s*catch/);
 });
+
+test('sold token with leftover reduce-only stop is not active: removing it never freezes the MASTER', () => {
+  const start = worker.indexOf('function activeRuntimeSymbols(){');
+  const src = worker.slice(start, worker.indexOf('// Jetons actifs dont un réglage verrouillé', start));
+  const projection = {
+    binancePositions:[{symbol:'MSTUUSDT',positionAmt:'25'}],
+    binanceOrders:[
+      {symbol:'ERAUSDT',type:'STOP',reduceOnly:true},
+      {symbol:'ERAUSDT',type:'TRAILING_STOP_MARKET',reduceOnly:'true'},
+      {symbol:'XUSDT',type:'STOP_MARKET',closePosition:true},
+      {symbol:'ETHFIUSDT',type:'LIMIT',reduceOnly:false},
+    ],
+  };
+  const active = new Function('streamProjection', src + '; return activeRuntimeSymbols;')(()=>projection)();
+  assert.deepEqual([...active].sort(), ['ETHFIUSDT','MSTUUSDT']);
+  assert.match(worker, /log\('ACTIVE_LOCKED_SETTING_BLOCKED',\{revision:blockedRevision,symbols\}\)/);
+  assert.match(worker, /ACTIVE_LOCKED_SETTING_BLOCKED:d=>/);
+});
+
+test('Telegram: outage alert after 3 minutes, recovery after 1 minute, failure alerts deduplicated', () => {
+  const start = worker.indexOf('const ENGINE_OUT_AFTER_MS');
+  const src = worker.slice(start, worker.indexOf('// Alertes de panne', start));
+  const logs = [];
+  const watch = new Function('log', src + '; return engineServiceWatch;')((k,d)=>logs.push([k,d]));
+  const bad = {leaseActive:true,mode:'RUNNING',synchronized:false,userStreamReady:true,runtimeError:'ACTIVE_LOCKED_SETTING_CHANGED'};
+  const good = {leaseActive:true,mode:'RUNNING',synchronized:true,userStreamReady:true};
+  watch(bad, 0); watch(bad, 170000);
+  assert.equal(logs.length, 0);
+  watch(bad, 181000); watch(bad, 400000);
+  assert.deepEqual(logs.map(x=>x[0]), ['ENGINE_OUT_OF_SERVICE']);
+  assert.equal(logs[0][1].label, 'DESYNC');
+  watch(good, 500000); watch(good, 550000);
+  assert.equal(logs.length, 1);
+  watch(good, 561000);
+  assert.deepEqual(logs.map(x=>x[0]), ['ENGINE_OUT_OF_SERVICE','ENGINE_BACK_IN_SERVICE']);
+  for (const kind of ['ENGINE_OUT_OF_SERVICE','ENGINE_BACK_IN_SERVICE','TRAILING_PROTECTION_FAILED','AUTO_TARGET_LOCAL_FAILURE','AUTO_MAX_LOSS_REPAIR_REFUSED']) {
+    assert.match(worker, new RegExp(kind + ':'));
+  }
+  const dStart = worker.indexOf('const TELEGRAM_ALERT_DEDUPE_KINDS');
+  const dSrc = worker.slice(dStart, worker.indexOf('function notifyTelegram', dStart));
+  const allowed = new Function('n', dSrc + '; return telegramAlertAllowed;')((v,f=0)=>{const x=Number(v);return Number.isFinite(x)?x:f});
+  const d = {symbol:'CLOUSDT',reason:'X'};
+  assert.equal(allowed('TRAILING_PROTECTION_FAILED', d, 1000), true);
+  assert.equal(allowed('TRAILING_PROTECTION_FAILED', d, 60000), false);
+  assert.equal(allowed('TRAILING_PROTECTION_FAILED', d, 1000 + 30*60*1000), true);
+  assert.equal(allowed('RUNNING', {}, 1000), true);
+});
