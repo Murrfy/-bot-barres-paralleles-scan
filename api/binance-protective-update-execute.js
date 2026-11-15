@@ -242,6 +242,11 @@ export function emergencyProtection(runtimeState,update,entryPrice,excludeClient
   })||null;
 }
 
+const MAX_EXIT_ID_ATTEMPTS=20;
+export function terminalExitOrderStatus(status){
+  return ['CANCELED','EXPIRED','REJECTED','EXPIRED_IN_MATCH'].includes(String(status||'').toUpperCase());
+}
+
 export function conflictingProtectiveOrders(runtimeState, update, kind, allowedIds = []) {
   const allowed = new Set((Array.isArray(allowedIds) ? allowedIds : []).filter(Boolean).map(String));
   const side = sideForDirection(update.direction);
@@ -787,10 +792,32 @@ export default async function handler(req,res){
           expectedSide,writesEnabled:true,timestamp:Date.now()
         });
       }else{
-        plan=buildExitOrderPlan({
+        // Un identifiant déjà utilisé par un ordre ANNULÉ/EXPIRÉ (ex. objectif enlevé à la main)
+        // ne doit jamais être pris pour un objectif posé : on passe à l'identifiant suivant.
+        const exitPlanFor=attempt=>buildExitOrderPlan({
           commandId:String(req.body?.commandId||''),symbol:update.symbol,direction:update.direction,
-          quantity:update.quantity,exitMode:'NORMAL_LIMIT',targetPrice:update.targetPrice,attempt:0
+          quantity:update.quantity,exitMode:'NORMAL_LIMIT',targetPrice:update.targetPrice,attempt
         });
+        let exitAttempt=0;
+        plan=exitPlanFor(0);
+        for(;;){
+          let previous=null;
+          try{
+            previous=await signedBinanceRequest({
+              path:'/fapi/v1/order',method:'GET',apiKey,secret,timestamp:Date.now(),
+              params:{symbol:update.symbol,origClientOrderId:plan.params.newClientOrderId}
+            });
+          }catch(error){
+            if(Number(error?.code)===-2013)break;
+            return send(res,503,{ok:false,code:'EXIT_ID_LOOKUP_FAILED',writeAttempted:false});
+          }
+          if(!terminalExitOrderStatus(previous?.status))break;
+          exitAttempt++;
+          if(exitAttempt>=MAX_EXIT_ID_ATTEMPTS){
+            return send(res,409,{ok:false,code:'EXIT_CLIENT_IDS_EXHAUSTED',writeAttempted:false});
+          }
+          plan=exitPlanFor(exitAttempt);
+        }
         const conflicts=conflictingProtectiveOrders(
           state.runtimeState,update,'EXIT',[plan.params.newClientOrderId]
         );

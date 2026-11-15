@@ -106,3 +106,17 @@ test('target exit and paliers are never refused for a missing MAX-LOSS stop (EDG
   assert.match(protectiveUpdate,/if\(!emergency&&maxLossEnforced\(\)\)return send\(res,423,\{ok:false,code:'EMERGENCY_MAX_LOSS_PROTECTION_REQUIRED'/);
   assert.match(protectiveUpdate,/import \{ maxLossEnforced \} from '\.\.\/lib\/max-loss-policy\.mjs';/);
 });
+
+test('a cancelled target id is never replayed as a placed target (EDGE incident)', async () => {
+  const mod = await import('../api/binance-protective-update-execute.js');
+  assert.equal(mod.terminalExitOrderStatus('CANCELED'), true);
+  assert.equal(mod.terminalExitOrderStatus('expired'), true);
+  assert.equal(mod.terminalExitOrderStatus('NEW'), false);
+  assert.equal(mod.terminalExitOrderStatus('FILLED'), false);
+  const start = protectiveUpdate.indexOf('const exitPlanFor=attempt=>');
+  const block = protectiveUpdate.slice(start, protectiveUpdate.indexOf('placeStandardOrderIdempotent({', start));
+  assert.match(block, /origClientOrderId:plan\.params\.newClientOrderId/);
+  assert.match(block, /terminalExitOrderStatus\(previous\?\.status\)/);
+  assert.match(block, /plan=exitPlanFor\(exitAttempt\)/);
+  assert.match(block, /conflictingProtectiveOrders\(/);
+});
