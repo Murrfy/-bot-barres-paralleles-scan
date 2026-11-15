@@ -45,7 +45,7 @@ test('controller can read only sanitized server entry-watch outcome',()=>{
 test('token list shows server-confirmed not-started state and keeps it out of watched KPI',()=>{
   assert.match(html,/function realEntryDidNotStart\(s\)/);
   assert.match(html,/'STAND-BY'/);
-  assert.match(html,/Object\.keys\(validated\)\.filter\(s=>!openBySymbol\(s\)&&!revalidateBlock\[s\]&&!realEntryDidNotStart\(s\)\)/);
+  assert.match(html,/Object\.keys\(validated\)\.filter\(s=>!anyActivePositionBySymbol\(s\)&&!revalidateBlock\[s\]&&!realEntryDidNotStart\(s\)\)/);
   assert.match(html,/watched=!!validated\[selectedSymbol\]&&!realEntryDidNotStart\(selectedSymbol\)&&!active/);
   assert.match(html,/setInterval\(refreshServerEntryWatch,3000\)/);
 });
