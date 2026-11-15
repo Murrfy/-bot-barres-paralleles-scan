@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 // Décision Walter 13/11/2026 (incident IDOL) : la MAX-LOSS ne bloque plus jamais
 // les paliers, la vente à l'objectif, la fermeture ni les achats.
 import test from 'node:test';
@@ -159,19 +160,96 @@ test('native Binance trailing stop: plan, params and reconcile acceptance (wick 
   assert.match(protectiveUpdate, /String\(master\?\.principal\|\|''\)!=='engine'\)\{\s*return send\(res,423,\{ok:false,code:'TRAILING_ENGINE_REQUIRED'/);
 });
 
-test('engine trailing plan: first complete palier, rate rounded down, activation skipped when already reached', () => {
-  const start = worker.indexOf('function trailingPlanForPosition');
+test('règle de Walter : 20 $ touché → 14 $ garanti, rien entre 21 et 39 $, 40 $ touché → 34 $', () => {
+  const start = worker.indexOf('function trailingCompleteStages');
   const src = worker.slice(start, worker.indexOf('async function ensureTrailingProtection', start));
-  const plan = new Function('n', src + '; return trailingPlanForPosition;')((v,f=0)=>{const x=Number(v);return Number.isFinite(x)?x:f});
+  const sha = (v)=>crypto.createHash('sha256').update(String(v),'utf8').digest('hex');
+  const lib = new Function('n','sha256Hex', src + '; return {trailingPlanForPosition,reachedStageFloorProtected,trailingCommandId,trailingClientAlgoIds};')((v,f=0)=>{const x=Number(v);return Number.isFinite(x)?x:f}, sha);
+  const plan = lib.trailingPlanForPosition;
   const stages=[{arm:40,floor:34},{arm:20,floor:14},{arm:500,floor:''}];
-  const edge = plan({position:{symbol:'EDGEUSDT',positionAmt:'1427',entryPrice:'0.2790581'},mark:0.2873,protectionStages:stages,tickSize:'0.0001'});
-  assert.equal(edge.ok, true);
-  assert.equal(edge.armProfitUsd, 20);
-  assert.equal(edge.callbackRate, 1.4);
-  assert.equal(edge.activatePrice, 0.2931);
-  const armed = plan({position:{symbol:'EDGEUSDT',positionAmt:'1427',entryPrice:'0.2790581'},mark:0.2940,protectionStages:stages,tickSize:'0.0001'});
-  assert.equal(armed.activatePrice, 0);
-  const none = plan({position:{symbol:'ETHFIUSDT',positionAmt:'800',entryPrice:'0.4788'},mark:0.48,protectionStages:[{arm:500,floor:''}],tickSize:'0.0001'});
-  assert.equal(none.ok, false);
-  assert.match(worker, /try\{await ensureTrailingProtection\(\{position,mark,protectionStages,orders,priceFilter\}\)\}\s*catch/);
+  const mstu={symbol:'MSTUUSDT',positionAmt:'25',entryPrice:'16'};
+  // Avant 20 $ : le trailing attend au prix des +20 $ (16,8) avec l'écart 20→14.
+  const first = plan({position:mstu,mark:16.2,protectionStages:stages,tickSize:'0.01',highWaterProfitUsd:5});
+  assert.equal(first.ok, true);
+  assert.equal(first.armProfitUsd, 20);
+  assert.equal(first.protectedProfitUsd, 14);
+  assert.equal(first.activatePrice, 16.8);
+  assert.equal(first.callbackRate, 1.4);
+  // 20 $ atteint, prix à +22 $ : plus de trailing qui suit le prix, le suivant attend au prix des +40 $ (17,6).
+  const second = plan({position:mstu,mark:16.88,protectionStages:stages,tickSize:'0.01',highWaterProfitUsd:22});
+  assert.equal(second.ok, true);
+  assert.equal(second.armProfitUsd, 40);
+  assert.equal(second.protectedProfitUsd, 34);
+  assert.equal(second.activatePrice, 17.6);
+  assert.ok(second.activatePrice > 16.88);
+  // Tous les paliers atteints : aucun trailing, seule la protection fixe reste.
+  assert.equal(plan({position:mstu,mark:17.9,protectionStages:stages,tickSize:'0.01',highWaterProfitUsd:45}).ok, false);
+  // Jamais de trailing qui démarre tout de suite en suivant le prix.
+  assert.equal(plan({position:mstu,mark:16.85,protectionStages:stages,tickSize:'0.01',highWaterProfitUsd:5}).reason, 'TRAILING_STAGE_ALREADY_AT_ARM');
+  // Le trailing du palier 20 $ n'est retiré que si la protection fixe à 14 $ (16,56) est posée.
+  const protect = (trigger)=>lib.reachedStageFloorProtected({position:mstu,orders:[{symbol:'MSTUUSDT',side:'SELL',orderClass:'ALGO',clientAlgoId:'zth-PRO-abc',triggerPrice:String(trigger)}],protectionStages:stages,highWaterProfitUsd:22,side:'SELL',tickSize:'0.01'});
+  assert.equal(protect(16.56), true);
+  assert.equal(protect(16.0), false);
+  // Même identifiant que celui déjà posé sur Binance : les trailings en place avant la mise à jour sont reconnus.
+  const id = lib.trailingCommandId('MSTUUSDT', first);
+  assert.equal(id, 'trail-MSTUUSDT-LONG-200-140-16');
+  assert.ok(lib.trailingClientAlgoIds(id).has('zth-TRL-'+sha(id+':0').slice(0,24)));
+  assert.match(worker, /ensureTrailingProtection\(\{position,mark,protectionStages,orders,priceFilter,highWaterProfitUsd:highWater\}\)/);
+  assert.match(protectiveUpdate, /const trailingCancel=type==='EXEC_CANCEL_TRAILING'&&phase==='CANCEL_OLD';/);
+});
+
+test('sold token with leftover reduce-only stop is not active: removing it never freezes the MASTER', () => {
+  const start = worker.indexOf('function activeRuntimeSymbols(){');
+  const src = worker.slice(start, worker.indexOf('// Jetons actifs dont un réglage verrouillé', start));
+  const projection = {
+    binancePositions:[{symbol:'MSTUUSDT',positionAmt:'25'}],
+    binanceOrders:[
+      {symbol:'ERAUSDT',type:'STOP',reduceOnly:true},
+      {symbol:'ERAUSDT',type:'TRAILING_STOP_MARKET',reduceOnly:'true'},
+      {symbol:'XUSDT',type:'STOP_MARKET',closePosition:true},
+      {symbol:'ETHFIUSDT',type:'LIMIT',reduceOnly:false},
+    ],
+  };
+  const active = new Function('streamProjection', src + '; return activeRuntimeSymbols;')(()=>projection)();
+  assert.deepEqual([...active].sort(), ['ETHFIUSDT','MSTUUSDT']);
+  assert.match(worker, /log\('ACTIVE_LOCKED_SETTING_BLOCKED',\{revision:blockedRevision,symbols\}\)/);
+  assert.match(worker, /ACTIVE_LOCKED_SETTING_BLOCKED:d=>/);
+});
+
+test('Telegram: outage alert after 3 minutes, recovery after 1 minute, failure alerts deduplicated', () => {
+  const start = worker.indexOf('const ENGINE_OUT_AFTER_MS');
+  const src = worker.slice(start, worker.indexOf('// Alertes de panne', start));
+  const logs = [];
+  const watch = new Function('log', src + '; return engineServiceWatch;')((k,d)=>logs.push([k,d]));
+  const bad = {leaseActive:true,mode:'RUNNING',synchronized:false,userStreamReady:true,runtimeError:'ACTIVE_LOCKED_SETTING_CHANGED'};
+  const good = {leaseActive:true,mode:'RUNNING',synchronized:true,userStreamReady:true};
+  watch(bad, 0); watch(bad, 170000);
+  assert.equal(logs.length, 0);
+  watch(bad, 181000); watch(bad, 400000);
+  assert.deepEqual(logs.map(x=>x[0]), ['ENGINE_OUT_OF_SERVICE']);
+  assert.equal(logs[0][1].label, 'DESYNC');
+  watch(good, 500000); watch(good, 550000);
+  assert.equal(logs.length, 1);
+  watch(good, 561000);
+  assert.deepEqual(logs.map(x=>x[0]), ['ENGINE_OUT_OF_SERVICE','ENGINE_BACK_IN_SERVICE']);
+  for (const kind of ['ENGINE_OUT_OF_SERVICE','ENGINE_BACK_IN_SERVICE','TRAILING_PROTECTION_FAILED','AUTO_TARGET_LOCAL_FAILURE','AUTO_MAX_LOSS_REPAIR_REFUSED']) {
+    assert.match(worker, new RegExp(kind + ':'));
+  }
+  const dStart = worker.indexOf('const TELEGRAM_ALERT_DEDUPE_KINDS');
+  const dSrc = worker.slice(dStart, worker.indexOf('function notifyTelegram', dStart));
+  const allowed = new Function('n', dSrc + '; return telegramAlertAllowed;')((v,f=0)=>{const x=Number(v);return Number.isFinite(x)?x:f});
+  const d = {symbol:'CLOUSDT',reason:'X'};
+  // Raté passager (une seule fois) : aucun message.
+  assert.equal(allowed('AUTO_TARGET_LOCAL_FAILURE', {symbol:'MSTUUSDT',reason:'NOT_STREAM_CONFIRMED'}, 1000), false);
+  assert.equal(allowed('AUTO_TARGET_LOCAL_FAILURE', {symbol:'MSTUUSDT',reason:'NOT_STREAM_CONFIRMED'}, 1000 + 11*60*1000), false);
+  // Problème qui dure (répété toutes les 15 s) : un message après 2 minutes, puis pas avant 30 minutes.
+  let sent=0;
+  for (let t=0; t<=40*60*1000; t+=15000) if (allowed('TRAILING_PROTECTION_FAILED', {...d,reason:'R'+t}, t)) sent++;
+  assert.equal(sent, 2);
+  assert.equal(allowed('RUNNING', {}, 1000), true);
+  // Ancien ordre bloqué après une vente : message clair avec le jeton.
+  const orphan = {leaseActive:true,mode:'RUNNING',synchronized:true,userStreamReady:false,streamError:'SYMBOL_QUARANTINE_ERAUSDT_ORPHAN_CLEANUP_BINANCE_ORPHAN_CLEANUP_FAILED'};
+  logs.length=0; watch(orphan, 1e7); watch(orphan, 1e7+181000);
+  assert.equal(logs[0][1].label, 'ORPHAN');
+  assert.equal(logs[0][1].symbol, 'ERAUSDT');
 });
