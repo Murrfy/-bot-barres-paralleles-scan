@@ -1940,21 +1940,32 @@ function managedTrailingOrders(orders,symbol,side){
   );
 }
 
-// Premier palier rempli (Atteint > Protégé ≥ 0) → prix d'activation et taux de rappel Binance.
-function trailingPlanForPosition({position,mark,protectionStages,tickSize}){
-  const amount=n(position?.positionAmt??position?.quantity,0);
-  const quantity=Math.abs(amount),entry=n(position?.entryPrice,0),tick=n(tickSize,0);
-  if(!(quantity>0)||!(entry>0)||!(tick>0))return {ok:false,reason:'TRAILING_POSITION_INVALID'};
-  const direction=amount<0?'SHORT':'LONG';
-  let stage=null;
+// Méthode des paliers de Walter : le trailing Binance ne garde QUE le prochain palier pas encore atteint.
+// Il attend au prix « Atteint » et, si une mèche touche le palier puis retombe, Binance vend vers « Protégé ».
+// Une fois le palier atteint et la protection fixe posée par Zenith, ce trailing est retiré :
+// le jeton respire jusqu'au plancher, rien ne bouge jusqu'au palier suivant.
+function trailingCompleteStages(protectionStages){
+  const out=[];
   for(const row of Array.isArray(protectionStages)?protectionStages:[]){
     if(!row||row.enabled===false)continue;
     if(row.arm===''||row.floor===''||row.arm==null||row.floor==null)continue;
     const arm=n(row.arm,NaN),floor=n(row.floor,NaN);
     if(!(arm>0)||!(floor>=0)||!(floor<arm))continue;
-    if(!stage||arm<stage.arm)stage={arm,floor};
+    out.push({arm,floor});
   }
-  if(!stage)return {ok:false,reason:'TRAILING_NO_COMPLETE_STAGE'};
+  return out.sort((a,b)=>a.arm-b.arm);
+}
+
+function trailingPlanForPosition({position,mark,protectionStages,tickSize,highWaterProfitUsd=-Infinity}){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const quantity=Math.abs(amount),entry=n(position?.entryPrice,0),tick=n(tickSize,0);
+  if(!(quantity>0)||!(entry>0)||!(tick>0))return {ok:false,reason:'TRAILING_POSITION_INVALID'};
+  const direction=amount<0?'SHORT':'LONG';
+  const stages=trailingCompleteStages(protectionStages);
+  if(!stages.length)return {ok:false,reason:'TRAILING_NO_COMPLETE_STAGE'};
+  const reachedProfit=Number.isFinite(Number(highWaterProfitUsd))?Number(highWaterProfitUsd):-Infinity;
+  const stage=stages.find(row=>row.arm>reachedProfit+1e-8);
+  if(!stage)return {ok:false,reason:'TRAILING_ALL_STAGES_REACHED'};
   const sign=direction==='LONG'?1:-1;
   const armPrice=entry+sign*stage.arm/quantity;
   const floorPrice=entry+sign*stage.floor/quantity;
@@ -1968,33 +1979,92 @@ function trailingPlanForPosition({position,mark,protectionStages,tickSize}){
   const steps=direction==='LONG'?Math.ceil(armPrice/tick-1e-9):Math.floor(armPrice/tick+1e-9);
   const activate=Number((steps*tick).toFixed(decimals));
   const price=n(mark,0);
-  // Si le palier est déjà dépassé, le trailing démarre tout de suite (sans prix d'activation).
-  const alreadyArmed=price>0&&(direction==='LONG'?price>=activate:price<=activate);
+  // Jamais de trailing qui suit le prix tout de suite : s'il est déjà au palier, la protection fixe s'en charge.
+  if(price>0&&(direction==='LONG'?price>=activate:price<=activate))return {ok:false,reason:'TRAILING_STAGE_ALREADY_AT_ARM'};
   return {
-    ok:true,direction,quantity,callbackRate,
-    activatePrice:alreadyArmed?0:activate,
+    ok:true,direction,quantity,callbackRate,activatePrice:activate,
     armProfitUsd:stage.arm,protectedProfitUsd:stage.floor,entryPrice:entry,
   };
 }
 
-async function ensureTrailingProtection({position,mark,protectionStages,orders,priceFilter}){
-  const symbol=String(position?.symbol||'').toUpperCase();
-  const plan=trailingPlanForPosition({position,mark,protectionStages,tickSize:priceFilter?.tickSize});
-  if(!plan.ok){trailingProtection.lastError=plan.reason;return false}
-  const side=plan.direction==='LONG'?'SELL':'BUY';
-  if(managedTrailingOrders(orders,symbol,side).length)return false;
+function trailingCommandId(symbol,plan){
+  return `trail-${symbol}-${plan.direction}-${Math.round(plan.armProfitUsd*10)}-${Math.round(plan.protectedProfitUsd*10)}-${String(plan.entryPrice).replace(/[^0-9]/g,'').slice(0,24)}`;
+}
+function trailingClientAlgoIds(commandId){
+  const out=new Set();
+  for(let attempt=0;attempt<20;attempt++)out.add('zth-TRL-'+sha256Hex(commandId+':'+attempt).slice(0,24));
+  return out;
+}
 
-  const key=`${symbol}:${plan.direction}:${plan.entryPrice}`;
+// La protection fixe (zth-PRO) du palier atteint est-elle posée au moins à son plancher ?
+function reachedStageFloorProtected({position,orders,protectionStages,highWaterProfitUsd,side,tickSize}){
+  const stages=trailingCompleteStages(protectionStages).filter(row=>row.arm<=n(highWaterProfitUsd,-Infinity)+1e-8);
+  if(!stages.length)return true;
+  const reached=stages[stages.length-1];
+  const amount=n(position?.positionAmt??position?.quantity,0),quantity=Math.abs(amount),entry=n(position?.entryPrice,0);
+  if(!(quantity>0)||!(entry>0))return false;
+  const long=amount>0,floorPrice=entry+(long?1:-1)*reached.floor/quantity,tick=Math.max(0,n(tickSize,0));
+  const symbol=String(position?.symbol||'').toUpperCase();
+  return (Array.isArray(orders)?orders:[]).some(order=>{
+    if(String(order?.symbol||'').toUpperCase()!==symbol||String(order?.side||'').toUpperCase()!==side)return false;
+    if(!/^zth-PRO-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId||'')))return false;
+    const trigger=n(order?.triggerPrice??order?.stopPrice,NaN);
+    if(!Number.isFinite(trigger))return false;
+    return long?trigger+tick+1e-12>=floorPrice:trigger-tick-1e-12<=floorPrice;
+  });
+}
+
+async function ensureTrailingProtection({position,mark,protectionStages,orders,priceFilter,highWaterProfitUsd}){
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const direction=amount<0?'SHORT':'LONG',side=direction==='LONG'?'SELL':'BUY';
+  const plan=trailingPlanForPosition({position,mark,protectionStages,tickSize:priceFilter?.tickSize,highWaterProfitUsd});
+  const commandId=plan.ok?trailingCommandId(symbol,plan):'';
+  const wantedIds=plan.ok?trailingClientAlgoIds(commandId):new Set();
+  const existing=managedTrailingOrders(orders,symbol,side);
+  const stale=existing.filter(order=>!wantedIds.has(String(order?.clientAlgoId||'')));
+
+  // Trailing d'un palier dépassé : retiré seulement quand la protection fixe de ce palier est en place.
+  if(stale.length){
+    if(!reachedStageFloorProtected({position,orders,protectionStages,highWaterProfitUsd,side,tickSize:priceFilter?.tickSize})){
+      trailingProtection.lastError='TRAILING_WAITING_FLOOR_PROTECTION';
+      return false;
+    }
+    const cancelKey=`cancel:${symbol}:${direction}`;
+    const previousCancel=trailingProtection.attempts.get(cancelKey)||{at:0,failures:0};
+    const cancelWait=Math.min(10*60000,15000*2**Math.min(previousCancel.failures,5));
+    if(Date.now()-previousCancel.at<cancelWait)return false;
+    trailingProtection.attempts.set(cancelKey,{at:Date.now(),failures:previousCancel.failures});
+    for(const order of stale){
+      const clientAlgoId=String(order?.clientAlgoId||'');
+      const cancelled=await callProtectiveUpdateExecute({type:'EXEC_CANCEL_TRAILING',phase:'CANCEL_OLD',symbol,direction,clientAlgoId});
+      if(!cancelled.response.ok||cancelled.data?.ok!==true){
+        const reason='TRAILING_CANCEL_'+String(cancelled.data?.code||('HTTP_'+cancelled.response.status));
+        trailingProtection.lastError=reason;
+        trailingProtection.attempts.set(cancelKey,{at:Date.now(),failures:previousCancel.failures+1});
+        log('TRAILING_PROTECTION_FAILED',{symbol,reason,binanceCode:cancelled.data?.binanceCode??null,error:String(cancelled.data?.error||'').slice(0,160)});
+        scheduleReconcile(500);
+        return false;
+      }
+      log('TRAILING_PROTECTION_REMOVED',{symbol,direction,clientAlgoId,disposition:String(cancelled.data?.result?.disposition||'')});
+    }
+    trailingProtection.attempts.set(cancelKey,{at:Date.now(),failures:0});
+    scheduleReconcile(500);
+    return true;
+  }
+
+  if(!plan.ok){trailingProtection.lastError=plan.reason;return false}
+  if(existing.length)return false;
+
+  const key=`${symbol}:${plan.direction}:${plan.entryPrice}:${plan.armProfitUsd}:${plan.protectedProfitUsd}`;
   const previous=trailingProtection.attempts.get(key)||{at:0,failures:0};
   const wait=Math.min(30*60000,60000*2**Math.min(previous.failures,5));
   if(Date.now()-previous.at<wait)return false;
   trailingProtection.attempts.set(key,{at:Date.now(),failures:previous.failures});
 
-  const commandId=`trail-${symbol}-${plan.direction}-${Math.round(plan.armProfitUsd*10)}-${Math.round(plan.protectedProfitUsd*10)}-${String(plan.entryPrice).replace(/[^0-9]/g,'').slice(0,24)}`;
   const placed=await callProtectiveUpdateExecute({
     type:'EXEC_PLACE_TRAILING',phase:'PLACE_NEW',commandId,symbol,direction:plan.direction,
-    quantity:plan.quantity,callbackRate:plan.callbackRate,
-    ...(plan.activatePrice>0?{activatePrice:plan.activatePrice}:{}),
+    quantity:plan.quantity,callbackRate:plan.callbackRate,activatePrice:plan.activatePrice,
   });
   if(!placed.response.ok||placed.data?.ok!==true){
     const reason='TRAILING_'+String(placed.data?.code||('HTTP_'+placed.response.status));
@@ -2008,6 +2078,7 @@ async function ensureTrailingProtection({position,mark,protectionStages,orders,p
   trailingProtection.attempts.set(key,{at:Date.now(),failures:0});
   log('TRAILING_PROTECTION_PLACED',{
     symbol,direction:plan.direction,clientAlgoId:String(placed.data?.clientAlgoId||''),
+    armProfitUsd:plan.armProfitUsd,protectedProfitUsd:plan.protectedProfitUsd,
     callbackRate:plan.callbackRate,activatePrice:plan.activatePrice,
     disposition:String(placed.data?.result?.disposition||''),
   });
@@ -2185,9 +2256,9 @@ async function runAutoProtection(symbol,mark){
     return false;
   }
 
-  // Trailing stop natif Binance (posé à l'avance, mèches comprises) : indépendant des paliers,
-  // chaque jeton est traité seul et un échec ne bloque jamais la suite.
-  try{await ensureTrailingProtection({position,mark,protectionStages,orders,priceFilter})}
+  // Trailing Binance du prochain palier (mèches comprises) ; celui d'un palier atteint est retiré
+  // une fois la protection fixe posée. Chaque jeton est traité seul, un échec ne bloque jamais la suite.
+  try{await ensureTrailingProtection({position,mark,protectionStages,orders,priceFilter,highWaterProfitUsd:highWater})}
   catch(error){trailingProtection.lastError=String(error?.message||'TRAILING_UNEXPECTED')}
 
   let plan;

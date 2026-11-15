@@ -468,7 +468,8 @@ export default async function handler(req,res){
   const orphanCleanup=type==='EXEC_CLEAN_ORPHAN_PROTECTION'&&phase==='CANCEL_ORPHAN';
   const maxLossPriorityCleanup=type==='EXEC_CLEAN_DUPLICATE_MAX_LOSS'&&phase==='CANCEL_DUPLICATE';
   const trailingPlace=type==='EXEC_PLACE_TRAILING'&&phase==='PLACE_NEW';
-  if(!orphanCleanup&&!maxLossPriorityCleanup&&!trailingPlace&&
+  const trailingCancel=type==='EXEC_CANCEL_TRAILING'&&phase==='CANCEL_OLD';
+  if(!orphanCleanup&&!maxLossPriorityCleanup&&!trailingPlace&&!trailingCancel&&
      (!['EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION'].includes(type)||!['CANCEL_OLD','PLACE_NEW'].includes(phase))){
     return send(res,400,{ok:false,code:'PROTECTIVE_UPDATE_OPERATION_INVALID',writeAttempted:false});
   }
@@ -576,6 +577,59 @@ export default async function handler(req,res){
       return send(res,502,{
         ok:false,code:ambiguous?'TRAILING_RESULT_AMBIGUOUS':'BINANCE_TRAILING_FAILED',
         error:'Trailing placement failed.',binanceCode:e?.code??null,
+        ambiguous,writeAttempted:ambiguous,
+      });
+    }
+  }
+
+  // Trailing d'un palier déjà atteint : le moteur le retire une fois la protection fixe du palier posée,
+  // pour que le jeton respire jusqu'au plancher (méthode des paliers de Walter).
+  if(trailingCancel){
+    try{
+      if(String(master?.principal||'')!=='engine'){
+        return send(res,423,{ok:false,code:'TRAILING_ENGINE_REQUIRED',writeAttempted:false});
+      }
+      const state=await readState();
+      const armReason=validateExecutionArmRecord(state.armRecord,master.deviceId);
+      if(armReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_ARMED',reason:armReason,writeAttempted:false});
+      const symbol=String(req.body?.symbol||'').toUpperCase();
+      const direction=String(req.body?.direction||'').toUpperCase();
+      const clientAlgoId=String(req.body?.clientAlgoId||'');
+      if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(direction)||!/^zth-TRL-[0-9a-f]{24}$/.test(clientAlgoId)){
+        return send(res,400,{ok:false,code:'TRAILING_CANCEL_PAYLOAD_INVALID',writeAttempted:false});
+      }
+      const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED);
+      if(!writesEnabled)return send(res,423,{
+        ok:false,code:'BINANCE_WRITE_LOCKED',realTradingEnabled:REAL_TRADING_ENABLED,
+        binanceWriteEnabled:BINANCE_WRITE_ENABLED,pairingDisabled:PAIRING_DISABLED,writeAttempted:false
+      });
+      if(!(await requireFinalProtectiveMaster(res,master)))return;
+      const result=await cancelAlgoOrderIdempotent({
+        apiKey,secret,symbol,clientAlgoId,
+        expected:{symbol,clientAlgoId,side:sideForDirection(direction),positionSide:'BOTH',type:'TRAILING_STOP_MARKET',reduceOnly:'true'},
+        writesEnabled:true,timestamp:Date.now()
+      });
+      await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+        at:Date.now(),kind:'BINANCE_TRAILING_CANCEL',deviceId:master.deviceId,symbol,direction,clientAlgoId,
+        disposition:String(result?.disposition||''),writeAttempted:result?.writeAttempted===true,
+      })]);
+      await redis(['LTRIM',KEY_AUDIT,'0','199']);
+      return send(res,200,{ok:true,type,phase,result,clientAlgoId});
+    }catch(e){
+      const retryAfter=binanceBackoffSecondsFromError(e);
+      if(retryAfter>0){
+        try{await registerBinanceWriteBackoff(redis,e)}catch{}
+        res.setHeader('Retry-After',String(retryAfter));
+        return send(res,429,{
+          ok:false,code:Number(e?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
+          retryAfterSeconds:retryAfter,binanceStatus:Number(e?.status)||0,
+          binanceCode:e?.code??null,ambiguous:false,writeAttempted:false,
+        });
+      }
+      const ambiguous=e?.ambiguous===true;
+      return send(res,502,{
+        ok:false,code:ambiguous?'TRAILING_CANCEL_AMBIGUOUS':'BINANCE_TRAILING_CANCEL_FAILED',
+        error:'Trailing cancel failed.',binanceCode:e?.code??null,
         ambiguous,writeAttempted:ambiguous,
       });
     }
