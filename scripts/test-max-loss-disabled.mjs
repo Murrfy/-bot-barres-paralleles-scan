@@ -120,3 +120,15 @@ test('a cancelled target id is never replayed as a placed target (EDGE incident)
   assert.match(block, /plan=exitPlanFor\(exitAttempt\)/);
   assert.match(block, /conflictingProtectiveOrders\(/);
 });
+
+test('bought token is no longer watched, and disappears from the list after the sale (MSTU)', () => {
+  const ui = fs.readFileSync('index.html','utf8');
+  assert.match(worker, /log\('ENTRY_WATCH_CONSUMED_BY_POSITION'/);
+  assert.match(worker, /consumed\.triggeredAt=Date\.now\(\)/);
+  const start = ui.indexOf('function removeSoldWatchedTokens');
+  const block = ui.slice(start, ui.indexOf('async function refreshBinanceAccount', start));
+  assert.match(block, /if\(soldFlatReads\[s\]<2\)continue/);
+  assert.match(block, /if\(open\.has\(s\)\)/);
+  assert.doesNotMatch(block, /delete tokenSettings/);
+  assert.match(ui, /try\{removeSoldWatchedTokens\(positions,standardOrders\)\}catch/);
+});
