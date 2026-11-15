@@ -139,14 +139,13 @@ test('a token with a real open position shows ACTIF, not SURVEILLÉ, and is not 
   assert.match(ui, /filter\(s=>!anyActivePositionBySymbol\(s\)&&/);
 });
 
-test('a palier reached by a wick whose protected level is already crossed sells now, gain or small loss', () => {
+test('a palier reached by a wick whose protected level is already crossed sells now if still in gain', () => {
   const start = worker.indexOf('function protectedLevelAlreadyCrossed');
   const fn = worker.slice(start, worker.indexOf('async function closeCrossedProtectedLevel', start));
   assert.match(fn, /direction==='LONG'\)return price<=trigger/);
   assert.match(fn, /direction==='SHORT'\)return price>=trigger/);
   const gate = worker.slice(worker.indexOf("if(plan.action==='REPLACE'&&protectedLevelAlreadyCrossed(plan,mark))"));
-  assert.doesNotMatch(gate.slice(0, 400), /AUTO_PROTECTED_LEVEL_CROSSED_IN_LOSS/);
-  assert.match(gate.slice(0, 400), /closeCrossedProtectedLevel\(plan,mark\)/);
+  assert.match(gate.slice(0, 400), /if\(!\(n\(plan\.observedProfitUsd,0\)>0\)\)\{\s*autoProtection\.lastError='AUTO_PROTECTED_LEVEL_CROSSED_IN_LOSS'/);
   const close = worker.slice(worker.indexOf('async function closeCrossedProtectedLevel'), worker.indexOf('async function executeAutoProgressive'));
   assert.match(close, /type:'EXEC_CLOSE_POSITION'/);
   assert.match(close, /exitMode:'REMAINDER_MARKET',recoveryReason:'INCOMPLETE_PROTECTIVE_CLOSE_REMAINDER'/);
