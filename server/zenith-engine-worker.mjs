@@ -1854,6 +1854,94 @@ async function ensureAutomaticTargets(){
   return {ok:true,changed:false,reason:'ALL_TARGETS_READY'};
 }
 
+const trailingProtection={attempts:new Map(),lastError:''};
+
+function managedTrailingOrders(orders,symbol,side){
+  return (Array.isArray(orders)?orders:[]).filter(order=>
+    String(order?.orderClass||'').toUpperCase()==='ALGO'&&
+    String(order?.symbol||'').toUpperCase()===symbol&&
+    String(order?.side||'').toUpperCase()===side&&
+    String(order?.type||order?.orderType||'').toUpperCase()==='TRAILING_STOP_MARKET'&&
+    /^zth-TRL-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId||''))&&
+    !['CANCELED','TRIGGERED','FINISHED','REJECTED','EXPIRED'].includes(String(order?.status||'').toUpperCase())
+  );
+}
+
+// Premier palier rempli (Atteint > Protégé ≥ 0) → prix d'activation et taux de rappel Binance.
+function trailingPlanForPosition({position,mark,protectionStages,tickSize}){
+  const amount=n(position?.positionAmt??position?.quantity,0);
+  const quantity=Math.abs(amount),entry=n(position?.entryPrice,0),tick=n(tickSize,0);
+  if(!(quantity>0)||!(entry>0)||!(tick>0))return {ok:false,reason:'TRAILING_POSITION_INVALID'};
+  const direction=amount<0?'SHORT':'LONG';
+  let stage=null;
+  for(const row of Array.isArray(protectionStages)?protectionStages:[]){
+    if(!row||row.enabled===false)continue;
+    if(row.arm===''||row.floor===''||row.arm==null||row.floor==null)continue;
+    const arm=n(row.arm,NaN),floor=n(row.floor,NaN);
+    if(!(arm>0)||!(floor>=0)||!(floor<arm))continue;
+    if(!stage||arm<stage.arm)stage={arm,floor};
+  }
+  if(!stage)return {ok:false,reason:'TRAILING_NO_COMPLETE_STAGE'};
+  const sign=direction==='LONG'?1:-1;
+  const armPrice=entry+sign*stage.arm/quantity;
+  const floorPrice=entry+sign*stage.floor/quantity;
+  if(!(armPrice>0)||!(floorPrice>0))return {ok:false,reason:'TRAILING_PRICE_INVALID'};
+  const rawRate=Math.abs(armPrice-floorPrice)/armPrice*100;
+  // Arrondi au dixième vers le bas : un rappel plus serré protège au moins le montant « Protégé ».
+  let callbackRate=Math.floor(rawRate*10+1e-9)/10;
+  if(callbackRate>5)callbackRate=5;
+  if(!(callbackRate>=0.1))return {ok:false,reason:'TRAILING_CALLBACK_BELOW_MINIMUM',rawRate};
+  const decimals=Math.max(0,(String(tick).split('.')[1]||'').replace(/0+$/,'').length);
+  const steps=direction==='LONG'?Math.ceil(armPrice/tick-1e-9):Math.floor(armPrice/tick+1e-9);
+  const activate=Number((steps*tick).toFixed(decimals));
+  const price=n(mark,0);
+  // Si le palier est déjà dépassé, le trailing démarre tout de suite (sans prix d'activation).
+  const alreadyArmed=price>0&&(direction==='LONG'?price>=activate:price<=activate);
+  return {
+    ok:true,direction,quantity,callbackRate,
+    activatePrice:alreadyArmed?0:activate,
+    armProfitUsd:stage.arm,protectedProfitUsd:stage.floor,entryPrice:entry,
+  };
+}
+
+async function ensureTrailingProtection({position,mark,protectionStages,orders,priceFilter}){
+  const symbol=String(position?.symbol||'').toUpperCase();
+  const plan=trailingPlanForPosition({position,mark,protectionStages,tickSize:priceFilter?.tickSize});
+  if(!plan.ok){trailingProtection.lastError=plan.reason;return false}
+  const side=plan.direction==='LONG'?'SELL':'BUY';
+  if(managedTrailingOrders(orders,symbol,side).length)return false;
+
+  const key=`${symbol}:${plan.direction}:${plan.entryPrice}`;
+  const previous=trailingProtection.attempts.get(key)||{at:0,failures:0};
+  const wait=Math.min(30*60000,60000*2**Math.min(previous.failures,5));
+  if(Date.now()-previous.at<wait)return false;
+  trailingProtection.attempts.set(key,{at:Date.now(),failures:previous.failures});
+
+  const commandId=`trail-${symbol}-${plan.direction}-${Math.round(plan.armProfitUsd*10)}-${Math.round(plan.protectedProfitUsd*10)}-${String(plan.entryPrice).replace(/[^0-9]/g,'').slice(0,24)}`;
+  const placed=await callProtectiveUpdateExecute({
+    type:'EXEC_PLACE_TRAILING',phase:'PLACE_NEW',commandId,symbol,direction:plan.direction,
+    quantity:plan.quantity,callbackRate:plan.callbackRate,
+    ...(plan.activatePrice>0?{activatePrice:plan.activatePrice}:{}),
+  });
+  if(!placed.response.ok||placed.data?.ok!==true){
+    const reason='TRAILING_'+String(placed.data?.code||('HTTP_'+placed.response.status));
+    trailingProtection.lastError=reason;
+    trailingProtection.attempts.set(key,{at:Date.now(),failures:previous.failures+1});
+    log('TRAILING_PROTECTION_FAILED',{symbol,reason,binanceCode:placed.data?.binanceCode??null,error:String(placed.data?.error||'').slice(0,160)});
+    if(placed.data?.writeAttempted===true||placed.data?.ambiguous===true)scheduleReconcile(500);
+    return false;
+  }
+  trailingProtection.lastError='';
+  trailingProtection.attempts.set(key,{at:Date.now(),failures:0});
+  log('TRAILING_PROTECTION_PLACED',{
+    symbol,direction:plan.direction,clientAlgoId:String(placed.data?.clientAlgoId||''),
+    callbackRate:plan.callbackRate,activatePrice:plan.activatePrice,
+    disposition:String(placed.data?.result?.disposition||''),
+  });
+  scheduleReconcile(500);
+  return true;
+}
+
 async function executeAutoProgressive(plan){
   const live=plan.live,level=plan.level;
   const body={
@@ -2023,6 +2111,11 @@ async function runAutoProtection(symbol,mark){
     autoProtection.lastError='AUTO_PRICE_FILTER_UNAVAILABLE';
     return false;
   }
+
+  // Trailing stop natif Binance (posé à l'avance, mèches comprises) : indépendant des paliers,
+  // chaque jeton est traité seul et un échec ne bloque jamais la suite.
+  try{await ensureTrailingProtection({position,mark,protectionStages,orders,priceFilter})}
+  catch(error){trailingProtection.lastError=String(error?.message||'TRAILING_UNEXPECTED')}
 
   let plan;
   try{

@@ -31,7 +31,7 @@ test('protective close, partial-remainder MARKET and entry-cancel writes revalid
 });
 
 test('every protective update mutation revalidates current MASTER immediately before Binance',()=>{
-  gateInvariant(update,'protective update',7);
+  gateInvariant(update,'protective update',8);
   const writers=[
     'cancelReduceOnlyOrderIdempotent({',
     'cancelAlgoOrderIdempotent({',
@@ -50,5 +50,5 @@ test('every protective update mutation revalidates current MASTER immediately be
       from=at+writer.length;
     }
   }
-  assert.equal(total,7,'protective update writer count changed; review final MASTER gating');
+  assert.equal(total,8,'protective update writer count changed; review final MASTER gating');
 });

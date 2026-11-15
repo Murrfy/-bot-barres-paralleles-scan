@@ -14,6 +14,7 @@ import {
 import {
   placeAlgoOrderIdempotent,
   cancelAlgoOrderIdempotent,
+  queryAlgoByClientId,
 } from '../lib/binance-algo-writer.mjs';
 import { validateExecutionArmRecord, protectiveModeReason, executionReadiness } from './binance-protective-execute.js';
 import { readBinanceWriteBackoff, registerBinanceWriteBackoff, binanceBackoffSecondsFromError } from '../lib/binance-write-backoff.mjs';
@@ -247,6 +248,42 @@ export function terminalExitOrderStatus(status){
   return ['CANCELED','EXPIRED','REJECTED','EXPIRED_IN_MATCH'].includes(String(status||'').toUpperCase());
 }
 
+export function trailingPlanFromBody(body){
+  const symbol=String(body?.symbol||'').toUpperCase();
+  const direction=String(body?.direction||'').toUpperCase();
+  const commandId=String(body?.commandId||'');
+  const quantity=n(body?.quantity,NaN);
+  const callbackRate=n(body?.callbackRate,NaN);
+  const activatePrice=body?.activatePrice===undefined||body?.activatePrice===null||body?.activatePrice===''
+    ?0:n(body.activatePrice,NaN);
+  if(!/^[A-Z0-9]{3,30}$/.test(symbol)||!['LONG','SHORT'].includes(direction))return {ok:false,code:'TRAILING_TARGET_INVALID'};
+  if(!/^[A-Za-z0-9._:-]{8,128}$/.test(commandId))return {ok:false,code:'TRAILING_COMMAND_ID_INVALID'};
+  if(!(quantity>0))return {ok:false,code:'TRAILING_QUANTITY_INVALID'};
+  // Binance : taux de rappel de 0,1 % à 5 %, au dixième.
+  if(!(callbackRate>=0.1&&callbackRate<=5)||Math.abs(Math.round(callbackRate*10)-callbackRate*10)>1e-9){
+    return {ok:false,code:'TRAILING_CALLBACK_RATE_INVALID'};
+  }
+  if(!(activatePrice>=0))return {ok:false,code:'TRAILING_ACTIVATE_PRICE_INVALID'};
+  return {ok:true,symbol,direction,commandId,quantity,callbackRate:Math.round(callbackRate*10)/10,activatePrice};
+}
+
+export function trailingAlgoParams(plan,attempt=0){
+  const clientAlgoId='zth-TRL-'+sha256(plan.commandId+':'+Number(attempt||0)).slice(0,24);
+  return {
+    algoType:'CONDITIONAL',
+    symbol:plan.symbol,
+    side:sideForDirection(plan.direction),
+    positionSide:'BOTH',
+    type:'TRAILING_STOP_MARKET',
+    quantity:String(plan.quantity),
+    reduceOnly:'true',
+    callbackRate:plan.callbackRate.toFixed(1),
+    workingType:'CONTRACT_PRICE',
+    clientAlgoId,
+    ...(plan.activatePrice>0?{activatePrice:String(plan.activatePrice)}:{}),
+  };
+}
+
 export function conflictingProtectiveOrders(runtimeState, update, kind, allowedIds = []) {
   const allowed = new Set((Array.isArray(allowedIds) ? allowedIds : []).filter(Boolean).map(String));
   const side = sideForDirection(update.direction);
@@ -430,7 +467,8 @@ export default async function handler(req,res){
   const type=String(req.body?.type||'').toUpperCase(),phase=String(req.body?.phase||'').toUpperCase();
   const orphanCleanup=type==='EXEC_CLEAN_ORPHAN_PROTECTION'&&phase==='CANCEL_ORPHAN';
   const maxLossPriorityCleanup=type==='EXEC_CLEAN_DUPLICATE_MAX_LOSS'&&phase==='CANCEL_DUPLICATE';
-  if(!orphanCleanup&&!maxLossPriorityCleanup&&
+  const trailingPlace=type==='EXEC_PLACE_TRAILING'&&phase==='PLACE_NEW';
+  if(!orphanCleanup&&!maxLossPriorityCleanup&&!trailingPlace&&
      (!['EXEC_UPDATE_EXIT','EXEC_UPDATE_PROTECTION'].includes(type)||!['CANCEL_OLD','PLACE_NEW'].includes(phase))){
     return send(res,400,{ok:false,code:'PROTECTIVE_UPDATE_OPERATION_INVALID',writeAttempted:false});
   }
@@ -465,6 +503,82 @@ export default async function handler(req,res){
         writeAttempted:false,
       }
     );
+  }
+
+  // Décision Walter (15/11/2026) : trailing stop natif Binance, posé à l'avance chez Binance pour
+  // que les mèches soient prises en compte sans délai. Vente au marché acceptée par Walter.
+  if(trailingPlace){
+    try{
+      if(String(master?.principal||'')!=='engine'){
+        return send(res,423,{ok:false,code:'TRAILING_ENGINE_REQUIRED',writeAttempted:false});
+      }
+      const state=await readState();
+      const armReason=validateExecutionArmRecord(state.armRecord,master.deviceId);
+      if(armReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_ARMED',reason:armReason,writeAttempted:false});
+      const modeReason=protectiveModeReason(state.masterMode);
+      if(modeReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:modeReason,writeAttempted:false});
+      const readyReason=exitPlaceReadiness(state.runtimeState,master.deviceId);
+      if(readyReason)return send(res,423,{ok:false,code:'EXECUTION_NOT_READY',reason:readyReason,writeAttempted:false});
+
+      const plan=trailingPlanFromBody(req.body);
+      if(!plan.ok)return send(res,400,{ok:false,code:plan.code,writeAttempted:false});
+      const position=runtimePosition(state.runtimeState,plan.symbol,plan.direction);
+      const liveQty=Math.abs(n(position?.positionAmt??position?.quantity,0));
+      if(!position||!(liveQty>0))return send(res,409,{ok:false,code:'POSITION_NOT_FOUND',writeAttempted:false});
+      if(Math.abs(liveQty-plan.quantity)>Math.max(1e-12,liveQty*1e-10)){
+        return send(res,409,{ok:false,code:'TRAILING_QUANTITY_MISMATCH',liveQuantity:liveQty,writeAttempted:false});
+      }
+
+      const writesEnabled=Boolean(REAL_TRADING_ENABLED&&BINANCE_WRITE_ENABLED&&PAIRING_DISABLED&&VERCEL_PRODUCTION_WRITE_ALLOWED);
+      if(!writesEnabled)return send(res,423,{
+        ok:false,code:'BINANCE_WRITE_LOCKED',realTradingEnabled:REAL_TRADING_ENABLED,
+        binanceWriteEnabled:BINANCE_WRITE_ENABLED,pairingDisabled:PAIRING_DISABLED,writeAttempted:false
+      });
+
+      // Un identifiant déjà utilisé par un trailing annulé/déclenché n'est jamais repris pour neuf.
+      let attempt=0,algoParams=trailingAlgoParams(plan,0);
+      for(;;){
+        let previous=null;
+        try{
+          previous=await queryAlgoByClientId({apiKey,secret,symbol:plan.symbol,clientAlgoId:algoParams.clientAlgoId,timestamp:Date.now()});
+        }catch(error){
+          if(Number(error?.code)===-2013)break;
+          return send(res,503,{ok:false,code:'TRAILING_ID_LOOKUP_FAILED',writeAttempted:false});
+        }
+        if(!terminalAlgo(previous?.algoStatus??previous?.status))break;
+        attempt++;
+        if(attempt>=20)return send(res,409,{ok:false,code:'TRAILING_CLIENT_IDS_EXHAUSTED',writeAttempted:false});
+        algoParams=trailingAlgoParams(plan,attempt);
+      }
+
+      if(!(await requireFinalProtectiveMaster(res,master)))return;
+      const result=await placeAlgoOrderIdempotent({apiKey,secret,algoParams,writesEnabled:true,timestamp:Date.now()});
+      await redis(['LPUSH',KEY_AUDIT,JSON.stringify({
+        at:Date.now(),kind:'BINANCE_TRAILING_PROTECTION',deviceId:master.deviceId,
+        symbol:plan.symbol,direction:plan.direction,clientAlgoId:algoParams.clientAlgoId,
+        callbackRate:algoParams.callbackRate,activatePrice:algoParams.activatePrice||'',
+        disposition:String(result?.disposition||''),writeAttempted:result?.writeAttempted===true,
+      })]);
+      await redis(['LTRIM',KEY_AUDIT,'0','199']);
+      return send(res,200,{ok:true,type,phase,result,clientAlgoId:algoParams.clientAlgoId,algoParams});
+    }catch(e){
+      const retryAfter=binanceBackoffSecondsFromError(e);
+      if(retryAfter>0){
+        try{await registerBinanceWriteBackoff(redis,e)}catch{}
+        res.setHeader('Retry-After',String(retryAfter));
+        return send(res,429,{
+          ok:false,code:Number(e?.status)===418?'BINANCE_IP_BANNED':'BINANCE_RATE_LIMITED',
+          retryAfterSeconds:retryAfter,binanceStatus:Number(e?.status)||0,
+          binanceCode:e?.code??null,ambiguous:false,writeAttempted:false,
+        });
+      }
+      const ambiguous=e?.ambiguous===true;
+      return send(res,502,{
+        ok:false,code:ambiguous?'TRAILING_RESULT_AMBIGUOUS':'BINANCE_TRAILING_FAILED',
+        error:'Trailing placement failed.',binanceCode:e?.code??null,
+        ambiguous,writeAttempted:ambiguous,
+      });
+    }
   }
 
   if(maxLossPriorityCleanup){

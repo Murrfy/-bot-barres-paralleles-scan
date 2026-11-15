@@ -1434,6 +1434,8 @@ function reconcile(runtimeState, actualPositions, actualOrders, entryTransitions
     const type = String(order?.type || '').toUpperCase();
     if (!['MARKET','STOP_MARKET','TAKE_PROFIT_MARKET','TRAILING_STOP_MARKET'].includes(type)) return false;
     if (!(order?.reduceOnly === true || order?.closePosition === true)) return false;
+    // Décision Walter (15/11/2026) : le trailing stop natif de Zenith (zth-TRL-) vend au marché, accepté.
+    if (type === 'TRAILING_STOP_MARKET' && /^zth-TRL-[A-Za-z0-9._:-]+$/.test(String(order?.clientAlgoId || ''))) return false;
     return actualPositions.some(position => orderProtectsPosition(order, position));
   });
   if (forbiddenMarketProtectiveOrders.length) reasons.push('FORBIDDEN_MARKET_PROTECTIVE_ORDER');
